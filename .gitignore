@@ -222,3 +222,4 @@ Thumbs.db
 *.swo
 Astrbot插件开发文档.md
 .gitignore
+config.json
