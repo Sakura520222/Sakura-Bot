@@ -26,8 +26,8 @@ Sakura-频道总结助手是一个基于Telegram API和DeepSeek AI的智能频�
 
 - Python 3.13或更高版本
 - 一个Telegram Bot Token（从@BotFather获取）
-- Telegram API ID和API Hash（从https://my.telegram.org获取）
-- DeepSeek API Key（从https://platform.deepseek.com获取）
+- Telegram API ID和API Hash（从https://my.telegram.org 获取）
+- DeepSeek API Key（从https://platform.deepseek.com 获取）
 
 ### 安装依赖
 
