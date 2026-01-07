@@ -125,14 +125,21 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 LLM_API_KEY = os.getenv('LLM_API_KEY', os.getenv('DEEPSEEK_API_KEY'))
 LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.deepseek.com')
 LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
+
+# 频道配置 - 从环境变量获取默认值
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL')
+CHANNELS = []
+if TARGET_CHANNEL:
+    CHANNELS = [TARGET_CHANNEL]
+    logger.info(f"已从环境变量加载单频道配置: {CHANNELS}")
+
 # 日志级别 - 从环境变量获取默认值
 LOG_LEVEL_FROM_ENV = os.getenv('LOG_LEVEL')
 logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
 
 logger.debug(f"从环境变量加载的配置: API_ID={'***' if API_ID else '未设置'}, API_HASH={'***' if API_HASH else '未设置'}, BOT_TOKEN={'***' if BOT_TOKEN else '未设置'}")
 logger.debug(f"AI配置 - 环境变量默认值: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}")
-logger.debug(f"目标频道: {TARGET_CHANNEL}")
+logger.debug(f"目标频道列表: {CHANNELS}")
 
 # 管理员 ID 列表，从环境变量读取后转为整数列表
 REPORT_ADMIN_IDS = os.getenv('REPORT_ADMIN_IDS', '')
@@ -157,6 +164,13 @@ if config:
     LLM_API_KEY = config.get('api_key', LLM_API_KEY)
     LLM_BASE_URL = config.get('base_url', LLM_BASE_URL)
     LLM_MODEL = config.get('model', LLM_MODEL)
+    
+    # 从配置文件读取频道列表
+    config_channels = config.get('channels')
+    if config_channels and isinstance(config_channels, list):
+        CHANNELS = config_channels
+        logger.info(f"已从配置文件加载频道列表: {CHANNELS}")
+    
     # 从配置文件读取日志级别
     LOG_LEVEL_FROM_CONFIG = config.get('log_level')
     logger.info("已使用配置文件覆盖AI配置默认值")
@@ -197,22 +211,35 @@ async def fetch_last_week_messages():
         last_week = datetime.now(timezone.utc) - timedelta(days=7)
         messages_list = []
         
-        logger.info(f"正在抓取频道: {TARGET_CHANNEL}，时间范围: {last_week} 至今")
+        if not CHANNELS:
+            logger.warning("没有配置任何频道，无法抓取消息")
+            return messages_list
         
-        message_count = 0
-        async for message in client.iter_messages(TARGET_CHANNEL, offset_date=last_week, reverse=True):
-            message_count += 1
-            if message.text:
-                # 动态获取频道名用于生成链接
-                channel_part = TARGET_CHANNEL.split('/')[-1]
-                msg_link = f"https://t.me/{channel_part}/{message.id}"
-                messages_list.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
-                
-                # 每抓取10条消息记录一次日志
-                if len(messages_list) % 10 == 0:
-                    logger.debug(f"已抓取 {len(messages_list)} 条有效消息")
+        logger.info(f"正在抓取 {len(CHANNELS)} 个频道的消息，时间范围: {last_week} 至今")
         
-        logger.info(f"消息抓取完成，共处理 {message_count} 条消息，其中 {len(messages_list)} 条包含文本内容")
+        total_message_count = 0
+        
+        # 遍历所有配置的频道
+        for channel in CHANNELS:
+            channel_message_count = 0
+            logger.info(f"开始抓取频道: {channel}")
+            
+            async for message in client.iter_messages(channel, offset_date=last_week, reverse=True):
+                total_message_count += 1
+                channel_message_count += 1
+                if message.text:
+                    # 动态获取频道名用于生成链接
+                    channel_part = channel.split('/')[-1]
+                    msg_link = f"https://t.me/{channel_part}/{message.id}"
+                    messages_list.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
+                    
+                    # 每抓取10条消息记录一次日志
+                    if len(messages_list) % 10 == 0:
+                        logger.debug(f"已抓取 {len(messages_list)} 条有效消息")
+            
+            logger.info(f"频道 {channel} 抓取完成，共处理 {channel_message_count} 条消息")
+        
+        logger.info(f"所有频道消息抓取完成，共处理 {total_message_count} 条消息，其中 {len(messages_list)} 条包含文本内容")
         return messages_list
 
 def analyze_with_ai(messages):
@@ -648,6 +675,117 @@ async def handle_restart(event):
     # 退出当前进程
     sys.exit(0)
 
+async def handle_show_channels(event):
+    """处理/showchannels命令，查看当前频道列表"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    logger.info(f"执行命令 {command} 成功")
+    
+    if not CHANNELS:
+        await event.reply("当前没有配置任何频道")
+        return
+    
+    # 构建频道列表消息
+    channels_msg = "当前配置的频道列表：\n\n"
+    for i, channel in enumerate(CHANNELS, 1):
+        channels_msg += f"{i}. {channel}\n"
+    
+    await event.reply(channels_msg)
+
+async def handle_add_channel(event):
+    """处理/addchannel命令，添加频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        _, channel_url = command.split(maxsplit=1)
+        channel_url = channel_url.strip()
+        
+        if not channel_url:
+            await event.reply("请提供有效的频道URL")
+            return
+        
+        # 检查频道是否已存在
+        if channel_url in CHANNELS:
+            await event.reply(f"频道 {channel_url} 已存在于列表中")
+            return
+        
+        # 添加频道到列表
+        CHANNELS.append(channel_url)
+        
+        # 更新配置文件
+        config = load_config()
+        config['channels'] = CHANNELS
+        save_config(config)
+        
+        logger.info(f"已添加频道 {channel_url} 到列表")
+        await event.reply(f"频道 {channel_url} 已成功添加到列表中\n\n当前频道数量：{len(CHANNELS)}")
+        
+    except ValueError:
+        # 没有提供频道URL
+        await event.reply("请提供有效的频道URL，例如：/addchannel https://t.me/examplechannel")
+    except Exception as e:
+        logger.error(f"添加频道时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"添加频道时出错: {e}")
+
+async def handle_delete_channel(event):
+    """处理/deletechannel命令，删除频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        _, channel_url = command.split(maxsplit=1)
+        channel_url = channel_url.strip()
+        
+        if not channel_url:
+            await event.reply("请提供有效的频道URL")
+            return
+        
+        # 检查频道是否存在
+        if channel_url not in CHANNELS:
+            await event.reply(f"频道 {channel_url} 不在列表中")
+            return
+        
+        # 从列表中删除频道
+        CHANNELS.remove(channel_url)
+        
+        # 更新配置文件
+        config = load_config()
+        config['channels'] = CHANNELS
+        save_config(config)
+        
+        logger.info(f"已从列表中删除频道 {channel_url}")
+        await event.reply(f"频道 {channel_url} 已成功从列表中删除\n\n当前频道数量：{len(CHANNELS)}")
+        
+    except ValueError:
+        # 没有提供频道URL或频道不存在
+        await event.reply("请提供有效的频道URL，例如：/deletechannel https://t.me/examplechannel")
+    except Exception as e:
+        logger.error(f"删除频道时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"删除频道时出错: {e}")
+
 async def main():
     logger.info("开始初始化机器人服务...")
     
@@ -677,6 +815,10 @@ async def main():
         client.add_event_handler(handle_set_log_level, NewMessage(pattern='/setloglevel|/set_log_level|/设置日志级别'))
         # 添加重启命令
         client.add_event_handler(handle_restart, NewMessage(pattern='/restart|/重启'))
+        # 添加频道管理命令
+        client.add_event_handler(handle_show_channels, NewMessage(pattern='/showchannels|/show_channels|/查看频道列表'))
+        client.add_event_handler(handle_add_channel, NewMessage(pattern='/addchannel|/add_channel|/添加频道'))
+        client.add_event_handler(handle_delete_channel, NewMessage(pattern='/deletechannel|/delete_channel|/删除频道'))
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
@@ -700,7 +842,10 @@ async def main():
             BotCommand(command="setaicfg", description="设置AI配置"),
             BotCommand(command="showloglevel", description="查看当前日志级别"),
             BotCommand(command="setloglevel", description="设置日志级别"),
-            BotCommand(command="restart", description="重启机器人")
+            BotCommand(command="restart", description="重启机器人"),
+            BotCommand(command="showchannels", description="查看当前频道列表"),
+            BotCommand(command="addchannel", description="添加频道"),
+            BotCommand(command="deletechannel", description="删除频道")
         ]
         
         await client(SetBotCommandsRequest(
