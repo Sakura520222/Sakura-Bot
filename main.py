@@ -202,8 +202,12 @@ client_llm = OpenAI(
 
 logger.info("AI客户端初始化完成")
 
-async def fetch_last_week_messages():
-    """抓取过去一周的频道消息"""
+async def fetch_last_week_messages(channels_to_fetch=None):
+    """抓取过去一周的频道消息
+    
+    Args:
+        channels_to_fetch: 可选，要抓取的频道列表。如果为None，则抓取所有配置的频道。
+    """
     # 确保 API_ID 是整数
     logger.info("开始抓取过去一周的频道消息")
     
@@ -211,16 +215,23 @@ async def fetch_last_week_messages():
         last_week = datetime.now(timezone.utc) - timedelta(days=7)
         messages_by_channel = {}  # 按频道分组的消息字典
         
-        if not CHANNELS:
-            logger.warning("没有配置任何频道，无法抓取消息")
-            return messages_by_channel
-        
-        logger.info(f"正在抓取 {len(CHANNELS)} 个频道的消息，时间范围: {last_week} 至今")
+        # 确定要抓取的频道
+        if channels_to_fetch and isinstance(channels_to_fetch, list):
+            # 只抓取指定的频道
+            channels = channels_to_fetch
+            logger.info(f"正在抓取指定的 {len(channels)} 个频道的消息，时间范围: {last_week} 至今")
+        else:
+            # 抓取所有配置的频道
+            if not CHANNELS:
+                logger.warning("没有配置任何频道，无法抓取消息")
+                return messages_by_channel
+            channels = CHANNELS
+            logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {last_week} 至今")
         
         total_message_count = 0
         
-        # 遍历所有配置的频道
-        for channel in CHANNELS:
+        # 遍历所有要抓取的频道
+        for channel in channels:
             channel_messages = []
             channel_message_count = 0
             logger.info(f"开始抓取频道: {channel}")
@@ -242,7 +253,7 @@ async def fetch_last_week_messages():
             messages_by_channel[channel] = channel_messages
             logger.info(f"频道 {channel} 抓取完成，共处理 {channel_message_count} 条消息，其中 {len(channel_messages)} 条包含文本内容")
         
-        logger.info(f"所有频道消息抓取完成，共处理 {total_message_count} 条消息")
+        logger.info(f"所有指定频道消息抓取完成，共处理 {total_message_count} 条消息")
         return messages_by_channel
 
 def analyze_with_ai(messages):
@@ -396,9 +407,38 @@ async def handle_manual_summary(event):
     await event.reply("正在为您生成本周总结...")
     logger.info(f"开始执行 {command} 命令")
     
-    # 执行总结任务
+    # 解析命令参数，支持指定频道
     try:
-        messages_by_channel = await fetch_last_week_messages()
+        # 分割命令和参数
+        parts = command.split()
+        if len(parts) > 1:
+            # 有指定频道参数
+            specified_channels = []
+            for part in parts[1:]:
+                if part.startswith('http'):
+                    # 完整的频道URL
+                    specified_channels.append(part)
+                else:
+                    # 频道名称，需要转换为完整URL
+                    specified_channels.append(f"https://t.me/{part}")
+            
+            # 验证指定的频道是否在配置中
+            valid_channels = []
+            for channel in specified_channels:
+                if channel in CHANNELS:
+                    valid_channels.append(channel)
+                else:
+                    await event.reply(f"频道 {channel} 不在配置列表中，将跳过")
+            
+            if not valid_channels:
+                await event.reply("没有找到有效的指定频道")
+                return
+            
+            # 执行总结任务，只处理指定的有效频道
+            messages_by_channel = await fetch_last_week_messages(valid_channels)
+        else:
+            # 没有指定频道，处理所有配置的频道
+            messages_by_channel = await fetch_last_week_messages()
         
         # 按频道分别生成和发送总结报告
         for channel, messages in messages_by_channel.items():
