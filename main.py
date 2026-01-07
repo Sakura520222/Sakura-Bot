@@ -209,11 +209,11 @@ async def fetch_last_week_messages():
     
     async with TelegramClient('session_name', int(API_ID), API_HASH) as client:
         last_week = datetime.now(timezone.utc) - timedelta(days=7)
-        messages_list = []
+        messages_by_channel = {}  # 按频道分组的消息字典
         
         if not CHANNELS:
             logger.warning("没有配置任何频道，无法抓取消息")
-            return messages_list
+            return messages_by_channel
         
         logger.info(f"正在抓取 {len(CHANNELS)} 个频道的消息，时间范围: {last_week} 至今")
         
@@ -221,6 +221,7 @@ async def fetch_last_week_messages():
         
         # 遍历所有配置的频道
         for channel in CHANNELS:
+            channel_messages = []
             channel_message_count = 0
             logger.info(f"开始抓取频道: {channel}")
             
@@ -231,16 +232,18 @@ async def fetch_last_week_messages():
                     # 动态获取频道名用于生成链接
                     channel_part = channel.split('/')[-1]
                     msg_link = f"https://t.me/{channel_part}/{message.id}"
-                    messages_list.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
+                    channel_messages.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
                     
                     # 每抓取10条消息记录一次日志
-                    if len(messages_list) % 10 == 0:
-                        logger.debug(f"已抓取 {len(messages_list)} 条有效消息")
+                    if len(channel_messages) % 10 == 0:
+                        logger.debug(f"频道 {channel} 已抓取 {len(channel_messages)} 条有效消息")
             
-            logger.info(f"频道 {channel} 抓取完成，共处理 {channel_message_count} 条消息")
+            # 将当前频道的消息添加到字典中
+            messages_by_channel[channel] = channel_messages
+            logger.info(f"频道 {channel} 抓取完成，共处理 {channel_message_count} 条消息，其中 {len(channel_messages)} 条包含文本内容")
         
-        logger.info(f"所有频道消息抓取完成，共处理 {total_message_count} 条消息，其中 {len(messages_list)} 条包含文本内容")
-        return messages_list
+        logger.info(f"所有频道消息抓取完成，共处理 {total_message_count} 条消息")
+        return messages_by_channel
 
 def analyze_with_ai(messages):
     """调用 AI 进行汇总"""
@@ -301,9 +304,15 @@ async def main_job():
     logger.info(f"定时任务启动: {start_time}")
     
     try:
-        messages = await fetch_last_week_messages()
-        summary = analyze_with_ai(messages)
-        await send_report(f"📋 **频道周报汇总**\n\n{summary}")
+        messages_by_channel = await fetch_last_week_messages()
+        
+        # 按频道分别生成和发送总结报告
+        for channel, messages in messages_by_channel.items():
+            logger.info(f"开始处理频道 {channel} 的消息")
+            summary = analyze_with_ai(messages)
+            # 获取频道名称用于报告标题
+            channel_name = channel.split('/')[-1]
+            await send_report(f"📋 **{channel_name} 频道周报汇总**\n\n{summary}")
         
         end_time = datetime.now()
         processing_time = (end_time - start_time).total_seconds()
@@ -328,6 +337,14 @@ async def send_long_message(client, chat_id, text, max_length=4000):
         logger.info(f"消息长度未超过限制，直接发送")
         await client.send_message(chat_id, text)
         return
+    
+    # 提取频道名称用于分段消息标题
+    channel_title = "频道周报汇总"
+    if "**" in text and "** " in text:
+        # 提取 ** 之间的频道名称
+        start_idx = text.index("**") + 2
+        end_idx = text.index("** ", start_idx)
+        channel_title = text[start_idx:end_idx]
     
     # 分段发送
     parts = []
@@ -360,7 +377,7 @@ async def send_long_message(client, chat_id, text, max_length=4000):
     # 发送所有部分
     for i, part in enumerate(parts):
         logger.info(f"正在发送第 {i+1}/{len(parts)} 段，长度: {len(part)}字符")
-        await client.send_message(chat_id, f"📋 **频道周报汇总 ({i+1}/{len(parts)})**\n\n{part}")
+        await client.send_message(chat_id, f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}")
         logger.debug(f"成功发送第 {i+1}/{len(parts)} 段")
 
 async def handle_manual_summary(event):
@@ -381,9 +398,16 @@ async def handle_manual_summary(event):
     
     # 执行总结任务
     try:
-        messages = await fetch_last_week_messages()
-        summary = analyze_with_ai(messages)
-        await send_long_message(event.client, sender_id, summary)
+        messages_by_channel = await fetch_last_week_messages()
+        
+        # 按频道分别生成和发送总结报告
+        for channel, messages in messages_by_channel.items():
+            logger.info(f"开始处理频道 {channel} 的消息")
+            summary = analyze_with_ai(messages)
+            # 获取频道名称用于报告标题
+            channel_name = channel.split('/')[-1]
+            await send_long_message(event.client, sender_id, f"📋 **{channel_name} 频道周报汇总**\n\n{summary}")
+        
         logger.info(f"命令 {command} 执行成功")
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
