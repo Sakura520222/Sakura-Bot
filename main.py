@@ -10,8 +10,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # 加载 .env 文件中的变量
 load_dotenv()
 
-# 提示词存储文件
+# 配置文件
 PROMPT_FILE = "prompt.txt"
+CONFIG_FILE = "config.json"
 
 # 默认提示词
 DEFAULT_PROMPT = "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：\n\n"
@@ -33,6 +34,25 @@ def save_prompt(prompt):
     with open(PROMPT_FILE, "w", encoding="utf-8") as f:
         f.write(prompt)
 
+# 读取配置文件
+def load_config():
+    """从配置文件读取AI配置"""
+    import json
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+# 保存配置文件
+def save_config(config):
+    """保存AI配置到文件"""
+    import json
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
 # 初始化提示词
 CURRENT_PROMPT = load_prompt()
 
@@ -40,7 +60,10 @@ CURRENT_PROMPT = load_prompt()
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+# AI 配置 - 从环境变量获取默认值
+LLM_API_KEY = os.getenv('LLM_API_KEY', os.getenv('DEEPSEEK_API_KEY'))
+LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.deepseek.com')
+LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL')
 # 管理员 ID 列表，从环境变量读取后转为整数列表
 REPORT_ADMIN_IDS = os.getenv('REPORT_ADMIN_IDS', '')
@@ -53,10 +76,17 @@ else:
     # 如果没有配置管理员ID，默认发送给自己
     ADMIN_LIST = ['me']
 
-# 初始化 DeepSeek 客户端
+# 加载配置文件，覆盖环境变量默认值
+config = load_config()
+if config:
+    LLM_API_KEY = config.get('api_key', LLM_API_KEY)
+    LLM_BASE_URL = config.get('base_url', LLM_BASE_URL)
+    LLM_MODEL = config.get('model', LLM_MODEL)
+
+# 初始化 AI 客户端
 client_llm = OpenAI(
-    api_key=DEEPSEEK_API_KEY, 
-    base_url="https://api.deepseek.com"
+    api_key=LLM_API_KEY, 
+    base_url=LLM_BASE_URL
 )
 
 async def fetch_last_week_messages():
@@ -77,8 +107,8 @@ async def fetch_last_week_messages():
         
         return messages_list
 
-def analyze_with_deepseek(messages):
-    """调用 DeepSeek 进行汇总"""
+def analyze_with_ai(messages):
+    """调用 AI 进行汇总"""
     if not messages:
         return "本周无新动态。"
 
@@ -88,7 +118,7 @@ def analyze_with_deepseek(messages):
 
     try:
         response = client_llm.chat.completions.create(
-            model="deepseek-chat",
+            model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。"},
                 {"role": "user", "content": prompt},
@@ -96,7 +126,7 @@ def analyze_with_deepseek(messages):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"DeepSeek 分析失败: {e}"
+        return f"AI 分析失败: {e}"
 
 async def send_report(summary_text):
     """发送报告"""
@@ -114,11 +144,15 @@ async def send_report(summary_text):
 async def main_job():
     print(f"任务启动: {datetime.now()}")
     messages = await fetch_last_week_messages()
-    summary = analyze_with_deepseek(messages)
+    summary = analyze_with_ai(messages)
     await send_report(f"📋 **频道周报汇总**\n\n{summary}")
 
 # 全局变量，用于跟踪正在设置提示词的用户
 setting_prompt_users = set()
+# 全局变量，用于跟踪正在设置AI配置的用户
+setting_ai_config_users = set()
+# 全局变量，用于存储正在配置中的AI参数
+current_ai_config = {}
 
 async def send_long_message(client, chat_id, text, max_length=4000):
     """分段发送长消息"""
@@ -167,7 +201,7 @@ async def handle_manual_summary(event):
     # 执行总结任务
     try:
         messages = await fetch_last_week_messages()
-        summary = analyze_with_deepseek(messages)
+        summary = analyze_with_ai(messages)
         await send_long_message(event.client, sender_id, summary)
     except Exception as e:
         await event.reply(f"生成总结时出错: {e}")
@@ -219,6 +253,102 @@ async def handle_prompt_input(event):
     
     await event.reply(f"提示词已更新为：\n\n{new_prompt}")
 
+async def handle_show_ai_config(event):
+    """处理/showaicfg命令，显示当前AI配置"""
+    # 检查发送者是否为管理员
+    sender_id = event.sender_id
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 显示当前配置
+    config_info = f"当前AI配置：\n\n"
+    config_info += f"API Key：{LLM_API_KEY[:10]}...{LLM_API_KEY[-10:] if len(LLM_API_KEY) > 20 else LLM_API_KEY}\n"
+    config_info += f"Base URL：{LLM_BASE_URL}\n"
+    config_info += f"Model：{LLM_MODEL}\n"
+    
+    await event.reply(config_info)
+
+async def handle_set_ai_config(event):
+    """处理/setaicfg命令，触发AI配置设置流程"""
+    # 检查发送者是否为管理员
+    sender_id = event.sender_id
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 添加用户到正在设置AI配置的集合中
+    setting_ai_config_users.add(sender_id)
+    # 初始化当前配置
+    global current_ai_config
+    current_ai_config = {
+        'api_key': LLM_API_KEY,
+        'base_url': LLM_BASE_URL,
+        'model': LLM_MODEL
+    }
+    
+    await event.reply("请依次发送以下AI配置参数，或发送/skip跳过：\n\n1. API Key\n2. Base URL\n3. Model\n\n发送/cancel取消设置")
+
+async def handle_ai_config_input(event):
+    """处理用户输入的AI配置参数"""
+    # 检查发送者是否在设置AI配置的集合中
+    sender_id = event.sender_id
+    if sender_id not in setting_ai_config_users:
+        return
+    
+    # 检查命令
+    if event.text == '/cancel':
+        # 取消设置
+        setting_ai_config_users.remove(sender_id)
+        await event.reply("已取消AI配置设置")
+        return
+    
+    # 获取当前配置状态
+    global current_ai_config
+    config_step = len([k for k, v in current_ai_config.items() if v is not None]) + 1
+    
+    # 根据当前步骤处理输入
+    if config_step == 1:
+        # 处理API Key
+        if event.text != '/skip':
+            current_ai_config['api_key'] = event.text.strip()
+        await event.reply(f"API Key已设置为：{current_ai_config['api_key'][:10]}...{current_ai_config['api_key'][-10:] if len(current_ai_config['api_key']) > 20 else current_ai_config['api_key']}\n\n请发送Base URL，或发送/skip跳过")
+    elif config_step == 2:
+        # 处理Base URL
+        if event.text != '/skip':
+            current_ai_config['base_url'] = event.text.strip()
+        await event.reply(f"Base URL已设置为：{current_ai_config['base_url']}\n\n请发送Model，或发送/skip跳过")
+    elif config_step == 3:
+        # 处理Model
+        if event.text != '/skip':
+            current_ai_config['model'] = event.text.strip()
+        
+        # 保存配置
+        save_config(current_ai_config)
+        
+        # 更新全局变量
+        global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, client_llm
+        LLM_API_KEY = current_ai_config['api_key']
+        LLM_BASE_URL = current_ai_config['base_url']
+        LLM_MODEL = current_ai_config['model']
+        
+        # 重新初始化AI客户端
+        client_llm = OpenAI(
+            api_key=LLM_API_KEY, 
+            base_url=LLM_BASE_URL
+        )
+        
+        # 从集合中移除用户
+        setting_ai_config_users.remove(sender_id)
+        
+        # 显示最终配置
+        config_info = f"AI配置已更新：\n\n"
+        config_info += f"API Key：{LLM_API_KEY[:10]}...{LLM_API_KEY[-10:] if len(LLM_API_KEY) > 20 else LLM_API_KEY}\n"
+        config_info += f"Base URL：{LLM_BASE_URL}\n"
+        config_info += f"Model：{LLM_MODEL}\n"
+        
+        await event.reply(config_info)
+
 async def main():
     # 初始化调度器
     scheduler = AsyncIOScheduler()
@@ -235,8 +365,11 @@ async def main():
     client.add_event_handler(handle_manual_summary, NewMessage(pattern='/立即总结|/summary'))
     client.add_event_handler(handle_show_prompt, NewMessage(pattern='/showprompt|/show_prompt|/查看提示词'))
     client.add_event_handler(handle_set_prompt, NewMessage(pattern='/setprompt|/set_prompt|/设置提示词'))
-    # 只处理非命令消息作为提示词输入
+    client.add_event_handler(handle_show_ai_config, NewMessage(pattern='/showaicfg|/show_aicfg|/查看AI配置'))
+    client.add_event_handler(handle_set_ai_config, NewMessage(pattern='/setaicfg|/set_aicfg|/设置AI配置'))
+    # 只处理非命令消息作为提示词或AI配置输入
     client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
+    client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
     
     # 启动客户端
     await client.start(bot_token=BOT_TOKEN)
@@ -248,7 +381,9 @@ async def main():
     commands = [
         BotCommand(command="summary", description="立即生成本周频道消息汇总"),
         BotCommand(command="showprompt", description="查看当前提示词"),
-        BotCommand(command="setprompt", description="设置自定义提示词")
+        BotCommand(command="setprompt", description="设置自定义提示词"),
+        BotCommand(command="showaicfg", description="查看AI配置"),
+        BotCommand(command="setaicfg", description="设置AI配置")
     ]
     
     await client(SetBotCommandsRequest(
@@ -269,7 +404,7 @@ async def main():
 
 if __name__ == "__main__":
     # 检查必要变量是否存在
-    required_vars = [API_ID, API_HASH, BOT_TOKEN, DEEPSEEK_API_KEY]
+    required_vars = [API_ID, API_HASH, BOT_TOKEN, LLM_API_KEY]
     if not all(required_vars):
         print("错误: 请确保 .env 文件中配置了所有必要的 API 凭证。")
     else:
