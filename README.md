@@ -217,15 +217,48 @@ python main.py
 
 ```
 tg-bot/
-├── main.py               # 主程序文件
+├── main.py               # 主程序文件（重构后，模块化入口）
+├── config.py             # 配置管理模块
+├── prompt_manager.py     # 提示词管理模块
+├── summary_time_manager.py # 总结时间管理模块
+├── ai_client.py          # AI客户端模块
+├── telegram_client.py    # Telegram客户端模块
+├── command_handlers.py   # 命令处理模块
+├── scheduler.py          # 调度器模块
 ├── prompt.txt            # 提示词存储文件
 ├── config.json           # AI配置存储文件（自动生成）
 ├── .env                  # 环境变量配置
-├── .last_summary_time    # 上次总结时间存储文件（自动生成）
+├── .last_summary_time.json # 上次总结时间存储文件（自动生成）
 ├── .restart_flag         # 重启标记文件（临时生成）
 ├── .gitignore            # Git忽略规则
 ├── requirements.txt      # 依赖列表
-└── README.md             # 项目说明文档
+├── README.md             # 项目说明文档
+└── MODULE_SPLIT_SUMMARY.md # 模块拆分总结文档
+```
+
+### 模块说明
+
+- **main.py** - 主程序入口，负责模块初始化和主流程控制
+- **config.py** - 配置管理，加载环境变量和配置文件
+- **prompt_manager.py** - 提示词管理，加载和保存提示词
+- **summary_time_manager.py** - 总结时间管理，记录和管理上次总结时间
+- **ai_client.py** - AI客户端，初始化AI客户端并进行消息分析
+- **telegram_client.py** - Telegram客户端，消息抓取和发送功能
+- **command_handlers.py** - 命令处理，处理所有Telegram命令
+- **scheduler.py** - 调度器，定时任务调度和执行
+
+### 模块依赖关系
+
+```
+main.py
+├── config.py (基础配置)
+├── scheduler.py (定时任务)
+├── command_handlers.py (命令处理)
+│   ├── prompt_manager.py (提示词管理)
+│   ├── summary_time_manager.py (时间管理)
+│   ├── ai_client.py (AI分析)
+│   └── telegram_client.py (Telegram操作)
+└── 其他第三方库依赖
 ```
 
 ## 注意事项
@@ -238,6 +271,7 @@ tg-bot/
 6. 支持的AI服务包括DeepSeek、OpenAI以及其他兼容OpenAI API的服务
 7. 通过指令设置的AI配置会保存到config.json文件中，重启后依然有效
 8. 环境变量和配置文件的优先级：config.json > 环境变量 > 默认值
+9. 项目已采用模块化架构，便于维护和扩展。各模块功能独立，便于单独测试和修改
 
 ## 许可证
 

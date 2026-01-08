@@ -1,0 +1,649 @@
+import logging
+import sys
+import subprocess
+import os
+from datetime import datetime, timezone, timedelta
+from telethon.events import NewMessage
+
+from config import (
+    CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, 
+    RESTART_FLAG_FILE, load_config, save_config, logger
+)
+from prompt_manager import load_prompt, save_prompt
+from summary_time_manager import load_last_summary_time, save_last_summary_time
+from ai_client import analyze_with_ai, client_llm
+from telegram_client import fetch_last_week_messages, send_long_message, send_report
+
+# 全局变量，用于跟踪正在设置提示词的用户
+setting_prompt_users = set()
+# 全局变量，用于跟踪正在设置AI配置的用户
+setting_ai_config_users = set()
+# 全局变量，用于存储正在配置中的AI参数
+current_ai_config = {}
+
+async def handle_manual_summary(event):
+    """处理/立即总结命令"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 发送正在处理的消息
+    await event.reply("正在为您生成总结...")
+    logger.info(f"开始执行 {command} 命令")
+    
+    # 解析命令参数，支持指定频道
+    try:
+        # 分割命令和参数
+        parts = command.split()
+        if len(parts) > 1:
+            # 有指定频道参数
+            specified_channels = []
+            for part in parts[1:]:
+                if part.startswith('http'):
+                    # 完整的频道URL
+                    specified_channels.append(part)
+                else:
+                    # 频道名称，需要转换为完整URL
+                    specified_channels.append(f"https://t.me/{part}")
+            
+            # 验证指定的频道是否在配置中
+            valid_channels = []
+            for channel in specified_channels:
+                if channel in CHANNELS:
+                    valid_channels.append(channel)
+                else:
+                    await event.reply(f"频道 {channel} 不在配置列表中，将跳过")
+            
+            if not valid_channels:
+                await event.reply("没有找到有效的指定频道")
+                return
+            
+            channels_to_process = valid_channels
+        else:
+            # 没有指定频道，处理所有配置的频道
+            channels_to_process = CHANNELS
+        
+        # 按频道分别处理
+        for channel in channels_to_process:
+            # 读取该频道的上次总结时间和报告消息ID
+            channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
+            if channel_summary_data:
+                channel_last_summary_time = channel_summary_data["time"]
+                report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
+            else:
+                channel_last_summary_time = None
+                report_message_ids_to_exclude = []
+            
+            # 抓取该频道从上次总结时间开始的消息，排除已发送的报告消息
+            messages_by_channel = await fetch_last_week_messages(
+                [channel], 
+                start_time=channel_last_summary_time,
+                report_message_ids={channel: report_message_ids_to_exclude}
+            )
+            
+            # 获取该频道的消息
+            messages = messages_by_channel.get(channel, [])
+            if messages:
+                logger.info(f"开始处理频道 {channel} 的消息")
+                current_prompt = load_prompt()
+                summary = analyze_with_ai(messages, current_prompt)
+                # 获取频道名称用于报告标题
+                channel_name = channel.split('/')[-1]
+                # 计算起始日期和终止日期
+                end_date = datetime.now(timezone.utc)
+                if channel_last_summary_time:
+                    start_date = channel_last_summary_time
+                else:
+                    start_date = end_date - timedelta(days=7)
+                # 格式化日期为 月.日 格式
+                start_date_str = f"{start_date.month}.{start_date.day}"
+                end_date_str = f"{end_date.month}.{end_date.day}"
+                # 生成报告标题
+                report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
+                # 向请求者发送总结
+                await send_long_message(event.client, sender_id, report_text)
+                # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
+                sent_report_ids = []
+                if SEND_REPORT_TO_SOURCE:
+                    sent_report_ids = await send_report(report_text, channel, event.client)
+                else:
+                    await send_report(report_text, None, event.client)
+                
+                # 保存该频道的本次总结时间和报告消息ID
+                save_last_summary_time(channel, datetime.now(timezone.utc), sent_report_ids)
+            else:
+                logger.info(f"频道 {channel} 没有新消息需要总结")
+                await send_long_message(event.client, sender_id, f"📋 **{channel.split('/')[-1]} 频道汇总**\n\n该频道自上次总结以来没有新消息。")
+        
+        logger.info(f"命令 {command} 执行成功")
+    except Exception as e:
+        logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"生成总结时出错: {e}")
+
+async def handle_show_prompt(event):
+    """处理/showprompt命令，显示当前提示词"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    logger.info(f"执行命令 {command} 成功")
+    current_prompt = load_prompt()
+    await event.reply(f"当前提示词：\n\n{current_prompt}")
+
+async def handle_set_prompt(event):
+    """处理/setprompt命令，触发提示词设置流程"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 添加用户到正在设置提示词的集合中
+    setting_prompt_users.add(sender_id)
+    logger.info(f"添加用户 {sender_id} 到提示词设置集合")
+    current_prompt = load_prompt()
+    await event.reply("请发送新的提示词，我将使用它来生成总结。\n\n当前提示词：\n" + current_prompt)
+
+async def handle_prompt_input(event):
+    """处理用户输入的新提示词"""
+    sender_id = event.sender_id
+    input_text = event.text
+    
+    # 检查发送者是否在设置提示词的集合中
+    if sender_id not in setting_prompt_users:
+        return
+    
+    logger.info(f"收到用户 {sender_id} 的提示词输入")
+    
+    # 检查是否是命令消息，如果是则不处理
+    if input_text.startswith('/'):
+        logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
+        await event.reply("请发送提示词内容，不要发送命令。如果要取消设置，请重新发送命令。")
+        return
+    
+    # 获取新提示词
+    new_prompt = input_text.strip()
+    logger.debug(f"用户 {sender_id} 设置的新提示词: {new_prompt[:100]}..." if len(new_prompt) > 100 else f"用户 {sender_id} 设置的新提示词: {new_prompt}")
+    
+    # 更新提示词
+    save_prompt(new_prompt)
+    logger.info(f"已更新提示词，长度: {len(new_prompt)}字符")
+    
+    # 从集合中移除用户
+    setting_prompt_users.remove(sender_id)
+    logger.info(f"从提示词设置集合中移除用户 {sender_id}")
+    
+    await event.reply(f"提示词已更新为：\n\n{new_prompt}")
+
+async def handle_show_ai_config(event):
+    """处理/showaicfg命令，显示当前AI配置"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 显示当前配置
+    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    config_info = f"当前AI配置：\n\n"
+    config_info += f"API Key：{LLM_API_KEY[:10]}...{LLM_API_KEY[-10:] if len(LLM_API_KEY) > 20 else LLM_API_KEY}\n"
+    config_info += f"Base URL：{LLM_BASE_URL}\n"
+    config_info += f"Model：{LLM_MODEL}\n"
+    
+    logger.info(f"执行命令 {command} 成功")
+    await event.reply(config_info)
+
+async def handle_set_ai_config(event):
+    """处理/setaicfg命令，触发AI配置设置流程"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 添加用户到正在设置AI配置的集合中
+    setting_ai_config_users.add(sender_id)
+    logger.info(f"添加用户 {sender_id} 到AI配置设置集合")
+    
+    # 初始化当前配置，使用None值来标识未处理的参数
+    global current_ai_config
+    current_ai_config = {
+        'api_key': None,
+        'base_url': None,
+        'model': None
+    }
+    
+    logger.info(f"开始执行 {command} 命令")
+    await event.reply("请依次发送以下AI配置参数，或发送/skip跳过：\n\n1. API Key\n2. Base URL\n3. Model\n\n发送/cancel取消设置")
+
+async def handle_ai_config_input(event):
+    """处理用户输入的AI配置参数"""
+    # 声明全局变量
+    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    
+    # 检查发送者是否在设置AI配置的集合中
+    sender_id = event.sender_id
+    input_text = event.text
+    
+    if sender_id not in setting_ai_config_users:
+        return
+    
+    logger.info(f"收到用户 {sender_id} 的AI配置输入: {input_text}")
+    
+    # 检查命令
+    if input_text == '/cancel':
+        # 取消设置
+        setting_ai_config_users.remove(sender_id)
+        logger.info(f"用户 {sender_id} 取消了AI配置设置")
+        await event.reply("已取消AI配置设置")
+        return
+    
+    # 检查是否是其他命令
+    if input_text.startswith('/') and input_text != '/skip':
+        # 如果是其他命令，提示用户先完成当前配置或取消
+        await event.reply("您正在设置AI配置中，请先完成当前配置或发送/cancel取消设置，然后再执行其他命令")
+        return
+    
+    # 重新计算配置步骤：找到第一个为None的参数
+    config_order = ['api_key', 'base_url', 'model']
+    config_step = None
+    
+    for i, param in enumerate(config_order):
+        if current_ai_config[param] is None:
+            config_step = i + 1
+            break
+    
+    if config_step is None:
+        config_step = 4  # 所有参数都已设置
+    
+    logger.debug(f"当前AI配置步骤: {config_step}")
+    
+    # 根据当前步骤处理输入
+    if config_step == 1:
+        # 处理API Key
+        if input_text != '/skip':
+            current_ai_config['api_key'] = input_text.strip()
+            logger.debug(f"用户 {sender_id} 设置了新的API Key: {'***' if input_text.strip() else '未设置'}")
+        else:
+            # 使用当前值
+            current_ai_config['api_key'] = LLM_API_KEY
+        await event.reply(f"API Key已设置为：{current_ai_config['api_key'][:10]}...{current_ai_config['api_key'][-10:] if len(current_ai_config['api_key']) > 20 else current_ai_config['api_key']}\n\n请发送Base URL，或发送/skip跳过")
+    elif config_step == 2:
+        # 处理Base URL
+        if input_text != '/skip':
+            current_ai_config['base_url'] = input_text.strip()
+            logger.debug(f"用户 {sender_id} 设置了新的Base URL: {input_text.strip()}")
+        else:
+            # 使用当前值
+            current_ai_config['base_url'] = LLM_BASE_URL
+        await event.reply(f"Base URL已设置为：{current_ai_config['base_url']}\n\n请发送Model，或发送/skip跳过")
+    elif config_step == 3:
+        # 处理Model
+        if input_text != '/skip':
+            current_ai_config['model'] = input_text.strip()
+            logger.debug(f"用户 {sender_id} 设置了新的Model: {input_text.strip()}")
+        else:
+            # 使用当前值
+            current_ai_config['model'] = LLM_MODEL
+        
+        # 保存配置
+        save_config(current_ai_config)
+        logger.info("已保存AI配置到文件")
+        
+        # 从集合中移除用户
+        setting_ai_config_users.remove(sender_id)
+        logger.info(f"从AI配置设置集合中移除用户 {sender_id}")
+        
+        # 显示最终配置
+        config_info = f"AI配置已更新：\n\n"
+        config_info += f"API Key：{current_ai_config['api_key'][:10]}...{current_ai_config['api_key'][-10:] if len(current_ai_config['api_key']) > 20 else current_ai_config['api_key']}\n"
+        config_info += f"Base URL：{current_ai_config['base_url']}\n"
+        config_info += f"Model：{current_ai_config['model']}\n"
+        
+        logger.info(f"用户 {sender_id} 完成了AI配置设置")
+        await event.reply(config_info)
+    elif config_step == 4:
+        # 所有参数都已设置，可能是重复输入，返回最终配置
+        await event.reply("AI配置已完成设置，当前配置：\n\n" + 
+                        f"API Key：{current_ai_config['api_key'][:10]}...{current_ai_config['api_key'][-10:] if len(current_ai_config['api_key']) > 20 else current_ai_config['api_key']}\n" +
+                        f"Base URL：{current_ai_config['base_url']}\n" +
+                        f"Model：{current_ai_config['model']}\n")
+
+async def handle_show_log_level(event):
+    """处理/showloglevel命令，显示当前日志级别"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 获取当前日志级别
+    import logging
+    root_logger = logging.getLogger()
+    current_level = root_logger.getEffectiveLevel()
+    level_name = logging.getLevelName(current_level)
+    
+    logger.info(f"执行命令 {command} 成功")
+    await event.reply(f"当前日志级别：{level_name}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+
+async def handle_set_log_level(event):
+    """处理/setloglevel命令，设置日志级别"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 解析命令参数
+    try:
+        _, level_str = command.split(maxsplit=1)
+        level_str = level_str.strip().upper()
+        
+        # 检查日志级别是否有效
+        from config import LOG_LEVEL_MAP
+        if level_str not in LOG_LEVEL_MAP:
+            await event.reply(f"无效的日志级别: {level_str}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+            return
+        
+        # 设置日志级别
+        import logging
+        root_logger = logging.getLogger()
+        old_level = root_logger.getEffectiveLevel()
+        new_level = LOG_LEVEL_MAP[level_str]
+        root_logger.setLevel(new_level)
+        
+        # 更新配置文件
+        config = load_config()
+        config['log_level'] = level_str
+        save_config(config)
+        
+        logger.info(f"日志级别已从 {logging.getLevelName(old_level)} 更改为 {logging.getLevelName(new_level)}")
+        await event.reply(f"日志级别已成功更改为：{level_str}\n\n之前的级别：{logging.getLevelName(old_level)}")
+        
+    except ValueError:
+        # 没有提供日志级别参数
+        await event.reply("请提供有效的日志级别，例如：/setloglevel INFO\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    except Exception as e:
+        logger.error(f"设置日志级别时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"设置日志级别时出错: {e}")
+
+async def handle_restart(event):
+    """处理/restart命令，重启机器人"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    logger.info(f"开始执行 {command} 命令")
+    
+    # 发送重启确认消息
+    await event.reply("正在重启机器人...")
+    
+    # 记录重启日志
+    logger.info("机器人重启命令已执行，正在重启...")
+    
+    # 实现重启逻辑
+    import sys
+    import subprocess
+    import os
+    
+    # 创建重启标记文件，用于新进程识别重启操作
+    with open(RESTART_FLAG_FILE, 'w') as f:
+        f.write(str(sender_id))  # 写入发起重启的用户ID
+    
+    # 关闭当前进程，启动新进程
+    python = sys.executable
+    subprocess.Popen([python] + sys.argv)
+    
+    # 退出当前进程
+    sys.exit(0)
+
+async def handle_show_channels(event):
+    """处理/showchannels命令，查看当前频道列表"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    logger.info(f"执行命令 {command} 成功")
+    
+    if not CHANNELS:
+        await event.reply("当前没有配置任何频道")
+        return
+    
+    # 构建频道列表消息
+    channels_msg = "当前配置的频道列表：\n\n"
+    for i, channel in enumerate(CHANNELS, 1):
+        channels_msg += f"{i}. {channel}\n"
+    
+    await event.reply(channels_msg)
+
+async def handle_add_channel(event):
+    """处理/addchannel命令，添加频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        _, channel_url = command.split(maxsplit=1)
+        channel_url = channel_url.strip()
+        
+        if not channel_url:
+            await event.reply("请提供有效的频道URL")
+            return
+        
+        # 检查频道是否已存在
+        if channel_url in CHANNELS:
+            await event.reply(f"频道 {channel_url} 已存在于列表中")
+            return
+        
+        # 添加频道到列表
+        CHANNELS.append(channel_url)
+        
+        # 更新配置文件
+        config = load_config()
+        config['channels'] = CHANNELS
+        save_config(config)
+        
+        logger.info(f"已添加频道 {channel_url} 到列表")
+        await event.reply(f"频道 {channel_url} 已成功添加到列表中\n\n当前频道数量：{len(CHANNELS)}")
+        
+    except ValueError:
+        # 没有提供频道URL
+        await event.reply("请提供有效的频道URL，例如：/addchannel https://t.me/examplechannel")
+    except Exception as e:
+        logger.error(f"添加频道时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"添加频道时出错: {e}")
+
+async def handle_delete_channel(event):
+    """处理/deletechannel命令，删除频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        _, channel_url = command.split(maxsplit=1)
+        channel_url = channel_url.strip()
+        
+        if not channel_url:
+            await event.reply("请提供有效的频道URL")
+            return
+        
+        # 检查频道是否存在
+        if channel_url not in CHANNELS:
+            await event.reply(f"频道 {channel_url} 不在列表中")
+            return
+        
+        # 从列表中删除频道
+        CHANNELS.remove(channel_url)
+        
+        # 更新配置文件
+        config = load_config()
+        config['channels'] = CHANNELS
+        save_config(config)
+        
+        logger.info(f"已从列表中删除频道 {channel_url}")
+        await event.reply(f"频道 {channel_url} 已成功从列表中删除\n\n当前频道数量：{len(CHANNELS)}")
+        
+    except ValueError:
+        # 没有提供频道URL或频道不存在
+        await event.reply("请提供有效的频道URL，例如：/deletechannel https://t.me/examplechannel")
+    except Exception as e:
+        logger.error(f"删除频道时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"删除频道时出错: {e}")
+
+async def handle_clear_summary_time(event):
+    """处理/clearsummarytime命令，清除上次总结时间记录
+    支持清除所有频道或特定频道的时间记录
+    """
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        # 解析命令参数
+        parts = command.split()
+        specific_channel = None
+        if len(parts) > 1:
+            # 有指定频道参数
+            channel_part = parts[1]
+            if channel_part.startswith('http'):
+                specific_channel = channel_part
+            else:
+                specific_channel = f"https://t.me/{channel_part}"
+        
+        import json
+        from config import LAST_SUMMARY_FILE
+        if os.path.exists(LAST_SUMMARY_FILE):
+            if specific_channel:
+                # 清除特定频道的时间记录
+                with open(LAST_SUMMARY_FILE, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        existing_data = json.loads(content)
+                        if specific_channel in existing_data:
+                            del existing_data[specific_channel]
+                            # 写回文件
+                            with open(LAST_SUMMARY_FILE, "w", encoding="utf-8") as f_write:
+                                json.dump(existing_data, f_write, ensure_ascii=False, indent=2)
+                            logger.info(f"已清除频道 {specific_channel} 的上次总结时间记录")
+                            await event.reply(f"已成功清除频道 {specific_channel} 的上次总结时间记录。")
+                        else:
+                            logger.info(f"频道 {specific_channel} 的上次总结时间记录不存在，无需清除")
+                            await event.reply(f"频道 {specific_channel} 的上次总结时间记录不存在，无需清除。")
+                    else:
+                        logger.info(f"上次总结时间记录文件 {LAST_SUMMARY_FILE} 内容为空，无需清除")
+                        await event.reply("上次总结时间记录文件内容为空，无需清除。")
+            else:
+                # 清除所有频道的时间记录
+                os.remove(LAST_SUMMARY_FILE)
+                logger.info(f"已清除所有频道的上次总结时间记录，文件 {LAST_SUMMARY_FILE} 已删除")
+                await event.reply("已成功清除所有频道的上次总结时间记录。下次总结将重新抓取过去一周的消息。")
+        else:
+            logger.info(f"上次总结时间记录文件 {LAST_SUMMARY_FILE} 不存在，无需清除")
+            await event.reply("上次总结时间记录文件不存在，无需清除。")
+    except Exception as e:
+        logger.error(f"清除上次总结时间记录时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"清除上次总结时间记录时出错: {e}")
+
+async def handle_set_send_to_source(event):
+    """处理/setsendtosource命令，设置是否将报告发送回源频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 解析命令参数
+    try:
+        _, value = command.split(maxsplit=1)
+        value = value.strip().lower()
+        
+        # 检查值是否有效
+        if value not in ['true', 'false', '1', '0', 'yes', 'no']:
+            await event.reply(f"无效的值: {value}\n\n可用值：true, false, 1, 0, yes, no")
+            return
+        
+        # 转换为布尔值
+        from config import SEND_REPORT_TO_SOURCE
+        SEND_REPORT_TO_SOURCE = value in ['true', '1', 'yes']
+        
+        # 更新配置文件
+        config = load_config()
+        config['send_report_to_source'] = SEND_REPORT_TO_SOURCE
+        save_config(config)
+        
+        logger.info(f"已将send_report_to_source设置为: {SEND_REPORT_TO_SOURCE}")
+        await event.reply(f"已成功将报告发送回源频道的设置更改为：{SEND_REPORT_TO_SOURCE}\n\n当前状态：{'开启' if SEND_REPORT_TO_SOURCE else '关闭'}")
+        
+    except ValueError:
+        # 没有提供值，显示当前设置
+        from config import SEND_REPORT_TO_SOURCE
+        await event.reply(f"当前报告发送回源频道的设置：{SEND_REPORT_TO_SOURCE}\n\n当前状态：{'开启' if SEND_REPORT_TO_SOURCE else '关闭'}\n\n使用格式：/setsendtosource true|false")
+    except Exception as e:
+        logger.error(f"设置报告发送回源频道选项时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"设置报告发送回源频道选项时出错: {e}")
