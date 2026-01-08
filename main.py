@@ -587,7 +587,17 @@ async def main_job():
                 summary = analyze_with_ai(messages)
                 # 获取频道名称用于报告标题
                 channel_name = channel.split('/')[-1]
-                report_text = f"📋 **{channel_name} 频道汇总**\n\n{summary}"
+                # 计算起始日期和终止日期
+                end_date = datetime.now(timezone.utc)
+                if channel_last_summary_time:
+                    start_date = channel_last_summary_time
+                else:
+                    start_date = end_date - timedelta(days=7)
+                # 格式化日期为 月.日 格式
+                start_date_str = f"{start_date.month}.{start_date.day}"
+                end_date_str = f"{end_date.month}.{end_date.day}"
+                # 生成报告标题
+                report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
                 # 发送报告给管理员，并根据配置决定是否发送回源频道
                 sent_report_ids = []
                 if SEND_REPORT_TO_SOURCE:
@@ -739,7 +749,17 @@ async def handle_manual_summary(event):
                 summary = analyze_with_ai(messages)
                 # 获取频道名称用于报告标题
                 channel_name = channel.split('/')[-1]
-                report_text = f"📋 **{channel_name} 频道汇总**\n\n{summary}"
+                # 计算起始日期和终止日期
+                end_date = datetime.now(timezone.utc)
+                if channel_last_summary_time:
+                    start_date = channel_last_summary_time
+                else:
+                    start_date = end_date - timedelta(days=7)
+                # 格式化日期为 月.日 格式
+                start_date_str = f"{start_date.month}.{start_date.day}"
+                end_date_str = f"{end_date.month}.{end_date.day}"
+                # 生成报告标题
+                report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
                 # 向请求者发送总结
                 await send_long_message(event.client, sender_id, report_text)
                 # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
