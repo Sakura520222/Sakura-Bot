@@ -167,6 +167,9 @@ if TARGET_CHANNEL:
     CHANNELS = [channel.strip() for channel in TARGET_CHANNEL.split(',')]
     logger.info(f"已从环境变量加载频道配置: {CHANNELS}")
 
+# 是否将报告发送回源频道的配置，默认为True
+SEND_REPORT_TO_SOURCE = True
+
 # 日志级别 - 从环境变量获取默认值
 LOG_LEVEL_FROM_ENV = os.getenv('LOG_LEVEL')
 logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
@@ -204,6 +207,10 @@ if config:
     if config_channels and isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已从配置文件加载频道列表: {CHANNELS}")
+    
+    # 从配置文件读取是否将报告发送回源频道的配置
+    SEND_REPORT_TO_SOURCE = config.get('send_report_to_source', SEND_REPORT_TO_SOURCE)
+    logger.info(f"已从配置文件加载发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
     
     # 从配置文件读取日志级别
     LOG_LEVEL_FROM_CONFIG = config.get('log_level')
@@ -330,16 +337,20 @@ def analyze_with_ai(messages):
         logger.error(f"AI分析失败: {type(e).__name__}: {e}", exc_info=True)
         return f"AI 分析失败: {e}"
 
-async def send_report(summary_text):
-    """发送报告"""
+async def send_report(summary_text, source_channel=None, client=None):
+    """发送报告
+    
+    Args:
+        summary_text: 报告内容
+        source_channel: 源频道，可选。如果提供，将向该频道发送报告
+        client: 可选。已存在的Telegram客户端实例，如果不提供，将创建一个新实例
+    """
     logger.info("开始发送报告")
     logger.debug(f"报告长度: {len(summary_text)}字符")
     
-    client = TelegramClient('bot_session', int(API_ID), API_HASH)
-    async with client:
-        await client.start(bot_token=BOT_TOKEN)
-        logger.info("Telegram机器人客户端已启动")
-        
+    # 如果提供了客户端实例，直接使用它；否则创建新实例
+    if client:
+        logger.info("使用现有客户端实例发送报告")
         # 向所有管理员发送消息
         for admin_id in ADMIN_LIST:
             try:
@@ -348,6 +359,39 @@ async def send_report(summary_text):
                 logger.info(f"成功向管理员 {admin_id} 发送报告")
             except Exception as e:
                 logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
+        
+        # 如果提供了源频道且配置允许，向源频道发送报告
+        if source_channel and SEND_REPORT_TO_SOURCE:
+            try:
+                logger.info(f"正在向源频道 {source_channel} 发送报告")
+                await send_long_message(client, source_channel, summary_text)
+                logger.info(f"成功向源频道 {source_channel} 发送报告")
+            except Exception as e:
+                logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
+    else:
+        logger.info("创建新客户端实例发送报告")
+        client = TelegramClient('bot_session', int(API_ID), API_HASH)
+        async with client:
+            await client.start(bot_token=BOT_TOKEN)
+            logger.info("Telegram机器人客户端已启动")
+            
+            # 向所有管理员发送消息
+            for admin_id in ADMIN_LIST:
+                try:
+                    logger.info(f"正在向管理员 {admin_id} 发送报告")
+                    await send_long_message(client, admin_id, summary_text)
+                    logger.info(f"成功向管理员 {admin_id} 发送报告")
+                except Exception as e:
+                    logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
+            
+            # 如果提供了源频道且配置允许，向源频道发送报告
+            if source_channel and SEND_REPORT_TO_SOURCE:
+                try:
+                    logger.info(f"正在向源频道 {source_channel} 发送报告")
+                    await send_long_message(client, source_channel, summary_text)
+                    logger.info(f"成功向源频道 {source_channel} 发送报告")
+                except Exception as e:
+                    logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
 
 async def main_job():
     start_time = datetime.now()
@@ -366,7 +410,12 @@ async def main_job():
             summary = analyze_with_ai(messages)
             # 获取频道名称用于报告标题
             channel_name = channel.split('/')[-1]
-            await send_report(f"📋 **{channel_name} 频道汇总**\n\n{summary}")
+            report_text = f"📋 **{channel_name} 频道汇总**\n\n{summary}"
+            # 发送报告给管理员，并根据配置决定是否发送回源频道
+            if SEND_REPORT_TO_SOURCE:
+                await send_report(report_text, channel)
+            else:
+                await send_report(report_text)
         
         # 保存本次总结时间
         save_last_summary_time(datetime.now(timezone.utc))
@@ -495,7 +544,14 @@ async def handle_manual_summary(event):
             summary = analyze_with_ai(messages)
             # 获取频道名称用于报告标题
             channel_name = channel.split('/')[-1]
-            await send_long_message(event.client, sender_id, f"📋 **{channel_name} 频道汇总**\n\n{summary}")
+            report_text = f"📋 **{channel_name} 频道汇总**\n\n{summary}"
+            # 向请求者发送总结
+            await send_long_message(event.client, sender_id, report_text)
+            # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
+            if SEND_REPORT_TO_SOURCE:
+                await send_report(report_text, channel, event.client)
+            else:
+                await send_report(report_text, None, event.client)
         
         # 保存本次总结时间
         save_last_summary_time(datetime.now(timezone.utc))
@@ -934,6 +990,73 @@ async def handle_delete_channel(event):
         logger.error(f"删除频道时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(f"删除频道时出错: {e}")
 
+async def handle_clear_summary_time(event):
+    """处理/clearsummarytime命令，清除上次总结时间记录"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        # 检查文件是否存在
+        if os.path.exists(LAST_SUMMARY_FILE):
+            # 删除文件以清除时间记录
+            os.remove(LAST_SUMMARY_FILE)
+            logger.info(f"已清除上次总结时间记录，文件 {LAST_SUMMARY_FILE} 已删除")
+            await event.reply("已成功清除上次总结时间记录。下次总结将重新抓取过去一周的消息。")
+        else:
+            logger.info(f"上次总结时间记录文件 {LAST_SUMMARY_FILE} 不存在，无需清除")
+            await event.reply("上次总结时间记录文件不存在，无需清除。")
+    except Exception as e:
+        logger.error(f"清除上次总结时间记录时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"清除上次总结时间记录时出错: {e}")
+
+async def handle_set_send_to_source(event):
+    """处理/setsendtosource命令，设置是否将报告发送回源频道"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    # 解析命令参数
+    try:
+        _, value = command.split(maxsplit=1)
+        value = value.strip().lower()
+        
+        # 检查值是否有效
+        if value not in ['true', 'false', '1', '0', 'yes', 'no']:
+            await event.reply(f"无效的值: {value}\n\n可用值：true, false, 1, 0, yes, no")
+            return
+        
+        # 转换为布尔值
+        global SEND_REPORT_TO_SOURCE
+        SEND_REPORT_TO_SOURCE = value in ['true', '1', 'yes']
+        
+        # 更新配置文件
+        config = load_config()
+        config['send_report_to_source'] = SEND_REPORT_TO_SOURCE
+        save_config(config)
+        
+        logger.info(f"已将send_report_to_source设置为: {SEND_REPORT_TO_SOURCE}")
+        await event.reply(f"已成功将报告发送回源频道的设置更改为：{SEND_REPORT_TO_SOURCE}\n\n当前状态：{'开启' if SEND_REPORT_TO_SOURCE else '关闭'}")
+        
+    except ValueError:
+        # 没有提供值，显示当前设置
+        await event.reply(f"当前报告发送回源频道的设置：{SEND_REPORT_TO_SOURCE}\n\n当前状态：{'开启' if SEND_REPORT_TO_SOURCE else '关闭'}\n\n使用格式：/setsendtosource true|false")
+    except Exception as e:
+        logger.error(f"设置报告发送回源频道选项时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"设置报告发送回源频道选项时出错: {e}")
+
 async def main():
     logger.info("开始初始化机器人服务...")
     
@@ -967,6 +1090,10 @@ async def main():
         client.add_event_handler(handle_show_channels, NewMessage(pattern='/showchannels|/show_channels|/查看频道列表'))
         client.add_event_handler(handle_add_channel, NewMessage(pattern='/addchannel|/add_channel|/添加频道'))
         client.add_event_handler(handle_delete_channel, NewMessage(pattern='/deletechannel|/delete_channel|/删除频道'))
+        # 添加清除总结时间命令
+        client.add_event_handler(handle_clear_summary_time, NewMessage(pattern='/clearsummarytime|/clear_summary_time|/清除总结时间'))
+        # 添加设置报告发送回源频道命令
+        client.add_event_handler(handle_set_send_to_source, NewMessage(pattern='/setsendtosource|/set_send_to_source|/设置报告发送回源频道'))
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
@@ -993,7 +1120,9 @@ async def main():
             BotCommand(command="restart", description="重启机器人"),
             BotCommand(command="showchannels", description="查看当前频道列表"),
             BotCommand(command="addchannel", description="添加频道"),
-            BotCommand(command="deletechannel", description="删除频道")
+            BotCommand(command="deletechannel", description="删除频道"),
+            BotCommand(command="clearsummarytime", description="清除上次总结时间记录"),
+            BotCommand(command="setsendtosource", description="设置是否将报告发送回源频道")
         ]
         
         await client(SetBotCommandsRequest(
