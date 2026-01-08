@@ -44,7 +44,8 @@ logger.info("已加载 .env 文件中的环境变量")
 PROMPT_FILE = "prompt.txt"
 CONFIG_FILE = "config.json"
 RESTART_FLAG_FILE = ".restart_flag"
-logger.debug(f"配置文件路径: 提示词文件={PROMPT_FILE}, 配置文件={CONFIG_FILE}")
+LAST_SUMMARY_FILE = ".last_summary_time"
+logger.debug(f"配置文件路径: 提示词文件={PROMPT_FILE}, 配置文件={CONFIG_FILE}, 上次总结时间文件={LAST_SUMMARY_FILE}")
 
 # 默认提示词
 DEFAULT_PROMPT = "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：\n\n"
@@ -78,6 +79,38 @@ def save_prompt(prompt):
         logger.info(f"成功保存提示词到文件，长度: {len(prompt)}字符")
     except Exception as e:
         logger.error(f"保存提示词到文件 {PROMPT_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+
+# 读取上次总结时间函数
+def load_last_summary_time():
+    """从文件中读取上次总结的时间，如果文件不存在则返回None"""
+    logger.info(f"开始读取上次总结时间文件: {LAST_SUMMARY_FILE}")
+    try:
+        with open(LAST_SUMMARY_FILE, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if content:
+                last_time = datetime.fromisoformat(content)
+                logger.info(f"成功读取上次总结时间: {last_time}")
+                return last_time
+            else:
+                logger.warning(f"上次总结时间文件 {LAST_SUMMARY_FILE} 内容为空")
+                return None
+    except FileNotFoundError:
+        logger.warning(f"上次总结时间文件 {LAST_SUMMARY_FILE} 不存在")
+        return None
+    except Exception as e:
+        logger.error(f"读取上次总结时间文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        return None
+
+# 保存上次总结时间函数
+def save_last_summary_time(time_to_save):
+    """将上次总结的时间保存到文件中"""
+    logger.info(f"开始保存上次总结时间到文件: {LAST_SUMMARY_FILE}")
+    try:
+        with open(LAST_SUMMARY_FILE, "w", encoding="utf-8") as f:
+            f.write(time_to_save.isoformat())
+        logger.info(f"成功保存上次总结时间: {time_to_save}")
+    except Exception as e:
+        logger.error(f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
 
 # 读取配置文件
 def load_config():
@@ -203,31 +236,36 @@ client_llm = OpenAI(
 
 logger.info("AI客户端初始化完成")
 
-async def fetch_last_week_messages(channels_to_fetch=None):
-    """抓取过去一周的频道消息
+async def fetch_last_week_messages(channels_to_fetch=None, start_time=None):
+    """抓取指定时间范围的频道消息
     
     Args:
         channels_to_fetch: 可选，要抓取的频道列表。如果为None，则抓取所有配置的频道。
+        start_time: 可选，开始抓取的时间。如果为None，则默认抓取过去一周的消息。
     """
     # 确保 API_ID 是整数
-    logger.info("开始抓取过去一周的频道消息")
+    logger.info("开始抓取指定时间范围的频道消息")
     
     async with TelegramClient('session_name', int(API_ID), API_HASH) as client:
-        last_week = datetime.now(timezone.utc) - timedelta(days=7)
+        # 如果没有提供开始时间，则默认抓取过去一周的消息
+        if start_time is None:
+            start_time = datetime.now(timezone.utc) - timedelta(days=7)
+            logger.info(f"未提供开始时间，默认抓取过去一周的消息")
+        
         messages_by_channel = {}  # 按频道分组的消息字典
         
         # 确定要抓取的频道
         if channels_to_fetch and isinstance(channels_to_fetch, list):
             # 只抓取指定的频道
             channels = channels_to_fetch
-            logger.info(f"正在抓取指定的 {len(channels)} 个频道的消息，时间范围: {last_week} 至今")
+            logger.info(f"正在抓取指定的 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
         else:
             # 抓取所有配置的频道
             if not CHANNELS:
                 logger.warning("没有配置任何频道，无法抓取消息")
                 return messages_by_channel
             channels = CHANNELS
-            logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {last_week} 至今")
+            logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
         
         total_message_count = 0
         
@@ -237,7 +275,7 @@ async def fetch_last_week_messages(channels_to_fetch=None):
             channel_message_count = 0
             logger.info(f"开始抓取频道: {channel}")
             
-            async for message in client.iter_messages(channel, offset_date=last_week, reverse=True):
+            async for message in client.iter_messages(channel, offset_date=start_time, reverse=True):
                 total_message_count += 1
                 channel_message_count += 1
                 if message.text:
@@ -316,7 +354,11 @@ async def main_job():
     logger.info(f"定时任务启动: {start_time}")
     
     try:
-        messages_by_channel = await fetch_last_week_messages()
+        # 读取上次总结时间
+        last_summary_time = load_last_summary_time()
+        
+        # 抓取消息，从上次总结时间开始
+        messages_by_channel = await fetch_last_week_messages(start_time=last_summary_time)
         
         # 按频道分别生成和发送总结报告
         for channel, messages in messages_by_channel.items():
@@ -324,7 +366,10 @@ async def main_job():
             summary = analyze_with_ai(messages)
             # 获取频道名称用于报告标题
             channel_name = channel.split('/')[-1]
-            await send_report(f"📋 **{channel_name} 频道周报汇总**\n\n{summary}")
+            await send_report(f"📋 **{channel_name} 频道汇总**\n\n{summary}")
+        
+        # 保存本次总结时间
+        save_last_summary_time(datetime.now(timezone.utc))
         
         end_time = datetime.now()
         processing_time = (end_time - start_time).total_seconds()
@@ -405,11 +450,14 @@ async def handle_manual_summary(event):
         return
     
     # 发送正在处理的消息
-    await event.reply("正在为您生成本周总结...")
+    await event.reply("正在为您生成总结...")
     logger.info(f"开始执行 {command} 命令")
     
     # 解析命令参数，支持指定频道
     try:
+        # 读取上次总结时间
+        last_summary_time = load_last_summary_time()
+        
         # 分割命令和参数
         parts = command.split()
         if len(parts) > 1:
@@ -435,11 +483,11 @@ async def handle_manual_summary(event):
                 await event.reply("没有找到有效的指定频道")
                 return
             
-            # 执行总结任务，只处理指定的有效频道
-            messages_by_channel = await fetch_last_week_messages(valid_channels)
+            # 执行总结任务，只处理指定的有效频道，从上次总结时间开始
+            messages_by_channel = await fetch_last_week_messages(valid_channels, start_time=last_summary_time)
         else:
-            # 没有指定频道，处理所有配置的频道
-            messages_by_channel = await fetch_last_week_messages()
+            # 没有指定频道，处理所有配置的频道，从上次总结时间开始
+            messages_by_channel = await fetch_last_week_messages(start_time=last_summary_time)
         
         # 按频道分别生成和发送总结报告
         for channel, messages in messages_by_channel.items():
@@ -447,7 +495,10 @@ async def handle_manual_summary(event):
             summary = analyze_with_ai(messages)
             # 获取频道名称用于报告标题
             channel_name = channel.split('/')[-1]
-            await send_long_message(event.client, sender_id, f"📋 **{channel_name} 频道周报汇总**\n\n{summary}")
+            await send_long_message(event.client, sender_id, f"📋 **{channel_name} 频道汇总**\n\n{summary}")
+        
+        # 保存本次总结时间
+        save_last_summary_time(datetime.now(timezone.utc))
         
         logger.info(f"命令 {command} 执行成功")
     except Exception as e:

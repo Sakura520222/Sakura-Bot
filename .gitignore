@@ -225,3 +225,4 @@ Astrbot插件开发文档.md
 config.json
 prompt.txt
 .gitignore
+.last_summary_time
