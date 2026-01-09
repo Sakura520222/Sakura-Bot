@@ -1,4 +1,4 @@
-name: Auto Create Tag
+name: Auto Create Tag and Release
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
             # 版本号相同，不需要创建新tag
             echo "CHANGED=false" >> $GITHUB_OUTPUT
             echo "REASON=版本号未变化: $LATEST_TAG" >> $GITHUB_OUTPUT
-            echo "版本号未变化，跳过tag创建"
+            echo "版本号未变化，跳过tag创建和发布"
           fi
       
       - name: Create new tag
@@ -111,23 +111,143 @@ jobs:
             echo "⚠ 警告: CHANGELOG.md文件不存在"
           fi
 
+  create-release:
+    runs-on: ubuntu-latest
+    needs: check-and-create-tag
+    if: needs.check-and-create-tag.outputs.CHANGED == 'true'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code with tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-and-create-tag.outputs.TAG_NAME }}
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Validate version format
+        run: |
+          # 验证版本号格式是否符合语义化版本
+          VERSION="${{ needs.check-and-create-tag.outputs.PY_VERSION }}"
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "错误: 版本号 '$VERSION' 不符合语义化版本格式"
+            exit 1
+          fi
+          echo "版本号 '$VERSION' 验证通过"
+      
+      - name: Generate release notes
+        id: generate_changelog
+        run: |
+          # 从CHANGELOG.md中提取当前版本的更新日志
+          VERSION="${{ needs.check-and-create-tag.outputs.PY_VERSION }}"
+          
+          # 查找CHANGELOG.md中对应版本的部分
+          if [ -f "CHANGELOG.md" ]; then
+            # 使用awk提取指定版本的内容
+            awk -v version="$VERSION" '
+              BEGIN { in_section=0; found=0 }
+              /^## \['version'\]/ { in_section=1; found=1; print; next }
+              /^## \[/ && in_section { in_section=0 }
+              in_section { print }
+            ' CHANGELOG.md > release_notes.md
+            
+            if [ -s "release_notes.md" ]; then
+              echo "从CHANGELOG.md成功提取版本 $VERSION 的更新日志"
+              # 将内容转换为单行，用于GitHub输出
+              NOTES=$(cat release_notes.md | sed ':a;N;$!ba;s/\n/\\n/g')
+              echo "notes<<EOF" >> $GITHUB_OUTPUT
+              echo "$NOTES" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              echo "警告: 在CHANGELOG.md中未找到版本 $VERSION 的更新日志"
+              echo "notes=## [$VERSION] - $(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "警告: CHANGELOG.md文件不存在"
+            echo "notes=## [$VERSION] - $(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "Sakura频道总结助手 v${{ needs.check-and-create-tag.outputs.PY_VERSION }}"
+          body: "${{ steps.generate_changelog.outputs.notes }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          files: |
+            README.md
+            CHANGELOG.md
+            requirements.txt
+            docker-compose.yml
+            Dockerfile
+      
+      - name: Verify main.py version
+        run: |
+          # 验证main.py中的版本号是否与tag一致
+          VERSION="${{ needs.check-and-create-tag.outputs.PY_VERSION }}"
+          PY_VERSION=$(grep -o "__version__ = \"[^\"]*\"" main.py | cut -d'"' -f2)
+          
+          if [ "$PY_VERSION" != "$VERSION" ]; then
+            echo "错误: main.py中的版本号($PY_VERSION)与tag版本($VERSION)不一致"
+            echo "请确保在创建tag前更新main.py中的版本号"
+            exit 1
+          fi
+          echo "版本验证通过: main.py中的版本号($PY_VERSION)与tag版本($VERSION)一致"
+      
+      - name: Upload release assets
+        run: |
+          # 创建发布包
+          VERSION="${{ needs.check-and-create-tag.outputs.PY_VERSION }}"
+          RELEASE_DIR="sakura-channel-summary-assistant-$VERSION"
+          mkdir -p "$RELEASE_DIR"
+          
+          # 复制主要文件
+          cp -r *.py *.txt *.md *.yml Dockerfile docker-entrypoint.sh "$RELEASE_DIR/" 2>/dev/null || true
+          
+          # 创建压缩包
+          tar -czf "sakura-channel-summary-assistant-$VERSION.tar.gz" "$RELEASE_DIR/"
+          zip -r "sakura-channel-summary-assistant-$VERSION.zip" "$RELEASE_DIR/"
+          
+          # 上传到release
+          gh release upload "v$VERSION" "sakura-channel-summary-assistant-$VERSION.tar.gz" "sakura-channel-summary-assistant-$VERSION.zip" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Run basic tests
+        run: |
+          # 运行简单的导入测试
+          python -c "import config; import main; print('导入测试通过')"
+          python -c "from config import logger; logger.info('配置模块测试通过')"
+
   # 可选：发送通知
   notify:
     runs-on: ubuntu-latest
-    needs: check-and-create-tag
+    needs: [check-and-create-tag, create-release]
     if: always()
     
     steps:
-      - name: Send tag creation status
+      - name: Send release status
         run: |
           if [ "${{ needs.check-and-create-tag.result }}" == "success" ]; then
             if [ "${{ needs.check-and-create-tag.outputs.CHANGED }}" == "true" ]; then
-              echo "✅ 已成功创建新tag: ${{ needs.check-and-create-tag.outputs.TAG_NAME }}"
-              echo "原因: ${{ needs.check-and-create-tag.outputs.REASON }}"
+              if [ "${{ needs.create-release.result }}" == "success" ]; then
+                echo "✅ 发布成功!"
+                echo "版本: ${{ needs.check-and-create-tag.outputs.TAG_NAME }}"
+                echo "发布地址: https://github.com/${{ github.repository }}/releases/tag/${{ needs.check-and-create-tag.outputs.TAG_NAME }}"
+              else
+                echo "❌ 发布失败: tag已创建但发布过程出错"
+                echo "版本: ${{ needs.check-and-create-tag.outputs.TAG_NAME }}"
+              fi
             else
-              echo "ℹ️ 未创建新tag"
+              echo "ℹ️ 未创建新版本"
               echo "原因: ${{ needs.check-and-create-tag.outputs.REASON }}"
             fi
           else
-            echo "❌ tag创建失败"
+            echo "❌ tag创建检查失败"
           fi
