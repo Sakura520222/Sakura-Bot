@@ -127,11 +127,28 @@ jobs:
           # 复制主要文件
           cp -r *.py *.txt *.md *.yml Dockerfile docker-entrypoint.sh "$RELEASE_DIR/" 2>/dev/null || true
           
+          # 复制Web管理界面的静态文件和模板
+          if [ -d "static" ]; then
+            cp -r static "$RELEASE_DIR/"
+            echo "已复制static目录"
+          fi
+          
+          if [ -d "templates" ]; then
+            cp -r templates "$RELEASE_DIR/"
+            echo "已复制templates目录"
+          fi
+          
+          # 复制环境变量示例文件
+          if [ -f ".env.example" ]; then
+            cp .env.example "$RELEASE_DIR/"
+            echo "已复制.env.example文件"
+          fi
+          
           # 创建压缩包
           tar -czf "sakura-channel-summary-assistant-${RELEASE_NAME}.tar.gz" "$RELEASE_DIR/"
           zip -r "sakura-channel-summary-assistant-${RELEASE_NAME}.zip" "$RELEASE_DIR/"
           
-          echo "发布资源包创建完成"
+          echo "发布资源包创建完成，包含所有必要文件"
       
       - name: Upload release assets
         run: |
