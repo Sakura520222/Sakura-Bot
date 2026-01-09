@@ -257,11 +257,34 @@ async def main():
                         channel = summary_task_queue.get()
                         logger.info(f"从Web管理界面接收到总结任务: {channel}")
                         
-                        # 执行总结任务
-                        from scheduler import main_job
-                        await main_job(channel)
-                        
-                        logger.info(f"Web管理界面触发的总结任务完成: {channel}")
+                        try:
+                            # 执行总结任务
+                            from scheduler import main_job
+                            await main_job(channel)
+                            
+                            # 任务执行成功，更新任务执行记录
+                            logger.info(f"Web管理界面触发的总结任务完成: {channel}")
+                            
+                            # 导入web_app模块中的函数来更新任务执行记录
+                            from web_app import record_task_execution
+                            record_task_execution(
+                                channel=channel,
+                                task_type="手动触发总结",
+                                status="成功",
+                                result_message=f"总结任务执行完成: {channel}"
+                            )
+                            
+                        except Exception as e:
+                            logger.error(f"执行总结任务时出错: {e}")
+                            
+                            # 任务执行失败，更新任务执行记录
+                            from web_app import record_task_execution
+                            record_task_execution(
+                                channel=channel,
+                                task_type="手动触发总结",
+                                status="失败",
+                                result_message=f"总结任务执行失败: {str(e)}"
+                            )
                 except Exception as e:
                     logger.error(f"处理Web管理界面总结任务时出错: {e}")
                 
