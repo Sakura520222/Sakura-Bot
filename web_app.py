@@ -21,7 +21,7 @@ from error_handler import get_health_checker, get_error_stats
 app = FastAPI(title="Sakura频道总结助手管理界面", version="1.1.0")
 
 # 配置会话中间件
-SECRET_KEY = os.getenv("WEB_SECRET_KEY", "sakura-channel-summary-secret-key-2024")
+SECRET_KEY = os.getenv("WEB_SECRET_KEY", "sakura-channel-summary-secret-key-2026/01/09")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, max_age=7200)  # 2小时会话
 
 # 配置CORS
@@ -189,9 +189,98 @@ async def system_info(request: Request, user: str = Depends(require_auth)):
 @app.post("/api/trigger_summary")
 async def trigger_summary(channel: str = Form(...), user: str = Depends(require_auth)):
     """手动触发总结"""
-    # 这里需要调用现有的总结功能
-    # 暂时返回成功消息
-    return {"status": "success", "message": f"已触发频道 {channel} 的总结任务"}
+    try:
+        # 检查频道是否存在
+        from config import CHANNELS
+        if channel not in CHANNELS:
+            return {"status": "error", "message": f"频道 {channel} 不在配置列表中"}
+        
+        # 记录触发事件
+        logger.info(f"Web管理界面触发了频道 {channel} 的手动总结")
+        
+        # 这里需要调用现有的总结功能
+        # 由于Web界面和Telegram客户端在不同的进程中，我们需要一种方式来触发总结
+        # 创建一个异步任务来执行总结
+        import asyncio
+        from datetime import datetime, timezone, timedelta
+        
+        # 导入必要的模块
+        from summary_time_manager import load_last_summary_time, save_last_summary_time
+        from ai_client import analyze_with_ai
+        from prompt_manager import load_prompt
+        from telegram_client import fetch_last_week_messages, send_long_message, send_report
+        from config import ADMIN_LIST, SEND_REPORT_TO_SOURCE
+        
+        # 在后台执行总结任务
+        async def execute_summary():
+            try:
+                # 读取该频道的上次总结时间和报告消息ID
+                channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
+                if channel_summary_data:
+                    channel_last_summary_time = channel_summary_data["time"]
+                    report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
+                else:
+                    channel_last_summary_time = None
+                    report_message_ids_to_exclude = []
+                
+                # 抓取该频道从上次总结时间开始的消息，排除已发送的报告消息
+                messages_by_channel = await fetch_last_week_messages(
+                    [channel], 
+                    start_time=channel_last_summary_time,
+                    report_message_ids={channel: report_message_ids_to_exclude}
+                )
+                
+                # 获取该频道的消息
+                messages = messages_by_channel.get(channel, [])
+                if messages:
+                    logger.info(f"开始处理频道 {channel} 的消息，共 {len(messages)} 条")
+                    current_prompt = load_prompt()
+                    summary = analyze_with_ai(messages, current_prompt)
+                    
+                    # 获取频道名称用于报告标题
+                    channel_name = channel.split('/')[-1]
+                    
+                    # 计算起始日期和终止日期
+                    end_date = datetime.now(timezone.utc)
+                    if channel_last_summary_time:
+                        start_date = channel_last_summary_time
+                    else:
+                        start_date = end_date - timedelta(days=7)
+                    
+                    # 格式化日期为 月.日 格式
+                    start_date_str = f"{start_date.month}.{start_date.day}"
+                    end_date_str = f"{end_date.month}.{end_date.day}"
+                    
+                    # 生成报告标题
+                    report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
+                    
+                    # 使用send_report函数发送总结（它会创建Telegram客户端实例）
+                    sent_report_ids = await send_report(report_text, channel if SEND_REPORT_TO_SOURCE else None, None, skip_admins=False)
+                    
+                    # 保存该频道的本次总结时间和报告消息ID
+                    save_last_summary_time(channel, datetime.now(timezone.utc), sent_report_ids)
+                    
+                    logger.info(f"频道 {channel} 的总结任务完成")
+                    return True, f"已成功为频道 {channel} 生成总结报告，共处理 {len(messages)} 条消息"
+                else:
+                    logger.info(f"频道 {channel} 没有新消息需要总结")
+                    return True, f"频道 {channel} 自上次总结以来没有新消息"
+                    
+            except Exception as e:
+                logger.error(f"执行总结任务时出错: {type(e).__name__}: {e}", exc_info=True)
+                return False, f"执行总结任务时出错: {str(e)}"
+        
+        # 在后台运行总结任务
+        asyncio.create_task(execute_summary())
+        
+        return {
+            "status": "success", 
+            "message": f"已触发频道 {channel} 的总结任务，正在后台执行..."
+        }
+        
+    except Exception as e:
+        logger.error(f"触发总结任务时出错: {type(e).__name__}: {e}", exc_info=True)
+        return {"status": "error", "message": f"触发总结任务时出错: {str(e)}"}
 
 @app.post("/api/update_config")
 async def update_config(
@@ -485,3 +574,4 @@ def run_web_server():
 
 if __name__ == "__main__":
     run_web_server()
+
