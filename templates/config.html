@@ -65,26 +65,27 @@
                 </h5>
             </div>
             <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="sendReportSwitch" 
-                                   {% if send_report_to_source %}checked{% endif %} disabled>
-                            <label class="form-check-label" for="sendReportSwitch">
-                                将报告发送回源频道
-                            </label>
+                <form id="systemConfigForm" method="post" action="/api/update_config">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sendReportSwitch" 
+                                       name="send_report_to_source" {% if send_report_to_source %}checked{% endif %}>
+                                <label class="form-check-label" for="sendReportSwitch">
+                                    将报告发送回源频道
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                当前配置: {{ "启用" if send_report_to_source else "禁用" }}
+                            </div>
                         </div>
-                        <div class="form-text">
-                            当前配置: {{ "启用" if send_report_to_source else "禁用" }}
+                        <div class="col-md-6 mb-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-save me-1"></i>保存系统配置
+                            </button>
                         </div>
                     </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle me-2"></i>
-                            此配置需要在配置文件中修改
-                        </div>
-                    </div>
-                </div>
+                </form>
             </div>
         </div>
     </div>
@@ -143,11 +144,46 @@ document.addEventListener('DOMContentLoaded', function() {
             updateAiConfig();
         });
     }
+    
+    const systemConfigForm = document.getElementById('systemConfigForm');
+    if (systemConfigForm) {
+        systemConfigForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            updateSystemConfig();
+        });
+    }
 });
 
 // 更新AI配置
 function updateAiConfig() {
     const formData = new FormData(document.getElementById('aiConfigForm'));
+    
+    fetch('/api/update_config', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showToast(data.message, 'success');
+            
+            // 刷新页面
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+        } else {
+            showToast(data.message, 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('更新配置失败:', error);
+        showToast('更新配置失败: ' + error, 'danger');
+    });
+}
+
+// 更新系统配置
+function updateSystemConfig() {
+    const formData = new FormData(document.getElementById('systemConfigForm'));
     
     fetch('/api/update_config', {
         method: 'POST',

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 import threading
 from telethon import TelegramClient
 from telethon.events import NewMessage
@@ -315,6 +316,13 @@ async def main():
                 
             except Exception as e:
                 logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
+                # 即使出错也尝试删除关机标记文件，避免遗留
+                try:
+                    if os.path.exists(SHUTDOWN_FLAG_FILE):
+                        os.remove(SHUTDOWN_FLAG_FILE)
+                        logger.info("出错后已清理关机标记文件")
+                except Exception as cleanup_error:
+                    logger.error(f"清理关机标记文件时出错: {cleanup_error}")
         
         # 启动一个后台任务来检查Web管理界面触发的总结任务
         async def check_web_summary_tasks():

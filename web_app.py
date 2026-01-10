@@ -129,6 +129,9 @@ async def config_management(request: Request, user: str = Depends(require_auth))
     """配置管理页面"""
     config = load_config()
     
+    # 从配置文件获取send_report_to_source，如果不存在则使用默认值True
+    send_report_to_source = config.get('send_report_to_source', True)
+    
     context = {
         "request": request,
         "user": user,
@@ -137,7 +140,7 @@ async def config_management(request: Request, user: str = Depends(require_auth))
         "ai_base_url": LLM_BASE_URL,
         "ai_model": LLM_MODEL,
         "channels": CHANNELS,
-        "send_report_to_source": SEND_REPORT_TO_SOURCE
+        "send_report_to_source": send_report_to_source
     }
     return templates.TemplateResponse("config.html", context)
 
@@ -231,9 +234,10 @@ async def update_config(
     ai_api_key: Optional[str] = Form(None),
     ai_base_url: Optional[str] = Form(None),
     ai_model: Optional[str] = Form(None),
+    send_report_to_source: Optional[str] = Form(None),
     user: str = Depends(require_auth)
 ):
-    """更新AI配置"""
+    """更新AI配置和系统配置"""
     config = load_config()
     
     if ai_api_key:
@@ -242,6 +246,11 @@ async def update_config(
         config['base_url'] = ai_base_url
     if ai_model:
         config['model'] = ai_model
+    
+    # 处理send_report_to_source参数
+    if send_report_to_source is not None:
+        # HTML checkbox: 选中时为"on"，未选中时为空字符串
+        config['send_report_to_source'] = (send_report_to_source == "on")
     
     save_config(config)
     
@@ -586,13 +595,22 @@ async def api_shutdown_bot(user: str = Depends(require_auth)):
         import threading
         import time
         import sys
+        import os
         
         def delayed_shutdown():
             """延迟执行关机"""
             time.sleep(2)  # 等待2秒确保响应已发送给客户端
             logger.info("执行关机操作...")
+            
+            # 尝试删除关机标记文件，避免遗留
+            try:
+                if os.path.exists(SHUTDOWN_FLAG_FILE):
+                    os.remove(SHUTDOWN_FLAG_FILE)
+                    logger.info("已清理关机标记文件")
+            except Exception as e:
+                logger.error(f"清理关机标记文件时出错: {e}")
+            
             # 使用os._exit而不是sys.exit，避免被FastAPI捕获
-            import os
             os._exit(0)
         
         # 启动后台线程执行关机
