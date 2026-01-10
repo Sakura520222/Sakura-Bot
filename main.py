@@ -10,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
-    RESTART_FLAG_FILE, logger, get_channel_schedule, ADMIN_LIST
+    RESTART_FLAG_FILE, logger, get_channel_schedule, ADMIN_LIST, WEB_PORT
 )
 from scheduler import main_job
 from command_handlers import (
@@ -26,7 +26,7 @@ from error_handler import initialize_error_handling, get_health_checker, get_err
 from web_app import run_web_server
 
 # 版本信息
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -88,7 +88,26 @@ async def main():
         logger.info("启动Web管理界面...")
         web_thread = threading.Thread(target=run_web_server, daemon=True)
         web_thread.start()
-        logger.info("Web管理界面已启动，访问地址: http://localhost:8000")
+        
+        # 获取本地IP地址用于显示
+        import socket
+        local_ip = None
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+        
+        # 显示所有可访问地址
+        logger.info(f"Web管理界面已启动，访问地址:")
+        logger.info(f"- 本地访问: http://127.0.0.1:{WEB_PORT} 或 http://localhost:{WEB_PORT}")
+        logger.info(f"- 所有接口: http://0.0.0.0:{WEB_PORT}")
+        if local_ip:
+            logger.info(f"- 局域网访问: http://{local_ip}:{WEB_PORT}")
+        else:
+            logger.info("- 局域网访问: 无法获取局域网IP地址")
         
         # 初始化错误处理系统
         logger.info("初始化错误处理系统...")

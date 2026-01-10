@@ -13,7 +13,7 @@ from typing import Optional
 from config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL,
     ADMIN_LIST, SEND_REPORT_TO_SOURCE, get_channel_schedule, SUMMARY_SCHEDULES,
-    load_config, save_config, logger, get_log_level
+    load_config, save_config, logger, get_log_level, WEB_PORT
 )
 from error_handler import get_health_checker, get_error_stats
 
@@ -569,11 +569,39 @@ async def api_clear_logs(user: str = Depends(require_auth)):
         logger.error(f"清空日志时出错: {e}")
         return {"status": "error", "message": f"清空日志失败: {str(e)}"}
 
+def get_local_ip():
+    """获取本地局域网IP地址"""
+    import socket
+    try:
+        # 创建一个socket连接来获取本地IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 不需要实际连接，只是获取本地IP
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        # 如果获取失败，返回None
+        return None
+
 def run_web_server():
     """运行Web服务器"""
     import uvicorn
     logger.info("启动Web管理界面服务器...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    
+    # 获取本地IP地址
+    local_ip = get_local_ip()
+    
+    # 显示所有可访问地址
+    logger.info(f"Web管理界面已启动，访问地址:")
+    logger.info(f"- 本地访问: http://127.0.0.1:{WEB_PORT} 或 http://localhost:{WEB_PORT}")
+    logger.info(f"- 所有接口: http://0.0.0.0:{WEB_PORT}")
+    if local_ip:
+        logger.info(f"- 局域网访问: http://{local_ip}:{WEB_PORT}")
+    else:
+        logger.info("- 局域网访问: 无法获取局域网IP地址")
+    
+    uvicorn.run(app, host="0.0.0.0", port=WEB_PORT, log_level="info")
 
 if __name__ == "__main__":
     run_web_server()

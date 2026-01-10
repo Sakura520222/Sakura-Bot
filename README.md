@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.1.3
+# 🌸 Sakura-频道总结助手 v1.1.4
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -118,6 +118,9 @@ REPORT_ADMIN_IDS=admin_id1,admin_id2
 
 # ===== 日志级别配置 =====
 LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# ===== Web管理界面配置 =====
+WEB_PORT=8000  # Web管理界面端口，可自定义（如9000、8080等）
 ```
 
 ## 🐳 Docker部署
@@ -189,8 +192,17 @@ Sakura-频道总结助手提供了完整的Web管理界面，可以通过浏览�
 ### 访问方式
 
 1. **启动服务**：`python main.py` 或 `docker-compose up -d`
-2. **访问地址**：http://localhost:8000
+2. **访问地址**：
+   - **默认端口**：http://localhost:8000
+   - **自定义端口**：在`.env`文件中设置`WEB_PORT=9000`，然后访问 http://localhost:9000
+   - **局域网访问**：启动时会显示局域网IP地址，如 http://192.168.1.100:8000
 3. **登录密码**：`Sakura`（默认）
+
+### 多地址访问
+Web管理界面启动时会显示所有可访问地址：
+- 本地访问: http://127.0.0.1:{PORT} 或 http://localhost:{PORT}
+- 所有接口: http://0.0.0.0:{PORT}
+- 局域网访问: http://{LAN_IP}:{PORT}（自动获取本地IP地址）
 
 ### 功能页面
 
@@ -366,7 +378,29 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-### v1.1.3 (最新)
+### v1.1.4 (最新)
+
+#### 🚀 新增功能
+- **可自定义的Web管理界面端口**：支持通过.env文件自定义Web端口
+  - 在`.env`文件中添加`WEB_PORT=9000`即可使用9000端口
+  - 支持Docker部署，端口映射自动适配配置的端口
+  - 默认端口8000，确保向后兼容性
+- **多地址访问显示**：Web管理界面启动时显示所有可访问地址
+  - 本地访问: http://127.0.0.1:{PORT} 或 http://localhost:{PORT}
+  - 所有接口: http://0.0.0.0:{PORT}
+  - 局域网访问: http://{LAN_IP}:{PORT}（自动获取本地IP地址）
+
+#### 🔧 技术改进
+- **Docker配置优化**：支持可配置端口映射和环境变量
+- **向后兼容性**：未配置`WEB_PORT`时使用默认端口8000
+- **代码健壮性**：添加获取局域网IP地址的异常处理
+
+#### 📦 部署方式
+- **自定义端口**：`WEB_PORT=9000 python main.py`，访问 http://localhost:9000
+- **Docker自定义端口**：`WEB_PORT=8080 docker-compose up -d`，访问 http://localhost:8080
+- **默认密码**：Sakura
+
+### v1.1.3
 
 #### 🚀 新增功能
 - **完整的Web管理界面**：提供直观的浏览器界面管理机器人所有功能

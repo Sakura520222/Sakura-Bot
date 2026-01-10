@@ -4,13 +4,13 @@ services:
     container_name: sakura-summary-bot
     restart: unless-stopped
     ports:
-      # 暴露Web管理界面端口
-      - "8000:8000"
+      # 暴露Web管理界面端口，支持通过环境变量自定义
+      - "${WEB_PORT:-8000}:${WEB_PORT:-8000}"
     environment:
       - TZ=Asia/Shanghai
       # Web管理界面相关环境变量
       - WEB_HOST=0.0.0.0
-      - WEB_PORT=8000
+      - WEB_PORT=${WEB_PORT:-8000}
     env_file:
       - .env
     volumes:
@@ -19,9 +19,9 @@ services:
       # 持久化会话文件
       - ./bot_session.session:/app/bot_session.session
       - ./session_name.session:/app/session_name.session
-    # 健康检查 - 同时检查Web服务
+    # 健康检查 - 同时检查Web服务，使用配置的端口
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; import sys; try: response = requests.get('http://localhost:8000/', timeout=5); sys.exit(0) if response.status_code in [200, 303] else sys.exit(1); except: sys.exit(1)"]
+      test: ["CMD", "python", "-c", "import os; import requests; import sys; port = os.getenv('WEB_PORT', '8000'); try: response = requests.get(f'http://localhost:{port}/', timeout=5); sys.exit(0) if response.status_code in [200, 303] else sys.exit(1); except: sys.exit(1)"]
       interval: 30s
       timeout: 10s
       retries: 3
