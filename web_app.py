@@ -21,7 +21,7 @@ from config import (
 from error_handler import get_health_checker, get_error_stats
 
 # 创建FastAPI应用
-app = FastAPI(title="Sakura频道总结助手管理界面", version="1.2.0")
+app = FastAPI(title="Sakura频道总结助手管理界面", version="1.2.2")
 
 # 配置会话中间件
 SECRET_KEY = os.getenv("WEB_SECRET_KEY", "sakura-channel-summary-secret-key-2026/01/09")
@@ -73,7 +73,7 @@ async def index(request: Request, user: str = Depends(require_auth)):
     context = {
         "request": request,
         "user": user,
-        "version": "1.2.0",
+        "version": "1.2.2",
         "channels_count": len(CHANNELS),
         "admin_count": len(ADMIN_LIST),
         "ai_model": LLM_MODEL,

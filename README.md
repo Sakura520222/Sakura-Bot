@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.2.1
+# 🌸 Sakura-频道总结助手 v1.2.2
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -384,7 +384,37 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-## [1.2.1] - 2026-01-11 （最新）
+## [1.2.2] - 2026-01-11 （最新）
+
+### 新增
+- **自动置顶总结消息**：当在频道中发送了总结消息后，自动将其置顶
+  - 在`send_report`函数中添加自动置顶功能
+  - 使用`client.pin_message()`方法置顶第一条消息
+  - 添加错误处理，即使置顶失败（如权限不足）也不会影响主要功能
+  - 在两个发送路径（使用现有客户端和创建新客户端）中都应用置顶功能
+
+### 修复
+- **总结消息标题优化**：修正总结消息的标题不使用从频道链接中提取，而使用频道的实际名称
+  - 在`command_handlers.py`的`handle_manual_summary`函数中，使用`client.get_entity(channel).title`获取频道实际名称
+  - 在`telegram_client.py`的`send_report`函数中，添加智能标题检查逻辑，避免重复标题
+  - 统一管理员和源频道接收的总结标题，确保两者都使用频道实际名称
+  - 改进标题替换逻辑，避免内容被截断
+
+### 技术实现
+- **频道实体获取**：使用`client.get_entity(source_channel)`获取频道实体，提取实际名称
+- **智能标题检查**：检查总结文本是否已有标题，避免重复添加
+- **条件性更新**：只有当标题与频道实际名称不匹配时才更新标题
+- **错误回退**：获取频道实体失败时，使用频道链接的最后部分作为回退名称
+- **日期范围提取**：从原总结文本中提取日期范围，保持格式一致
+
+### 影响范围
+- 所有总结消息发送功能：
+  - `/summary`命令的手动总结
+  - 自动周报的定时总结
+  - 所有发送到源频道的总结消息都会自动置顶
+  - 所有总结消息都使用频道实际名称作为标题
+
+## [1.2.1] - 2026-01-11
 
 ### 修复
 - **EntityBoundsInvalidError错误**：修复了发送长消息分段时出现的`EntityBoundsInvalidError: Some of provided entities have invalid bounds`错误

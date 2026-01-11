@@ -238,12 +238,69 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
         
         if use_existing_client:
             # 使用现有的客户端实例（已经启动并连接）
+            
+            # 获取频道实际名称（如果提供了源频道）
+            channel_actual_name = None
+            if source_channel:
+                try:
+                    channel_entity = await use_client.get_entity(source_channel)
+                    channel_actual_name = channel_entity.title
+                    logger.info(f"获取到频道实际名称: {channel_actual_name}")
+                except Exception as e:
+                    logger.warning(f"获取频道实体失败，使用默认名称: {e}")
+                    # 使用频道链接的最后部分作为回退
+                    channel_actual_name = source_channel.split('/')[-1]
+            
+            # 提取日期范围（从原总结文本中提取）
+            date_range = ""
+            if "周报" in summary_text and "**" in summary_text:
+                # 尝试从原总结文本中提取日期范围
+                import re
+                date_pattern = r"\*\*.*周报\s*([0-9.]+-[0-9.]+)\*\*"
+                match = re.search(date_pattern, summary_text)
+                if match:
+                    date_range = match.group(1)
+            
+            # 检查总结文本是否已经有正确的标题格式
+            # 如果总结文本已经以 "**" 开头，说明已经有标题，不需要重复添加
+            summary_text_for_admins = summary_text  # 管理员接收的文本
+            summary_text_for_source = summary_text  # 源频道接收的文本
+            
+            # 如果提供了源频道，检查是否需要更新标题
+            if source_channel and channel_actual_name:
+                # 检查总结文本是否已经有标题
+                if summary_text.startswith("**") and "周报" in summary_text:
+                    # 已经有标题，检查是否需要更新为频道实际名称
+                    # 提取日期范围
+                    if date_range:
+                        expected_title = f"**{channel_actual_name} 周报 {date_range}**"
+                    else:
+                        expected_title = f"**{channel_actual_name} 周报**"
+                    
+                    # 如果当前标题与预期标题不同，则更新
+                    if not summary_text.startswith(expected_title):
+                        # 找到原标题的结束位置
+                        if "** " in summary_text:
+                            start_idx = summary_text.index("**")
+                            end_idx = summary_text.index("** ", start_idx) + 2
+                            # 替换标题
+                            summary_text_for_source = expected_title + summary_text[end_idx:]
+                            summary_text_for_admins = summary_text_for_source
+                else:
+                    # 没有标题，添加标题
+                    if date_range:
+                        new_title = f"**{channel_actual_name} 周报 {date_range}**"
+                    else:
+                        new_title = f"**{channel_actual_name} 周报**"
+                    summary_text_for_source = new_title + "\n\n" + summary_text
+                    summary_text_for_admins = summary_text_for_source
+            
             # 向所有管理员发送消息（除非跳过）
             if not skip_admins:
                 for admin_id in ADMIN_LIST:
                     try:
                         logger.info(f"正在向管理员 {admin_id} 发送报告")
-                        await send_long_message(use_client, admin_id, summary_text)
+                        await send_long_message(use_client, admin_id, summary_text_for_admins)
                         logger.info(f"成功向管理员 {admin_id} 发送报告")
                     except Exception as e:
                         logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
@@ -254,19 +311,16 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
             if source_channel and SEND_REPORT_TO_SOURCE:
                 try:
                     logger.info(f"正在向源频道 {source_channel} 发送报告")
+                    
                     # 直接调用use_client.send_message并收集消息ID
-                    if len(summary_text) <= 4000:
+                    if len(summary_text_for_source) <= 4000:
                         # 短消息直接发送
-                        msg = await use_client.send_message(source_channel, summary_text, link_preview=False)
+                        msg = await use_client.send_message(source_channel, summary_text_for_source, link_preview=False)
                         report_message_ids.append(msg.id)
                     else:
                         # 长消息分段发送，收集每个分段的消息ID
-                        # 提取频道名称用于分段消息标题
-                        channel_title = "频道周报汇总"
-                        if "**" in summary_text and "** " in summary_text:
-                            start_idx = summary_text.index("**") + 2
-                            end_idx = summary_text.index("** ", start_idx)
-                            channel_title = summary_text[start_idx:end_idx]
+                        # 使用频道实际名称作为分段消息标题
+                        channel_title = channel_actual_name if channel_actual_name else "频道周报汇总"
                         
                         # 使用send_long_message函数进行智能分割和发送
                         # 但需要收集消息ID，所以需要自定义实现
@@ -276,7 +330,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         
                         # 使用智能分割算法
                         try:
-                            parts = split_message_smart(summary_text, content_max_length, preserve_markdown=True)
+                            parts = split_message_smart(summary_text_for_source, content_max_length, preserve_markdown=True)
                             logger.info(f"智能分割完成，共分成 {len(parts)} 段")
                             
                             # 验证每个分段的实体完整性
@@ -291,9 +345,9 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             logger.error(f"智能分割失败，使用简单分割: {e}")
                             # 回退到简单分割
                             parts = []
-                            text_length = len(summary_text)
+                            text_length = len(summary_text_for_source)
                             for i in range(0, text_length, content_max_length):
-                                part = summary_text[i:i+content_max_length]
+                                part = summary_text_for_source[i:i+content_max_length]
                                 if part:
                                     parts.append(part)
                             logger.info(f"简单分割完成，共分成 {len(parts)} 段")
@@ -318,12 +372,21 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     
                     logger.info(f"成功向源频道 {source_channel} 发送报告，消息ID: {report_message_ids}")
                     
+                    # 自动置顶第一条消息
+                    if report_message_ids:
+                        try:
+                            first_message_id = report_message_ids[0]
+                            await use_client.pin_message(source_channel, first_message_id)
+                            logger.info(f"已成功置顶消息ID: {first_message_id}")
+                        except Exception as e:
+                            logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
+                    
                     # 如果启用了投票功能，发送投票到讨论组
                     if ENABLE_POLL and report_message_ids:
                         logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
                         # 使用第一个消息ID作为投票回复目标
                         poll_success = await send_poll_to_discussion_group(
-                            use_client, source_channel, report_message_ids[0], summary_text
+                            use_client, source_channel, report_message_ids[0], summary_text_for_source
                         )
                         if poll_success:
                             logger.info("投票成功发送到讨论组")
@@ -337,12 +400,68 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 await use_client.start(bot_token=BOT_TOKEN)
                 logger.info("Telegram机器人客户端已启动")
                 
+                # 获取频道实际名称（如果提供了源频道）
+                channel_actual_name = None
+                if source_channel:
+                    try:
+                        channel_entity = await use_client.get_entity(source_channel)
+                        channel_actual_name = channel_entity.title
+                        logger.info(f"获取到频道实际名称: {channel_actual_name}")
+                    except Exception as e:
+                        logger.warning(f"获取频道实体失败，使用默认名称: {e}")
+                        # 使用频道链接的最后部分作为回退
+                        channel_actual_name = source_channel.split('/')[-1]
+                
+                # 提取日期范围（从原总结文本中提取）
+                date_range = ""
+                if "周报" in summary_text and "**" in summary_text:
+                    # 尝试从原总结文本中提取日期范围
+                    import re
+                    date_pattern = r"\*\*.*周报\s*([0-9.]+-[0-9.]+)\*\*"
+                    match = re.search(date_pattern, summary_text)
+                    if match:
+                        date_range = match.group(1)
+                
+                # 检查总结文本是否已经有正确的标题格式
+                # 如果总结文本已经以 "**" 开头，说明已经有标题，不需要重复添加
+                summary_text_for_admins = summary_text  # 管理员接收的文本
+                summary_text_for_source = summary_text  # 源频道接收的文本
+                
+                # 如果提供了源频道，检查是否需要更新标题
+                if source_channel and channel_actual_name:
+                    # 检查总结文本是否已经有标题
+                    if summary_text.startswith("**") and "周报" in summary_text:
+                        # 已经有标题，检查是否需要更新为频道实际名称
+                        # 提取日期范围
+                        if date_range:
+                            expected_title = f"**{channel_actual_name} 周报 {date_range}**"
+                        else:
+                            expected_title = f"**{channel_actual_name} 周报**"
+                        
+                        # 如果当前标题与预期标题不同，则更新
+                        if not summary_text.startswith(expected_title):
+                            # 找到原标题的结束位置
+                            if "** " in summary_text:
+                                start_idx = summary_text.index("**")
+                                end_idx = summary_text.index("** ", start_idx) + 2
+                                # 替换标题
+                                summary_text_for_source = expected_title + summary_text[end_idx:]
+                                summary_text_for_admins = summary_text_for_source
+                    else:
+                        # 没有标题，添加标题
+                        if date_range:
+                            new_title = f"**{channel_actual_name} 周报 {date_range}**"
+                        else:
+                            new_title = f"**{channel_actual_name} 周报**"
+                        summary_text_for_source = new_title + "\n\n" + summary_text
+                        summary_text_for_admins = summary_text_for_source
+                
                 # 向所有管理员发送消息（除非跳过）
                 if not skip_admins:
                     for admin_id in ADMIN_LIST:
                         try:
                             logger.info(f"正在向管理员 {admin_id} 发送报告")
-                            await send_long_message(use_client, admin_id, summary_text)
+                            await send_long_message(use_client, admin_id, summary_text_for_admins)
                             logger.info(f"成功向管理员 {admin_id} 发送报告")
                         except Exception as e:
                             logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
@@ -353,19 +472,16 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 if source_channel and SEND_REPORT_TO_SOURCE:
                     try:
                         logger.info(f"正在向源频道 {source_channel} 发送报告")
+                        
                         # 直接调用use_client.send_message并收集消息ID
-                        if len(summary_text) <= 4000:
+                        if len(summary_text_for_source) <= 4000:
                             # 短消息直接发送
-                            msg = await use_client.send_message(source_channel, summary_text, link_preview=False)
+                            msg = await use_client.send_message(source_channel, summary_text_for_source, link_preview=False)
                             report_message_ids.append(msg.id)
                         else:
                             # 长消息分段发送，收集每个分段的消息ID
-                            # 提取频道名称用于分段消息标题
-                            channel_title = "频道周报汇总"
-                            if "**" in summary_text and "** " in summary_text:
-                                start_idx = summary_text.index("**") + 2
-                                end_idx = summary_text.index("** ", start_idx)
-                                channel_title = summary_text[start_idx:end_idx]
+                            # 使用频道实际名称作为分段消息标题
+                            channel_title = channel_actual_name if channel_actual_name else "频道周报汇总"
                             
                             # 使用智能分割算法
                             max_length = 4000
@@ -374,7 +490,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             
                             # 使用智能分割算法
                             try:
-                                parts = split_message_smart(summary_text, content_max_length, preserve_markdown=True)
+                                parts = split_message_smart(summary_text_for_source, content_max_length, preserve_markdown=True)
                                 logger.info(f"智能分割完成，共分成 {len(parts)} 段")
                                 
                                 # 验证每个分段的实体完整性
@@ -389,9 +505,9 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 logger.error(f"智能分割失败，使用简单分割: {e}")
                                 # 回退到简单分割
                                 parts = []
-                                text_length = len(summary_text)
+                                text_length = len(summary_text_for_source)
                                 for i in range(0, text_length, content_max_length):
-                                    part = summary_text[i:i+content_max_length]
+                                    part = summary_text_for_source[i:i+content_max_length]
                                     if part:
                                         parts.append(part)
                                 logger.info(f"简单分割完成，共分成 {len(parts)} 段")
@@ -416,12 +532,21 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         
                         logger.info(f"成功向源频道 {source_channel} 发送报告，消息ID: {report_message_ids}")
                         
+                        # 自动置顶第一条消息
+                        if report_message_ids:
+                            try:
+                                first_message_id = report_message_ids[0]
+                                await use_client.pin_message(source_channel, first_message_id)
+                                logger.info(f"已成功置顶消息ID: {first_message_id}")
+                            except Exception as e:
+                                logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
+                        
                         # 如果启用了投票功能，发送投票到讨论组
                         if ENABLE_POLL and report_message_ids:
                             logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
                             # 使用第一个消息ID作为投票回复目标
                             poll_success = await send_poll_to_discussion_group(
-                                use_client, source_channel, report_message_ids[0], summary_text
+                                use_client, source_channel, report_message_ids[0], summary_text_for_source
                             )
                             if poll_success:
                                 logger.info("投票成功发送到讨论组")

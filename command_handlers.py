@@ -94,8 +94,15 @@ async def handle_manual_summary(event):
                 logger.info(f"开始处理频道 {channel} 的消息")
                 current_prompt = load_prompt()
                 summary = analyze_with_ai(messages, current_prompt)
-                # 获取频道名称用于报告标题
-                channel_name = channel.split('/')[-1]
+                # 获取频道实际名称
+                try:
+                    channel_entity = await event.client.get_entity(channel)
+                    channel_actual_name = channel_entity.title
+                    logger.info(f"获取到频道实际名称: {channel_actual_name}")
+                except Exception as e:
+                    logger.warning(f"获取频道实体失败，使用默认名称: {e}")
+                    # 使用频道链接的最后部分作为回退
+                    channel_actual_name = channel.split('/')[-1]
                 # 计算起始日期和终止日期
                 end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
@@ -105,8 +112,8 @@ async def handle_manual_summary(event):
                 # 格式化日期为 月.日 格式
                 start_date_str = f"{start_date.month}.{start_date.day}"
                 end_date_str = f"{end_date.month}.{end_date.day}"
-                # 生成报告标题
-                report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
+                # 生成报告标题（使用频道实际名称）
+                report_text = f"**{channel_actual_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
                 # 向请求者发送总结
                 await send_long_message(event.client, sender_id, report_text)
                 # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
@@ -122,7 +129,13 @@ async def handle_manual_summary(event):
                 save_last_summary_time(channel, datetime.now(timezone.utc), sent_report_ids)
             else:
                 logger.info(f"频道 {channel} 没有新消息需要总结")
-                await send_long_message(event.client, sender_id, f"📋 **{channel.split('/')[-1]} 频道汇总**\n\n该频道自上次总结以来没有新消息。")
+                # 获取频道实际名称用于无消息提示
+                try:
+                    channel_entity = await event.client.get_entity(channel)
+                    channel_actual_name = channel_entity.title
+                except Exception as e:
+                    channel_actual_name = channel.split('/')[-1]
+                await send_long_message(event.client, sender_id, f"📋 **{channel_actual_name} 频道汇总**\n\n该频道自上次总结以来没有新消息。")
         
         logger.info(f"命令 {command} 执行成功")
     except Exception as e:
