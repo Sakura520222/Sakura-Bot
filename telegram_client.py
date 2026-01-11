@@ -119,7 +119,7 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
         logger.info(f"所有指定频道消息抓取完成，共处理 {total_message_count} 条消息")
         return messages_by_channel
 
-async def send_long_message(client, chat_id, text, max_length=4000, channel_title=None):
+async def send_long_message(client, chat_id, text, max_length=4000, channel_title=None, show_pagination=True):
     """分段发送长消息
     
     Args:
@@ -128,11 +128,15 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
         text: 要发送的文本
         max_length: 最大分段长度，默认4000字符
         channel_title: 频道标题，用于分段消息的标题。如果为None，则使用"更新日志"
+        show_pagination: 是否在每条消息显示分页标题（如"1/3"），默认为True。设为False时只在第一条显示标题
     """
     logger.info(f"开始发送长消息，接收者: {chat_id}，消息总长度: {len(text)}字符，最大分段长度: {max_length}字符")
     
     if len(text) <= max_length:
         logger.info(f"消息长度未超过限制，直接发送")
+        # 如果消息不超过限制但提供了标题，可以添加标题
+        if channel_title and show_pagination:
+            text = f"📋 **{channel_title}**\n\n{text}"
         await client.send_message(chat_id, text, link_preview=False)
         return
     
@@ -141,9 +145,15 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
         channel_title = "更新日志"
     
     # 计算标题长度
-    # 标题格式：📋 **{channel_title} ({i+1}/{len(parts)})**\n\n
-    # 计算最大可能标题长度
-    max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
+    if show_pagination:
+        # 标题格式：📋 **{channel_title} ({i+1}/{len(parts)})**\n\n
+        # 计算最大可能标题长度
+        max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
+    else:
+        # 只在第一条消息显示标题，其他条不显示
+        # 第一条：📋 **{channel_title}**\n\n
+        # 其他：无标题
+        max_title_length = len(f"📋 **{channel_title}**\n\n")
     
     # 实际可用于内容的最大长度
     content_max_length = max_length - max_title_length
@@ -180,8 +190,17 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
     
     # 发送所有部分
     for i, part in enumerate(parts):
-        # 构建完整消息，包含标题
-        full_message = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
+        # 根据 show_pagination 参数决定标题格式
+        if show_pagination:
+            # 在每条消息显示分页标题
+            full_message = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
+        else:
+            # 只在第一条消息显示标题，其他条不显示
+            if i == 0:
+                full_message = f"📋 **{channel_title}**\n\n{part}"
+            else:
+                full_message = part
+        
         full_message_length = len(full_message)
         logger.info(f"正在发送第 {i+1}/{len(parts)} 段，长度: {full_message_length}字符")
         

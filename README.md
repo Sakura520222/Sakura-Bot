@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.2.2
+# 🌸 Sakura-频道总结助手 v1.2.3
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -384,7 +384,28 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-## [1.2.2] - 2026-01-11 （最新）
+## [1.2.3] - 2026-01-11 （最新）
+
+### 修复
+- **/changelog命令过度分段问题**：修复了/changelog命令导致消息被分割成几百条的问题
+  - 修改默认行为，只显示最近1个版本的更新日志
+  - 支持参数控制显示的版本数量：/changelog 5 显示最近5个版本
+  - 优化send_long_message函数，新增show_pagination参数
+  - 当show_pagination=False时，只在第一条消息显示标题，后续消息直接发送内容
+  - 大幅减少消息数量，提供更好的用户体验
+
+### 改进
+- **消息分段优化**：改进长消息的分段策略
+  - 避免每条消息都显示分页标题浪费字符空间
+  - 第一条消息显示完整标题，后续消息无标题
+  - 充分利用Telegram 4000字符的消息限制
+
+### 使用方式
+- `/changelog` - 显示最近1个版本（默认）
+- `/changelog 5` - 显示最近5个版本
+- `/changelog 14` - 显示全部14个版本
+
+## [1.2.2] - 2026-01-11
 
 ### 新增
 - **自动置顶总结消息**：当在频道中发送了总结消息后，自动将其置顶
