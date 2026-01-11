@@ -861,10 +861,7 @@ async def handle_delete_channel_schedule(event):
         await event.reply(f"删除频道时间配置时出错: {e}")
 
 async def handle_changelog(event):
-    """处理/changelog命令，显示更新日志
-    支持参数控制显示的版本数量：/changelog 10 显示最近10个版本
-    默认显示最近5个版本
-    """
+    """处理/changelog命令，直接发送变更日志文件"""
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
@@ -876,89 +873,28 @@ async def handle_changelog(event):
         return
     
     try:
-        # 解析命令参数，获取要显示的版本数量
-        parts = command.split()
-        if len(parts) > 1:
-            try:
-                version_count = int(parts[1])
-                if version_count <= 0:
-                    await event.reply("版本数量必须大于0，例如：/changelog 5")
-                    return
-            except ValueError:
-                await event.reply("无效的版本数量，请使用数字，例如：/changelog 5")
-                return
-        else:
-            # 默认显示最近1个版本
-            version_count = 1
-        
-        # 读取CHANGELOG.md文件
         import os
-        import re
         changelog_file = "CHANGELOG.md"
         
+        # 检查文件是否存在
         if not os.path.exists(changelog_file):
             logger.error(f"更新日志文件 {changelog_file} 不存在")
             await event.reply(f"更新日志文件 {changelog_file} 不存在")
             return
         
-        with open(changelog_file, "r", encoding="utf-8") as f:
-            changelog_content = f.read()
+        # 直接发送文件
+        await event.client.send_file(
+            sender_id,
+            changelog_file,
+            caption="📄 项目的完整变更日志文件",
+            file_name="CHANGELOG.md"
+        )
         
-        if not changelog_content.strip():
-            logger.warning("更新日志文件内容为空")
-            await event.reply("更新日志文件内容为空")
-            return
-        
-        # 解析版本信息
-        # 匹配版本号行：## [版本号] - 日期
-        version_pattern = r'^## \[([^\]]+)\]\s*-\s*([0-9-]+)$'
-        version_matches = list(re.finditer(version_pattern, changelog_content, re.MULTILINE))
-        
-        if not version_matches:
-            logger.warning("未找到任何版本信息")
-            await event.reply("更新日志格式错误，未找到版本信息")
-            return
-        
-        # 获取要显示的版本范围
-        display_count = min(version_count, len(version_matches))
-        display_versions = version_matches[:display_count]
-        
-        # 提取要显示的内容
-        if display_count >= len(version_matches):
-            # 如果请求的版本数量大于等于总版本数，显示全部内容
-            display_content = changelog_content
-            logger.info(f"显示全部 {len(version_matches)} 个版本的更新日志")
-        else:
-            # 只显示指定数量的版本
-            # 从第一个版本开始到最后一个要显示的版本结束位置
-            first_version = display_versions[0]
-            last_version = display_versions[-1]
-            
-            # 找到最后一个版本后的下一个版本开始位置，或者文件结尾
-            next_version_start = len(changelog_content)
-            if display_count < len(version_matches):
-                next_version_start = version_matches[display_count].start()
-            
-            # 提取内容
-            display_content = changelog_content[:next_version_start].strip()
-            
-            # 添加提示信息
-            total_versions = len(version_matches)
-            hidden_count = total_versions - display_count
-            display_content += f"\n\n---\n*显示最近的 {display_count} 个版本，还有 {hidden_count} 个历史版本未显示。使用 `/changelog {total_versions}` 查看完整更新日志。*"
-            
-            logger.info(f"显示最近 {display_count} 个版本的更新日志，隐藏 {hidden_count} 个历史版本")
-        
-        # 使用现有的send_long_message函数发送消息
-        # 设置 show_pagination=False，只在第一条消息显示标题，避免每条都显示分页标题导致分段过多
-        from telegram_client import send_long_message
-        await send_long_message(event.client, sender_id, display_content, show_pagination=False)
-        
-        logger.info(f"已向用户 {sender_id} 发送更新日志（{display_count} 个版本）")
+        logger.info(f"已向用户 {sender_id} 发送变更日志文件")
         
     except Exception as e:
-        logger.error(f"显示更新日志时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"显示更新日志时出错: {e}")
+        logger.error(f"发送变更日志文件时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"发送变更日志文件时出错: {e}")
 
 async def handle_shutdown(event):
     """处理/shutdown命令，彻底停止机器人"""

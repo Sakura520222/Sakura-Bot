@@ -17,7 +17,7 @@ from config import CHANNELS, SEND_REPORT_TO_SOURCE, logger
 from prompt_manager import load_prompt
 from summary_time_manager import load_last_summary_time, save_last_summary_time
 from ai_client import analyze_with_ai
-from telegram_client import fetch_last_week_messages, send_report
+from telegram_client import fetch_last_week_messages, send_report, get_active_client
 
 async def main_job(channel=None):
     """定时任务主函数
@@ -94,8 +94,16 @@ async def main_job(channel=None):
                 logger.info(f"开始处理频道 {channel} 的消息，共 {len(messages)} 条消息")
                 current_prompt = load_prompt()
                 summary = analyze_with_ai(messages, current_prompt)
-                # 获取频道名称用于报告标题
-                channel_name = channel.split('/')[-1]
+                # 获取活动的客户端实例和频道的实际名称用于报告标题
+                active_client = get_active_client()
+                try:
+                    channel_entity = await active_client.get_entity(channel)
+                    channel_name = channel_entity.title
+                    logger.info(f"获取到频道实际名称: {channel_name}")
+                except Exception as e:
+                    logger.warning(f"获取频道实体失败，使用链接后缀作为回退: {e}")
+                    # 如果获取失败，使用链接后缀作为回退
+                    channel_name = channel.split('/')[-1]
                 # 计算起始日期和终止日期
                 end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
@@ -109,10 +117,6 @@ async def main_job(channel=None):
                 report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
                 # 发送报告给管理员，并根据配置决定是否发送回源频道
                 sent_report_ids = []
-                
-                # 尝试获取活动的客户端实例
-                from telegram_client import get_active_client
-                active_client = get_active_client()
                 
                 if SEND_REPORT_TO_SOURCE:
                     sent_report_ids = await send_report(report_text, channel, client=active_client)

@@ -3,11 +3,29 @@
 {% block title %}频道管理{% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row mb-4">
     <div class="col-12">
-        <h1 class="mb-4">
-            <i class="bi bi-collection-play me-2"></i>频道管理
-        </h1>
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-1">
+                    <i class="bi bi-collection-play me-2 text-primary"></i>频道管理
+                </h1>
+                <p class="text-muted mb-0">管理所有监控的Telegram频道</p>
+            </div>
+            <div>
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addChannelModal">
+                        <i class="bi bi-plus-circle me-1"></i>添加频道
+                    </button>
+                    <button class="btn btn-outline-success" onclick="importChannels()">
+                        <i class="bi bi-upload me-1"></i>批量导入
+                    </button>
+                    <button class="btn btn-outline-info" onclick="exportChannels()">
+                        <i class="bi bi-download me-1"></i>导出列表
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -16,26 +34,33 @@
     <div class="col-12">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">频道列表</h5>
-                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addChannelModal">
-                    <i class="bi bi-plus-circle me-1"></i>添加频道
-                </button>
+                <h5 class="mb-0">
+                    <i class="bi bi-list-ul me-2"></i>频道列表
+                    <span class="badge bg-primary ms-2">{{ channels|length }}</span>
+                </h5>
+                <div class="input-group" style="max-width: 300px;">
+                    <input type="text" class="form-control" id="searchInput" placeholder="搜索频道..." oninput="filterChannels()">
+                    <button class="btn btn-outline-secondary" onclick="clearSearch()">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
             </div>
             <div class="card-body">
                 {% if channels %}
                 <div class="table-responsive">
-                    <table class="table table-hover" data-sortable>
+                    <table class="table table-hover" id="channelsTable">
                         <thead>
                             <tr>
                                 <th>#</th>
-                                <th data-sort="string">频道URL</th>
-                                <th data-sort="string">总结时间</th>
+                                <th>频道URL</th>
+                                <th>总结时间</th>
+                                <th>状态</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for channel in channels %}
-                            <tr>
+                            <tr data-channel="{{ channel }}">
                                 <td>{{ loop.index }}</td>
                                 <td>
                                     <code>{{ channel }}</code>
@@ -55,10 +80,17 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    <span class="status-indicator online" title="在线"></span>
+                                    <small class="text-muted">监控中</small>
+                                </td>
+                                <td>
                                     <div class="btn-group btn-group-sm" role="group">
-                                        <button class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#editScheduleModal" 
+                                        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editScheduleModal" 
                                                 data-channel="{{ channel }}">
-                                            <i class="bi bi-clock"></i> 时间设置
+                                            <i class="bi bi-clock"></i> 时间
+                                        </button>
+                                        <button class="btn btn-outline-info" onclick="testChannel('{{ channel }}')">
+                                            <i class="bi bi-gear"></i> 测试
                                         </button>
                                         <button class="btn btn-outline-danger" onclick="deleteChannel('{{ channel }}')">
                                             <i class="bi bi-trash"></i> 删除
@@ -72,9 +104,12 @@
                 </div>
                 {% else %}
                 <div class="text-center py-5">
-                    <i class="bi bi-collection text-muted" style="font-size: 3rem;"></i>
+                    <i class="bi bi-collection text-muted" style="font-size: 4rem;"></i>
                     <h5 class="mt-3 text-muted">暂无频道</h5>
                     <p class="text-muted">点击上方"添加频道"按钮开始添加</p>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addChannelModal">
+                        <i class="bi bi-plus-circle me-1"></i>添加第一个频道
+                    </button>
                 </div>
                 {% endif %}
             </div>
@@ -92,18 +127,39 @@
                 </h5>
             </div>
             <div class="card-body">
-                <ul>
-                    <li>每个频道可以独立设置自动总结的时间</li>
-                    <li>如果不设置，将使用默认时间（周一 09:00）</li>
-                    <li>时间格式：星期几（英文缩写） + 24小时制时间</li>
-                    <li>支持的时间配置：
-                        <ul>
-                            <li>星期：mon（周一）, tue（周二）, wed（周三）, thu（周四）, fri（周五）, sat（周六）, sun（周日）</li>
-                            <li>小时：0-23</li>
-                            <li>分钟：0-59</li>
+                <div class="row">
+                    <div class="col-md-6">
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <i class="bi bi-check-circle text-success me-2"></i>
+                                每个频道可以独立设置自动总结的时间
+                            </li>
+                            <li class="list-group-item">
+                                <i class="bi bi-check-circle text-success me-2"></i>
+                                如果不设置，将使用默认时间（周一 09:00）
+                            </li>
+                            <li class="list-group-item">
+                                <i class="bi bi-check-circle text-success me-2"></i>
+                                时间格式：星期几（英文缩写） + 24小时制时间
+                            </li>
                         </ul>
-                    </li>
-                </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>支持的时间配置：</h6>
+                        <div class="badge-list">
+                            <span class="badge bg-info">mon (周一)</span>
+                            <span class="badge bg-info">tue (周二)</span>
+                            <span class="badge bg-info">wed (周三)</span>
+                            <span class="badge bg-info">thu (周四)</span>
+                            <span class="badge bg-info">fri (周五)</span>
+                            <span class="badge bg-info">sat (周六)</span>
+                            <span class="badge bg-info">sun (周日)</span>
+                        </div>
+                        <small class="text-muted mt-2 d-block">
+                            小时：0-23，分钟：0-59
+                        </small>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -119,20 +175,23 @@
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form id="addChannelForm" method="post" action="/api/add_channel">
+            <form id="addChannelForm">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="channelUrl" class="form-label">频道URL</label>
-                        <input type="text" class="form-control" id="channelUrl" name="channel_url" 
+                        <input type="text" class="form-control" id="channelUrl" 
                                placeholder="例如：https://t.me/channel_name" required>
                         <div class="form-text">
+                            <i class="bi bi-info-circle me-1"></i>
                             请输入Telegram频道的完整URL
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="submit" class="btn btn-primary">添加</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-1"></i>添加
+                    </button>
                 </div>
             </form>
         </div>
@@ -149,19 +208,19 @@
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form id="editScheduleForm" method="post" action="/api/set_schedule">
+            <form id="editScheduleForm">
                 <div class="modal-body">
                     <input type="hidden" id="editChannel" name="channel">
                     
                     <div class="mb-3">
                         <label class="form-label">频道</label>
-                        <div class="form-control" id="channelDisplay"></div>
+                        <div class="form-control bg-body-secondary" id="channelDisplay"></div>
                     </div>
                     
                     <div class="row">
                         <div class="col-md-4 mb-3">
                             <label for="scheduleDay" class="form-label">星期几</label>
-                            <select class="form-select" id="scheduleDay" name="day" required>
+                            <select class="form-select" id="scheduleDay" required>
                                 <option value="mon">周一</option>
                                 <option value="tue">周二</option>
                                 <option value="wed">周三</option>
@@ -173,12 +232,12 @@
                         </div>
                         <div class="col-md-4 mb-3">
                             <label for="scheduleHour" class="form-label">小时 (0-23)</label>
-                            <input type="number" class="form-control" id="scheduleHour" name="hour" 
+                            <input type="number" class="form-control" id="scheduleHour" 
                                    min="0" max="23" value="9" required>
                         </div>
                         <div class="col-md-4 mb-3">
                             <label for="scheduleMinute" class="form-label">分钟 (0-59)</label>
-                            <input type="number" class="form-control" id="scheduleMinute" name="minute" 
+                            <input type="number" class="form-control" id="scheduleMinute" 
                                    min="0" max="59" value="0" required>
                         </div>
                     </div>
@@ -191,9 +250,42 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-danger" onclick="deleteSchedule()">删除配置</button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-1"></i>保存
+                    </button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- 导入频道模态框 -->
+<div class="modal fade" id="importChannelsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-upload me-2"></i>批量导入频道
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="channelsInput" class="form-label">频道列表</label>
+                    <textarea class="form-control" id="channelsInput" rows="10"
+                              placeholder="每行一个频道URL&#10;例如：&#10;https://t.me/channel1&#10;https://t.me/channel2&#10;https://t.me/channel3"></textarea>
+                    <div class="form-text">
+                        <i class="bi bi-info-circle me-1"></i>
+                        每行输入一个频道URL，支持批量导入多个频道
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="processImport()">
+                    <i class="bi bi-upload me-1"></i>导入
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -201,7 +293,23 @@
 
 {% block extra_js %}
 <script>
-// 初始化模态框事件
+// 搜索和筛选
+function filterChannels() {
+    const searchValue = document.getElementById('searchInput').value.toLowerCase();
+    const rows = document.querySelectorAll('#channelsTable tbody tr');
+    
+    rows.forEach(row => {
+        const channel = row.getAttribute('data-channel').toLowerCase();
+        row.style.display = channel.includes(searchValue) ? '' : 'none';
+    });
+}
+
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    filterChannels();
+}
+
+// 模态框初始化
 document.addEventListener('DOMContentLoaded', function() {
     // 编辑时间配置模态框
     const editScheduleModal = document.getElementById('editScheduleModal');
@@ -212,13 +320,10 @@ document.addEventListener('DOMContentLoaded', function() {
             
             document.getElementById('editChannel').value = channel;
             document.getElementById('channelDisplay').textContent = channel;
-            
-            // 如果已有配置，填充表单
-            // 这里可以添加从服务器获取现有配置的逻辑
         });
     }
     
-    // 添加频道表单提交
+    // 添加频道表单
     const addChannelForm = document.getElementById('addChannelForm');
     if (addChannelForm) {
         addChannelForm.addEventListener('submit', function(event) {
@@ -227,7 +332,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // 编辑时间配置表单提交
+    // 编辑时间配置表单
     const editScheduleForm = document.getElementById('editScheduleForm');
     if (editScheduleForm) {
         editScheduleForm.addEventListener('submit', function(event) {
@@ -238,153 +343,221 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // 添加频道
-function addChannel() {
-    const channelUrl = document.getElementById('channelUrl').value;
+async function addChannel() {
+    const channelUrl = document.getElementById('channelUrl').value.trim();
     
     if (!channelUrl) {
-        alert('请输入频道URL');
+        showWarning('请输入频道URL');
         return;
     }
     
-    // 发送AJAX请求到服务器
+    showGlobalLoader();
+    
     const formData = new FormData();
     formData.append('channel_url', channelUrl);
     
-    fetch('/api/add_channel', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
+    try {
+        const data = await apiPost('/api/add_channel', formData);
+        
         if (data.status === 'success') {
-            showToast(data.message, 'success');
-            $('#addChannelModal').modal('hide');
+            showSuccess(data.message);
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addChannelModal'));
+            if (modal) modal.hide();
             
-            // 刷新页面
             setTimeout(() => {
                 location.reload();
             }, 1000);
         } else {
-            showToast(data.message, 'danger');
+            showError(data.message);
         }
-    })
-    .catch(error => {
+    } catch (error) {
         console.error('添加频道失败:', error);
-        showToast('添加频道失败: ' + error, 'danger');
-    });
+        showError('添加频道失败: ' + error);
+    } finally {
+        hideGlobalLoader();
+    }
 }
 
 // 保存时间配置
-function saveSchedule() {
+async function saveSchedule() {
     const channel = document.getElementById('editChannel').value;
     const day = document.getElementById('scheduleDay').value;
     const hour = parseInt(document.getElementById('scheduleHour').value);
     const minute = parseInt(document.getElementById('scheduleMinute').value);
     
-    // 发送AJAX请求到服务器
+    showGlobalLoader();
+    
     const formData = new FormData();
     formData.append('channel', channel);
     formData.append('day', day);
     formData.append('hour', hour);
     formData.append('minute', minute);
     
-    fetch('/api/set_schedule', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
+    try {
+        const data = await apiPost('/api/set_schedule', formData);
+        
         if (data.status === 'success') {
-            showToast(data.message, 'success');
-            $('#editScheduleModal').modal('hide');
+            showSuccess(data.message);
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editScheduleModal'));
+            if (modal) modal.hide();
             
-            // 刷新页面
             setTimeout(() => {
                 location.reload();
             }, 1000);
         } else {
-            showToast(data.message, 'danger');
+            showError(data.message);
         }
-    })
-    .catch(error => {
+    } catch (error) {
         console.error('保存时间配置失败:', error);
-        showToast('保存时间配置失败: ' + error, 'danger');
-    });
+        showError('保存时间配置失败: ' + error);
+    } finally {
+        hideGlobalLoader();
+    }
 }
 
 // 删除频道
-function deleteChannel(channel) {
-    if (confirm(`确定要删除频道 "${channel}" 吗？`)) {
-        // 发送AJAX请求到服务器
+async function deleteChannel(channel) {
+    if (await confirmDialog('确定要删除频道 "' + channel + '" 吗？')) {
+        showGlobalLoader();
+        
         const formData = new FormData();
         formData.append('channel_url', channel);
         
-        fetch('/api/delete_channel', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
+        try {
+            const data = await apiPost('/api/delete_channel', formData);
+            
             if (data.status === 'success') {
-                showToast(data.message, 'success');
-                
-                // 刷新页面
+                showSuccess(data.message);
                 setTimeout(() => {
                     location.reload();
                 }, 1000);
             } else {
-                showToast(data.message, 'danger');
+                showError(data.message);
             }
-        })
-        .catch(error => {
+        } catch (error) {
             console.error('删除频道失败:', error);
-            showToast('删除频道失败: ' + error, 'danger');
-        });
+            showError('删除频道失败: ' + error);
+        } finally {
+            hideGlobalLoader();
+        }
     }
 }
 
 // 删除时间配置
-function deleteSchedule() {
+async function deleteSchedule() {
     const channel = document.getElementById('editChannel').value;
     
-    if (confirm(`确定要删除频道 "${channel}" 的时间配置吗？`)) {
-        // 发送AJAX请求到服务器
+    if (await confirmDialog('确定要删除频道 "' + channel + '" 的时间配置吗？')) {
+        showGlobalLoader();
+        
         const formData = new FormData();
         formData.append('channel', channel);
         
-        fetch('/api/delete_schedule', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
+        try {
+            const data = await apiPost('/api/delete_schedule', formData);
+            
             if (data.status === 'success') {
-                showToast(data.message, 'success');
-                $('#editScheduleModal').modal('hide');
+                showSuccess(data.message);
+                const modal = bootstrap.Modal.getInstance(document.getElementById('editScheduleModal'));
+                if (modal) modal.hide();
                 
-                // 刷新页面
                 setTimeout(() => {
                     location.reload();
                 }, 1000);
             } else {
-                showToast(data.message, 'danger');
+                showError(data.message);
             }
-        })
-        .catch(error => {
+        } catch (error) {
             console.error('删除时间配置失败:', error);
-            showToast('删除时间配置失败: ' + error, 'danger');
-        });
+            showError('删除时间配置失败: ' + error);
+        } finally {
+            hideGlobalLoader();
+        }
     }
 }
 
-// 复制到剪贴板
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('已复制到剪贴板', 'success');
-    }).catch(err => {
-        console.error('复制失败:', err);
-        showToast('复制失败', 'danger');
-    });
+// 测试频道
+function testChannel(channel) {
+    showInfo('测试频道连接功能尚未实现', 5000);
 }
+
+// 批量导入
+function importChannels() {
+    const modal = new bootstrap.Modal(document.getElementById('importChannelsModal'));
+    modal.show();
+}
+
+async function processImport() {
+    const channelsInput = document.getElementById('channelsInput').value.trim();
+    if (!channelsInput) {
+        showWarning('请输入频道列表');
+        return;
+    }
+    
+    const channels = channelsInput.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+    
+    if (channels.length === 0) {
+        showWarning('没有有效的频道URL');
+        return;
+    }
+    
+    if (!await confirmDialog('确定要导入 ' + channels.length + ' 个频道吗？')) {
+        return;
+    }
+    
+    showGlobalLoader();
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const channel of channels) {
+        const formData = new FormData();
+        formData.append('channel_url', channel);
+        
+        try {
+            const data = await apiPost('/api/add_channel', formData);
+            if (data.status === 'success') {
+                successCount++;
+            } else {
+                failCount++;
+            }
+        } catch (error) {
+            failCount++;
+        }
+    }
+    
+    hideGlobalLoader();
+    
+    const modal = bootstrap.Modal.getInstance(document.getElementById('importChannelsModal'));
+    if (modal) modal.hide();
+    
+    if (successCount > 0) {
+        showSuccess('成功导入 ' + successCount + ' 个频道' + (failCount > 0 ? '，失败 ' + failCount + ' 个' : ''));
+        setTimeout(() => {
+            location.reload();
+        }, 2000);
+    } else {
+        showError('导入失败，请检查频道URL格式');
+    }
+}
+
+// 导出频道
+function exportChannels() {
+    const channels = {{ channels|tojson }};
+    const content = channels.join('\n');
+    downloadFile(content, 'channels-export.txt', 'text/plain');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 导入频道模态框
+    const importChannelsModal = document.getElementById('importChannelsModal');
+    if (importChannelsModal) {
+        importChannelsModal.addEventListener('show.bs.modal', function() {
+            // 模态框显示时的处理
+        });
+    }
+});
 </script>
 {% endblock %}

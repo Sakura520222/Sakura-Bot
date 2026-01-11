@@ -195,11 +195,8 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
             # 在每条消息显示分页标题
             full_message = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
         else:
-            # 只在第一条消息显示标题，其他条不显示
-            if i == 0:
-                full_message = f"📋 **{channel_title}**\n\n{part}"
-            else:
-                full_message = part
+            # 不显示任何标题，直接发送内容
+            full_message = part
         
         full_message_length = len(full_message)
         logger.info(f"正在发送第 {i+1}/{len(parts)} 段，长度: {full_message_length}字符")
@@ -330,7 +327,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 for admin_id in ADMIN_LIST:
                     try:
                         logger.info(f"正在向管理员 {admin_id} 发送报告")
-                        await send_long_message(use_client, admin_id, summary_text_for_admins)
+                        await send_long_message(use_client, admin_id, summary_text_for_admins, show_pagination=False)
                         logger.info(f"成功向管理员 {admin_id} 发送报告")
                     except Exception as e:
                         logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
@@ -384,7 +381,8 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         
                         # 发送所有部分并收集消息ID
                         for i, part in enumerate(parts):
-                            part_text = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
+                            # 不显示任何标题，直接发送内容
+                            part_text = part
                             try:
                                 msg = await use_client.send_message(source_channel, part_text, link_preview=False)
                                 report_message_ids.append(msg.id)
@@ -491,7 +489,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     for admin_id in ADMIN_LIST:
                         try:
                             logger.info(f"正在向管理员 {admin_id} 发送报告")
-                            await send_long_message(use_client, admin_id, summary_text_for_admins)
+                            await send_long_message(use_client, admin_id, summary_text_for_admins, show_pagination=False)
                             logger.info(f"成功向管理员 {admin_id} 发送报告")
                         except Exception as e:
                             logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
@@ -544,7 +542,8 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             
                             # 发送所有部分并收集消息ID
                             for i, part in enumerate(parts):
-                                part_text = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
+                                # 不显示任何标题，直接发送内容
+                                part_text = part
                                 try:
                                     msg = await use_client.send_message(source_channel, part_text, link_preview=False)
                                     report_message_ids.append(msg.id)

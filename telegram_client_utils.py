@@ -86,15 +86,15 @@ def split_message_smart(text, max_length, preserve_markdown=True):
     for match in re.finditer(r'[。.?!]\s+', text):
         sentence_boundaries.append(match.end())
     
-    # 再次优在换行处分割
-    line_boundaries = []
-    for match in re.finditer(r'\n', text):
-        line_boundaries.append(match.end())
+    # 不再在每个换行处分割，只在连续换行（段落边界）处分割
+    # 这样可以避免将列表式内容过度分割
     
-    # 所有分割点，按优先级排序
-    all_boundaries = sorted(set(paragraph_boundaries + sentence_boundaries + line_boundaries))
+    # 所有分割点，按优先级排序（只包含段落和句子边界）
+    all_boundaries = sorted(set(paragraph_boundaries + sentence_boundaries))
     
     # 分割算法
+    min_segment_length = 100  # 最小分段长度，避免产生过短的段落
+    
     while current_pos < len(text):
         # 计算当前分段的最大结束位置
         max_end_pos = min(current_pos + max_length, len(text))
@@ -107,13 +107,28 @@ def split_message_smart(text, max_length, preserve_markdown=True):
         # 查找最佳分割点
         best_split_pos = -1
         
-        # 1. 查找在边界内的分割点
+        # 1. 查找在边界内的分割点（只查找在合理范围内的）
         for boundary in all_boundaries:
             if current_pos < boundary <= max_end_pos:
                 best_split_pos = boundary
                 break
         
-        # 2. 如果没有找到边界分割点，检查是否会在实体中间分割
+        # 2. 如果找到的分割点会导致分段太短，继续查找更远的分割点
+        if best_split_pos != -1 and (best_split_pos - current_pos) < min_segment_length:
+            # 尝试查找更远的分割点
+            for boundary in all_boundaries:
+                if boundary > best_split_pos and boundary <= max_end_pos:
+                    # 检查这个新的分割点是否会产生合理的长度
+                    segment_length = boundary - current_pos
+                    if segment_length >= min_segment_length and segment_length <= max_length:
+                        best_split_pos = boundary
+                    # 如果新的分割点仍然太短，继续查找
+                    elif segment_length < min_segment_length:
+                        best_split_pos = boundary
+                    else:
+                        break  # 超过最大长度了
+        
+        # 3. 如果没有找到边界分割点，检查是否会在实体中间分割
         if best_split_pos == -1:
             # 检查当前位置到max_end_pos之间是否有实体
             for entity in merged_entities:
@@ -127,7 +142,7 @@ def split_message_smart(text, max_length, preserve_markdown=True):
                         best_split_pos = entity['end']
                         break
         
-        # 3. 如果还是没有找到合适的分割点，使用字符边界
+        # 4. 如果还是没有找到合适的分割点，使用字符边界
         if best_split_pos == -1:
             # 确保不在单词中间分割（如果可能）
             # 查找最后一个空格或标点
