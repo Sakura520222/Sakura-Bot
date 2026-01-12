@@ -5,6 +5,31 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.5] - 2026-01-12 （最新）
+
+### 移除
+- **完全移除Web管理界面**：移除了整个Web管理界面及相关功能
+  - 删除了`web_app.py`文件及其所有FastAPI路由和API端点
+  - 删除了`templates/`目录（所有HTML模板文件）
+  - 删除了`static/`目录（CSS和JavaScript文件）
+  - 从`main.py`中移除了Web服务器启动代码和相关线程
+  - 移除了Web管理界面触发的总结任务队列处理逻辑
+  - 从`requirements.txt`中移除了Web相关依赖（fastapi、uvicorn、jinja2、python-multipart、itsdangerous）
+  - 从`config.py`中移除了`WEB_PORT`配置项和相关日志
+  - 从`.env.example`中移除了Web管理界面配置示例
+  - 从`docker-compose.yml`中移除了Web端口映射、健康检查和资源限制相关配置
+
+### 简化
+- **简化架构**：项目现在完全依赖Telegram命令进行管理，架构更加简洁
+  - 所有功能通过Telegram机器人命令操作
+  - 减少了依赖项和代码复杂度
+  - 降低了资源使用（内存限制从768M降至512M）
+  - 简化了部署流程
+
+### 文档更新
+- 更新了README.md，移除了所有Web管理界面相关的说明和配置示例
+- 更新了项目结构说明，移除了Web相关文件和目录的描述
+
 ## [1.2.4] - 2026-01-11
 
 ### 修复

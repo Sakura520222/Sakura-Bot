@@ -63,8 +63,6 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 LLM_API_KEY = os.getenv('LLM_API_KEY', os.getenv('DEEPSEEK_API_KEY'))
 LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.deepseek.com')
 LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
-# Web管理界面配置 - 从环境变量获取默认值
-WEB_PORT = int(os.getenv('WEB_PORT', '8000'))
 
 # 频道配置 - 从环境变量获取默认值
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL')
@@ -86,7 +84,6 @@ logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
 
 logger.debug(f"从环境变量加载的配置: API_ID={'***' if API_ID else '未设置'}, API_HASH={'***' if API_HASH else '未设置'}, BOT_TOKEN={'***' if BOT_TOKEN else '未设置'}")
 logger.debug(f"AI配置 - 环境变量默认值: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}")
-logger.debug(f"Web配置 - 环境变量默认值: Port={WEB_PORT}")
 logger.debug(f"目标频道列表: {CHANNELS}")
 
 # 管理员 ID 列表，从环境变量读取后转为整数列表

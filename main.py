@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
-    RESTART_FLAG_FILE, logger, get_channel_schedule, ADMIN_LIST, WEB_PORT
+    RESTART_FLAG_FILE, logger, get_channel_schedule, ADMIN_LIST
 )
 from scheduler import main_job
 from command_handlers import (
@@ -35,10 +35,9 @@ from command_handlers import (
     handle_changelog, handle_shutdown, handle_pause, handle_resume
 )
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
-from web_app import run_web_server
 
 # 版本信息
-__version__ = "1.2.4"
+__version__ = "1.2.5"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -99,31 +98,6 @@ async def main():
     logger.info(f"开始初始化机器人服务 v{__version__}...")
     
     try:
-        # 启动Web管理界面（在独立线程中）
-        logger.info("启动Web管理界面...")
-        web_thread = threading.Thread(target=run_web_server, daemon=True)
-        web_thread.start()
-        
-        # 获取本地IP地址用于显示
-        import socket
-        local_ip = None
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            pass
-        
-        # 显示所有可访问地址
-        logger.info(f"Web管理界面已启动，访问地址:")
-        logger.info(f"- 本地访问: http://127.0.0.1:{WEB_PORT} 或 http://localhost:{WEB_PORT}")
-        logger.info(f"- 所有接口: http://0.0.0.0:{WEB_PORT}")
-        if local_ip:
-            logger.info(f"- 局域网访问: http://{local_ip}:{WEB_PORT}")
-        else:
-            logger.info("- 局域网访问: 无法获取局域网IP地址")
-        
         # 初始化错误处理系统
         logger.info("初始化错误处理系统...")
         health_checker = initialize_error_handling()
@@ -271,21 +245,9 @@ async def main():
                     logger.info(f"检测到重启标记，向用户 {restart_user_id} 发送重启成功消息")
                     await client.send_message(restart_user_id, "机器人已成功重启！", link_preview=False)
                 except ValueError:
-                    # 如果不是整数，可能是特殊标识（如web_admin）
-                    logger.info(f"检测到重启标记，特殊标识: {content}")
-                    if content == "web_admin":
-                        # Web管理界面触发的重启，向所有管理员发送通知
-                        for admin_id in ADMIN_LIST:
-                            try:
-                                await client.send_message(
-                                    admin_id, 
-                                    "🤖 机器人已通过Web管理界面成功重启！", 
-                                    link_preview=False
-                                )
-                                logger.info(f"已向管理员 {admin_id} 发送Web重启通知")
-                            except Exception as e:
-                                logger.error(f"向管理员 {admin_id} 发送重启通知失败: {e}")
-                
+                    # 如果不是整数，忽略
+                    logger.info(f"检测到重启标记，但内容不是有效的用户ID: {content}")
+
                 # 删除重启标记文件
                 os.remove(RESTART_FLAG_FILE)
                 logger.info("重启标记文件已删除")
@@ -306,13 +268,13 @@ async def main():
                     try:
                         await client.send_message(
                             admin_id,
-                            "🤖 机器人已通过Web管理界面执行关机命令，正在停止运行...",
+                            "🤖 机器人已执行关机命令，正在停止运行...",
                             link_preview=False
                         )
                         logger.info(f"已向管理员 {admin_id} 发送关机通知")
                     except Exception as e:
                         logger.error(f"向管理员 {admin_id} 发送关机通知失败: {e}")
-                
+
                 # 删除关机标记文件
                 os.remove(SHUTDOWN_FLAG_FILE)
                 logger.info("关机标记文件已删除")
@@ -334,84 +296,7 @@ async def main():
                         logger.info("出错后已清理关机标记文件")
                 except Exception as cleanup_error:
                     logger.error(f"清理关机标记文件时出错: {cleanup_error}")
-        
-        # 启动一个后台任务来检查Web管理界面触发的总结任务
-        async def check_web_summary_tasks():
-            """检查Web管理界面触发的总结任务"""
-            from web_app import summary_task_queue
-            import asyncio
-            
-            while True:
-                try:
-                    # 检查队列中是否有任务
-                    if not summary_task_queue.empty():
-                        channel = summary_task_queue.get()
-                        logger.info(f"从Web管理界面接收到总结任务: {channel}")
-                        
-                        try:
-                            # 执行总结任务并获取详细结果
-                            from scheduler import main_job
-                            result = await main_job(channel)
-                            
-                            # 根据结果更新任务执行记录
-                            from web_app import record_task_execution
-                            
-                            if result["success"]:
-                                # 任务执行成功，使用详细结果信息
-                                status = "成功"
-                                if result["message_count"] > 0:
-                                    result_message = f"✅ 总结任务成功完成\n"
-                                    result_message += f"• 频道: {result['channel']}\n"
-                                    result_message += f"• 处理消息: {result['message_count']} 条\n"
-                                    result_message += f"• 总结长度: {result['summary_length']} 字符\n"
-                                    result_message += f"• 处理时间: {result['processing_time']:.2f} 秒\n"
-                                    result_message += f"• 详情: {result['details']}"
-                                else:
-                                    result_message = f"ℹ️ 没有新消息需要总结\n"
-                                    result_message += f"• 频道: {result['channel']}\n"
-                                    result_message += f"• 处理时间: {result['processing_time']:.2f} 秒\n"
-                                    result_message += f"• 详情: {result['details']}"
-                                
-                                logger.info(f"Web管理界面触发的总结任务成功: {result['details']}")
-                            else:
-                                # 任务执行失败
-                                status = "失败"
-                                result_message = f"❌ 总结任务执行失败\n"
-                                result_message += f"• 频道: {result['channel']}\n"
-                                result_message += f"• 错误: {result['error']}\n"
-                                result_message += f"• 处理时间: {result['processing_time']:.2f} 秒\n"
-                                result_message += f"• 详情: {result['details']}"
-                                
-                                logger.error(f"Web管理界面触发的总结任务失败: {result['error']}")
-                            
-                            # 更新任务执行记录
-                            record_task_execution(
-                                channel=channel,
-                                task_type="手动触发总结",
-                                status=status,
-                                result_message=result_message
-                            )
-                            
-                        except Exception as e:
-                            logger.error(f"执行总结任务时出错: {e}")
-                            
-                            # 任务执行失败，更新任务执行记录
-                            from web_app import record_task_execution
-                            record_task_execution(
-                                channel=channel,
-                                task_type="手动触发总结",
-                                status="失败",
-                                result_message=f"❌ 总结任务执行失败\n• 频道: {channel}\n• 错误: {str(e)}\n• 详情: 执行过程中发生未预期的错误"
-                            )
-                except Exception as e:
-                    logger.error(f"处理Web管理界面总结任务时出错: {e}")
-                
-                # 每秒检查一次
-                await asyncio.sleep(1)
-        
-        # 启动后台任务
-        asyncio.create_task(check_web_summary_tasks())
-        
+
         # 保持客户端运行
         await client.run_until_disconnected()
     except Exception as e:

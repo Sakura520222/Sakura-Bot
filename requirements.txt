@@ -2,8 +2,3 @@ telethon
 openai
 apscheduler
 python-dotenv
-fastapi
-uvicorn
-jinja2
-python-multipart
-itsdangerous
