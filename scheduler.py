@@ -94,6 +94,7 @@ async def main_job(channel=None):
                 logger.info(f"开始处理频道 {channel} 的消息，共 {len(messages)} 条消息")
                 current_prompt = load_prompt()
                 summary = analyze_with_ai(messages, current_prompt)
+
                 # 获取活动的客户端实例和频道的实际名称用于报告标题
                 active_client = get_active_client()
                 try:
@@ -104,17 +105,31 @@ async def main_job(channel=None):
                     logger.warning(f"获取频道实体失败，使用链接后缀作为回退: {e}")
                     # 如果获取失败，使用链接后缀作为回退
                     channel_name = channel.split('/')[-1]
+
+                # 获取频道的调度配置，用于生成报告标题
+                from config import get_channel_schedule
+                schedule_config = get_channel_schedule(channel)
+                frequency = schedule_config.get('frequency', 'weekly')
+
                 # 计算起始日期和终止日期
                 end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
                     start_date = channel_last_summary_time
                 else:
                     start_date = end_date - timedelta(days=7)
+
                 # 格式化日期为 月.日 格式
                 start_date_str = f"{start_date.month}.{start_date.day}"
                 end_date_str = f"{end_date.month}.{end_date.day}"
-                # 生成报告标题
-                report_text = f"**{channel_name} 周报 {start_date_str}-{end_date_str}**\n\n{summary}"
+
+                # 根据频率生成报告标题
+                if frequency == 'daily':
+                    report_title = f"{channel_name} 日报 {end_date_str}"
+                else:  # weekly
+                    report_title = f"{channel_name} 周报 {start_date_str}-{end_date_str}"
+
+                # 生成报告文本
+                report_text = f"**{report_title}**\n\n{summary}"
                 # 发送报告给管理员，并根据配置决定是否发送回源频道
                 sent_report_ids = []
                 

@@ -264,70 +264,48 @@ if config:
 
 # 获取频道的时间配置
 def get_channel_schedule(channel):
-    """获取指定频道的自动总结时间配置
-    
+    """获取指定频道的自动总结时间配置（支持新格式）
+
     Args:
         channel: 频道URL
-        
+
     Returns:
-        dict: 包含day, hour, minute的配置字典
+        dict: 标准化的配置字典，包含 frequency, days, hour, minute
     """
     if channel in SUMMARY_SCHEDULES:
         schedule = SUMMARY_SCHEDULES[channel]
-        return {
-            'day': schedule.get('day', DEFAULT_SUMMARY_DAY),
-            'hour': schedule.get('hour', DEFAULT_SUMMARY_HOUR),
-            'minute': schedule.get('minute', DEFAULT_SUMMARY_MINUTE)
-        }
+        # 标准化配置（处理向后兼容）
+        return normalize_schedule_config(schedule)
     else:
         # 返回默认配置
         return {
-            'day': DEFAULT_SUMMARY_DAY,
+            'frequency': 'weekly',
+            'days': [DEFAULT_SUMMARY_DAY],
             'hour': DEFAULT_SUMMARY_HOUR,
             'minute': DEFAULT_SUMMARY_MINUTE
         }
 
 # 设置频道的时间配置
 def set_channel_schedule(channel, day=None, hour=None, minute=None):
-    """设置指定频道的自动总结时间配置
-    
+    """设置指定频道的自动总结时间配置（旧格式，保持向后兼容）
+
+    此函数保留以支持旧代码，内部调用 set_channel_schedule_v2
+
     Args:
         channel: 频道URL
         day: 星期几（mon, tue, wed, thu, fri, sat, sun）
         hour: 小时（0-23）
         minute: 分钟（0-59）
-        
+
     Returns:
         bool: 是否成功保存配置
     """
-    try:
-        # 加载当前配置
-        current_config = load_config()
-        
-        # 确保summary_schedules字段存在
-        if 'summary_schedules' not in current_config:
-            current_config['summary_schedules'] = {}
-        
-        # 获取或创建频道的配置
-        if channel not in current_config['summary_schedules']:
-            current_config['summary_schedules'][channel] = {}
-        
-        # 更新配置
-        if day is not None:
-            current_config['summary_schedules'][channel]['day'] = day
-        if hour is not None:
-            current_config['summary_schedules'][channel]['hour'] = hour
-        if minute is not None:
-            current_config['summary_schedules'][channel]['minute'] = minute
-        
-        # 保存配置（save_config会自动更新模块变量）
-        save_config(current_config)
-        
-        logger.info(f"已更新频道 {channel} 的时间配置: day={day}, hour={hour}, minute={minute}")
-        return True
-    except Exception as e:
-        logger.error(f"设置频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        return False
+    if day is not None:
+        # 旧格式，转换为 weekly 模式
+        return set_channel_schedule_v2(channel, 'weekly', days=[day], hour=hour, minute=minute)
+    else:
+        # 仅更新时间，保持默认星期
+        return set_channel_schedule_v2(channel, 'weekly', days=[DEFAULT_SUMMARY_DAY], hour=hour, minute=minute)
 
 # 删除频道的时间配置
 def delete_channel_schedule(channel):
@@ -384,3 +362,170 @@ def validate_schedule(day, hour, minute):
         return False, f"无效的分钟: {minute}，有效范围: 0-59"
     
     return True, "配置有效"
+
+# ==================== 多频率模式支持函数 ====================
+
+def normalize_schedule_config(schedule_dict):
+    """将配置标准化为新格式，处理向后兼容
+
+    Args:
+        schedule_dict: 原始配置字典
+
+    Returns:
+        dict: 标准化后的配置，包含 frequency, days, hour, minute
+    """
+    # 如果包含 frequency 字段，已经是新格式
+    if 'frequency' in schedule_dict:
+        # 确保 days 字段存在（weekly 模式）
+        if schedule_dict['frequency'] == 'weekly' and 'days' not in schedule_dict:
+            # 如果没有 days 字段但有 day 字段，转换它
+            if 'day' in schedule_dict:
+                schedule_dict['days'] = [schedule_dict['day']]
+            else:
+                schedule_dict['days'] = [DEFAULT_SUMMARY_DAY]
+        return schedule_dict
+
+    # 向后兼容：旧格式 (day 字段)
+    if 'day' in schedule_dict:
+        return {
+            'frequency': 'weekly',
+            'days': [schedule_dict['day']],
+            'hour': schedule_dict.get('hour', DEFAULT_SUMMARY_HOUR),
+            'minute': schedule_dict.get('minute', DEFAULT_SUMMARY_MINUTE)
+        }
+
+    # 默认配置
+    return {
+        'frequency': 'weekly',
+        'days': [DEFAULT_SUMMARY_DAY],
+        'hour': schedule_dict.get('hour', DEFAULT_SUMMARY_HOUR),
+        'minute': schedule_dict.get('minute', DEFAULT_SUMMARY_MINUTE)
+    }
+
+
+def validate_schedule_v2(config_dict):
+    """验证新的时间配置格式
+
+    Args:
+        config_dict: 包含 frequency, days, hour, minute 的字典
+
+    Returns:
+        tuple: (是否有效, 错误信息)
+    """
+    valid_days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    valid_frequencies = ['daily', 'weekly']
+
+    # 验证 frequency
+    frequency = config_dict.get('frequency')
+    if frequency not in valid_frequencies:
+        return False, f"无效的频率: {frequency}，有效值: {', '.join(valid_frequencies)}"
+
+    # 验证 days（仅 weekly 模式需要）
+    if frequency == 'weekly':
+        days = config_dict.get('days', [])
+        if not isinstance(days, list) or not days:
+            return False, "weekly 模式必须提供 days 字段（非空数组）"
+
+        for day in days:
+            if day not in valid_days:
+                return False, f"无效的星期几: {day}，有效值: {', '.join(valid_days)}"
+
+    # 验证时间
+    hour = config_dict.get('hour')
+    minute = config_dict.get('minute')
+
+    if not isinstance(hour, int) or hour < 0 or hour > 23:
+        return False, f"无效的小时: {hour}，有效范围: 0-23"
+
+    if not isinstance(minute, int) or minute < 0 or minute > 59:
+        return False, f"无效的分钟: {minute}，有效范围: 0-59"
+
+    return True, "配置有效"
+
+
+def set_channel_schedule_v2(channel, frequency, days=None, hour=None, minute=None):
+    """设置指定频道的自动总结时间配置（支持新格式）
+
+    Args:
+        channel: 频道URL
+        frequency: 频率类型（'daily' 或 'weekly'）
+        days: 星期几列表（weekly 模式必需）
+        hour: 小时（0-23）
+        minute: 分钟（0-59）
+
+    Returns:
+        bool: 是否成功保存配置
+    """
+    try:
+        # 构建配置字典
+        config_dict = {
+            'frequency': frequency,
+            'hour': hour if hour is not None else DEFAULT_SUMMARY_HOUR,
+            'minute': minute if minute is not None else DEFAULT_SUMMARY_MINUTE
+        }
+
+        # weekly 模式需要 days 字段
+        if frequency == 'weekly':
+            if days is None:
+                days = [DEFAULT_SUMMARY_DAY]
+            config_dict['days'] = days
+
+        # 验证配置
+        is_valid, error_msg = validate_schedule_v2(config_dict)
+        if not is_valid:
+            logger.error(f"配置验证失败: {error_msg}")
+            return False
+
+        # 加载当前配置
+        current_config = load_config()
+
+        # 确保summary_schedules字段存在
+        if 'summary_schedules' not in current_config:
+            current_config['summary_schedules'] = {}
+
+        # 更新配置
+        current_config['summary_schedules'][channel] = config_dict
+
+        # 保存配置
+        save_config(current_config)
+
+        logger.info(f"已更新频道 {channel} 的时间配置: {config_dict}")
+        return True
+    except Exception as e:
+        logger.error(f"设置频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+def build_cron_trigger(schedule_config):
+    """根据配置构建 APScheduler cron 触发器参数
+
+    Args:
+        schedule_config: 标准化的调度配置字典
+
+    Returns:
+        dict: 包含 cron 触发器参数的字典
+    """
+    frequency = schedule_config.get('frequency', 'weekly')
+
+    if frequency == 'daily':
+        # 每天模式
+        return {
+            'day_of_week': '*',  # 每天
+            'hour': schedule_config['hour'],
+            'minute': schedule_config['minute']
+        }
+    elif frequency == 'weekly':
+        # 每周模式（支持多天）
+        days_str = ','.join(schedule_config['days'])
+        return {
+            'day_of_week': days_str,
+            'hour': schedule_config['hour'],
+            'minute': schedule_config['minute']
+        }
+    else:
+        # 默认：每周一
+        return {
+            'day_of_week': 'mon',
+            'hour': schedule_config.get('hour', DEFAULT_SUMMARY_HOUR),
+            'minute': schedule_config.get('minute', DEFAULT_SUMMARY_MINUTE)
+        }

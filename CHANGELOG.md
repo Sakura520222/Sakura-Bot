@@ -5,7 +5,76 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.2.5] - 2026-01-12 （最新）
+## [1.2.6] - 2026-01-12 （最新）
+
+### 新增
+- **多频率模式支持**：新增"每天"和"每周N天"两种自动总结频率模式
+  - **每天模式 (daily)**：每天在固定时间执行总结，如每天23:00
+  - **每周N天模式 (weekly)**：每周在指定的多天执行，如每周一和周四
+  - 支持为每个频道单独配置不同的总结频率
+  - 报告标题根据频率自动显示"日报"或"周报"
+  - 配置数据结构扩展支持 `frequency` 和 `days` 字段
+
+### 命令增强
+- `/setchannelschedule` 命令支持新格式：
+  - `/setchannelschedule <频道> daily <小时> <分钟>` - 设置每天总结
+  - `/setchannelschedule <频道> weekly <星期,星期> <小时> <分钟>` - 设置每周多天总结
+  - 支持多天格式：`mon,thu` 表示周一和周四
+- `/showchannelschedule` 命令优化显示格式：
+  - 清晰展示"每天"或"每周N天"模式
+  - 使用中文显示星期几（周一、周二等）
+  - 支持查看所有频道或指定频道的配置
+
+### 向后兼容
+- 保留旧命令格式 `/setchannelschedule <频道> <星期> <小时> <分钟>`
+- 旧格式配置自动识别并转换为新格式
+- 无需修改现有配置即可继续使用
+- 现有调度任务不受影响
+
+### 技术实现
+- **config.py** 新增函数：
+  - `normalize_schedule_config()` - 配置标准化，处理向后兼容
+  - `validate_schedule_v2()` - 新格式验证
+  - `set_channel_schedule_v2()` - 新格式设置
+  - `build_cron_trigger()` - 构建 cron 触发器参数
+- **main.py** 更新调度器初始化逻辑：
+  - 使用 `build_cron_trigger()` 构建触发器
+  - 支持每天的 `day_of_week='*'` 参数
+  - 支持每周多天的 `day_of_week='mon,thu'` 参数
+- **command_handlers.py** 更新命令处理：
+  - 添加 `format_schedule_info()` 辅助函数
+  - 支持新旧格式的命令解析
+  - 更新手动总结标题生成逻辑
+- **scheduler.py** 更新报告标题生成：
+  - 根据频率模式生成"日报"或"周报"标题
+  - 日报标题格式：`频道名 日报 M.D`
+  - 周报标题格式：`频道名 周报 M.D-M.D`
+
+### 配置示例
+```json
+{
+  "summary_schedules": {
+    "https://t.me/DailyChannel": {
+      "frequency": "daily",
+      "hour": 23,
+      "minute": 0
+    },
+    "https://t.me/WeeklyChannel": {
+      "frequency": "weekly",
+      "days": ["mon", "thu"],
+      "hour": 14,
+      "minute": 30
+    },
+    "https://t.me/LegacyChannel": {
+      "day": "sun",
+      "hour": 23,
+      "minute": 0
+    }
+  }
+}
+```
+
+## [1.2.5] - 2026-01-12
 
 ### 移除
 - **完全移除Web管理界面**：移除了整个Web管理界面及相关功能

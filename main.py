@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
-    RESTART_FLAG_FILE, logger, get_channel_schedule, ADMIN_LIST
+    RESTART_FLAG_FILE, logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST
 )
 from scheduler import main_job
 from command_handlers import (
@@ -37,7 +37,7 @@ from command_handlers import (
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.2.5"
+__version__ = "1.2.6"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -105,30 +105,42 @@ async def main():
         
         # 初始化调度器
         scheduler = AsyncIOScheduler()
-        
+
         # 为每个频道配置独立的定时任务
         logger.info(f"开始为 {len(CHANNELS)} 个频道配置定时任务...")
         for channel in CHANNELS:
-            # 获取频道的自动总结时间配置
+            # 获取频道的自动总结时间配置（已标准化）
             schedule = get_channel_schedule(channel)
-            day = schedule['day']
-            hour = schedule['hour']
-            minute = schedule['minute']
-            
-            # 创建定时任务，传入频道参数
+
+            # 构建 cron 触发器参数
+            trigger_params = build_cron_trigger(schedule)
+
+            # 创建定时任务
             scheduler.add_job(
                 main_job,
                 'cron',
-                day_of_week=day,
-                hour=hour,
-                minute=minute,
+                **trigger_params,  # 解包触发器参数
                 args=[channel],  # 传入频道参数
                 id=f"summary_job_{channel}",  # 唯一ID，便于管理
                 replace_existing=True
             )
-            
-            logger.info(f"频道 {channel} 的定时任务已配置：每周{day} {hour:02d}:{minute:02d}")
-        
+
+            # 格式化输出信息
+            frequency = schedule.get('frequency', 'weekly')
+            if frequency == 'daily':
+                frequency_text = '每天'
+            elif frequency == 'weekly':
+                day_map = {
+                    'mon': '周一', 'tue': '周二', 'wed': '周三', 'thu': '周四',
+                    'fri': '周五', 'sat': '周六', 'sun': '周日'
+                }
+                days_cn = '、'.join([day_map.get(d, d) for d in schedule.get('days', [])])
+                frequency_text = f'每周{days_cn}'
+            else:
+                frequency_text = '未知'
+
+            logger.info(f"频道 {channel} 的定时任务已配置：{frequency_text} {schedule['hour']:02d}:{schedule['minute']:02d}")
+
         logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
         
         # 启动机器人客户端，处理命令

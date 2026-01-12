@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.2.5
+# 🌸 Sakura-频道总结助手 v1.2.6
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -31,7 +31,7 @@
 |------|------|------|
 | 🤖 **AI智能总结** | 利用AI大模型对消息进行深度分析，提取核心要点 | ✅ |
 | 🔍 **自动消息抓取** | 定期监控指定Telegram频道，自动抓取并整理消息内容 | ✅ |
-| ⏰ **定时周报推送** | 每周一早上9点自动生成并发送频道周报 | ✅ |
+| ⏰ **多频率模式** | 支持每天、每周、每周多天等多种自动总结频率 | ✅ |
 | ⚡ **手动触发总结** | 支持管理员通过命令随时生成总结 | ✅ |
 | 🔧 **自定义AI配置** | 支持多种OpenAI兼容API服务（DeepSeek、OpenAI等） | ✅ |
 | 🎯 **自定义提示词** | 允许管理员设置专属提示词，灵活调整总结风格 | ✅ |
@@ -253,13 +253,26 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 # 查看所有频道配置
 /showchannelschedule
 
-# 设置频道自动总结时间
-/setchannelschedule FireflyLeak tue 10 30
-# 含义：FireflyLeak频道每周二10:30执行自动总结
+# 每天模式：设置每天固定时间总结
+/setchannelschedule FireflyLeak daily 23 0
+# 含义：FireflyLeak频道每天23:00执行自动总结
+
+# 每周模式：设置每周多天总结
+/setchannelschedule Nahida_Leak weekly mon,thu 14 30
+# 含义：Nahida_Leak频道每周一和周四14:30执行自动总结
+
+# 旧格式（仍然支持）：设置每周单天总结
+/setchannelschedule FireflyLeak sun 9 0
+# 含义：FireflyLeak频道每周日09:00执行自动总结
 
 # 删除频道时间配置
 /deletechannelschedule FireflyLeak
 ```
+
+**支持的频率模式：**
+- **每天模式 (daily)**：每天在固定时间执行总结
+- **每周模式 (weekly)**：每周在指定的多天执行总结
+- **旧格式（向后兼容）**：每周单天执行总结
 
 ## 🏗️ 项目结构
 
@@ -330,7 +343,27 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-### [1.2.5] - 2026-01-12 （最新）
+### [1.2.6] - 2026-01-12 （最新）
+
+#### 新增
+- **多频率模式支持**：新增"每天"和"每周N天"两种自动总结频率模式
+  - **每天模式 (daily)**：每天在固定时间执行总结，如每天23:00
+  - **每周N天模式 (weekly)**：每周在指定的多天执行，如每周一和周四
+  - 支持为每个频道单独配置不同的总结频率
+  - 报告标题根据频率自动显示"日报"或"周报"
+
+#### 命令增强
+- `/setchannelschedule` 命令支持新格式：
+  - `/setchannelschedule <频道> daily <小时> <分钟>` - 设置每天总结
+  - `/setchannelschedule <频道> weekly <星期,星期> <小时> <分钟>` - 设置每周多天总结
+- `/showchannelschedule` 命令优化显示格式，清晰展示每天/每周模式
+
+#### 向后兼容
+- 保留旧命令格式 `/setchannelschedule <频道> <星期> <小时> <分钟>`
+- 旧格式配置自动识别并转换为新格式
+- 无需修改现有配置即可继续使用
+
+### [1.2.5] - 2026-01-12
 
 #### 移除
 - **完全移除Web管理界面**：移除了整个Web管理界面及相关功能
