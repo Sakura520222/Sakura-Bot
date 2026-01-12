@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.2.6] - 2026-01-12 （最新）
+## [1.2.6] - 2026-01-12
 
 ### 新增
 - **多频率模式支持**：新增"每天"和"每周N天"两种自动总结频率模式
