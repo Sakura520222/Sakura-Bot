@@ -139,34 +139,40 @@ def save_config(config):
 
 def update_module_variables(config):
     """更新模块变量以匹配配置文件"""
-    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, CHANNELS, SEND_REPORT_TO_SOURCE, SUMMARY_SCHEDULES
-    
+    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, CHANNELS, SEND_REPORT_TO_SOURCE, SUMMARY_SCHEDULES, CHANNEL_POLL_SETTINGS
+
     # 更新AI配置
     LLM_API_KEY = config.get('api_key', LLM_API_KEY)
     LLM_BASE_URL = config.get('base_url', LLM_BASE_URL)
     LLM_MODEL = config.get('model', LLM_MODEL)
-    
+
     # 更新频道列表
     config_channels = config.get('channels')
     if config_channels and isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已更新内存中的频道列表: {CHANNELS}")
-    
+
     # 更新是否将报告发送回源频道的配置
     if 'send_report_to_source' in config:
         SEND_REPORT_TO_SOURCE = config['send_report_to_source']
         logger.info(f"已更新内存中的发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
-    
+
     # 更新是否启用投票功能的配置
     if 'enable_poll' in config:
         ENABLE_POLL = config['enable_poll']
         logger.info(f"已更新内存中的投票功能配置: {ENABLE_POLL}")
-    
+
     # 更新频道级时间配置
     summary_schedules_config = config.get('summary_schedules', {})
     if isinstance(summary_schedules_config, dict):
         SUMMARY_SCHEDULES = summary_schedules_config
         logger.info(f"已更新内存中的频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
+
+    # 更新频道级投票配置
+    channel_poll_config = config.get('channel_poll_settings', {})
+    if isinstance(channel_poll_config, dict):
+        CHANNEL_POLL_SETTINGS = channel_poll_config
+        logger.info(f"已更新内存中的频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
 
 # 加载配置文件，覆盖环境变量默认值
 logger.info("开始加载配置文件...")
@@ -261,6 +267,16 @@ if config:
         logger.info(f"已从配置文件加载频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
     else:
         logger.warning("配置文件中的summary_schedules格式不正确，使用默认配置")
+
+# 频道级投票配置
+CHANNEL_POLL_SETTINGS = {}
+if config:
+    channel_poll_config = config.get('channel_poll_settings', {})
+    if isinstance(channel_poll_config, dict):
+        CHANNEL_POLL_SETTINGS = channel_poll_config
+        logger.info(f"已从配置文件加载频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
+    else:
+        logger.warning("配置文件中的channel_poll_settings格式不正确，使用默认配置")
 
 # 获取频道的时间配置
 def get_channel_schedule(channel):
@@ -529,3 +545,109 @@ def build_cron_trigger(schedule_config):
             'hour': schedule_config.get('hour', DEFAULT_SUMMARY_HOUR),
             'minute': schedule_config.get('minute', DEFAULT_SUMMARY_MINUTE)
         }
+
+
+# ==================== 频道级投票配置管理函数 ====================
+
+def get_channel_poll_config(channel):
+    """获取指定频道的投票配置
+
+    Args:
+        channel: 频道URL
+
+    Returns:
+        dict: 包含 enabled 和 send_to_channel 的配置字典
+            - enabled: 是否启用投票（None 表示使用全局配置）
+            - send_to_channel: true=频道模式, false=讨论组模式
+    """
+    if channel in CHANNEL_POLL_SETTINGS:
+        config = CHANNEL_POLL_SETTINGS[channel]
+        return {
+            'enabled': config.get('enabled', None),  # None 表示使用全局配置
+            'send_to_channel': config.get('send_to_channel', False)  # 默认讨论组模式
+        }
+    else:
+        # 没有独立配置，返回默认配置
+        return {
+            'enabled': None,  # 使用全局 ENABLE_POLL
+            'send_to_channel': False  # 默认讨论组模式
+        }
+
+
+def set_channel_poll_config(channel, enabled=None, send_to_channel=None):
+    """设置指定频道的投票配置
+
+    Args:
+        channel: 频道URL
+        enabled: 是否启用投票（None 表示不修改）
+        send_to_channel: 投票发送位置（None 表示不修改）
+            True - 频道模式（直接发送到频道）
+            False - 讨论组模式（发送到讨论组）
+
+    Returns:
+        bool: 是否成功保存配置
+    """
+    try:
+        # 加载当前配置
+        current_config = load_config()
+
+        # 确保channel_poll_settings字段存在
+        if 'channel_poll_settings' not in current_config:
+            current_config['channel_poll_settings'] = {}
+
+        # 获取频道当前配置
+        if channel not in current_config['channel_poll_settings']:
+            current_config['channel_poll_settings'][channel] = {}
+
+        channel_config = current_config['channel_poll_settings'][channel]
+
+        # 更新配置（只更新提供的参数）
+        if enabled is not None:
+            channel_config['enabled'] = enabled
+            logger.info(f"设置频道 {channel} 的投票启用状态: {enabled}")
+
+        if send_to_channel is not None:
+            channel_config['send_to_channel'] = send_to_channel
+            logger.info(f"设置频道 {channel} 的投票发送位置: {'频道' if send_to_channel else '讨论组'}")
+
+        # 保存配置
+        save_config(current_config)
+
+        logger.info(f"已更新频道 {channel} 的投票配置")
+        return True
+    except Exception as e:
+        logger.error(f"设置频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+def delete_channel_poll_config(channel):
+    """删除指定频道的投票配置
+
+    删除后，该频道将使用全局投票配置
+
+    Args:
+        channel: 频道URL
+
+    Returns:
+        bool: 是否成功删除配置
+    """
+    try:
+        # 加载当前配置
+        current_config = load_config()
+
+        # 检查是否存在配置
+        if 'channel_poll_settings' in current_config and channel in current_config['channel_poll_settings']:
+            # 删除频道配置
+            del current_config['channel_poll_settings'][channel]
+
+            # 保存配置
+            save_config(current_config)
+
+            logger.info(f"已删除频道 {channel} 的投票配置，将使用全局配置")
+            return True
+        else:
+            logger.info(f"频道 {channel} 没有独立的投票配置，无需删除")
+            return True
+    except Exception as e:
+        logger.error(f"删除频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False

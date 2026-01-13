@@ -14,7 +14,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient
 from telethon.tl.types import PeerChannel
-from config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL
+from config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL, get_channel_poll_config
 from error_handler import retry_with_backoff, record_error
 from telegram_client_utils import split_message_smart, validate_message_entities
 
@@ -419,15 +419,15 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         except Exception as e:
                             logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
                     
-                    # 如果启用了投票功能，发送投票到讨论组
-                    if ENABLE_POLL and report_message_ids:
+                    # 如果启用了投票功能，根据频道配置发送投票
+                    if report_message_ids:
                         logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
                         # 使用第一个消息ID作为投票回复目标
-                        poll_success = await send_poll_to_discussion_group(
+                        poll_success = await send_poll(
                             use_client, source_channel, report_message_ids[0], summary_text_for_source
                         )
                         if poll_success:
-                            logger.info("投票成功发送到讨论组")
+                            logger.info("投票成功发送")
                         else:
                             logger.warning("投票发送失败，但总结消息已成功发送")
                 except Exception as e:
@@ -580,15 +580,15 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             except Exception as e:
                                 logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
                         
-                        # 如果启用了投票功能，发送投票到讨论组
-                        if ENABLE_POLL and report_message_ids:
+                        # 如果启用了投票功能，根据频道配置发送投票
+                        if report_message_ids:
                             logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
                             # 使用第一个消息ID作为投票回复目标
-                            poll_success = await send_poll_to_discussion_group(
+                            poll_success = await send_poll(
                                 use_client, source_channel, report_message_ids[0], summary_text_for_source
                             )
                             if poll_success:
-                                logger.info("投票成功发送到讨论组")
+                                logger.info("投票成功发送")
                             else:
                                 logger.warning("投票发送失败，但总结消息已成功发送")
                     except Exception as e:
@@ -602,15 +602,143 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
         return []
 
 
-async def send_poll_to_discussion_group(client, channel, summary_message_id, summary_text):
-    """发送投票到频道的讨论组（评论区）
-    
+async def send_poll_to_channel(client, channel, summary_message_id, summary_text):
+    """发送投票到源频道，直接回复总结消息
+
     Args:
         client: Telegram客户端实例
         channel: 频道URL或ID
         summary_message_id: 总结消息在频道中的ID
         summary_text: 总结文本，用于生成投票内容
-    
+
+    Returns:
+        bool: 是否成功发送投票
+    """
+    logger.info(f"开始处理投票发送到频道: 频道={channel}, 消息ID={summary_message_id}")
+
+    try:
+        # 获取频道实体
+        logger.info(f"获取频道实体: {channel}")
+        channel_entity = await client.get_entity(channel)
+        logger.info(f"成功获取频道实体: {channel_entity.title if hasattr(channel_entity, 'title') else channel}")
+
+        # 生成投票内容
+        logger.info("开始生成投票内容")
+        from ai_client import generate_poll_from_summary
+        poll_data = generate_poll_from_summary(summary_text)
+
+        if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
+            logger.error("生成投票内容失败，使用默认投票")
+            poll_data = {
+                "question": "你对本周总结有什么看法？",
+                "options": ["非常满意", "比较满意", "一般", "有待改进"]
+            }
+
+        # 发送投票，使用 reply_to 参数回复总结消息
+        logger.info(f"发送投票到频道: {poll_data['question']}")
+
+        # 使用底层RPC调用发送投票
+        from telethon.tl.types import (
+            InputMediaPoll, Poll, PollAnswer, TextWithEntities,
+            InputReplyToMessage
+        )
+        from telethon.tl.functions.messages import SendMediaRequest
+
+        try:
+            # 清洗并截断问题文本
+            question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
+
+            # 构造选项
+            poll_answers = []
+            for i, opt in enumerate(poll_data.get('options', [])[:10]):
+                opt_clean = str(opt).strip()[:100]
+                poll_answers.append(PollAnswer(
+                    text=TextWithEntities(text=opt_clean, entities=[]),
+                    option=bytes([i])
+                ))
+
+            # 构造投票对象
+            poll_obj = Poll(
+                id=0,
+                question=TextWithEntities(text=question_text, entities=[]),
+                answers=poll_answers,
+                closed=False,
+                public_voters=False,
+                multiple_choice=False,
+                quiz=False
+            )
+
+            # 构造回复头
+            reply_header = InputReplyToMessage(reply_to_msg_id=int(summary_message_id))
+
+            # 发送投票到频道，回复总结消息
+            await client(SendMediaRequest(
+                peer=channel,
+                media=InputMediaPoll(poll=poll_obj),
+                message='',
+                reply_to=reply_header
+            ))
+
+            logger.info(f"✅ 成功发送投票到频道并回复消息 {summary_message_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"发送投票到频道失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+
+    except Exception as e:
+        record_error(e, "send_poll_to_channel")
+        logger.error(f"发送投票到频道时发生错误: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+async def send_poll(client, channel, summary_message_id, summary_text):
+    """根据频道配置发送投票到频道或讨论组
+
+    Args:
+        client: Telegram客户端实例
+        channel: 频道URL或ID
+        summary_message_id: 总结消息在频道中的ID
+        summary_text: 总结文本，用于生成投票内容
+
+    Returns:
+        bool: 是否成功发送投票
+    """
+    # 获取频道投票配置
+    poll_config = get_channel_poll_config(channel)
+
+    # 检查是否启用投票
+    enabled = poll_config['enabled']
+    if enabled is None:
+        # 没有独立配置，使用全局配置
+        enabled = ENABLE_POLL
+
+    if not enabled:
+        logger.info(f"频道 {channel} 的投票功能已禁用，跳过投票发送")
+        return False
+
+    # 根据配置决定发送位置
+    if poll_config['send_to_channel']:
+        # 频道模式：直接回复总结消息
+        logger.info(f"频道 {channel} 配置为频道模式，投票将发送到频道")
+        return await send_poll_to_channel(client, channel, summary_message_id, summary_text)
+    else:
+        # 讨论组模式：发送到讨论组，回复转发消息
+        logger.info(f"频道 {channel} 配置为讨论组模式，投票将发送到讨论组")
+        return await send_poll_to_discussion_group(client, channel, summary_message_id, summary_text)
+
+
+async def send_poll_to_discussion_group(client, channel, summary_message_id, summary_text):
+    """发送投票到频道的讨论组（评论区）
+
+    Args:
+        client: Telegram客户端实例
+        channel: 频道URL或ID
+        summary_message_id: 总结消息在频道中的ID
+        summary_text: 总结文本，用于生成投票内容
+
     Returns:
         bool: 是否成功发送投票
     """

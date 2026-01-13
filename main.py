@@ -32,12 +32,13 @@ from command_handlers import (
     handle_restart, handle_show_channels, handle_add_channel,
     handle_delete_channel, handle_clear_summary_time, handle_set_send_to_source,
     handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
-    handle_changelog, handle_shutdown, handle_pause, handle_resume
+    handle_changelog, handle_shutdown, handle_pause, handle_resume,
+    handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll
 )
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.2.6"
+__version__ = "1.2.7"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -72,6 +73,9 @@ async def send_startup_message(client):
 /showchannelschedule - 查看频道自动总结时间配置
 /setchannelschedule - 设置频道自动总结时间
 /deletechannelschedule - 删除频道自动总结时间配置
+/channelpoll - 查看频道投票配置
+/setchannelpoll - 设置频道投票配置
+/deletechannelpoll - 删除频道投票配置
 
 **版本信息**
 当前版本: v{__version__}
@@ -181,6 +185,10 @@ async def main():
         client.add_event_handler(handle_show_channel_schedule, NewMessage(pattern='/showchannelschedule|/show_channel_schedule|/查看频道时间配置'))
         client.add_event_handler(handle_set_channel_schedule, NewMessage(pattern='/setchannelschedule|/set_channel_schedule|/设置频道时间配置'))
         client.add_event_handler(handle_delete_channel_schedule, NewMessage(pattern='/deletechannelschedule|/delete_channel_schedule|/删除频道时间配置'))
+        # 添加频道投票配置命令
+        client.add_event_handler(handle_show_channel_poll, NewMessage(pattern='/channelpoll|/channel_poll|/查看频道投票配置'))
+        client.add_event_handler(handle_set_channel_poll, NewMessage(pattern='/setchannelpoll|/set_channel_poll|/设置频道投票配置'))
+        client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
         # 添加更新日志命令
         client.add_event_handler(handle_changelog, NewMessage(pattern='/changelog|/更新日志'))
         # 只处理非命令消息作为提示词或AI配置输入
@@ -216,6 +224,9 @@ async def main():
             BotCommand(command="showchannelschedule", description="查看频道自动总结时间配置"),
             BotCommand(command="setchannelschedule", description="设置频道自动总结时间"),
             BotCommand(command="deletechannelschedule", description="删除频道自动总结时间配置"),
+            BotCommand(command="channelpoll", description="查看频道投票配置"),
+            BotCommand(command="setchannelpoll", description="设置频道投票配置"),
+            BotCommand(command="deletechannelpoll", description="删除频道投票配置"),
             BotCommand(command="changelog", description="查看更新日志")
         ]
         

@@ -5,6 +5,81 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.7] - 2026-01-13
+
+### 新增
+- **频道级投票配置功能**：为每个频道单独配置投票的发送位置和行为
+  - **频道模式**：投票直接发送到频道，回复总结消息
+  - **讨论组模式**：投票发送到频道讨论组，回复转发消息（默认，保持向后兼容）
+  - 支持为每个频道单独启用或禁用投票功能
+  - 支持通过配置文件或命令进行配置
+
+### 新增命令
+- `/channelpoll <频道>` - 查看指定频道或所有频道的投票配置
+  - 不带参数：显示所有频道的投票配置
+  - 带频道参数：显示指定频道的详细配置
+- `/setchannelpoll <频道> <enabled> <location>` - 设置频道投票配置
+  - `enabled`: true/false（启用/禁用投票）
+  - `location`: channel/discussion（频道/讨论组）
+  - 示例：`/setchannelpoll channel1 true channel` - 启用并发送到频道
+  - 示例：`/setchannelpoll channel1 false discussion` - 禁用投票
+- `/deletechannelpoll <频道>` - 删除频道投票配置，恢复全局配置
+  - 删除后频道将使用全局 `ENABLE_POLL` 配置
+  - 默认使用讨论组模式
+
+### 配置文件增强
+- **config.json** 新增 `channel_poll_settings` 字段：
+  ```json
+  {
+    "channel_poll_settings": {
+      "https://t.me/channel1": {
+        "enabled": true,
+        "send_to_channel": true
+      },
+      "https://t.me/channel2": {
+        "enabled": true,
+        "send_to_channel": false
+      }
+    }
+  }
+  ```
+- 支持为每个频道配置独立的投票行为
+- 未配置的频道自动使用全局配置，保持向后兼容
+
+### 技术实现
+- **config.py** 新增函数：
+  - `get_channel_poll_config(channel)` - 获取频道投票配置
+  - `set_channel_poll_config(channel, enabled, send_to_channel)` - 设置频道投票配置
+  - `delete_channel_poll_config(channel)` - 删除频道投票配置
+  - 新增 `CHANNEL_POLL_SETTINGS` 全局变量
+- **telegram_client.py** 重构投票发送逻辑：
+  - 新增 `send_poll_to_channel()` - 频道模式投票发送
+  - 新增 `send_poll()` - 根据配置统一入口
+  - 保留 `send_poll_to_discussion_group()` - 讨论组模式投票发送
+  - 更新 `send_report()` 使用新的投票发送接口
+- **command_handlers.py** 新增命令处理：
+  - `handle_show_channel_poll()` - 查看投票配置
+  - `handle_set_channel_poll()` - 设置投票配置
+  - `handle_delete_channel_poll()` - 删除投票配置
+- **main.py** 注册新命令和更新启动消息
+
+### 文档更新
+- 新增 `POLL_FEATURE.md` 文档，详细说明投票配置功能
+- 新增 `config.example.json` 配置示例文件
+- 更新 `README.md`，添加投票配置说明和使用示例
+- 更新命令列表，添加三个新投票配置命令
+
+### 向后兼容
+- 未配置的频道默认使用讨论组模式（原有行为）
+- 未配置启用状态的频道使用全局 `ENABLE_POLL` 配置
+- 现有配置无需修改即可继续使用
+- 所有现有功能保持不变
+
+### 使用场景
+- **公开频道**：使用讨论组模式，投票在评论区进行
+- **私有频道**：使用频道模式，投票直接在频道中
+- **混合配置**：不同频道使用不同的投票策略
+
 ## [1.2.6] - 2026-01-12
 
 ### 新增

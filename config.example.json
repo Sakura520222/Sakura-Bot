@@ -1,0 +1,35 @@
+{
+  "api_key": "your_deepseek_api_key_here",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "channels": [
+    "https://t.me/example_channel1",
+    "https://t.me/example_channel2"
+  ],
+  "send_report_to_source": true,
+  "enable_poll": true,
+  "log_level": "INFO",
+  "summary_schedules": {
+    "https://t.me/example_channel1": {
+      "frequency": "weekly",
+      "days": ["mon"],
+      "hour": 9,
+      "minute": 0
+    },
+    "https://t.me/example_channel2": {
+      "frequency": "daily",
+      "hour": 23,
+      "minute": 0
+    }
+  },
+  "channel_poll_settings": {
+    "https://t.me/example_channel1": {
+      "enabled": true,
+      "send_to_channel": true
+    },
+    "https://t.me/example_channel2": {
+      "enabled": true,
+      "send_to_channel": false
+    }
+  }
+}

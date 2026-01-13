@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.2.6
+# 🌸 Sakura-频道总结助手 v1.2.7
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -42,6 +42,7 @@
 | ⏰ **频道级时间配置** | 为每个频道单独配置自动总结时间 | ✅ |
 | 🛡️ **错误处理与恢复** | 智能重试机制、健康检查和优雅关闭 | ✅ |
 | 📊 **投票消息功能** | 总结消息发送后自动生成投票并发送到讨论组评论区 | ✅ |
+| 🎯 **频道级投票配置** | 为每个频道单独配置投票发送位置和启用状态 | ✅ |
 
 ## 🚀 快速开始
 
@@ -208,6 +209,9 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 | `/showchannelschedule` | `/查看频道时间配置` | 查看频道自动总结时间配置 | `/showchannelschedule` |
 | `/setchannelschedule` | `/设置频道时间配置` | 设置频道自动总结时间 | `/setchannelschedule` |
 | `/deletechannelschedule` | `/删除频道时间配置` | 删除频道自动总结时间配置 | `/deletechannelschedule` |
+| `/channelpoll` | `/查看频道投票配置` | 查看频道投票配置 | `/channelpoll` |
+| `/setchannelpoll` | `/设置频道投票配置` | 设置频道投票配置 | `/setchannelpoll` |
+| `/deletechannelpoll` | `/删除频道投票配置` | 删除频道投票配置 | `/deletechannelpoll` |
 | `/changelog` | `/更新日志` | 查看更新日志 | `/changelog` |
 
 ### AI配置管理
@@ -273,6 +277,34 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 - **每天模式 (daily)**：每天在固定时间执行总结
 - **每周模式 (weekly)**：每周在指定的多天执行总结
 - **旧格式（向后兼容）**：每周单天执行总结
+
+#### 频道投票配置
+
+```bash
+# 查看所有频道的投票配置
+/channelpoll
+
+# 查看指定频道的投票配置
+/channelpoll channel1
+
+# 设置频道投票：启用并发送到频道（回复总结消息）
+/setchannelpoll channel1 true channel
+
+# 设置频道投票：启用并发送到讨论组（回复转发消息）
+/setchannelpoll channel1 true discussion
+
+# 禁用频道投票功能
+/setchannelpoll channel1 false channel
+
+# 删除频道投票配置（恢复全局配置）
+/deletechannelpoll channel1
+```
+
+**投票配置说明：**
+- **频道模式 (channel)**：投票直接发送到频道，回复总结消息
+- **讨论组模式 (discussion)**：投票发送到频道讨论组，回复转发消息（默认）
+- **启用状态**：可以为每个频道单独启用或禁用投票功能
+- **向后兼容**：未配置的频道使用全局 `ENABLE_POLL` 配置，默认讨论组模式
 
 ## 🏗️ 项目结构
 
@@ -343,7 +375,38 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-### [1.2.6] - 2026-01-12 （最新）
+### [1.2.7] - 2026-01-13 （最新）
+
+#### 新增
+- **频道级投票配置功能**：为每个频道单独配置投票的发送位置和行为
+  - **频道模式**：投票直接发送到频道，回复总结消息
+  - **讨论组模式**：投票发送到频道讨论组，回复转发消息（默认，保持向后兼容）
+  - 支持为每个频道单独启用或禁用投票功能
+  - 支持通过配置文件或命令进行配置
+
+#### 新增命令
+- `/channelpoll <频道>` - 查看指定频道或所有频道的投票配置
+- `/setchannelpoll <频道> <enabled> <location>` - 设置频道投票配置
+  - `enabled`: true/false（启用/禁用投票）
+  - `location`: channel/discussion（频道/讨论组）
+- `/deletechannelpoll <频道>` - 删除频道投票配置，恢复全局配置
+
+#### 配置文件增强
+- 在 `config.json` 中新增 `channel_poll_settings` 字段
+- 支持为每个频道配置独立的投票行为
+- 未配置的频道自动使用全局配置，保持向后兼容
+
+#### 文档更新
+- 新增 `POLL_FEATURE.md` 文档，详细说明投票配置功能
+- 新增 `config.example.json` 配置示例文件
+- 更新 README.md，添加投票配置说明
+
+#### 向后兼容
+- 未配置的频道默认使用讨论组模式（原有行为）
+- 未配置启用状态的频道使用全局 `ENABLE_POLL` 配置
+- 现有配置无需修改即可继续使用
+
+### [1.2.6] - 2026-01-12
 
 #### 新增
 - **多频率模式支持**：新增"每天"和"每周N天"两种自动总结频率模式

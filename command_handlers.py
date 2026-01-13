@@ -20,7 +20,8 @@ from config import (
     CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE,
     RESTART_FLAG_FILE, load_config, save_config, logger,
     get_channel_schedule, set_channel_schedule, set_channel_schedule_v2,
-    delete_channel_schedule, validate_schedule
+    delete_channel_schedule, validate_schedule,
+    get_channel_poll_config, set_channel_poll_config, delete_channel_poll_config
 )
 from prompt_manager import load_prompt, save_prompt
 from summary_time_manager import load_last_summary_time, save_last_summary_time
@@ -1094,34 +1095,263 @@ async def handle_resume(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply("您没有权限执行此命令")
         return
-    
+
     # 检查当前状态
     from config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
     current_state = get_bot_state()
-    
+
     if current_state == BOT_STATE_RUNNING:
         await event.reply("机器人已经在运行状态")
         return
-    
+
     if current_state != BOT_STATE_PAUSED:
         await event.reply(f"机器人当前状态为 {current_state}，无法恢复")
         return
-    
+
     # 恢复调度器
     from config import get_scheduler_instance
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.resume()
         logger.info("调度器已恢复")
-    
+
     # 更新状态
     set_bot_state(BOT_STATE_RUNNING)
-    
+
     logger.info(f"执行命令 {command} 成功")
     await event.reply("机器人已恢复运行。定时任务将继续执行。")
+
+async def handle_show_channel_poll(event):
+    """处理/channelpoll命令，查看指定频道的投票配置"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+
+    try:
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) > 1:
+            # 有指定频道参数
+            channel_part = parts[1]
+            if channel_part.startswith('http'):
+                channel = channel_part
+            else:
+                channel = f"https://t.me/{channel_part}"
+
+            # 检查频道是否存在
+            if channel not in CHANNELS:
+                await event.reply(f"频道 {channel} 不在配置列表中")
+                return
+
+            # 获取指定频道的配置
+            poll_config = get_channel_poll_config(channel)
+
+            channel_name = channel.split('/')[-1]
+            enabled = poll_config['enabled']
+            send_to_channel = poll_config['send_to_channel']
+
+            # 格式化启用状态
+            if enabled is None:
+                enabled_text = "使用全局配置"
+            else:
+                enabled_text = "启用" if enabled else "禁用"
+
+            # 格式化发送位置
+            location_text = "频道" if send_to_channel else "讨论组"
+
+            poll_info = f"频道 {channel_name} 的投票配置：\n\n"
+            poll_info += f"• 状态：{enabled_text}\n"
+            poll_info += f"• 发送位置：{location_text}\n\n"
+
+            poll_info += f"使用格式：\n"
+            poll_info += f"/setchannelpoll {channel_name} true|false channel|discussion\n"
+            poll_info += f"/deletechannelpoll {channel_name}"
+
+            logger.info(f"执行命令 {command} 成功")
+            await event.reply(poll_info)
+        else:
+            # 没有指定频道，显示所有频道的配置
+            if not CHANNELS:
+                await event.reply("当前没有配置任何频道")
+                return
+
+            # 构建所有频道的配置信息
+            poll_info = "所有频道的投票配置：\n\n"
+            for i, ch in enumerate(CHANNELS, 1):
+                poll_config = get_channel_poll_config(ch)
+                channel_name = ch.split('/')[-1]
+
+                enabled = poll_config['enabled']
+                send_to_channel = poll_config['send_to_channel']
+
+                # 格式化启用状态
+                if enabled is None:
+                    enabled_text = "全局"
+                else:
+                    enabled_text = "启用" if enabled else "禁用"
+
+                # 格式化发送位置
+                location_text = "频道" if send_to_channel else "讨论组"
+
+                poll_info += f"{i}. {channel_name}: {enabled_text} / {location_text}\n"
+
+            await event.reply(poll_info)
+
+    except Exception as e:
+        logger.error(f"查看频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"查看频道投票配置时出错: {e}")
+
+async def handle_set_channel_poll(event):
+    """处理/setchannelpoll命令，设置指定频道的投票配置"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+
+    try:
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) < 4:
+            await event.reply(
+                "请提供完整的参数。可用格式：\n\n"
+                "/setchannelpoll <频道> <enabled> <location>\n\n"
+                "参数说明：\n"
+                "• 频道：频道URL或名称\n"
+                "• enabled：true（启用）或 false（禁用）\n"
+                "• location：channel（频道）或 discussion（讨论组）\n\n"
+                "示例：\n"
+                "/setchannelpoll channel1 true channel\n"
+                "/setchannelpoll channel1 false discussion\n"
+                "/setchannelpoll channel1 false channel"
+            )
+            return
+
+        # 解析频道参数
+        channel_part = parts[1]
+        if channel_part.startswith('http'):
+            channel = channel_part
+        else:
+            channel = f"https://t.me/{channel_part}"
+
+        # 检查频道是否存在
+        if channel not in CHANNELS:
+            await event.reply(f"频道 {channel} 不在配置列表中，请先使用/addchannel命令添加频道")
+            return
+
+        # 解析enabled参数
+        enabled_str = parts[2].lower()
+        if enabled_str in ['true', '1', 'yes']:
+            enabled = True
+        elif enabled_str in ['false', '0', 'no']:
+            enabled = False
+        else:
+            await event.reply(f"无效的enabled参数: {enabled_str}\n\n有效值：true, false, 1, 0, yes, no")
+            return
+
+        # 解析location参数
+        location_str = parts[3].lower()
+        if location_str in ['channel', 'c']:
+            send_to_channel = True
+        elif location_str in ['discussion', 'd', 'discuss']:
+            send_to_channel = False
+        else:
+            await event.reply(f"无效的location参数: {location_str}\n\n有效值：channel, discussion")
+            return
+
+        # 设置配置
+        success = set_channel_poll_config(channel, enabled=enabled, send_to_channel=send_to_channel)
+
+        if success:
+            channel_name = channel.split('/')[-1]
+            enabled_text = "启用" if enabled else "禁用"
+            location_text = "频道" if send_to_channel else "讨论组"
+
+            success_msg = f"已成功设置频道 {channel_name} 的投票配置：\n\n"
+            success_msg += f"• 状态：{enabled_text}\n"
+            success_msg += f"• 发送位置：{location_text}\n"
+
+            if not enabled:
+                success_msg += f"\n注意：投票功能已禁用，不会发送投票。"
+            elif send_to_channel:
+                success_msg += f"\n注意：投票将直接发送到频道，回复总结消息。"
+            else:
+                success_msg += f"\n注意：投票将发送到讨论组，回复转发消息。"
+
+            await event.reply(success_msg)
+        else:
+            await event.reply("设置失败，请检查日志")
+
+    except Exception as e:
+        logger.error(f"设置频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"设置频道投票配置时出错: {e}")
+
+async def handle_delete_channel_poll(event):
+    """处理/deletechannelpoll命令，删除指定频道的投票配置"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+
+    try:
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) < 2:
+            await event.reply("请提供频道参数：/deletechannelpoll 频道\n\n例如：/deletechannelpoll examplechannel")
+            return
+
+        # 解析频道参数
+        channel_part = parts[1]
+        if channel_part.startswith('http'):
+            channel = channel_part
+        else:
+            channel = f"https://t.me/{channel_part}"
+
+        # 检查频道是否存在
+        if channel not in CHANNELS:
+            await event.reply(f"频道 {channel} 不在配置列表中")
+            return
+
+        # 删除频道投票配置
+        success = delete_channel_poll_config(channel)
+
+        if success:
+            channel_name = channel.split('/')[-1]
+            success_msg = f"已成功删除频道 {channel_name} 的投票配置。\n\n"
+            success_msg += f"该频道将使用全局投票配置："
+
+            # 获取全局配置状态
+            from config import ENABLE_POLL
+            global_enabled = "启用" if ENABLE_POLL else "禁用"
+            success_msg += f"\n• 状态：{global_enabled}\n"
+            success_msg += f"• 发送位置：讨论组（默认）"
+
+            logger.info(f"已删除频道 {channel} 的投票配置")
+            await event.reply(success_msg)
+        else:
+            await event.reply("删除频道投票配置失败，请检查日志")
+
+    except Exception as e:
+        logger.error(f"删除频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"删除频道投票配置时出错: {e}")
