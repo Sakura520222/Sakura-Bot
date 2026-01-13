@@ -232,3 +232,4 @@ health_check.session
 .shutdown_flag
 test_session.session
 .claude
+.poll_regenerations.json

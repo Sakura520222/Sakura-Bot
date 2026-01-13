@@ -47,6 +47,10 @@ CONFIG_FILE = "config.json"
 RESTART_FLAG_FILE = ".restart_flag"
 LAST_SUMMARY_FILE = ".last_summary_time.json"
 
+# 讨论组ID缓存 (频道URL -> 讨论组ID)
+# 避免频繁调用GetFullChannelRequest,提升性能
+LINKED_CHAT_CACHE = {}
+
 # 默认提示词
 DEFAULT_PROMPT = "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：\n\n"
 
@@ -651,3 +655,240 @@ def delete_channel_poll_config(channel):
     except Exception as e:
         logger.error(f"删除频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
         return False
+
+
+# 投票重新生成数据存储
+POLL_REGENERATIONS_FILE = ".poll_regenerations.json"
+
+
+def load_poll_regenerations():
+    """加载投票重新生成数据
+
+    Returns:
+        dict: 投票重新生成数据字典
+    """
+    import json
+    if os.path.exists(POLL_REGENERATIONS_FILE):
+        try:
+            with open(POLL_REGENERATIONS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"加载投票重新生成数据失败: {e}")
+            return {}
+    return {}
+
+
+def save_poll_regenerations(data):
+    """保存投票重新生成数据
+
+    Args:
+        data: 要保存的数据字典
+    """
+    import json
+    try:
+        with open(POLL_REGENERATIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"保存投票重新生成数据失败: {e}")
+
+
+def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
+                         button_msg_id, summary_text, channel_name, send_to_channel,
+                         discussion_forward_msg_id=None):
+    """添加一条投票重新生成记录
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+        poll_msg_id: 投票消息ID
+        button_msg_id: 按钮消息ID
+        summary_text: 总结文本
+        channel_name: 频道名称
+        send_to_channel: 是否发送到频道(True=频道, False=讨论组)
+        discussion_forward_msg_id: 讨论组中的转发消息ID(仅讨论组模式需要)
+    """
+    from datetime import datetime, timezone
+    data = load_poll_regenerations()
+    if channel not in data:
+        data[channel] = {}
+    record = {
+        "poll_message_id": poll_msg_id,
+        "button_message_id": button_msg_id,
+        "summary_text": summary_text,
+        "channel_name": channel_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "send_to_channel": send_to_channel
+    }
+    # 如果是讨论组模式，保存转发消息ID
+    if not send_to_channel and discussion_forward_msg_id is not None:
+        record["discussion_forward_msg_id"] = discussion_forward_msg_id
+    data[channel][str(summary_msg_id)] = record
+    save_poll_regenerations(data)
+    logger.info(f"已添加投票重新生成记录: channel={channel}, summary_id={summary_msg_id}")
+
+
+def get_poll_regeneration(channel, summary_msg_id):
+    """获取指定的投票重新生成记录
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+
+    Returns:
+        dict: 投票重新生成记录,如果不存在返回None
+    """
+    data = load_poll_regenerations()
+    return data.get(channel, {}).get(str(summary_msg_id))
+
+
+def update_poll_regeneration(channel, summary_msg_id, poll_msg_id, button_msg_id):
+    """更新投票重新生成记录的消息ID
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+        poll_msg_id: 新的投票消息ID
+        button_msg_id: 新的按钮消息ID
+    """
+    data = load_poll_regenerations()
+    if channel in data and str(summary_msg_id) in data[channel]:
+        data[channel][str(summary_msg_id)]["poll_message_id"] = poll_msg_id
+        data[channel][str(summary_msg_id)]["button_message_id"] = button_msg_id
+        save_poll_regenerations(data)
+        logger.info(f"已更新投票重新生成记录: channel={channel}, summary_id={summary_msg_id}")
+
+
+def delete_poll_regeneration(channel, summary_msg_id):
+    """删除指定的投票重新生成记录
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+    """
+    data = load_poll_regenerations()
+    if channel in data and str(summary_msg_id) in data[channel]:
+        del data[channel][str(summary_msg_id)]
+        save_poll_regenerations(data)
+        logger.info(f"已删除投票重新生成记录: channel={channel}, summary_id={summary_msg_id}")
+
+
+def cleanup_old_regenerations(days=30):
+    """清理超过指定天数的旧记录
+
+    Args:
+        days: 保留天数,默认30天
+
+    Returns:
+        int: 清理的记录数量
+    """
+    from datetime import datetime, timezone, timedelta
+    data = load_poll_regenerations()
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
+    count = 0
+    for channel in list(data.keys()):
+        for summary_id in list(data[channel].keys()):
+            record = data[channel][summary_id]
+            try:
+                record_time = datetime.fromisoformat(record["timestamp"])
+                if record_time < cutoff_time:
+                    del data[channel][summary_id]
+                    count += 1
+            except Exception:
+                pass
+    save_poll_regenerations(data)
+    if count > 0:
+        logger.info(f"已清理 {count} 条超过 {days} 天的投票重新生成记录")
+    return count
+
+
+# ==================== 讨论组ID缓存管理 ====================
+
+def get_cached_discussion_group_id(channel_url):
+    """获取缓存的讨论组ID
+
+    Args:
+        channel_url: 频道URL
+
+    Returns:
+        int: 讨论组ID,如果不存在则返回None
+    """
+    return LINKED_CHAT_CACHE.get(channel_url)
+
+
+def cache_discussion_group_id(channel_url, discussion_group_id):
+    """缓存讨论组ID
+
+    Args:
+        channel_url: 频道URL
+        discussion_group_id: 讨论组ID (已转换为超级群组格式)
+    """
+    LINKED_CHAT_CACHE[channel_url] = discussion_group_id
+    logger.debug(f"已缓存讨论组ID: {channel_url} -> {discussion_group_id}")
+
+
+def clear_discussion_group_cache(channel_url=None):
+    """清除讨论组ID缓存
+
+    Args:
+        channel_url: 可选,指定要清除的频道URL。如果为None则清除所有缓存
+    """
+    if channel_url:
+        if channel_url in LINKED_CHAT_CACHE:
+            del LINKED_CHAT_CACHE[channel_url]
+            logger.info(f"已清除频道 {channel_url} 的讨论组ID缓存")
+    else:
+        LINKED_CHAT_CACHE.clear()
+        logger.info("已清除所有讨论组ID缓存")
+
+
+async def get_discussion_group_id_cached(client, channel_url):
+    """获取频道的讨论组ID(带缓存)
+
+    首先尝试从缓存获取,如果缓存不存在则从Telegram获取并缓存结果
+
+    Args:
+        client: Telegram客户端实例
+        channel_url: 频道URL
+
+    Returns:
+        int: 讨论组ID(已转换为超级群组格式),如果频道没有讨论组则返回None
+    """
+    # 1. 先尝试从缓存获取
+    cached_id = get_cached_discussion_group_id(channel_url)
+    if cached_id is not None:
+        logger.debug(f"使用缓存的讨论组ID: {channel_url} -> {cached_id}")
+        return cached_id
+
+    # 2. 缓存未命中,从Telegram获取
+    from telethon.tl.functions.channels import GetFullChannelRequest
+
+    try:
+        full_channel = await client.get_entity(channel_url)
+
+        # 获取讨论组ID
+        discussion_group_id = None
+        if hasattr(full_channel, 'linked_chat_id') and full_channel.linked_chat_id:
+            discussion_group_id = full_channel.linked_chat_id
+        else:
+            # 尝试使用GetFullChannelRequest
+            logger.debug(f"频道 {channel_url} 没有linked_chat_id属性,尝试GetFullChannelRequest")
+            full_info = await client(GetFullChannelRequest(full_channel))
+            if hasattr(full_info.full_chat, 'linked_chat_id') and full_info.full_chat.linked_chat_id:
+                discussion_group_id = full_info.full_chat.linked_chat_id
+
+        if discussion_group_id:
+            # 转换为超级群组格式
+            if discussion_group_id > 0:
+                discussion_group_id = -1000000000000 - discussion_group_id
+
+            # 缓存结果
+            cache_discussion_group_id(channel_url, discussion_group_id)
+            logger.info(f"已获取并缓存讨论组ID: {channel_url} -> {discussion_group_id}")
+            return discussion_group_id
+        else:
+            logger.warning(f"频道 {channel_url} 没有绑定讨论组")
+            return None
+
+    except Exception as e:
+        logger.error(f"获取频道 {channel_url} 的讨论组ID失败: {e}")
+        return None

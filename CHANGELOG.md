@@ -5,7 +5,179 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.2.8] - 2026-01-13 （最新）
+## [1.2.9] - 2026-01-13 （最新）
+
+### 新增
+- **投票重新生成功能**：投票消息附带"重新生成投票"按钮，管理员可重新生成投票内容
+  - 点击按钮后自动删除旧投票和按钮，生成新的投票内容
+  - 支持频道模式和讨论组模式的投票重新生成
+  - 自动记录并使用讨论组转发消息ID，确保讨论组模式重新生成成功
+  - 新投票将发送到与原投票相同的位置（频道或讨论组）
+  - 权限控制：仅管理员可以重新生成投票
+  - 按钮消息提示："💡 投票效果不理想?点击下方按钮重新生成"
+
+- **讨论组ID缓存机制**：优化讨论组ID查询性能
+  - 首次查询后缓存讨论组ID到内存，避免重复调用 `GetFullChannelRequest`
+  - 显著减少网络延迟（每次查询节省 1-2 秒）
+  - 消除频繁的 `GetFullChannelRequest` 警告日志
+  - 新增 `/clearcache` 命令用于手动清除缓存
+
+### 新增文件
+- `poll_regeneration_handlers.py` - 投票重新生成处理模块
+  - `handle_poll_regeneration_callback()` - 处理按钮点击回调
+  - `regenerate_poll()` - 重新生成投票的核心逻辑
+  - `send_new_poll_to_channel()` - 发送新投票到频道
+  - `send_new_poll_to_discussion_group()` - 发送新投票到讨论组
+
+### 新增数据文件
+- `.poll_regenerations.json` - 投票重新生成数据存储
+  - 存储每个投票的相关信息（消息ID、总结文本、频道信息等）
+  - 讨论组模式额外存储转发消息ID
+  - 支持定期清理超过30天的旧记录
+
+### 新增命令
+- `/clearcache` - 清除讨论组ID缓存
+  - `/clearcache` - 清除所有缓存
+  - `/clearcache 频道URL` - 清除指定频道缓存
+  - 支持中英文别名：`/清除缓存`
+
+### 技术改进
+- **config.py** 投票重新生成数据管理：
+  - `add_poll_regeneration()` - 添加投票重新生成记录，支持存储转发消息ID
+  - `load_poll_regenerations()` - 加载所有投票重新生成数据
+  - `save_poll_regenerations()` - 保存投票重新生成数据
+  - `update_poll_regeneration()` - 更新投票和按钮消息ID
+  - `delete_poll_regeneration()` - 删除指定记录
+  - `cleanup_old_regenerations()` - 清理超过指定天数的旧记录
+
+- **config.py** 讨论组ID缓存管理：
+  - `LINKED_CHAT_CACHE` - 全局内存缓存字典
+  - `get_cached_discussion_group_id()` - 获取缓存的讨论组ID
+  - `cache_discussion_group_id()` - 缓存讨论组ID
+  - `clear_discussion_group_cache()` - 清除缓存
+  - `get_discussion_group_id_cached()` - 带缓存的讨论组ID获取函数
+
+- **telegram_client.py** 投票发送逻辑优化：
+  - `send_poll_to_channel()` 返回投票和按钮消息ID字典
+  - `send_poll_to_discussion_group()` 返回投票和按钮消息ID字典
+  - `send_report()` 返回值包含所有三类消息ID
+  - 投票发送成功后自动调用 `add_poll_regeneration()` 存储重新生成数据
+  - 讨论组模式存储转发消息ID（`discussion_forward_msg_id`）
+  - 使用缓存的讨论组ID，避免重复查询
+
+- **summary_time_manager.py** 消息ID追踪优化：
+  - 扩展数据结构，分别记录 `summary_message_ids`、`poll_message_ids`、`button_message_ids`
+  - `save_last_summary_time()` 支持保存三类消息ID
+  - `load_last_summary_time()` 支持加载三类消息ID
+  - 向后兼容旧格式的 `report_message_ids` 字段
+  - 添加类型检查，防止数据格式错误
+
+- **main.py** 事件处理注册：
+  - 注册 `CallbackQuery` 事件处理器
+  - 处理 `regen_poll_` 前缀的回调查询
+  - 添加定期清理任务（每天凌晨3点）
+  - 注册 `/clearcache` 命令处理器
+
+- **command_handlers.py** 新增缓存管理命令：
+  - `handle_clear_cache()` - 处理缓存清除命令
+  - 支持清除所有缓存或指定频道缓存
+  - 显示缓存清除数量
+
+- **poll_regeneration_handlers.py** 性能优化：
+  - 删除逻辑使用 `get_discussion_group_id_cached()` 获取讨论组ID
+  - 重新生成逻辑使用 `get_discussion_group_id_cached()` 获取讨论组ID
+  - 简化删除逻辑，减少代码重复
+
+- **scheduler.py** 定期清理：
+  - `cleanup_old_poll_regenerations()` - 清理超过30天的投票重新生成数据
+  - 集成到调度器中自动执行
+
+### 性能优化
+- **讨论组ID查询缓存**：
+  - 首次查询后缓存到内存，后续查询直接使用缓存
+  - 避免每次投票重新生成都调用 `GetFullChannelRequest`
+  - 每次查询节省 1-2 秒的网络延迟
+  - 减少不必要的网络请求和API调用
+
+- **日志优化**：
+  - 减少重复的 "没有linked_chat_id属性" 警告日志
+  - 首次查询成功后记录 INFO 日志
+  - 后续缓存命中记录 DEBUG 日志
+
+### 修复
+- **讨论组模式投票重新生成超时问题**：
+  - 问题：重新生成时等待新的转发消息导致超时
+  - 原因：删除旧投票时，原有的转发消息也被删除
+  - 解决：存储初始转发消息ID，重新生成时直接使用该ID
+  - 实现：在 `add_poll_regeneration()` 中存储 `discussion_forward_msg_id`
+
+- **讨论组模式删除位置错误**：
+  - 问题：从频道而不是讨论组删除投票和按钮
+  - 原因：未正确获取讨论组ID
+  - 解决：使用 `GetFullChannelRequest` 获取完整的讨论组ID
+  - 实现：在删除逻辑中添加与发送逻辑相同的讨论组ID获取方法
+
+- **GetHistoryRequest 权限限制**：
+  - 问题：Bot账号无法使用 `iter_messages()` 搜索历史消息
+  - 原因：Telegram API限制Bot账号的GetHistory权限
+  - 解决：通过存储转发消息ID，无需搜索历史消息
+
+- **频繁的 GetFullChannelRequest 调用**：
+  - 问题：每次投票重新生成都调用 `GetFullChannelRequest`，导致延迟和警告
+  - 原因：未缓存已查询过的讨论组ID
+  - 解决：实现内存缓存机制，首次查询后永久缓存
+  - 性能提升：每次查询节省 1-2 秒
+
+### 数据结构变更
+- `.last_summary_time.json` 新格式：
+  ```json
+  {
+    "https://t.me/channel": {
+      "time": "2026-01-13T12:00:00+00:00",
+      "summary_message_ids": [12345],
+      "poll_message_ids": [12346],
+      "button_message_ids": [12347]
+    }
+  }
+  ```
+
+- `.poll_regenerations.json` 新格式：
+  ```json
+  {
+    "https://t.me/channel": {
+      "12345": {
+        "poll_message_id": 12346,
+        "button_message_id": 12347,
+        "summary_text": "总结文本...",
+        "channel_name": "频道名称",
+        "timestamp": "2026-01-13T12:00:00+00:00",
+        "send_to_channel": false,
+        "discussion_forward_msg_id": 248
+      }
+    }
+  }
+  ```
+
+### 向后兼容
+- 支持旧格式的 `.last_summary_time.json`（`report_message_ids` 字段）
+- 自动转换旧格式为新格式
+- 新创建的投票自动包含重新生成功能
+- 旧投票不支持重新生成（无存储数据）
+
+### 使用方式
+1. 自动触发：生成投票时自动附加重新生成按钮
+2. 手动操作：管理员点击按钮即可重新生成投票
+3. 权限控制：非管理员点击按钮收到权限不足提示
+4. 多次生成：可反复点击按钮生成不同的投票内容
+
+### 注意事项
+- Telegram API限制：投票消息不支持编辑，只能删除后重新发送
+- 消息ID追踪：准确追踪投票、按钮、转发消息ID是重新生成成功的关键
+- 权限要求：机器人需要在频道/讨论组中有删除消息和发送消息的权限
+- 存储管理：定期清理超过30天的旧记录，避免存储文件无限增长
+- 讨论组模式：首次生成投票后，转发消息必须保留才能重新生成
+
+## [1.2.8] - 2026-01-13
 
 ### 新增
 - **用户帮助系统**：添加 `/start` 和 `/help` 命令，提供完整的命令帮助体系

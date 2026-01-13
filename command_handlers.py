@@ -89,7 +89,33 @@ async def handle_manual_summary(event):
             channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
             if channel_summary_data:
                 channel_last_summary_time = channel_summary_data["time"]
-                report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
+                # 使用新的键名: summary_message_ids
+                # 为了向后兼容,同时支持旧格式
+                if "summary_message_ids" in channel_summary_data:
+                    # 新格式
+                    summary_ids = channel_summary_data["summary_message_ids"]
+                    # 类型检查: 如果summary_ids是字典,说明数据格式错误,需要修复
+                    if isinstance(summary_ids, dict):
+                        logger.warning(f"检测到summary_ids是字典格式,正在修复数据结构: {summary_ids}")
+                        summary_ids = summary_ids.get("summary_message_ids", [])
+                    # 确保是列表
+                    if not isinstance(summary_ids, list):
+                        logger.error(f"summary_ids类型错误: {type(summary_ids)}, 值: {summary_ids}, 使用空列表")
+                        summary_ids = []
+
+                    poll_ids = channel_summary_data.get("poll_message_ids", [])
+                    button_ids = channel_summary_data.get("button_message_ids", [])
+                    # 确保都是列表
+                    if not isinstance(poll_ids, list):
+                        poll_ids = []
+                    if not isinstance(button_ids, list):
+                        button_ids = []
+
+                    # 合并所有消息ID用于排除
+                    report_message_ids_to_exclude = summary_ids + poll_ids + button_ids
+                else:
+                    # 旧格式,使用report_message_ids
+                    report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
             else:
                 channel_last_summary_time = None
                 report_message_ids_to_exclude = []
@@ -1404,6 +1430,43 @@ async def handle_start(event):
         logger.error(f"发送欢迎消息时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(f"发送欢迎消息时出错: {e}")
 
+
+async def handle_clear_cache(event):
+    """处理/clearcache命令，清除讨论组ID缓存"""
+    sender_id = event.sender_id
+    command = event.text
+
+    # 检查管理员权限
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"用户 {sender_id} 尝试使用 /clearcache 命令，但没有管理员权限")
+        await event.reply("❌ 只有管理员可以清除缓存")
+        return
+
+    logger.info(f"收到 /clearcache 命令，发送者: {sender_id}")
+
+    try:
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) > 1:
+            # 清除指定频道的缓存
+            channel = parts[1]
+            from config import clear_discussion_group_cache
+            clear_discussion_group_cache(channel)
+            await event.reply(f"✅ 已清除频道 {channel} 的讨论组ID缓存")
+            logger.info(f"管理员 {sender_id} 清除了频道 {channel} 的讨论组ID缓存")
+        else:
+            # 清除所有缓存
+            from config import clear_discussion_group_cache, LINKED_CHAT_CACHE
+            cache_size = len(LINKED_CHAT_CACHE)
+            clear_discussion_group_cache()
+            await event.reply(f"✅ 已清除所有讨论组ID缓存（共 {cache_size} 条）")
+            logger.info(f"管理员 {sender_id} 清除了所有讨论组ID缓存（共 {cache_size} 条）")
+
+    except Exception as e:
+        logger.error(f"清除缓存时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"❌ 清除缓存时出错: {e}")
+
+
 async def handle_help(event):
     """处理/help命令，显示完整命令列表和使用说明"""
     sender_id = event.sender_id
@@ -1465,6 +1528,11 @@ async def handle_help(event):
 /setchannelpoll - 设置频道投票配置
 • 格式：/setchannelpoll 频道 true/false channel/discussion
 /deletechannelpoll - 删除频道投票配置
+
+**💾 缓存管理**
+/clearcache - 清除讨论组ID缓存
+• /clearcache - 清除所有缓存
+• /clearcache 频道URL - 清除指定频道缓存
 
 ---
 💡 **提示**

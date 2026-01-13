@@ -57,7 +57,33 @@ async def main_job(channel=None):
             channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
             if channel_summary_data:
                 channel_last_summary_time = channel_summary_data["time"]
-                report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
+                # 使用新的键名: summary_message_ids
+                # 为了向后兼容,同时支持旧格式
+                if "summary_message_ids" in channel_summary_data:
+                    # 新格式
+                    summary_ids = channel_summary_data["summary_message_ids"]
+                    # 类型检查: 如果summary_ids是字典,说明数据格式错误,需要修复
+                    if isinstance(summary_ids, dict):
+                        logger.warning(f"检测到summary_ids是字典格式,正在修复数据结构: {summary_ids}")
+                        summary_ids = summary_ids.get("summary_message_ids", [])
+                    # 确保是列表
+                    if not isinstance(summary_ids, list):
+                        logger.error(f"summary_ids类型错误: {type(summary_ids)}, 值: {summary_ids}, 使用空列表")
+                        summary_ids = []
+
+                    poll_ids = channel_summary_data.get("poll_message_ids", [])
+                    button_ids = channel_summary_data.get("button_message_ids", [])
+                    # 确保都是列表
+                    if not isinstance(poll_ids, list):
+                        poll_ids = []
+                    if not isinstance(button_ids, list):
+                        button_ids = []
+
+                    # 合并所有消息ID用于排除
+                    report_message_ids_to_exclude = summary_ids + poll_ids + button_ids
+                else:
+                    # 旧格式,使用report_message_ids
+                    report_message_ids_to_exclude = channel_summary_data["report_message_ids"]
             else:
                 channel_last_summary_time = None
                 report_message_ids_to_exclude = []
@@ -131,15 +157,30 @@ async def main_job(channel=None):
                 # 生成报告文本
                 report_text = f"**{report_title}**\n\n{summary}"
                 # 发送报告给管理员，并根据配置决定是否发送回源频道
-                sent_report_ids = []
-                
+                report_result = None
+
                 if SEND_REPORT_TO_SOURCE:
-                    sent_report_ids = await send_report(report_text, channel, client=active_client)
+                    report_result = await send_report(report_text, channel, client=active_client)
                 else:
-                    await send_report(report_text, client=active_client)
-                
-                # 保存该频道的本次总结时间和报告消息ID
-                save_last_summary_time(channel, datetime.now(timezone.utc), sent_report_ids)
+                    report_result = await send_report(report_text, client=active_client)
+
+                # 保存该频道的本次总结时间和所有相关消息ID
+                if report_result:
+                    summary_ids = report_result.get("summary_message_ids", [])
+                    poll_id = report_result.get("poll_message_id")
+                    button_id = report_result.get("button_message_id")
+
+                    # 转换单个ID为列表格式
+                    poll_ids = [poll_id] if poll_id else []
+                    button_ids = [button_id] if button_id else []
+
+                    save_last_summary_time(
+                        channel,
+                        datetime.now(timezone.utc),
+                        summary_message_ids=summary_ids,
+                        poll_message_ids=poll_ids,
+                        button_message_ids=button_ids
+                    )
                 
                 channel_end_time = datetime.now()
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
@@ -215,3 +256,15 @@ async def main_job(channel=None):
             "error": error_msg,
             "details": f"任务执行失败: {error_msg}，处理时间 {processing_time:.2f}秒"
         }
+
+
+async def cleanup_old_poll_regenerations():
+    """定期清理超过30天的投票重新生成数据"""
+    from config import cleanup_old_regenerations
+
+    try:
+        deleted_count = cleanup_old_regenerations(days=30)
+        if deleted_count > 0:
+            logger.info(f"已清理 {deleted_count} 条过期的投票重新生成数据")
+    except Exception as e:
+        logger.error(f"清理投票重新生成数据失败: {e}")

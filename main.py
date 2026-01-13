@@ -15,7 +15,7 @@ import os
 import sys
 import threading
 from telethon import TelegramClient
-from telethon.events import NewMessage
+from telethon.events import NewMessage, CallbackQuery
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from telethon.tl.types import BotCommand, BotCommandScopeDefault
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -34,12 +34,13 @@ from command_handlers import (
     handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
     handle_changelog, handle_shutdown, handle_pause, handle_resume,
     handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
-    handle_start, handle_help
+    handle_start, handle_help, handle_clear_cache
 )
+from poll_regeneration_handlers import handle_poll_regeneration_callback
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.2.8"
+__version__ = "1.2.9"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -77,6 +78,7 @@ async def send_startup_message(client):
 /channelpoll - 查看频道投票配置
 /setchannelpoll - 设置频道投票配置
 /deletechannelpoll - 删除频道投票配置
+/clearcache - 清除讨论组ID缓存
 
 **版本信息**
 当前版本: v{__version__}
@@ -147,7 +149,18 @@ async def main():
             logger.info(f"频道 {channel} 的定时任务已配置：{frequency_text} {schedule['hour']:02d}:{schedule['minute']:02d}")
 
         logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
-        
+
+        # 添加定期清理任务
+        from scheduler import cleanup_old_poll_regenerations
+        scheduler.add_job(
+            cleanup_old_poll_regenerations,
+            'cron',
+            hour=3,
+            minute=0,
+            id="cleanup_poll_regenerations"
+        )
+        logger.info("投票重新生成数据清理任务已配置：每天凌晨3点执行")
+
         # 启动机器人客户端，处理命令
         logger.info("开始初始化Telegram机器人客户端...")
         client = TelegramClient('bot_session', int(API_ID), API_HASH)
@@ -192,6 +205,8 @@ async def main():
         client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
         # 添加更新日志命令
         client.add_event_handler(handle_changelog, NewMessage(pattern='/changelog|/更新日志'))
+        # 添加缓存管理命令
+        client.add_event_handler(handle_clear_cache, NewMessage(pattern='/clearcache|/clear_cache|/清除缓存'))
         # 添加start命令
         client.add_event_handler(handle_start, NewMessage(pattern='/start|/开始'))
         # 添加help命令
@@ -199,8 +214,17 @@ async def main():
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
+
+        # 添加投票重新生成回调查询处理器
+        logger.debug("添加投票重新生成回调处理器...")
+        client.add_event_handler(
+            handle_poll_regeneration_callback,
+            CallbackQuery(func=lambda e: e.data.startswith(b'regen_poll_'))
+        )
+        logger.info("投票重新生成回调处理器已注册")
+
         logger.info("命令处理器添加完成")
-        
+
         # 启动客户端
         logger.info("正在启动Telegram机器人客户端...")
         await client.start(bot_token=BOT_TOKEN)
@@ -234,7 +258,8 @@ async def main():
             BotCommand(command="channelpoll", description="查看频道投票配置"),
             BotCommand(command="setchannelpoll", description="设置频道投票配置"),
             BotCommand(command="deletechannelpoll", description="删除频道投票配置"),
-            BotCommand(command="changelog", description="查看更新日志")
+            BotCommand(command="changelog", description="查看更新日志"),
+            BotCommand(command="clearcache", description="清除讨论组ID缓存")
         ]
         
         await client(SetBotCommandsRequest(
