@@ -1355,3 +1355,126 @@ async def handle_delete_channel_poll(event):
     except Exception as e:
         logger.error(f"删除频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(f"删除频道投票配置时出错: {e}")
+
+async def handle_start(event):
+    """处理/start命令，显示欢迎消息和帮助信息"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 不检查管理员权限，所有用户都可以使用 /start 命令
+
+    try:
+        # 构建欢迎消息
+        welcome_message = """🌸 **欢迎使用 Sakura-频道总结助手**
+
+🤖 我是Telegram智能频道管理助手，专门帮助频道主自动化管理 Telegram 频道内容。
+
+✨ **主要功能**
+• 📊 AI智能总结频道消息
+• ⏰ 支持每天/每周自动总结
+• 🎯 自定义总结风格和频率
+• 📝 自动生成投票互动
+• 👥 多频道同时管理
+
+📚 **常用命令**
+
+**基础命令**
+/start - 查看此欢迎消息
+/summary - 立即生成本周汇总
+
+**配置命令**
+/showchannels - 查看频道列表
+/addchannel - 添加监控频道
+/setchannelschedule - 设置自动总结时间
+
+**管理命令**
+/pause - 暂停定时任务
+/resume - 恢复定时任务
+/changelog - 查看更新日志
+
+💡 **提示**
+• 发送 /help 查看完整命令列表
+• 更多信息请访问项目[开源仓库](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant)"""
+
+        await event.reply(welcome_message, link_preview=False)
+        logger.info(f"已向用户 {sender_id} 发送欢迎消息")
+
+    except Exception as e:
+        logger.error(f"发送欢迎消息时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"发送欢迎消息时出错: {e}")
+
+async def handle_help(event):
+    """处理/help命令，显示完整命令列表和使用说明"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 不检查管理员权限，所有用户都可以使用 /help 命令
+
+    try:
+        # 构建完整帮助消息
+        help_message = """📚 **Sakura-频道总结助手 - 完整命令列表**
+
+**🤖 基础命令**
+/start - 查看欢迎消息和基本介绍
+/help - 查看此完整命令列表
+/summary - 立即生成本周频道消息汇总
+/changelog - 查看项目更新日志
+
+**⚙️ 提示词管理**
+/showprompt - 查看当前使用的提示词
+/setprompt - 设置自定义提示词
+
+**🤖 AI 配置**
+/showaicfg - 查看当前 AI 配置信息
+/setaicfg - 设置自定义 AI 配置（API Key、Base URL、Model）
+
+**📊 日志管理**
+/showloglevel - 查看当前日志级别
+/setloglevel - 设置日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
+
+**🔄 机器人控制**
+/restart - 重启机器人
+/shutdown - 彻底停止机器人
+/pause - 暂停所有定时任务
+/resume - 恢复所有定时任务
+
+**📺 频道管理**
+/showchannels - 查看当前监控的频道列表
+/addchannel - 添加新频道到监控列表
+• 示例：/addchannel https://t.me/examplechannel
+/deletechannel - 从监控列表中删除频道
+• 示例：/deletechannel https://t.me/examplechannel
+
+**⏰ 时间配置**
+/showchannelschedule - 查看频道自动总结时间配置
+/setchannelschedule - 设置频道自动总结时间
+• 每天：/setchannelschedule 频道 daily 小时 分钟
+• 每周：/setchannelschedule 频道 weekly 星期,星期 小时 分钟
+/deletechannelschedule - 删除频道自动总结时间配置
+
+**🗑️ 数据管理**
+/clearsummarytime - 清除上次总结时间记录
+
+**📤 报告设置**
+/setsendtosource - 设置是否将报告发送回源频道
+
+**🗳️ 投票配置**
+/channelpoll - 查看频道投票配置
+/setchannelpoll - 设置频道投票配置
+• 格式：/setchannelpoll 频道 true/false channel/discussion
+/deletechannelpoll - 删除频道投票配置
+
+---
+💡 **提示**
+• 大多数命令支持中英文别名
+• 配置类命令需要管理员权限
+• 使用 /start 查看快速入门指南"""
+
+        await event.reply(help_message, link_preview=False)
+        logger.info(f"已向用户 {sender_id} 发送完整帮助信息")
+
+    except Exception as e:
+        logger.error(f"发送帮助信息时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"发送帮助信息时出错: {e}")

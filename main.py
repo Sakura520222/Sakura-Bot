@@ -33,12 +33,13 @@ from command_handlers import (
     handle_delete_channel, handle_clear_summary_time, handle_set_send_to_source,
     handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
     handle_changelog, handle_shutdown, handle_pause, handle_resume,
-    handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll
+    handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
+    handle_start, handle_help
 )
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.2.7"
+__version__ = "1.2.8"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -191,6 +192,10 @@ async def main():
         client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
         # 添加更新日志命令
         client.add_event_handler(handle_changelog, NewMessage(pattern='/changelog|/更新日志'))
+        # 添加start命令
+        client.add_event_handler(handle_start, NewMessage(pattern='/start|/开始'))
+        # 添加help命令
+        client.add_event_handler(handle_help, NewMessage(pattern='/help|/帮助'))
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
@@ -205,6 +210,8 @@ async def main():
         logger.info("开始注册机器人命令...")
         
         commands = [
+            BotCommand(command="start", description="查看欢迎消息和帮助"),
+            BotCommand(command="help", description="查看完整命令列表"),
             BotCommand(command="summary", description="立即生成本周频道消息汇总"),
             BotCommand(command="showprompt", description="查看当前提示词"),
             BotCommand(command="setprompt", description="设置自定义提示词"),

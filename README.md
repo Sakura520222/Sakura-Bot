@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.2.7
+# 🌸 Sakura-频道总结助手 v1.2.8
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -190,6 +190,8 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 
 | 命令 | 别名 | 功能 | 示例 |
 |------|------|------|------|
+| `/start` | `/开始` | 查看欢迎消息和基本介绍 | `/start` |
+| `/help` | `/帮助` | 查看完整命令列表和使用说明 | `/help` |
 | `/summary` | `/立即总结` | 立即生成本周频道消息汇总 | `/summary` |
 | `/showprompt` | `/查看提示词` | 查看当前提示词 | `/showprompt` |
 | `/setprompt` | `/设置提示词` | 设置自定义提示词 | `/setprompt` |
@@ -375,7 +377,25 @@ Sakura-Channel-Summary-Assistant/
 
 ## 📝 更新日志
 
-### [1.2.7] - 2026-01-13 （最新）
+### [1.2.8] - 2026-01-13 （最新）
+
+#### 新增
+- **用户帮助系统**：添加 `/start` 和 `/help` 命令，提供完整的命令帮助体系
+  - `/start` 命令：显示欢迎消息和快速入门指南，列出精选常用命令
+  - `/help` 命令：显示完整的命令列表和使用说明，按功能分类展示
+  - 两个命令都支持中英文别名
+  - 所有用户都可以使用（无需管理员权限）
+
+#### 新增命令
+- `/start` 或 `/开始` - 查看欢迎消息和基本介绍
+- `/help` 或 `/帮助` - 查看完整命令列表和使用说明
+
+#### 用户体验改进
+- 新用户首次使用时发送 `/start` 即可快速了解机器人功能
+- 通过 `/help` 命令轻松查找所有可用命令
+- 帮助体系完整，两个命令互相引用，便于导航
+
+### [1.2.7] - 2026-01-13
 
 #### 新增
 - **频道级投票配置功能**：为每个频道单独配置投票的发送位置和行为
