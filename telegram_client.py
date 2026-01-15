@@ -14,11 +14,68 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, Button
 from telethon.tl.types import PeerChannel
-from config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL, get_channel_poll_config
+from config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL, get_channel_poll_config, LLM_MODEL
 from error_handler import retry_with_backoff, record_error
 from telegram_client_utils import split_message_smart, validate_message_entities
 
 logger = logging.getLogger(__name__)
+
+
+def extract_date_range_from_summary(summary_text):
+    """
+    从总结文本中提取日期范围
+
+    Args:
+        summary_text: 总结文本
+
+    Returns:
+        (start_time, end_time): 起始时间和结束时间的datetime对象，解析失败返回(None, None)
+    """
+    try:
+        import re
+
+        # 匹配周报日期范围: "**xxx周报 1.8-1.15**" 或 "**xxx周报 1.8 - 1.15**"
+        weekly_pattern = r"\*\*.*?周报\s*(\d{1,2})\.(\d{1,2})\s*[-—~]\s*(\d{1,2})\.(\d{1,2})\*\*"
+        weekly_match = re.search(weekly_pattern, summary_text)
+
+        if weekly_match:
+            start_month = int(weekly_match.group(1))
+            start_day = int(weekly_match.group(2))
+            end_month = int(weekly_match.group(3))
+            end_day = int(weekly_match.group(4))
+
+            current_year = datetime.now().year
+
+            start_time = datetime(current_year, start_month, start_day, tzinfo=timezone.utc)
+            end_time = datetime(current_year, end_month, end_day, 23, 59, 59, tzinfo=timezone.utc)
+
+            # 如果结束时间早于开始时间，说明跨年了
+            if end_time < start_time:
+                end_time = datetime(current_year + 1, end_month, end_day, 23, 59, 59, tzinfo=timezone.utc)
+
+            return start_time, end_time
+
+        # 匹配日报日期: "**xxx日报 1.15**"
+        daily_pattern = r"\*\*.*?日报\s*(\d{1,2})\.(\d{1,2})\*\*"
+        daily_match = re.search(daily_pattern, summary_text)
+
+        if daily_match:
+            month = int(daily_match.group(1))
+            day = int(daily_match.group(2))
+            current_year = datetime.now().year
+
+            start_time = datetime(current_year, month, day, tzinfo=timezone.utc)
+            end_time = datetime(current_year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+
+            return start_time, end_time
+
+        # 没有匹配到日期模式
+        logger.debug("未能从总结文本中提取日期范围")
+        return None, None
+
+    except Exception as e:
+        logger.warning(f"提取日期范围时出错: {e}")
+        return None, None
 
 # 全局变量，用于存储活动的Telegram客户端实例
 _active_client = None
@@ -223,7 +280,7 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
                 except Exception as e2:
                     logger.error(f"即使移除格式后发送第 {i+1} 段仍然失败: {e2}")
 
-async def send_report(summary_text, source_channel=None, client=None, skip_admins=False):
+async def send_report(summary_text, source_channel=None, client=None, skip_admins=False, message_count=0):
     """发送报告
 
     Args:
@@ -231,6 +288,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
         source_channel: 源频道，可选。如果提供，将向该频道发送报告
         client: 可选。已存在的Telegram客户端实例，如果不提供，将尝试使用活动的客户端实例或创建新实例
         skip_admins: 是否跳过向管理员发送报告，默认为False
+        message_count: 消息数量，用于数据库记录，默认为0
 
     Returns:
         dict: 包含所有消息ID的字典
@@ -603,6 +661,40 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     except Exception as e:
                         logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
         
+        # ✅ 新增：保存到数据库
+        # 如果成功发送总结到频道，保存到数据库
+        if source_channel and report_message_ids:
+            try:
+                from database import get_db_manager
+
+                # 提取时间范围
+                start_time, end_time = extract_date_range_from_summary(summary_text_for_source)
+
+                # 保存到数据库
+                db = get_db_manager()
+                summary_id = db.save_summary(
+                    channel_id=source_channel,
+                    channel_name=channel_actual_name,
+                    summary_text=summary_text_for_source,
+                    message_count=message_count,
+                    start_time=start_time,
+                    end_time=end_time,
+                    summary_message_ids=report_message_ids,
+                    poll_message_id=poll_message_id,
+                    button_message_id=button_message_id,
+                    ai_model=LLM_MODEL,
+                    summary_type='manual'  # 手动触发的总结
+                )
+
+                if summary_id:
+                    logger.info(f"总结已保存到数据库，记录ID: {summary_id}")
+                else:
+                    logger.warning("保存到数据库失败，但不影响总结发送")
+
+            except Exception as e:
+                logger.error(f"保存总结到数据库时出错: {type(e).__name__}: {e}", exc_info=True)
+                # 数据库保存失败不影响总结发送，只记录日志
+
         # 返回包含所有消息ID的字典
         return {
             "summary_message_ids": report_message_ids,

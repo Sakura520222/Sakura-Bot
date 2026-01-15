@@ -171,9 +171,9 @@ async def handle_manual_summary(event):
                 skip_admins = sender_id in ADMIN_LIST or ADMIN_LIST == ['me']
                 sent_report_ids = []
                 if SEND_REPORT_TO_SOURCE:
-                    sent_report_ids = await send_report(report_text, channel, event.client, skip_admins=skip_admins)
+                    sent_report_ids = await send_report(report_text, channel, event.client, skip_admins=skip_admins, message_count=len(messages))
                 else:
-                    await send_report(report_text, None, event.client, skip_admins=skip_admins)
+                    await send_report(report_text, None, event.client, skip_admins=skip_admins, message_count=len(messages))
                 
                 # 保存该频道的本次总结时间和报告消息ID
                 save_last_summary_time(channel, datetime.now(timezone.utc), sent_report_ids)
@@ -1402,6 +1402,7 @@ async def handle_start(event):
 • 🎯 自定义总结风格和频率
 • 📝 自动生成投票互动
 • 👥 多频道同时管理
+• 📜 历史总结记录与查询
 
 📚 **常用命令**
 
@@ -1413,6 +1414,11 @@ async def handle_start(event):
 /showchannels - 查看频道列表
 /addchannel - 添加监控频道
 /setchannelschedule - 设置自动总结时间
+
+**历史记录** (新功能)
+/history - 查看历史总结
+/export - 导出历史记录
+/stats - 查看统计数据
 
 **管理命令**
 /pause - 暂停定时任务
@@ -1533,6 +1539,21 @@ async def handle_help(event):
 /clearcache - 清除讨论组ID缓存
 • /clearcache - 清除所有缓存
 • /clearcache 频道URL - 清除指定频道缓存
+
+**📜 历史记录** (新功能)
+/history - 查看历史总结
+• /history - 查看所有频道最近10条
+• /history channel1 - 查看指定频道
+• /history channel1 30 - 查看最近30天
+
+/export - 导出历史记录
+• /export - 导出所有记录为JSON
+• /export channel1 csv - 导出为CSV
+• /export channel1 markdown - 导出为Markdown
+
+/stats - 查看统计数据
+• /stats - 查看所有频道统计
+• /stats channel1 - 查看指定频道统计
 
 ---
 💡 **提示**

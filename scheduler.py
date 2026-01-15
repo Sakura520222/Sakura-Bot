@@ -13,11 +13,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import CHANNELS, SEND_REPORT_TO_SOURCE, logger
+from config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
 from prompt_manager import load_prompt
 from summary_time_manager import load_last_summary_time, save_last_summary_time
 from ai_client import analyze_with_ai
-from telegram_client import fetch_last_week_messages, send_report, get_active_client
+from telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
 
 async def main_job(channel=None):
     """定时任务主函数
@@ -160,9 +160,9 @@ async def main_job(channel=None):
                 report_result = None
 
                 if SEND_REPORT_TO_SOURCE:
-                    report_result = await send_report(report_text, channel, client=active_client)
+                    report_result = await send_report(report_text, channel, client=active_client, message_count=len(messages))
                 else:
-                    report_result = await send_report(report_text, client=active_client)
+                    report_result = await send_report(report_text, client=active_client, message_count=len(messages))
 
                 # 保存该频道的本次总结时间和所有相关消息ID
                 if report_result:
@@ -173,6 +173,38 @@ async def main_job(channel=None):
                     # 转换单个ID为列表格式
                     poll_ids = [poll_id] if poll_id else []
                     button_ids = [button_id] if button_id else []
+
+                    # ✅ 新增：保存到数据库
+                    try:
+                        from database import get_db_manager
+
+                        # 提取时间范围
+                        start_time_db, end_time_db = extract_date_range_from_summary(report_text)
+
+                        # 保存到数据库
+                        db = get_db_manager()
+                        summary_id = db.save_summary(
+                            channel_id=channel,
+                            channel_name=channel_name,
+                            summary_text=report_text,
+                            message_count=len(messages),
+                            start_time=start_time_db,
+                            end_time=end_time_db,
+                            summary_message_ids=summary_ids,
+                            poll_message_id=poll_id,
+                            button_message_id=button_id,
+                            ai_model=LLM_MODEL,
+                            summary_type=frequency  # 'daily' 或 'weekly'
+                        )
+
+                        if summary_id:
+                            logger.info(f"定时任务总结已保存到数据库，记录ID: {summary_id}")
+                        else:
+                            logger.warning("保存到数据库失败，但不影响定时任务执行")
+
+                    except Exception as e:
+                        logger.error(f"保存定时任务总结到数据库时出错: {type(e).__name__}: {e}", exc_info=True)
+                        # 数据库保存失败不影响定时任务，只记录日志
 
                     save_last_summary_time(
                         channel,

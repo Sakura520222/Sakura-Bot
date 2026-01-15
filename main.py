@@ -36,11 +36,12 @@ from command_handlers import (
     handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
     handle_start, handle_help, handle_clear_cache
 )
+from history_handlers import handle_history, handle_export, handle_stats
 from poll_regeneration_handlers import handle_poll_regeneration_callback
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.2.9"
+__version__ = "1.3.0"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -213,6 +214,11 @@ async def main():
         client.add_event_handler(handle_set_log_level, NewMessage(pattern='/setloglevel|/set_log_level|/设置日志级别'))
         client.add_event_handler(handle_clear_cache, NewMessage(pattern='/clearcache|/clear_cache|/清除缓存'))
         client.add_event_handler(handle_changelog, NewMessage(pattern='/changelog|/更新日志'))
+
+        # 9. 历史记录命令 (新增)
+        client.add_event_handler(handle_history, NewMessage(pattern='/history|/历史'))
+        client.add_event_handler(handle_export, NewMessage(pattern='/export|/导出'))
+        client.add_event_handler(handle_stats, NewMessage(pattern='/stats|/统计'))
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
@@ -269,7 +275,12 @@ async def main():
             BotCommand(command="showloglevel", description="查看当前日志级别"),
             BotCommand(command="setloglevel", description="设置日志级别"),
             BotCommand(command="clearcache", description="清除讨论组ID缓存"),
-            BotCommand(command="changelog", description="查看更新日志")
+            BotCommand(command="changelog", description="查看更新日志"),
+
+            # 历史记录命令
+            BotCommand(command="history", description="查看历史总结"),
+            BotCommand(command="export", description="导出历史记录"),
+            BotCommand(command="stats", description="查看统计数据")
         ]
         
         await client(SetBotCommandsRequest(

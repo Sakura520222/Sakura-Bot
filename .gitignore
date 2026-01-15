@@ -234,3 +234,4 @@ test_session.session
 .claude
 .poll_regenerations.json
 tmpclaude-*-cwd
+*.db
