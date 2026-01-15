@@ -292,8 +292,8 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 # 导出为CSV格式（适合Excel）
 /export channel1 csv
 
-# 导出为Markdown格式（适合阅读）
-/export channel1 markdown
+# 导出为md格式（适合阅读）
+/export channel1 md
 ```
 
 **查看统计数据 (`/stats`)**
@@ -315,7 +315,7 @@ docker inspect --format='{{json .State.Health}}' sakura-summary-bot
 **数据存储**：
 - 所有总结自动保存到 SQLite 数据库 (`summaries.db`)
 - 数据库文件本地存储，不上传云端
-- 支持导出多种格式：JSON、CSV、Markdown
+- 支持导出多种格式：JSON、CSV、md
 - 定期清理旧数据，防止数据库过大
 
 ### AI配置管理

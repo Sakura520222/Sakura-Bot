@@ -219,7 +219,7 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
     
     # 使用智能分割算法
     try:
-        parts = split_message_smart(text, content_max_length, preserve_markdown=True)
+        parts = split_message_smart(text, content_max_length, preserve_md=True)
         logger.info(f"智能分割完成，共分成 {len(parts)} 段")
         
         # 验证每个分段的实体完整性
@@ -432,7 +432,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         
                         # 使用智能分割算法
                         try:
-                            parts = split_message_smart(summary_text_for_source, content_max_length, preserve_markdown=True)
+                            parts = split_message_smart(summary_text_for_source, content_max_length, preserve_md=True)
                             logger.info(f"智能分割完成，共分成 {len(parts)} 段")
                             
                             # 验证每个分段的实体完整性
@@ -595,7 +595,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             
                             # 使用智能分割算法
                             try:
-                                parts = split_message_smart(summary_text_for_source, content_max_length, preserve_markdown=True)
+                                parts = split_message_smart(summary_text_for_source, content_max_length, preserve_md=True)
                                 logger.info(f"智能分割完成，共分成 {len(parts)} 段")
                                 
                                 # 验证每个分段的实体完整性

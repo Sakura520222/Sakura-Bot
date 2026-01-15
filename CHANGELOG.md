@@ -26,7 +26,7 @@
 - **数据导出功能**：新增 `/export` 命令导出历史记录
   - 支持 JSON 格式导出（默认）
   - 支持 CSV 格式导出，适合 Excel 打开
-  - 支持 Markdown 格式导出，适合阅读和归档
+  - 支持 md 格式导出，适合阅读和归档
   - 可导出所有频道或指定频道的记录
   - 自动生成带时间戳的文件名
   - 导出完成后自动发送文件并清理临时文件
@@ -51,10 +51,10 @@
   - `delete_old_summaries()` - 删除旧总结记录（默认保留90天）
   - `get_statistics()` - 获取统计信息
   - `get_channel_ranking()` - 获取频道排行榜
-  - `export_summaries()` - 导出历史记录（JSON/CSV/Markdown）
+  - `export_summaries()` - 导出历史记录（JSON/CSV/md）
   - `_export_json()` - JSON 格式导出
   - `_export_csv()` - CSV 格式导出
-  - `_export_markdown()` - Markdown 格式导出
+  - `_export_md()` - md 格式导出
 
 - **history_handlers.py** - 历史记录命令处理器
   - `handle_history()` - 处理 /history 命令
@@ -78,8 +78,8 @@
   - `/export` - 导出所有记录为 JSON
   - `/export channel1` - 导出指定频道为 JSON
   - `/export channel1 csv` - 导出为 CSV 格式
-  - `/export channel1 markdown` - 导出为 Markdown 格式
-  - 支持格式：json、csv、markdown
+  - `/export channel1 md` - 导出为 md 格式
+  - 支持格式：json、csv、md
   - 支持中英文别名：`/导出`
 
 - `/stats [频道]` - 查看统计数据
@@ -592,7 +592,7 @@
   - 使用`send_file()`方法发送完整文件，用户可下载查看
   - 简化代码逻辑，提高可维护性
   - 完全避免消息分段问题
-  - 保持原始markdown格式完整性
+  - 保持原始md格式完整性
 
 ### 影响
 - 长消息分段更加合理，充分利用Telegram 4000字符的消息限制
@@ -656,15 +656,15 @@
 
 ### 修复
 - **EntityBoundsInvalidError错误**：修复了发送长消息分段时出现的`EntityBoundsInvalidError: Some of provided entities have invalid bounds`错误
-  - 创建智能消息分割算法 (`telegram_client_utils.py`)，保护Markdown格式实体不被破坏
+  - 创建智能消息分割算法 (`telegram_client_utils.py`)，保护md格式实体不被破坏
   - 更新`send_long_message()`函数使用智能分割，确保**粗体**、`内联代码`、[链接]等实体完整性
   - 添加实体完整性验证和自动修复机制，当格式被破坏时自动移除格式重试
   - 优先在段落、句子、换行等自然边界分割，避免破坏消息结构
   - 提供优雅的回退机制：智能分割失败时自动使用简单字符分割
 
 ### 技术实现
-- **智能分割算法**：实现`split_message_smart()`函数，能够识别和保护Markdown实体
-- **实体保护**：确保**粗体**、`代码`、[链接]等Markdown实体不被分割破坏
+- **智能分割算法**：实现`split_message_smart()`函数，能够识别和保护md实体
+- **实体保护**：确保**粗体**、`代码`、[链接]等md实体不被分割破坏
 - **边界检测**：优先在自然边界（段落、句子）分割，其次在单词边界分割
 - **验证机制**：每个分段都验证实体完整性和长度限制
 - **错误恢复**：发送失败时自动尝试移除格式重试，确保消息能够送达

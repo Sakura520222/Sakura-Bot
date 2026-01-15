@@ -1549,7 +1549,7 @@ async def handle_help(event):
 /export - 导出历史记录
 • /export - 导出所有记录为JSON
 • /export channel1 csv - 导出为CSV
-• /export channel1 markdown - 导出为Markdown
+• /export channel1 md - 导出为md
 
 /stats - 查看统计数据
 • /stats - 查看所有频道统计

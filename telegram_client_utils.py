@@ -14,14 +14,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def split_message_smart(text, max_length, preserve_markdown=True):
+def split_message_smart(text, max_length, preserve_md=True):
     """
-    智能分割消息，确保Markdown格式实体不被破坏
+    智能分割消息，确保md格式实体不被破坏
     
     Args:
         text: 要分割的文本
         max_length: 每个分段的最大长度
-        preserve_markdown: 是否保护Markdown格式
+        preserve_md: 是否保护md格式
     
     Returns:
         list: 分割后的文本片段列表
@@ -29,20 +29,20 @@ def split_message_smart(text, max_length, preserve_markdown=True):
     if len(text) <= max_length:
         return [text]
     
-    if not preserve_markdown:
+    if not preserve_md:
         # 简单分割：按字符数分割
         parts = []
         for i in range(0, len(text), max_length):
             parts.append(text[i:i+max_length])
         return parts
     
-    # 智能分割：保护Markdown实体
+    # 智能分割：保护md实体
     parts = []
     current_part = ""
     current_pos = 0
     
-    # 定义需要保护的Markdown实体模式
-    markdown_patterns = [
+    # 定义需要保护的md实体模式
+    md_patterns = [
         (r'\*\*.*?\*\*', 'bold'),        # 粗体 **text**
         (r'`.*?`', 'inline_code'),       # 内联代码 `code`
         (r'\[.*?\]\(.*?\)', 'link'),     # 链接 [text](url)
@@ -52,9 +52,9 @@ def split_message_smart(text, max_length, preserve_markdown=True):
         (r'__.*?__', 'bold_underscore'), # 粗体 __text__
     ]
     
-    # 查找所有Markdown实体的位置
+    # 查找所有md实体的位置
     entities = []
-    for pattern, entity_type in markdown_patterns:
+    for pattern, entity_type in md_patterns:
         for match in re.finditer(pattern, text, re.DOTALL):
             entities.append({
                 'start': match.start(),
@@ -176,7 +176,7 @@ def split_message_smart(text, max_length, preserve_markdown=True):
     
     # 验证所有实体完整性
     for part in validated_parts:
-        # 检查是否有未闭合的Markdown实体
+        # 检查是否有未闭合的md实体
         bold_count = part.count('**')
         if bold_count % 2 != 0:
             logger.warning(f"分段中粗体标记不匹配: {bold_count}个**标记")
@@ -189,7 +189,7 @@ def split_message_smart(text, max_length, preserve_markdown=True):
 
 def validate_message_entities(text):
     """
-    验证消息中的Markdown实体是否完整
+    验证消息中的md实体是否完整
     
     Args:
         text: 要验证的文本

@@ -93,7 +93,7 @@ async def send_startup_message(client):
                 await client.send_message(
                     admin_id,
                     help_text,
-                    parse_mode='markdown',
+                    parse_mode='md',
                     link_preview=False
                 )
                 logger.info(f"已向管理员 {admin_id} 发送启动消息")

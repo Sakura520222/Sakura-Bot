@@ -437,7 +437,7 @@ class DatabaseManager:
         导出历史记录
 
         Args:
-            output_format: 输出格式 (json/csv/markdown)
+            output_format: 输出格式 (json/csv/md)
             channel_id: 可选，频道URL，不指定则导出所有频道
 
         Returns:
@@ -460,8 +460,8 @@ class DatabaseManager:
                 self._export_json(summaries, filename)
             elif output_format == "csv":
                 self._export_csv(summaries, filename)
-            elif output_format == "markdown":
-                self._export_markdown(summaries, filename)
+            elif output_format == "md":
+                self._export_md(summaries, filename)
             else:
                 logger.error(f"不支持的导出格式: {output_format}")
                 return None
@@ -499,8 +499,8 @@ class DatabaseManager:
                     row['summary_message_ids'] = json.dumps(row['summary_message_ids'])
                 writer.writerow(row)
 
-    def _export_markdown(self, summaries: List[Dict], filename: str):
-        """导出为Markdown格式"""
+    def _export_md(self, summaries: List[Dict], filename: str):
+        """导出为md格式"""
         with open(filename, 'w', encoding='utf-8') as f:
             f.write("# 频道总结历史记录\n\n")
             f.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")

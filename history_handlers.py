@@ -152,7 +152,7 @@ async def handle_export(event):
                 channel_id = channel_part
             else:
                 # 可能是频道名或格式
-                if channel_part.lower() in ['json', 'csv', 'markdown']:
+                if channel_part.lower() in ['json', 'csv', 'md']:
                     output_format = channel_part.lower()
                 else:
                     channel_id = f"https://t.me/{channel_part}"
@@ -160,7 +160,7 @@ async def handle_export(event):
         if len(parts) > 2:
             # 第二个参数可能是格式或频道
             second_param = parts[2].lower()
-            if second_param in ['json', 'csv', 'markdown']:
+            if second_param in ['json', 'csv', 'md']:
                 output_format = second_param
 
         # 如果指定了频道，验证是否存在
