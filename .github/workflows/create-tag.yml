@@ -124,20 +124,62 @@ jobs:
           echo "创建发布资源包: 版本=$VERSION, 发布名称=$RELEASE_NAME"
           mkdir -p "$RELEASE_DIR"
           
-          # 复制主要文件
-          cp -r *.py *.txt *.md *.yml Dockerfile docker-entrypoint.sh "$RELEASE_DIR/" 2>/dev/null || true
-
-          # 复制许可证文件
-          if [ -f "LICENSE" ]; then
-            cp LICENSE "$RELEASE_DIR/"
-            echo "已复制LICENSE文件"
-          fi
-
-          # 复制环境变量示例文件
-          if [ -f ".env.example" ]; then
-            cp .env.example "$RELEASE_DIR/"
-            echo "已复制.env.example文件"
-          fi
+          # 复制 Python 源文件（15个）
+          for py_file in ai_client.py command_handlers.py config.py database.py error_handler.py \
+                         history_handlers.py main.py poll_prompt_manager.py \
+                         poll_regeneration_handlers.py prompt_manager.py scheduler.py \
+                         summary_time_manager.py telegram_client.py telegram_client_utils.py; do
+            if [ -f "$py_file" ]; then
+              cp "$py_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制辅助工具（2个）
+          for tool_file in restart_bot.py restart_bot_improved.py; do
+            if [ -f "$tool_file" ]; then
+              cp "$tool_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制配置文件
+          for config_file in config.example.json .env.example requirements.txt; do
+            if [ -f "$config_file" ]; then
+              cp "$config_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制文档文件（仅用户需要的）
+          for doc_file in README.md CHANGELOG.md LICENSE; do
+            if [ -f "$doc_file" ]; then
+              cp "$doc_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制启动脚本
+          for script_file in start.bat start.sh; do
+            if [ -f "$script_file" ]; then
+              cp "$script_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制 Docker 相关文件
+          for docker_file in Dockerfile docker-compose.yml docker-entrypoint.sh; do
+            if [ -f "$docker_file" ]; then
+              cp "$docker_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 复制提示词文件
+          for prompt_file in prompt.txt poll_prompt.txt; do
+            if [ -f "$prompt_file" ]; then
+              cp "$prompt_file" "$RELEASE_DIR/"
+            fi
+          done
+          
+          # 设置可执行权限
+          chmod +x "$RELEASE_DIR/start.sh"
+          chmod +x "$RELEASE_DIR/docker-entrypoint.sh"
+          echo "已设置可执行文件权限"
           
           # 创建压缩包
           tar -czf "sakura-channel-summary-assistant-${RELEASE_NAME}.tar.gz" "$RELEASE_DIR/"
