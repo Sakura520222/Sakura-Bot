@@ -1,13 +1,12 @@
 {
-  "api_key": "your_deepseek_api_key_here",
-  "base_url": "https://api.deepseek.com",
-  "model": "deepseek-chat",
   "channels": [
     "https://t.me/example_channel1",
     "https://t.me/example_channel2"
   ],
   "send_report_to_source": true,
   "enable_poll": true,
+  "poll_regen_threshold": 5,
+  "enable_vote_regen_request": true,
   "log_level": "INFO",
   "summary_schedules": {
     "https://t.me/example_channel1": {

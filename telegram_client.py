@@ -809,10 +809,22 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
             try:
                 # 使用 Telethon 的高层 Button API
                 # 注意：buttons 必须是二维列表 [[...]]
-                button_markup = [[Button.inline(
-                    "🔄 重新生成投票",
+                # 添加投票重新生成请求功能：垂直堆叠两个按钮
+                from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+                button_markup = []
+                
+                # 如果启用投票重新生成请求功能，添加请求按钮
+                if ENABLE_VOTE_REGEN_REQUEST:
+                    button_markup.append([Button.inline(
+                        f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                        data=f"request_regen_{summary_message_id}".encode('utf-8')
+                    )])
+                
+                # 添加管理员重新生成按钮
+                button_markup.append([Button.inline(
+                    "🔄 重新生成投票 (管理员)",
                     data=f"regen_poll_{summary_message_id}".encode('utf-8')
-                )]]
+                )])
 
                 # 发送按钮消息，回复投票
                 button_msg = await client.send_message(
@@ -1057,10 +1069,22 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                 try:
                     # 使用 Telethon 的高层 Button API
                     # 注意：buttons 必须是二维列表 [[...]]
-                    button_markup = [[Button.inline(
-                        "🔄 重新生成投票",
+                    # 添加投票重新生成请求功能：垂直堆叠两个按钮
+                    from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+                    button_markup = []
+                    
+                    # 如果启用投票重新生成请求功能，添加请求按钮
+                    if ENABLE_VOTE_REGEN_REQUEST:
+                        button_markup.append([Button.inline(
+                            f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                            data=f"request_regen_{summary_message_id}".encode('utf-8')
+                        )])
+                    
+                    # 添加管理员重新生成按钮
+                    button_markup.append([Button.inline(
+                        "🔄 重新生成投票 (管理员)",
                         data=f"regen_poll_{summary_message_id}".encode('utf-8')
-                    )]]
+                    )])
 
                     # 发送按钮消息到讨论组，回复投票
                     button_msg = await client.send_message(

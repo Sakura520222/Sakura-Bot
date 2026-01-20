@@ -8,11 +8,17 @@ services:
     env_file:
       - .env
     volumes:
-      # 持久化数据目录
-      - ./data:/app/data
+      # 持久化配置文件
+      - ./config.json:/app/config.json
+      - ./prompt.txt:/app/prompt.txt
+      - ./poll_prompt.txt:/app/poll_prompt.txt
+      - ./.last_summary_time.json:/app/.last_summary_time.json
+      - ./.poll_regenerations.json:/app/.poll_regenerations.json
+      # 持久化数据库文件
+      - ./summaries.db:/app/summaries.db
       # 持久化会话文件
-      - ./bot_session.session:/app/bot_session.session
       - ./session_name.session:/app/session_name.session
+      - ./bot_session.session:/app/bot_session.session
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

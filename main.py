@@ -38,11 +38,14 @@ from command_handlers import (
     handle_start, handle_help, handle_clear_cache
 )
 from history_handlers import handle_history, handle_export, handle_stats
-from poll_regeneration_handlers import handle_poll_regeneration_callback
+from poll_regeneration_handlers import (
+    handle_poll_regeneration_callback,
+    handle_vote_regen_request_callback
+)
 from error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -236,6 +239,13 @@ async def main():
             CallbackQuery(func=lambda e: e.data.startswith(b'regen_poll_'))
         )
         logger.info("投票重新生成回调处理器已注册")
+
+        # 添加投票重新生成请求回调查询处理器
+        client.add_event_handler(
+            handle_vote_regen_request_callback,
+            CallbackQuery(func=lambda e: e.data.startswith(b'request_regen_'))
+        )
+        logger.info("投票重新生成请求回调处理器已注册")
 
         logger.info("命令处理器添加完成")
 

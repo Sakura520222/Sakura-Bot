@@ -1,4 +1,4 @@
-# 🌸 Sakura-频道总结助手 v1.3.2
+# 🌸 Sakura-频道总结助手 v1.3.3
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
@@ -151,25 +151,30 @@ docker-compose down
 ```
 Sakura-Channel-Summary-Assistant/
 ├── 📄 配置文件（持久化保存）
-│   ├── .env                    # 环境变量配置
-│   ├── config.json             # AI配置文件
-│   ├── prompt.txt              # 提示词文件
-│   └── .last_summary_time.json # 总结时间记录文件
+│   ├── .env                      # 环境变量配置
+│   ├── config.json               # AI配置文件
+│   ├── prompt.txt                # 总结提示词文件
+│   ├── poll_prompt.txt           # 投票提示词文件
+│   ├── .last_summary_time.json   # 总结时间记录文件
+│   └── .poll_regenerations.json  # 投票重新生成记录文件
 │
-├── 📄 会话文件（持久化保存）
-│   ├── bot_session.session     # Telegram主会话
-│   ├── health_check.session    # 健康检查会话
-│   └── *.session-journal       # 会话日志文件
+├── 📄 数据文件（持久化保存）
+│   ├── summaries.db              # SQLite数据库文件（历史记录）
+│   ├── bot_session.session       # Telegram主会话
+│   └── *.session-journal         # 会话日志文件
 │
 └── 📄 Docker配置
-    ├── docker-compose.yml      # Docker Compose配置
-    └── Dockerfile              # Docker镜像构建
+    ├── docker-compose.yml        # Docker Compose配置
+    ├── docker-entrypoint.sh      # Docker入口点脚本
+    └── Dockerfile                # Docker镜像构建
 ```
 
 **重要说明：**
-- 所有配置文件（`.env`、`config.json`、`prompt.txt`）都保存在项目根目录，确保容器重启后配置不丢失
-- Telegram会话文件（`*.session`）持久化保存，避免重复登录
-- 数据目录结构已简化，不再使用单独的`data/`目录，所有文件直接保存在项目根目录
+- **配置文件**：`.env`、`config.json`、`prompt.txt`、`poll_prompt.txt` 都保存在项目根目录，确保容器重启后配置不丢失
+- **数据文件**：`summaries.db` 数据库文件持久化保存，容器重启后历史记录不会丢失
+- **会话文件**：`bot_session.session` 持久化保存，避免重复登录
+- **投票数据**：`.poll_regenerations.json` 持久化保存，投票重新生成功能不会失效
+- 文件结构已简化，不再使用单独的 `data/` 目录，所有文件直接保存在项目根目录
 
 ### 管理命令
 

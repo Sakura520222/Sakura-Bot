@@ -33,31 +33,49 @@ fi
 
 echo "环境变量检查完成"
 
-# 创建数据目录和文件
-echo "初始化数据目录..."
-mkdir -p /app/data
-
 # 检查并创建必要的文件
-if [ ! -f /app/data/config.json ]; then
+if [ ! -f /app/config.json ]; then
     echo "创建默认 config.json 文件"
-    echo '{}' > /app/data/config.json
+    echo '{}' > /app/config.json
 fi
 
-if [ ! -f /app/data/prompt.txt ]; then
+if [ ! -f /app/prompt.txt ]; then
     echo "创建默认 prompt.txt 文件"
-    echo "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：" > /app/data/prompt.txt
+    echo "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：" > /app/prompt.txt
 fi
 
-if [ ! -f /app/data/.last_summary_time.json ]; then
+if [ ! -f /app/poll_prompt.txt ]; then
+    echo "创建默认 poll_prompt.txt 文件"
+    cat > /app/poll_prompt.txt << 'EOF'
+根据以下内容生成一个有趣的单选投票。
+1. 趣味性：题目和选项要幽默、有梗，具有互动性，避免平铺直叙。
+2. 双语要求：整体内容中文在上，英文在下。在 JSON 字段内部，中文与英文之间使用 " / " 分隔。
+3. 输出格式：仅输出标准的 JSON 格式，严禁包含任何前言、解释或 Markdown 代码块标识符。
+4. JSON 结构：
+{
+  "question": "中文题目 / English Question",
+  "options": [
+    "中文选项1 / English Option 1",
+    "中文选项2 / English Option 2",
+    "中文选项3 / English Option 3",
+    "中文选项4 / English Option 4"
+  ]
+}
+
+# Input Content
+{summary_text}
+EOF
+fi
+
+if [ ! -f /app/.last_summary_time.json ]; then
     echo "创建默认 .last_summary_time.json 文件"
-    echo '{}' > /app/data/.last_summary_time.json
+    echo '{}' > /app/.last_summary_time.json
 fi
 
-# 创建符号链接到数据目录
-echo "创建配置文件符号链接..."
-ln -sf /app/data/config.json /app/config.json
-ln -sf /app/data/prompt.txt /app/prompt.txt
-ln -sf /app/data/.last_summary_time.json /app/.last_summary_time.json
+if [ ! -f /app/.poll_regenerations.json ]; then
+    echo "创建默认 .poll_regenerations.json 文件"
+    echo '{}' > /app/.poll_regenerations.json
+fi
 
 # 检查会话文件
 if [ ! -f /app/bot_session.session ]; then
@@ -68,7 +86,7 @@ fi
 
 # 设置文件权限
 echo "设置文件权限..."
-chown -R appuser:appuser /app/data /app/bot_session.session 2>/dev/null || true
+chown -R appuser:appuser /app/bot_session.session 2>/dev/null || true
 
 echo "========================================"
 echo "启动参数: $@"

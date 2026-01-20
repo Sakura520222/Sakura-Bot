@@ -11,9 +11,121 @@
 
 import logging
 from telethon import Button
-from config import ADMIN_LIST, get_poll_regeneration, update_poll_regeneration, load_poll_regenerations
+from config import (
+    ADMIN_LIST, get_poll_regeneration, update_poll_regeneration, load_poll_regenerations,
+    POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST,
+    increment_vote_count, reset_vote_count, get_vote_count
+)
 
 logger = logging.getLogger(__name__)
+
+
+async def handle_vote_regen_request_callback(event):
+    """处理投票重新生成请求按钮的回调
+
+    允许任何人点击并记录点击数，当达到阈值时自动重新生成投票
+    """
+    callback_data = event.data.decode('utf-8')
+    sender_id = event.query.user_id
+
+    logger.info(f"收到投票重新生成请求: {callback_data}, 来自用户: {sender_id}")
+
+    # 检查是否启用该功能
+    if not ENABLE_VOTE_REGEN_REQUEST:
+        logger.info("投票重新生成请求功能已禁用")
+        await event.answer("❌ 该功能已禁用", alert=True)
+        return
+
+    # 解析callback_data
+    # 格式: request_regen_{summary_message_id}
+    parts = callback_data.split('_')
+    if len(parts) < 3 or parts[0] != 'request' or parts[1] != 'regen':
+        await event.answer("❌ 无效的请求格式", alert=True)
+        return
+
+    summary_msg_id = int(parts[-1])
+
+    # 先获取投票重新生成数据以找到频道
+    data = load_poll_regenerations()
+    target_channel = None
+    button_msg_id = None
+
+    for channel, records in data.items():
+        if str(summary_msg_id) in records:
+            target_channel = channel
+            button_msg_id = records[str(summary_msg_id)].get('button_message_id')
+            break
+
+    if not target_channel:
+        await event.answer("❌ 未找到相关投票数据", alert=True)
+        return
+
+    # 增加投票计数（传入正确的频道）
+    success, count, already_voted = await increment_vote_count(target_channel, summary_msg_id, sender_id)
+
+    if not success:
+        logger.warning(f"投票重新生成记录不存在或更新失败: summary_msg_id={summary_msg_id}")
+        await event.answer("❌ 未找到相关投票数据", alert=True)
+        return
+
+    if already_voted:
+        # 用户已经投过票了
+        await event.answer(f"⚠️ 您已经投票过了 (当前: {count}/{POLL_REGEN_THRESHOLD})", alert=True)
+        return
+
+    # 更新按钮文本显示进度
+    try:
+        new_button_text = f"👍 请求重新生成 ({count}/{POLL_REGEN_THRESHOLD})"
+
+        button_markup = [
+            [Button.inline(
+                new_button_text,
+                data=f"request_regen_{summary_msg_id}".encode('utf-8')
+            )],
+            [Button.inline(
+                "🔄 重新生成投票 (管理员)",
+                data=f"regen_poll_{summary_msg_id}".encode('utf-8')
+            )]
+        ]
+
+        # 使用 edit_message 方法更新按钮
+        await event.client.edit_message(
+            entity=event.chat_id,
+            message=button_msg_id,
+            buttons=button_markup
+        )
+        logger.info(f"✅ 已更新按钮文本: {new_button_text}")
+    except Exception as e:
+        logger.error(f"更新按钮文本失败: {e}")
+        # 继续执行，按钮更新失败不影响投票逻辑
+
+    # 用户个人提示
+    await event.answer(f"✅ 您已成功投票 ({count}/{POLL_REGEN_THRESHOLD})")
+
+    # 检查是否达到阈值
+    if count >= POLL_REGEN_THRESHOLD:
+        logger.info(f"🎉 投票数达到阈值: {count}/{POLL_REGEN_THRESHOLD}, 开始自动重新生成投票")
+        
+        # 自动触发投票重新生成
+        regen_data = get_poll_regeneration(target_channel, summary_msg_id)
+        if regen_data:
+            success = await regenerate_poll(
+                client=event.client,
+                channel=target_channel,
+                summary_msg_id=summary_msg_id,
+                regen_data=regen_data
+            )
+            if success:
+                # 重置投票计数
+                reset_success = reset_vote_count(target_channel, summary_msg_id)
+                if reset_success:
+                    logger.info(f"✅ 投票计数已重置: channel={target_channel}, summary_id={summary_msg_id}")
+            else:
+                logger.warning(f"⚠️ 重置投票计数失败: channel={target_channel}, summary_id={summary_msg_id}")
+        else:
+            logger.error("❌ 未找到投票重新生成数据")
+    else:
+        logger.info(f"当前投票进度: {count}/{POLL_REGEN_THRESHOLD}")
 
 
 async def handle_poll_regeneration_callback(event):
@@ -70,6 +182,12 @@ async def handle_poll_regeneration_callback(event):
     )
 
     if success:
+        # 管理员手动重新生成后，必须重置投票计数和用户列表
+        reset_success = reset_vote_count(target_channel, summary_msg_id)
+        if reset_success:
+            logger.info(f"✅ 管理员手动重置，已清空投票计数和名单: {summary_msg_id}")
+        else:
+            logger.warning(f"⚠️ 重置投票计数失败: {summary_msg_id}")
         logger.info(f"✅ 投票重新生成成功: channel={target_channel}, summary_id={summary_msg_id}")
     else:
         logger.error(f"❌ 投票重新生成失败: channel={target_channel}, summary_id={summary_msg_id}")
@@ -219,10 +337,21 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
         logger.info(f"✅ 新投票已发送到频道,消息ID: {poll_msg_id}")
 
         # 4. 发送新按钮
-        button_markup = [[Button.inline(
-            "🔄 重新生成投票",
+        from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        button_markup = []
+        
+        # 如果启用投票重新生成请求功能，添加请求按钮
+        if ENABLE_VOTE_REGEN_REQUEST:
+            button_markup.append([Button.inline(
+                f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                data=f"request_regen_{summary_msg_id}".encode('utf-8')
+            )])
+        
+        # 添加管理员重新生成按钮
+        button_markup.append([Button.inline(
+            "🔄 重新生成投票 (管理员)",
             data=f"regen_poll_{summary_msg_id}".encode('utf-8')
-        )]]
+        )])
 
         button_msg = await client.send_message(
             channel,
@@ -358,10 +487,21 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
         logger.info(f"✅ 新投票已发送到讨论组,消息ID: {poll_msg_id}")
 
         # 5. 发送新按钮
-        button_markup = [[Button.inline(
-            "🔄 重新生成投票",
+        from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        button_markup = []
+        
+        # 如果启用投票重新生成请求功能，添加请求按钮
+        if ENABLE_VOTE_REGEN_REQUEST:
+            button_markup.append([Button.inline(
+                f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                data=f"request_regen_{summary_msg_id}".encode('utf-8')
+            )])
+        
+        # 添加管理员重新生成按钮
+        button_markup.append([Button.inline(
+            "🔄 重新生成投票 (管理员)",
             data=f"regen_poll_{summary_msg_id}".encode('utf-8')
-        )]]
+        )])
 
         button_msg = await client.send_message(
             discussion_group_id,

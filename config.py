@@ -11,6 +11,7 @@
 
 import os
 import logging
+import asyncio
 from dotenv import load_dotenv
 
 # 配置日志
@@ -103,6 +104,16 @@ SEND_REPORT_TO_SOURCE = True
 # 是否启用投票功能，默认为True
 ENABLE_POLL = True
 
+# 投票重新生成请求配置
+# 触发重新生成的投票数阈值，默认为5
+POLL_REGEN_THRESHOLD = 5
+
+# 是否启用投票重新生成请求功能，默认为True
+ENABLE_VOTE_REGEN_REQUEST = True
+
+# 投票重新生成数据文件锁，用于并发控制
+_poll_regenerations_lock = asyncio.Lock()
+
 # 日志级别 - 从环境变量获取默认值
 LOG_LEVEL_FROM_ENV = os.getenv('LOG_LEVEL')
 logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
@@ -164,7 +175,7 @@ def save_config(config):
 
 def update_module_variables(config):
     """更新模块变量以匹配配置文件"""
-    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, CHANNELS, SEND_REPORT_TO_SOURCE, SUMMARY_SCHEDULES, CHANNEL_POLL_SETTINGS
+    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, CHANNELS, SEND_REPORT_TO_SOURCE, SUMMARY_SCHEDULES, CHANNEL_POLL_SETTINGS, POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 
     # 更新AI配置
     LLM_API_KEY = config.get('api_key', LLM_API_KEY)
@@ -199,6 +210,15 @@ def update_module_variables(config):
         CHANNEL_POLL_SETTINGS = channel_poll_config
         logger.info(f"已更新内存中的频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
 
+    # 更新投票重新生成请求配置
+    if 'poll_regen_threshold' in config:
+        POLL_REGEN_THRESHOLD = config['poll_regen_threshold']
+        logger.info(f"已更新内存中的投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
+
+    if 'enable_vote_regen_request' in config:
+        ENABLE_VOTE_REGEN_REQUEST = config['enable_vote_regen_request']
+        logger.info(f"已更新内存中的投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
+
 # 加载配置文件，覆盖环境变量默认值
 logger.info("开始加载配置文件...")
 config = load_config()
@@ -221,6 +241,13 @@ if config:
     # 从配置文件读取是否启用投票功能的配置
     ENABLE_POLL = config.get('enable_poll', ENABLE_POLL)
     logger.info(f"已从配置文件加载投票功能配置: {ENABLE_POLL}")
+    
+    # 从配置文件读取投票重新生成请求配置
+    POLL_REGEN_THRESHOLD = config.get('poll_regen_threshold', POLL_REGEN_THRESHOLD)
+    logger.info(f"已从配置文件加载投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
+    
+    ENABLE_VOTE_REGEN_REQUEST = config.get('enable_vote_regen_request', ENABLE_VOTE_REGEN_REQUEST)
+    logger.info(f"已从配置文件加载投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
     
     # 从配置文件读取日志级别
     LOG_LEVEL_FROM_CONFIG = config.get('log_level')
@@ -738,7 +765,9 @@ def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
         "summary_text": summary_text,
         "channel_name": channel_name,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "send_to_channel": send_to_channel
+        "send_to_channel": send_to_channel,
+        "vote_count": 0,  # 初始化投票计数
+        "voters": []  # 初始化已投票用户列表
     }
     # 如果是讨论组模式，保存转发消息ID
     if not send_to_channel and discussion_forward_msg_id is not None:
@@ -820,6 +849,93 @@ def cleanup_old_regenerations(days=30):
     if count > 0:
         logger.info(f"已清理 {count} 条超过 {days} 天的投票重新生成记录")
     return count
+
+
+async def increment_vote_count(channel, summary_msg_id, user_id):
+    """增加投票计数
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+        user_id: 用户ID
+
+    Returns:
+        tuple: (是否成功增加, 当前计数, 是否已投票)
+    """
+    global _poll_regenerations_lock
+
+    async with _poll_regenerations_lock:
+        data = load_poll_regenerations()
+        
+        # 检查记录是否存在
+        if channel not in data or str(summary_msg_id) not in data[channel]:
+            logger.warning(f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}")
+            return False, 0, False
+        
+        record = data[channel][str(summary_msg_id)]
+        
+        # 检查用户是否已投票
+        if user_id in record.get('voters', []):
+            logger.info(f"用户 {user_id} 已经投票过了")
+            return False, record.get('vote_count', 0), True
+        
+        # 增加投票计数
+        record['vote_count'] = record.get('vote_count', 0) + 1
+        record.setdefault('voters', []).append(user_id)
+        
+        # 保存数据
+        save_poll_regenerations(data)
+        
+        logger.info(f"投票计数已更新: channel={channel}, summary_id={summary_msg_id}, count={record['vote_count']}, user_id={user_id}")
+        return True, record['vote_count'], False
+
+
+def reset_vote_count(channel, summary_msg_id):
+    """重置投票计数
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+
+    Returns:
+        bool: 是否成功重置
+    """
+    global _poll_regenerations_lock
+    
+    data = load_poll_regenerations()
+    
+    # 检查记录是否存在
+    if channel not in data or str(summary_msg_id) not in data[channel]:
+        logger.warning(f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}")
+        return False
+    
+    # 重置计数和投票者列表
+    data[channel][str(summary_msg_id)]['vote_count'] = 0
+    data[channel][str(summary_msg_id)]['voters'] = []
+    
+    # 保存数据
+    save_poll_regenerations(data)
+    
+    logger.info(f"投票计数已重置: channel={channel}, summary_id={summary_msg_id}")
+    return True
+
+
+def get_vote_count(channel, summary_msg_id):
+    """获取投票计数
+
+    Args:
+        channel: 频道URL
+        summary_msg_id: 总结消息ID
+
+    Returns:
+        int: 投票计数，如果记录不存在返回0
+    """
+    data = load_poll_regenerations()
+    
+    if channel not in data or str(summary_msg_id) not in data[channel]:
+        return 0
+    
+    return data[channel][str(summary_msg_id)].get('vote_count', 0)
 
 
 # ==================== 讨论组ID缓存管理 ====================
