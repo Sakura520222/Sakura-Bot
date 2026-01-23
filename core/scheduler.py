@@ -13,11 +13,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
-from prompt_manager import load_prompt
-from summary_time_manager import load_last_summary_time, save_last_summary_time
-from ai_client import analyze_with_ai
-from telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
+from .config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
+from .prompt_manager import load_prompt
+from .summary_time_manager import load_last_summary_time, save_last_summary_time
+from .ai_client import analyze_with_ai
+from .telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
 
 async def main_job(channel=None):
     """定时任务主函数
@@ -133,7 +133,7 @@ async def main_job(channel=None):
                     channel_name = channel.split('/')[-1]
 
                 # 获取频道的调度配置，用于生成报告标题
-                from config import get_channel_schedule
+                from .config import get_channel_schedule
                 schedule_config = get_channel_schedule(channel)
                 frequency = schedule_config.get('frequency', 'weekly')
 
@@ -176,7 +176,7 @@ async def main_job(channel=None):
 
                     # ✅ 新增：保存到数据库
                     try:
-                        from database import get_db_manager
+                        from .database import get_db_manager
 
                         # 提取时间范围
                         start_time_db, end_time_db = extract_date_range_from_summary(report_text)
@@ -292,7 +292,7 @@ async def main_job(channel=None):
 
 async def cleanup_old_poll_regenerations():
     """定期清理超过30天的投票重新生成数据"""
-    from config import cleanup_old_regenerations
+    from .config import cleanup_old_regenerations
 
     try:
         deleted_count = cleanup_old_regenerations(days=30)

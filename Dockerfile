@@ -37,7 +37,7 @@ USER appuser
 
 # 创建必要的目录和文件
 RUN mkdir -p /app/data && \
-    touch /app/data/config.json /app/data/prompt.txt /app/data/.last_summary_time.json
+    touch /app/data/config.json /app/data/prompt.txt /app/data/poll_prompt.txt /app/data/.last_summary_time.json /app/data/.poll_regenerations.json
 
 # 设置数据卷
 VOLUME ["/app/data"]

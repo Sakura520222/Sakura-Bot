@@ -43,11 +43,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 配置文件路径
-PROMPT_FILE = "prompt.txt"
-POLL_PROMPT_FILE = "poll_prompt.txt"
-CONFIG_FILE = "config.json"
-RESTART_FLAG_FILE = ".restart_flag"
-LAST_SUMMARY_FILE = ".last_summary_time.json"
+PROMPT_FILE = os.path.join("data", "prompt.txt")
+POLL_PROMPT_FILE = os.path.join("data", "poll_prompt.txt")
+CONFIG_FILE = os.path.join("data", "config.json")
+RESTART_FLAG_FILE = os.path.join("data", ".restart_flag")
+LAST_SUMMARY_FILE = os.path.join("data", ".last_summary_time.json")
 
 # 讨论组ID缓存 (频道URL -> 讨论组ID)
 # 避免频繁调用GetFullChannelRequest,提升性能
@@ -77,8 +77,10 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 """
 
 # 加载 .env 文件中的变量
-load_dotenv()
-logger.info("已加载 .env 文件中的环境变量")
+# 显式指定 .env 文件路径（data/.env）
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", ".env")
+load_dotenv(env_path)
+logger.info(f"已加载 .env 文件中的环境变量 (路径: {env_path})")
 
 # 从环境变量中读取配置
 logger.info("开始从环境变量加载配置...")
@@ -706,7 +708,7 @@ def delete_channel_poll_config(channel):
 
 
 # 投票重新生成数据存储
-POLL_REGENERATIONS_FILE = ".poll_regenerations.json"
+POLL_REGENERATIONS_FILE = os.path.join("data", ".poll_regenerations.json")
 
 
 def load_poll_regenerations():

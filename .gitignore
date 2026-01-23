@@ -207,31 +207,44 @@ marimo/_lsp/
 __marimo__/
 
 # 项目特有文件
-# 会话文件
-session_name*
-bot_session*
+# 配置和数据文件（data/目录）
+config.json
+data/config.json
+data/*.jsons
 
-# 操作系统文件补充
+# 提示词文件
+
+# 运行时文件
+.last_summary_time
+.last_summary_time.json
+data/.last_summary_time.json
+.poll_regenerations.json
+data/.poll_regenerations.json
+.shutdown_flag
+data/.shutdown_flag
+summaries.db
+data/summaries.db
+*.db
+
+# 会话文件
+bot_session*
+session_name*
+
+# 备份文件
+备份/
+health_check.session
+test_session.session
+
+# 操作系统文件
 .DS_Store
 Thumbs.db
 
-# IDE配置文件补充
+# IDE配置文件
 .vscode/
 .idea/
 *.swp
 *.swo
-Astrbot插件开发文档.md
-.gitignore
-config.json
-prompt.txt
-.gitignore
-.last_summary_time
-.last_summary_time.json
-备份/
-health_check.session
-.shutdown_flag
-test_session.session
+
+# 其他
 .claude
-.poll_regenerations.json
 tmpclaude-*-cwd
-*.db

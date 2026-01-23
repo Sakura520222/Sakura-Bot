@@ -14,9 +14,9 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, Button
 from telethon.tl.types import PeerChannel
-from config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL, get_channel_poll_config, LLM_MODEL
-from error_handler import retry_with_backoff, record_error
-from telegram_client_utils import split_message_smart, validate_message_entities
+from .config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, ENABLE_POLL, get_channel_poll_config, LLM_MODEL
+from .error_handler import retry_with_backoff, record_error
+from .telegram_client_utils import split_message_smart, validate_message_entities
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +414,19 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 try:
                     logger.info(f"正在向源频道 {source_channel} 发送报告")
                     
+                    # 检查频道是否为仅讨论组模式（无写入权限）
+                    try:
+                        # 尝试获取频道实体和权限
+                        channel_entity = await use_client.get_entity(source_channel)
+                        logger.info(f"成功获取频道实体: {channel_entity.title if hasattr(channel_entity, 'title') else source_channel}")
+                        
+                        # 检查是否可以发送消息（发送测试）
+                        # 注意：某些频道只允许讨论组，不允许直接发送消息
+                        # 如果发送失败，跳过频道发送但继续执行管理员通知
+                    
+                    except Exception as e:
+                        logger.warning(f"获取频道实体失败: {e}，将尝试直接发送")
+                    
                     # 直接调用use_client.send_message并收集消息ID
                     if len(summary_text_for_source) <= 4000:
                         # 短消息直接发送
@@ -475,6 +488,18 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     
                     logger.info(f"成功向源频道 {source_channel} 发送报告，消息ID: {report_message_ids}")
                     
+                    # 向管理员发送频道发送成功的通知
+                    if not skip_admins:
+                        for admin_id in ADMIN_LIST:
+                            try:
+                                await use_client.send_message(
+                                    admin_id,
+                                    f"✅ 总结已成功发送到频道 {channel_actual_name or source_channel}",
+                                    link_preview=False
+                                )
+                            except Exception as e:
+                                logger.debug(f"发送频道成功通知到管理员失败: {e}")
+                    
                     # 自动置顶第一条消息
                     if report_message_ids:
                         try:
@@ -499,6 +524,47 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             logger.warning("投票发送失败，但总结消息已成功发送")
                 except Exception as e:
                     logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
+                    
+                    # 特殊处理：频道无写入权限错误
+                    if "ChatWriteForbiddenError" in type(e).__name__ or "You can't write in this chat" in str(e):
+                        logger.warning(f"⚠️ 频道 {source_channel} ({channel_actual_name}) 不允许机器人发送消息")
+                        logger.warning(f"可能的原因：")
+                        logger.warning(f"  1. 频道设置为仅讨论组模式")
+                        logger.warning(f"  2. 机器人没有在该频道发送消息的权限")
+                        logger.warning(f"  3. 频道未启用机器人功能")
+                        logger.warning(f"建议：检查频道设置，或仅使用管理员通知功能")
+                        
+                        # 向管理员发送详细的失败通知
+                        if not skip_admins:
+                            for admin_id in ADMIN_LIST:
+                                try:
+                                    notification = (
+                                        f"⚠️ **频道发送失败**\n\n"
+                                        f"频道：{channel_actual_name or source_channel}\n"
+                                        f"原因：机器人没有在该频道发送消息的权限\n\n"
+                                        f"可能原因：\n"
+                                        f"• 频道设置为仅讨论组模式\n"
+                                        f"• 机器人未获得发送消息的权限\n"
+                                        f"• 频道未启用机器人功能\n\n"
+                                        f"建议：检查频道管理员权限设置\n\n"
+                                        f"📊 **总结内容如下：**\n\n"
+                                        f"{summary_text_for_source}"
+                                    )
+                                    await use_client.send_message(admin_id, notification, link_preview=False)
+                                except Exception as notify_error:
+                                    logger.error(f"发送失败通知到管理员失败: {notify_error}")
+                    else:
+                        # 其他错误，也向管理员发送通知
+                        if not skip_admins:
+                            for admin_id in ADMIN_LIST:
+                                try:
+                                    await use_client.send_message(
+                                        admin_id,
+                                        f"❌ 向频道 {channel_actual_name or source_channel} 发送报告失败：\n{type(e).__name__}: {e}",
+                                        link_preview=False
+                                    )
+                                except Exception as notify_error:
+                                    logger.error(f"发送失败通知到管理员失败: {notify_error}")
         else:
             # 创建新的客户端实例
             async with use_client:
@@ -665,7 +731,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
         # 如果成功发送总结到频道，保存到数据库
         if source_channel and report_message_ids:
             try:
-                from database import get_db_manager
+                from .database import get_db_manager
 
                 # 提取时间范围
                 start_time, end_time = extract_date_range_from_summary(summary_text_for_source)
@@ -734,7 +800,7 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
 
         # 生成投票内容
         logger.info("开始生成投票内容")
-        from ai_client import generate_poll_from_summary
+        from .ai_client import generate_poll_from_summary
         poll_data = generate_poll_from_summary(summary_text)
 
         if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
@@ -810,7 +876,7 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
                 # 使用 Telethon 的高层 Button API
                 # 注意：buttons 必须是二维列表 [[...]]
                 # 添加投票重新生成请求功能：垂直堆叠两个按钮
-                from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+                from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
                 button_markup = []
                 
                 # 如果启用投票重新生成请求功能，添加请求按钮
@@ -837,7 +903,7 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
                 logger.info(f"✅ 成功发送重新生成按钮,消息ID: {button_msg.id}")
 
                 # 保存映射关系到存储
-                from config import add_poll_regeneration
+                from .config import add_poll_regeneration
                 channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
                 add_poll_regeneration(
                     channel=channel,
@@ -937,7 +1003,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
         channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
 
         # 检查频道是否有绑定的讨论组(使用缓存版本)
-        from config import get_discussion_group_id_cached
+        from .config import get_discussion_group_id_cached
         discussion_group_id = await get_discussion_group_id_cached(client, channel)
 
         if not discussion_group_id:
@@ -957,7 +1023,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
 
         # 生成投票内容
         logger.info("开始生成投票内容")
-        from ai_client import generate_poll_from_summary
+        from .ai_client import generate_poll_from_summary
         poll_data = generate_poll_from_summary(summary_text)
 
         if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
@@ -1070,7 +1136,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                     # 使用 Telethon 的高层 Button API
                     # 注意：buttons 必须是二维列表 [[...]]
                     # 添加投票重新生成请求功能：垂直堆叠两个按钮
-                    from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+                    from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
                     button_markup = []
                     
                     # 如果启用投票重新生成请求功能，添加请求按钮
@@ -1097,7 +1163,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                     logger.info(f"✅ 成功发送重新生成按钮到讨论组,消息ID: {button_msg.id}")
 
                     # 保存映射关系到存储
-                    from config import add_poll_regeneration
+                    from .config import add_poll_regeneration
                     add_poll_regeneration(
                         channel=channel,
                         summary_msg_id=summary_message_id,

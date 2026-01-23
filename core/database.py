@@ -22,13 +22,15 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """总结历史记录数据库管理器"""
 
-    def __init__(self, db_path="summaries.db"):
+    def __init__(self, db_path=None):
         """
         初始化数据库管理器
 
         Args:
-            db_path: 数据库文件路径，默认为 summaries.db
+            db_path: 数据库文件路径，默认为 data/summaries.db
         """
+        if db_path is None:
+            db_path = os.path.join("data", "summaries.db")
         self.db_path = db_path
         self.init_database()
         logger.info(f"数据库管理器初始化完成: {db_path}")
@@ -531,5 +533,6 @@ def get_db_manager():
     """获取全局数据库管理器实例"""
     global db_manager
     if db_manager is None:
-        db_manager = DatabaseManager()
+        # 使用 data/summaries.db 作为默认路径
+        db_manager = DatabaseManager(os.path.join("data", "summaries.db"))
     return db_manager

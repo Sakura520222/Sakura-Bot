@@ -16,18 +16,18 @@ import os
 from datetime import datetime, timezone, timedelta
 from telethon.events import NewMessage
 
-from config import (
+from .config import (
     CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE,
     RESTART_FLAG_FILE, load_config, save_config, logger,
     get_channel_schedule, set_channel_schedule, set_channel_schedule_v2,
     delete_channel_schedule, validate_schedule,
     get_channel_poll_config, set_channel_poll_config, delete_channel_poll_config
 )
-from prompt_manager import load_prompt, save_prompt
-from poll_prompt_manager import load_poll_prompt, save_poll_prompt
-from summary_time_manager import load_last_summary_time, save_last_summary_time
-from ai_client import analyze_with_ai, client_llm
-from telegram_client import fetch_last_week_messages, send_long_message, send_report
+from .prompt_manager import load_prompt, save_prompt
+from .poll_prompt_manager import load_poll_prompt, save_poll_prompt
+from .summary_time_manager import load_last_summary_time, save_last_summary_time
+from .ai_client import analyze_with_ai, client_llm
+from .telegram_client import fetch_last_week_messages, send_long_message, send_report
 
 # 全局变量，用于跟踪正在设置提示词的用户
 setting_prompt_users = set()
@@ -350,12 +350,12 @@ async def handle_show_ai_config(event):
     
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
-        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        logger.warning(f"发送者 {sender_id} 没有权限执行此命令")
         await event.reply("您没有权限执行此命令")
         return
     
     # 显示当前配置
-    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
     config_info = f"当前AI配置：\n\n"
     config_info += f"API Key：{LLM_API_KEY[:10]}...{LLM_API_KEY[-10:] if len(LLM_API_KEY) > 20 else LLM_API_KEY}\n"
     config_info += f"Base URL：{LLM_BASE_URL}\n"
@@ -394,7 +394,7 @@ async def handle_set_ai_config(event):
 async def handle_ai_config_input(event):
     """处理用户输入的AI配置参数"""
     # 声明全局变量
-    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
     
     # 检查发送者是否在设置AI配置的集合中
     sender_id = event.sender_id
@@ -523,7 +523,7 @@ async def handle_set_log_level(event):
         level_str = level_str.strip().upper()
         
         # 检查日志级别是否有效
-        from config import LOG_LEVEL_MAP
+        from .config import LOG_LEVEL_MAP
         if level_str not in LOG_LEVEL_MAP:
             await event.reply(f"无效的日志级别: {level_str}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
             return
@@ -724,7 +724,7 @@ async def handle_clear_summary_time(event):
                 specific_channel = f"https://t.me/{channel_part}"
         
         import json
-        from config import LAST_SUMMARY_FILE
+        from .config import LAST_SUMMARY_FILE
         if os.path.exists(LAST_SUMMARY_FILE):
             if specific_channel:
                 # 清除特定频道的时间记录
@@ -780,7 +780,7 @@ async def handle_set_send_to_source(event):
             return
         
         # 转换为布尔值
-        from config import SEND_REPORT_TO_SOURCE
+        from .config import SEND_REPORT_TO_SOURCE
         SEND_REPORT_TO_SOURCE = value in ['true', '1', 'yes']
         
         # 更新配置文件
@@ -793,7 +793,7 @@ async def handle_set_send_to_source(event):
         
     except ValueError:
         # 没有提供值，显示当前设置
-        from config import SEND_REPORT_TO_SOURCE
+        from .config import SEND_REPORT_TO_SOURCE
         await event.reply(f"当前报告发送回源频道的设置：{SEND_REPORT_TO_SOURCE}\n\n当前状态：{'开启' if SEND_REPORT_TO_SOURCE else '关闭'}\n\n使用格式：/setsendtosource true|false")
     except Exception as e:
         logger.error(f"设置报告发送回源频道选项时出错: {type(e).__name__}: {e}", exc_info=True)
@@ -1137,11 +1137,11 @@ async def handle_shutdown(event):
     await event.reply("正在关闭机器人...")
     
     # 设置关机状态
-    from config import set_bot_state, BOT_STATE_SHUTTING_DOWN
+    from .config import set_bot_state, BOT_STATE_SHUTTING_DOWN
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
     
     # 停止调度器
-    from config import get_scheduler_instance
+    from .config import get_scheduler_instance
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.shutdown(wait=False)
@@ -1177,7 +1177,7 @@ async def handle_pause(event):
         return
     
     # 检查当前状态
-    from config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
+    from .config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
     current_state = get_bot_state()
     
     if current_state == BOT_STATE_PAUSED:
@@ -1189,7 +1189,7 @@ async def handle_pause(event):
         return
     
     # 暂停调度器
-    from config import get_scheduler_instance
+    from .config import get_scheduler_instance
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.pause()
@@ -1214,7 +1214,7 @@ async def handle_resume(event):
         return
 
     # 检查当前状态
-    from config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
+    from .config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
     current_state = get_bot_state()
 
     if current_state == BOT_STATE_RUNNING:
@@ -1226,7 +1226,7 @@ async def handle_resume(event):
         return
 
     # 恢复调度器
-    from config import get_scheduler_instance
+    from .config import get_scheduler_instance
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.resume()
@@ -1453,7 +1453,7 @@ async def handle_delete_channel_poll(event):
             success_msg += f"该频道将使用全局投票配置："
 
             # 获取全局配置状态
-            from config import ENABLE_POLL
+            from .config import ENABLE_POLL
             global_enabled = "启用" if ENABLE_POLL else "禁用"
             success_msg += f"\n• 状态：{global_enabled}\n"
             success_msg += f"• 发送位置：讨论组（默认）"
@@ -1541,13 +1541,13 @@ async def handle_clear_cache(event):
         if len(parts) > 1:
             # 清除指定频道的缓存
             channel = parts[1]
-            from config import clear_discussion_group_cache
+            from .config import clear_discussion_group_cache
             clear_discussion_group_cache(channel)
             await event.reply(f"✅ 已清除频道 {channel} 的讨论组ID缓存")
             logger.info(f"管理员 {sender_id} 清除了频道 {channel} 的讨论组ID缓存")
         else:
             # 清除所有缓存
-            from config import clear_discussion_group_cache, LINKED_CHAT_CACHE
+            from .config import clear_discussion_group_cache, LINKED_CHAT_CACHE
             cache_size = len(LINKED_CHAT_CACHE)
             clear_discussion_group_cache()
             await event.reply(f"✅ 已清除所有讨论组ID缓存（共 {cache_size} 条）")

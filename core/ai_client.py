@@ -11,9 +11,9 @@
 
 import logging
 from openai import OpenAI
-from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-from error_handler import retry_with_backoff, record_error
-from poll_prompt_manager import load_poll_prompt
+from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from .error_handler import retry_with_backoff, record_error
+from .poll_prompt_manager import load_poll_prompt
 
 logger = logging.getLogger(__name__)
 

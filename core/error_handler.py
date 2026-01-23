@@ -353,7 +353,7 @@ def setup_graceful_shutdown():
 # 预定义的健康检查函数
 async def check_telegram_connection():
     """检查Telegram连接"""
-    from config import API_ID, API_HASH, BOT_TOKEN
+    from core.config import API_ID, API_HASH, BOT_TOKEN
     from telethon import TelegramClient
     
     try:
@@ -367,7 +367,7 @@ async def check_telegram_connection():
 
 async def check_ai_api():
     """检查AI API连接"""
-    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    from core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
     from openai import OpenAI
     
     try:

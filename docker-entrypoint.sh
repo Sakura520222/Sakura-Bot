@@ -34,19 +34,19 @@ fi
 echo "环境变量检查完成"
 
 # 检查并创建必要的文件
-if [ ! -f /app/config.json ]; then
+if [ ! -f /app/data/config.json ]; then
     echo "创建默认 config.json 文件"
-    echo '{}' > /app/config.json
+    echo '{}' > /app/data/config.json
 fi
 
-if [ ! -f /app/prompt.txt ]; then
+if [ ! -f /app/data/prompt.txt ]; then
     echo "创建默认 prompt.txt 文件"
-    echo "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：" > /app/prompt.txt
+    echo "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：" > /app/data/prompt.txt
 fi
 
-if [ ! -f /app/poll_prompt.txt ]; then
+if [ ! -f /app/data/poll_prompt.txt ]; then
     echo "创建默认 poll_prompt.txt 文件"
-    cat > /app/poll_prompt.txt << 'EOF'
+    cat > /app/data/poll_prompt.txt << 'EOF'
 根据以下内容生成一个有趣的单选投票。
 1. 趣味性：题目和选项要幽默、有梗，具有互动性，避免平铺直叙。
 2. 双语要求：整体内容中文在上，英文在下。在 JSON 字段内部，中文与英文之间使用 " / " 分隔。
@@ -67,14 +67,14 @@ if [ ! -f /app/poll_prompt.txt ]; then
 EOF
 fi
 
-if [ ! -f /app/.last_summary_time.json ]; then
+if [ ! -f /app/data/.last_summary_time.json ]; then
     echo "创建默认 .last_summary_time.json 文件"
-    echo '{}' > /app/.last_summary_time.json
+    echo '{}' > /app/data/.last_summary_time.json
 fi
 
-if [ ! -f /app/.poll_regenerations.json ]; then
+if [ ! -f /app/data/.poll_regenerations.json ]; then
     echo "创建默认 .poll_regenerations.json 文件"
-    echo '{}' > /app/.poll_regenerations.json
+    echo '{}' > /app/data/.poll_regenerations.json
 fi
 
 # 检查会话文件
@@ -89,7 +89,7 @@ echo "设置文件权限..."
 chown -R appuser:appuser /app/bot_session.session 2>/dev/null || true
 
 # 修改所有需要写入的文件权限，确保appuser用户可以写入
-for file in /app/.last_summary_time.json /app/.poll_regenerations.json /app/summaries.db; do
+for file in /app/data/.last_summary_time.json /app/data/.poll_regenerations.json /app/data/summaries.db; do
     if [ -f "$file" ]; then
         echo "  设置文件权限: $file"
         chown appuser:appuser "$file" 2>/dev/null || true

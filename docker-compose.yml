@@ -9,16 +9,15 @@ services:
     env_file:
       - .env
     volumes:
-      # 持久化配置文件
-      - ./config.json:/app/config.json
-      - ./prompt.txt:/app/prompt.txt
-      - ./poll_prompt.txt:/app/poll_prompt.txt
-      - ./.last_summary_time.json:/app/.last_summary_time.json
-      - ./.poll_regenerations.json:/app/.poll_regenerations.json
-      # 持久化数据库文件
-      - ./summaries.db:/app/summaries.db
-      # 持久化会话文件
-      - ./session_name.session:/app/session_name.session
+      # 持久化配置文件 - 更新为 data/ 子目录
+      - ./data/config.json:/app/data/config.json
+      - ./data/prompt.txt:/app/data/prompt.txt
+      - ./data/poll_prompt.txt:/app/data/poll_prompt.txt
+      - ./data/.last_summary_time.json:/app/data/.last_summary_time.json
+      - ./data/.poll_regenerations.json:/app/data/.poll_regenerations.json
+      # 持久化数据库文件 - 移至 data/
+      - ./data/summaries.db:/app/data/summaries.db
+      # 持久化会话文件 - 保留在根目录
       - ./bot_session.session:/app/bot_session.session
     # 健康检查
     healthcheck:

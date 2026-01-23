@@ -12,7 +12,10 @@
 import os
 import json
 import logging
+import time
 from datetime import datetime
+import tempfile
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ def load_last_summary_time(channel=None, include_report_ids=False):
         include_report_ids: 可选，是否包含报告消息ID。默认False只返回时间，True返回包含时间和消息ID的字典
                                 新版: 返回summary_message_ids, poll_message_ids, button_message_ids三类ID
     """
-    from config import LAST_SUMMARY_FILE
+    from core.config import LAST_SUMMARY_FILE
 
     logger.info(f"开始读取上次总结时间文件: {LAST_SUMMARY_FILE}")
     try:
@@ -111,7 +114,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         button_message_ids: 按钮消息ID列表(新格式)
         report_message_ids: 发送到源频道的报告消息ID列表(旧格式,兼容参数)
     """
-    from config import LAST_SUMMARY_FILE
+    from core.config import LAST_SUMMARY_FILE
 
     logger.info(f"开始保存频道 {channel} 的上次总结时间到文件: {LAST_SUMMARY_FILE}")
     try:
@@ -156,11 +159,62 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         }
         existing_data[channel] = channel_data
 
-        # 写入文件
-        with open(LAST_SUMMARY_FILE, "w", encoding="utf-8") as f:
-            json.dump(existing_data, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save}")
-        logger.debug(f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}")
+        # 使用临时文件+原子重命名的方式写入（避免文件被锁定的问题）
+        max_retries = 5
+        base_delay = 0.3  # 秒
+        
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # 创建临时文件
+                temp_dir = os.path.dirname(LAST_SUMMARY_FILE)
+                with tempfile.NamedTemporaryFile(
+                    mode='w',
+                    encoding='utf-8',
+                    dir=temp_dir,
+                    suffix='.tmp',
+                    delete=False
+                ) as temp_file:
+                    # 写入数据到临时文件
+                    json.dump(existing_data, temp_file, ensure_ascii=False, indent=2)
+                    temp_path = temp_file.name
+                
+                # 刷新并关闭临时文件后，再进行原子替换
+                # 使用 shutil.move 实现跨文件系统的兼容性
+                try:
+                    # 先删除目标文件（如果存在）
+                    if os.path.exists(LAST_SUMMARY_FILE):
+                        os.remove(LAST_SUMMARY_FILE)
+                    # 重命名临时文件为目标文件
+                    shutil.move(temp_path, LAST_SUMMARY_FILE)
+                except OSError:
+                    # 如果删除或移动失败，清理临时文件
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                    raise
+                
+                logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save}")
+                logger.debug(f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}")
+                return  # 成功则退出函数
+                
+            except PermissionError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # 指数退避：0.3, 0.6, 1.2, 2.4 秒
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"文件被占用，第 {attempt + 1} 次重试... (等待 {delay:.1f}秒，错误: {e})")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"保存上次总结时间失败: 文件被其他程序占用或权限不足。请关闭可能打开该文件的程序后重试。")
+                    logger.error(f"受影响的频道: {channel}, 时间: {time_to_save}")
+                    # 尝试回退到原始文件名（可能需要从备份恢复）
+                    raise PermissionError(f"无法保存文件 {LAST_SUMMARY_FILE}，已被其他程序锁定。请关闭 VSCode 或其他可能打开该文件的程序。") from e
+                    
+            except Exception as e:
+                logger.error(f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+                raise
     except Exception as e:
-        logger.error(f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"保存上次总结时间失败: {type(e).__name__}: {e}", exc_info=True)
+        raise

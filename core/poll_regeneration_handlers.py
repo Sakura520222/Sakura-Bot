@@ -11,7 +11,7 @@
 
 import logging
 from telethon import Button
-from config import (
+from .config import (
     ADMIN_LIST, get_poll_regeneration, update_poll_regeneration, load_poll_regenerations,
     POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST,
     increment_vote_count, reset_vote_count, get_vote_count
@@ -224,7 +224,7 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
             else:
                 # 讨论组模式：需要先获取讨论组ID，然后从讨论组删除
                 # 使用缓存版本避免频繁调用GetFullChannelRequest
-                from config import get_discussion_group_id_cached
+                from .config import get_discussion_group_id_cached
                 discussion_group_id = await get_discussion_group_id_cached(client, channel)
 
                 if discussion_group_id:
@@ -242,7 +242,7 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
             logger.warning(f"删除旧消息时出错: {e}")
 
         # 2. 生成新的投票内容
-        from ai_client import generate_poll_from_summary
+        from .ai_client import generate_poll_from_summary
         summary_text = regen_data['summary_text']
         logger.info("开始生成新的投票内容...")
         new_poll_data = generate_poll_from_summary(summary_text)
@@ -337,7 +337,7 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
         logger.info(f"✅ 新投票已发送到频道,消息ID: {poll_msg_id}")
 
         # 4. 发送新按钮
-        from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
         button_markup = []
         
         # 如果启用投票重新生成请求功能，添加请求按钮
@@ -371,7 +371,7 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
         )
 
         # 6. 更新 .last_summary_time.json 中的投票和按钮ID
-        from summary_time_manager import load_last_summary_time, save_last_summary_time
+        from .summary_time_manager import load_last_summary_time, save_last_summary_time
         from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)
@@ -431,7 +431,7 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
 
         # 2. 获取频道实体和讨论组ID
         # 使用缓存版本避免频繁调用GetFullChannelRequest
-        from config import get_discussion_group_id_cached
+        from .config import get_discussion_group_id_cached
         discussion_group_id = await get_discussion_group_id_cached(client, channel)
 
         if not discussion_group_id:
@@ -487,7 +487,7 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
         logger.info(f"✅ 新投票已发送到讨论组,消息ID: {poll_msg_id}")
 
         # 5. 发送新按钮
-        from config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
         button_markup = []
         
         # 如果启用投票重新生成请求功能，添加请求按钮
@@ -521,7 +521,7 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
         )
 
         # 7. 更新 .last_summary_time.json 中的投票和按钮ID
-        from summary_time_manager import load_last_summary_time, save_last_summary_time
+        from .summary_time_manager import load_last_summary_time, save_last_summary_time
         from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)

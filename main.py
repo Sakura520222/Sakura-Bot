@@ -20,12 +20,15 @@ from telethon.tl.functions.bots import SetBotCommandsRequest
 from telethon.tl.types import BotCommand, BotCommandScopeDefault
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import (
+# 添加项目根目录到 Python 路径
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from core.config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
     RESTART_FLAG_FILE, logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST
 )
-from scheduler import main_job
-from command_handlers import (
+from core.scheduler import main_job
+from core.command_handlers import (
     handle_manual_summary, handle_show_prompt, handle_set_prompt,
     handle_prompt_input, handle_show_poll_prompt, handle_set_poll_prompt,
     handle_poll_prompt_input, handle_show_ai_config, handle_set_ai_config,
@@ -37,12 +40,12 @@ from command_handlers import (
     handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
     handle_start, handle_help, handle_clear_cache
 )
-from history_handlers import handle_history, handle_export, handle_stats
-from poll_regeneration_handlers import (
+from core.history_handlers import handle_history, handle_export, handle_stats
+from core.poll_regeneration_handlers import (
     handle_poll_regeneration_callback,
     handle_vote_regen_request_callback
 )
-from error_handler import initialize_error_handling, get_health_checker, get_error_stats
+from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
 __version__ = "1.3.3"
@@ -158,7 +161,7 @@ async def main():
         logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
 
         # 添加定期清理任务
-        from scheduler import cleanup_old_poll_regenerations
+        from core.scheduler import cleanup_old_poll_regenerations
         scheduler.add_job(
             cleanup_old_poll_regenerations,
             'cron',
@@ -173,7 +176,7 @@ async def main():
         client = TelegramClient('bot_session', int(API_ID), API_HASH)
         
         # 设置活动的客户端实例，供其他模块使用
-        from telegram_client import set_active_client
+        from core.telegram_client import set_active_client
         set_active_client(client)
         
         # 添加命令处理，支持中英文命令
@@ -317,7 +320,7 @@ async def main():
         logger.info("调度器已启动")
         
         # 存储调度器实例到config模块，供其他模块访问
-        from config import set_scheduler_instance
+        from core.config import set_scheduler_instance
         set_scheduler_instance(scheduler)
         logger.info("调度器实例已存储到config模块")
         

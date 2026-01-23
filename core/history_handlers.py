@@ -14,9 +14,9 @@ import os
 from datetime import datetime, timedelta
 from telethon.events import NewMessage
 
-from config import ADMIN_LIST, CHANNELS
-from telegram_client import send_long_message
-from database import get_db_manager
+from .config import ADMIN_LIST, CHANNELS
+from .telegram_client import send_long_message
+from .database import get_db_manager
 
 logger = logging.getLogger(__name__)
 

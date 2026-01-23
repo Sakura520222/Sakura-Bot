@@ -10,7 +10,7 @@
 # 许可证全文：https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh
 
 import logging
-from config import POLL_PROMPT_FILE, DEFAULT_POLL_PROMPT
+from core.config import POLL_PROMPT_FILE, DEFAULT_POLL_PROMPT
 
 logger = logging.getLogger(__name__)
 
