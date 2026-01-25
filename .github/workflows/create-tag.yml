@@ -69,15 +69,15 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           
-          # 从wiki/CHANGELOG.md中提取当前版本的更新日志
-          if [ -f "wiki/CHANGELOG.md" ]; then
+          # 从CHANGELOG.md中提取当前版本的更新日志
+          if [ -f "CHANGELOG.md" ]; then
             # 查找CHANGELOG.md中对应版本的部分
             awk -v version="$VERSION" '
               BEGIN { in_section=0; found=0 }
               index($0, "## [" version "]") == 1 { in_section=1; found=1; print; next }
               /^## \[/ && in_section { in_section=0 }
               in_section { print }
-            ' wiki/CHANGELOG.md > release_notes.md
+            ' CHANGELOG.md > release_notes.md
             
             if [ -s "release_notes.md" ]; then
               echo "从CHANGELOG.md成功提取版本 $VERSION 的更新日志"
@@ -158,8 +158,8 @@ jobs:
           if [ -f "README.md" ]; then
             cp README.md "$RELEASE_DIR/"
           fi
-          if [ -f "wiki/CHANGELOG.md" ]; then
-            cp wiki/CHANGELOG.md "$RELEASE_DIR/"
+          if [ -f "CHANGELOG.md" ]; then
+            cp CHANGELOG.md "$RELEASE_DIR/"
           fi
           if [ -f "LICENSE" ]; then
             cp LICENSE "$RELEASE_DIR/"
