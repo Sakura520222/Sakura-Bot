@@ -814,14 +814,13 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
         # 发送投票，使用 reply_to 参数回复总结消息
         logger.info(f"发送投票到频道: {poll_data['question']}")
 
-        # 使用底层RPC调用发送投票
-        from telethon.tl.types import (
-            InputMediaPoll, Poll, PollAnswer, TextWithEntities,
-            InputReplyToMessage
-        )
-        from telethon.tl.functions.messages import SendMediaRequest
-
+        # 使用高层 API 发送投票并附加按钮
         try:
+            from telethon.tl.types import (
+                InputMediaPoll, Poll, PollAnswer, TextWithEntities
+            )
+            from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+
             # 清洗并截断问题文本
             question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
 
@@ -845,90 +844,48 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
                 quiz=False
             )
 
-            # 构造回复头
-            reply_header = InputReplyToMessage(reply_to_msg_id=int(summary_message_id))
-
-            # 发送投票到频道，回复总结消息
-            poll_result = await client(SendMediaRequest(
-                peer=channel,
-                media=InputMediaPoll(poll=poll_obj),
-                message='',
-                reply_to=reply_header
-            ))
-
-            # 从返回结果中提取投票消息ID
-            # poll_result是Updates类型,updates[0]可能是UpdateNewMessage或UpdateMessageID
-            update = poll_result.updates[0]
-            if hasattr(update, 'message'):
-                # UpdateNewMessage类型
-                poll_msg_id = update.message.id
-            elif hasattr(update, 'id'):
-                # UpdateMessageID类型
-                poll_msg_id = update.id
-            else:
-                logger.error(f"无法从更新中提取消息ID: {update}")
-                return None
-
-            logger.info(f"✅ 成功发送投票到频道并回复消息 {summary_message_id}, 投票消息ID: {poll_msg_id}")
-
-            # 发送重新生成按钮
-            logger.info("开始发送重新生成按钮消息")
-            try:
-                # 使用 Telethon 的高层 Button API
-                # 注意：buttons 必须是二维列表 [[...]]
-                # 添加投票重新生成请求功能：垂直堆叠两个按钮
-                from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
-                button_markup = []
-                
-                # 如果启用投票重新生成请求功能，添加请求按钮
-                if ENABLE_VOTE_REGEN_REQUEST:
-                    button_markup.append([Button.inline(
-                        f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
-                        data=f"request_regen_{summary_message_id}".encode('utf-8')
-                    )])
-                
-                # 添加管理员重新生成按钮
+            # 构造内联按钮
+            button_markup = []
+            # 如果启用投票重新生成请求功能，添加请求按钮
+            if ENABLE_VOTE_REGEN_REQUEST:
                 button_markup.append([Button.inline(
-                    "🔄 重新生成投票 (管理员)",
-                    data=f"regen_poll_{summary_message_id}".encode('utf-8')
+                    f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                    data=f"request_regen_{summary_message_id}".encode('utf-8')
                 )])
+            # 添加管理员重新生成按钮
+            button_markup.append([Button.inline(
+                "🔄 重新生成投票 (管理员)",
+                data=f"regen_poll_{summary_message_id}".encode('utf-8')
+            )])
 
-                # 发送按钮消息，回复投票
-                button_msg = await client.send_message(
-                    channel,
-                    "💡 投票效果不理想?点击下方按钮重新生成",
-                    reply_to=poll_msg_id,
-                    buttons=button_markup
-                )
+            # 使用 send_message 发送投票并附加按钮
+            poll_msg = await client.send_message(
+                channel,
+                file=InputMediaPoll(poll=poll_obj),
+                buttons=button_markup,
+                reply_to=int(summary_message_id)
+            )
 
-                logger.info(f"✅ 成功发送重新生成按钮,消息ID: {button_msg.id}")
+            logger.info(f"✅ 成功发送投票到频道并回复消息 {summary_message_id}, 投票消息ID: {poll_msg.id}")
 
-                # 保存映射关系到存储
-                from .config import add_poll_regeneration
-                channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
-                add_poll_regeneration(
-                    channel=channel,
-                    summary_msg_id=summary_message_id,
-                    poll_msg_id=poll_msg_id,
-                    button_msg_id=button_msg.id,
-                    summary_text=summary_text,
-                    channel_name=channel_name,
-                    send_to_channel=True
-                )
+            # 保存映射关系到存储
+            from .config import add_poll_regeneration
+            channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
+            add_poll_regeneration(
+                channel=channel,
+                summary_msg_id=summary_message_id,
+                poll_msg_id=poll_msg.id,
+                button_msg_id=None,  # 按钮直接附加在投票消息上，无需单独存储
+                summary_text=summary_text,
+                channel_name=channel_name,
+                send_to_channel=True
+            )
 
-                # 返回消息ID
-                return {
-                    "poll_msg_id": poll_msg_id,
-                    "button_msg_id": button_msg.id
-                }
-
-            except Exception as e:
-                logger.error(f"发送重新生成按钮失败: {e}")
-                # 按钮发送失败仍然返回投票ID
-                return {
-                    "poll_msg_id": poll_msg_id,
-                    "button_msg_id": None
-                }
+            # 返回消息ID
+            return {
+                "poll_msg_id": poll_msg.id,
+                "button_msg_id": None  # 按钮直接附加在投票消息上
+            }
 
         except Exception as e:
             logger.error(f"发送投票到频道失败: {e}")
@@ -1069,20 +1026,15 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
             # 发送投票作为回复
             logger.info(f"发送投票到讨论组: {poll_data['question']}")
 
-            # 终极解决方案：直接使用底层RPC调用SendMediaRequest
-            # 绕过send_message内部可能出错的自动转换逻辑
-            from telethon.tl.types import (
-                InputMediaPoll, Poll, PollAnswer, TextWithEntities,
-                InputReplyToMessage
-            )
-            from telethon.tl.functions.messages import SendMediaRequest
+            # 使用高层 API 发送投票并附加按钮
+            from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
+            from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 
             try:
                 # 1. 严格清洗并截断
                 question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
 
                 # 2. 构造选项，确保text字段被显式包装为TextWithEntities
-                # 这是为了适配2025/2026年最新的协议层要求
                 poll_answers = []
                 for i, opt in enumerate(poll_data.get('options', [])[:10]):
                     opt_clean = str(opt).strip()[:100]
@@ -1091,10 +1043,9 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                         option=bytes([i])
                     ))
 
-                # 3. 手动构造底层Poll对象
-                # 注意：question必须是TextWithEntities对象
+                # 3. 手动构造Poll对象
                 poll_obj = Poll(
-                    id=0,  # 这里的id由Telegram分配，发出去时设为0
+                    id=0,
                     question=TextWithEntities(text=question_text, entities=[]),
                     answers=poll_answers,
                     closed=False,
@@ -1103,95 +1054,51 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                     quiz=False
                 )
 
-                # 4. 【关键修复】将reply_to包装为InputReplyToMessage对象
-                # 这里的forward_message.id是转发消息ID，例如47
-                reply_header = InputReplyToMessage(reply_to_msg_id=int(forward_message.id))
-
-                # 5. 【核心区别】直接通过client(...)发起SendMediaRequest
-                # 这会绕过send_message内部那些容易出错的自动转换逻辑
-                poll_result = await client(SendMediaRequest(
-                    peer=int(discussion_group_id),  # 必须是int, 例如-1003311748800
-                    media=InputMediaPoll(poll=poll_obj),
-                    message='',  # 不要带任何消息文本，让它纯粹发投票
-                    reply_to=reply_header  # 传入包装后的对象，不再是int
-                ))
-
-                # 从返回结果中提取投票消息ID
-                # poll_result是Updates类型,updates[0]可能是UpdateNewMessage或UpdateMessageID
-                update = poll_result.updates[0]
-                if hasattr(update, 'message'):
-                    # UpdateNewMessage类型
-                    poll_msg_id = update.message.id
-                elif hasattr(update, 'id'):
-                    # UpdateMessageID类型
-                    poll_msg_id = update.id
-                else:
-                    logger.error(f"无法从更新中提取消息ID: {update}")
-                    return None
-
-                logger.info(f"✅ [底层RPC模式] 投票发送成功: {question_text}, 消息ID: {poll_msg_id}")
-
-                # 发送重新生成按钮
-                logger.info("开始发送重新生成按钮消息到讨论组")
-                try:
-                    # 使用 Telethon 的高层 Button API
-                    # 注意：buttons 必须是二维列表 [[...]]
-                    # 添加投票重新生成请求功能：垂直堆叠两个按钮
-                    from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
-                    button_markup = []
-                    
-                    # 如果启用投票重新生成请求功能，添加请求按钮
-                    if ENABLE_VOTE_REGEN_REQUEST:
-                        button_markup.append([Button.inline(
-                            f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
-                            data=f"request_regen_{summary_message_id}".encode('utf-8')
-                        )])
-                    
-                    # 添加管理员重新生成按钮
+                # 4. 构造内联按钮
+                button_markup = []
+                # 如果启用投票重新生成请求功能，添加请求按钮
+                if ENABLE_VOTE_REGEN_REQUEST:
                     button_markup.append([Button.inline(
-                        "🔄 重新生成投票 (管理员)",
-                        data=f"regen_poll_{summary_message_id}".encode('utf-8')
+                        f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                        data=f"request_regen_{summary_message_id}".encode('utf-8')
                     )])
+                # 添加管理员重新生成按钮
+                button_markup.append([Button.inline(
+                    "🔄 重新生成投票 (管理员)",
+                    data=f"regen_poll_{summary_message_id}".encode('utf-8')
+                )])
 
-                    # 发送按钮消息到讨论组，回复投票
-                    button_msg = await client.send_message(
-                        discussion_group_id,
-                        "💡 投票效果不理想?点击下方按钮重新生成",
-                        reply_to=poll_msg_id,
-                        buttons=button_markup
-                    )
+                # 5. 使用 send_message 发送投票并附加按钮
+                poll_msg = await client.send_message(
+                    discussion_group_id,
+                    file=InputMediaPoll(poll=poll_obj),
+                    buttons=button_markup,
+                    reply_to=forward_message.id
+                )
 
-                    logger.info(f"✅ 成功发送重新生成按钮到讨论组,消息ID: {button_msg.id}")
+                logger.info(f"✅ [高层API模式] 投票发送成功: {question_text}, 消息ID: {poll_msg.id}")
 
-                    # 保存映射关系到存储
-                    from .config import add_poll_regeneration
-                    add_poll_regeneration(
-                        channel=channel,
-                        summary_msg_id=summary_message_id,
-                        poll_msg_id=poll_msg_id,
-                        button_msg_id=button_msg.id,
-                        summary_text=summary_text,
-                        channel_name=channel_name,
-                        send_to_channel=False,
-                        discussion_forward_msg_id=forward_message.id
-                    )
+                # 保存映射关系到存储
+                from .config import add_poll_regeneration
+                add_poll_regeneration(
+                    channel=channel,
+                    summary_msg_id=summary_message_id,
+                    poll_msg_id=poll_msg.id,
+                    button_msg_id=None,  # 按钮直接附加在投票消息上，无需单独存储
+                    summary_text=summary_text,
+                    channel_name=channel_name,
+                    send_to_channel=False,
+                    discussion_forward_msg_id=forward_message.id
+                )
 
-                    # 返回消息ID
-                    return {
-                        "poll_msg_id": poll_msg_id,
-                        "button_msg_id": button_msg.id
-                    }
-
-                except Exception as e:
-                    logger.error(f"发送重新生成按钮失败: {e}")
-                    # 按钮发送失败仍然返回投票ID
-                    return {
-                        "poll_msg_id": poll_msg_id,
-                        "button_msg_id": None
-                    }
+                # 返回消息ID
+                return {
+                    "poll_msg_id": poll_msg.id,
+                    "button_msg_id": None  # 按钮直接附加在投票消息上
+                }
 
             except Exception as e:
-                logger.error(f"❌ 终极尝试依然失败: {e}")
+                logger.error(f"❌ 发送投票失败: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 return None

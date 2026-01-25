@@ -5,6 +5,45 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.4] - 2026-01-25
+
+### 改进
+- **投票按钮集成优化**：将投票重新生成按钮直接附加到投票消息上，减少消息条数
+  - 投票消息和按钮合二为一，不再需要独立的按钮消息
+  - 使用 Telethon 高层 API (`send_message`) 直接在发送投票时附加按钮
+  - 按钮直接显示在投票消息下方，提升交互连贯性
+  - 删除旧投票时只需删除投票消息，按钮随之自动删除
+  - 减少消息数量，改善用户体验
+
+### 技术实现
+- **telegram_client.py 重构**：
+  - `send_poll_to_channel()` - 改用高层 API 发送投票并附加按钮
+  - `send_poll_to_discussion_group()` - 改用高层 API 发送投票并附加按钮
+  - 移除单独发送按钮消息的代码逻辑
+  - 存储时 `button_msg_id` 设置为 `None`
+
+- **poll_regeneration_handlers.py 重构**：
+  - `handle_vote_regen_request_callback()` - 更新投票消息的按钮，而非独立按钮消息
+  - `regenerate_poll()` - 兼容 `button_message_id` 为 `None` 的删除逻辑
+  - `send_new_poll_to_channel()` - 使用高层 API 发送新投票并附加按钮
+  - `send_new_poll_to_discussion_group()` - 使用高层 API 发送新投票并附加按钮
+
+### 用户体验改进
+- **消息数量减少**：从两条消息（投票+按钮）减少到一条消息（投票带按钮）
+- **界面更简洁**：按钮直接显示在投票下方，视觉上更加统一
+- **操作更流畅**：无需多次点击查看和操作，一键完成投票和重新生成请求
+
+### 向后兼容
+- 完全兼容现有功能
+- 按钮功能保持不变（请求重新生成、管理员重新生成）
+- 投票重新生成流程保持不变
+- 数据存储结构兼容旧格式（`button_message_id` 可为 `None`）
+
+### 注意事项
+- 旧格式的投票记录（`button_message_id` 不为 `None`）仍然可以正常删除
+- 讨论组模式和频道模式都支持按钮直接附加
+- 按钮文本更新机制保持不变，实时显示投票进度
+
 ## [1.3.3] - 2026-01-21
 
 ### 新增

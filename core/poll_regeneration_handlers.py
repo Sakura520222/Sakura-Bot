@@ -46,15 +46,15 @@ async def handle_vote_regen_request_callback(event):
 
     summary_msg_id = int(parts[-1])
 
-    # 先获取投票重新生成数据以找到频道
+    # 先获取投票重新生成数据以找到频道和投票消息ID
     data = load_poll_regenerations()
     target_channel = None
-    button_msg_id = None
+    poll_msg_id = None
 
     for channel, records in data.items():
         if str(summary_msg_id) in records:
             target_channel = channel
-            button_msg_id = records[str(summary_msg_id)].get('button_message_id')
+            poll_msg_id = records[str(summary_msg_id)].get('poll_message_id')
             break
 
     if not target_channel:
@@ -78,24 +78,26 @@ async def handle_vote_regen_request_callback(event):
     try:
         new_button_text = f"👍 请求重新生成 ({count}/{POLL_REGEN_THRESHOLD})"
 
-        button_markup = [
-            [Button.inline(
+        button_markup = []
+        # 如果启用投票重新生成请求功能，添加请求按钮
+        if ENABLE_VOTE_REGEN_REQUEST:
+            button_markup.append([Button.inline(
                 new_button_text,
                 data=f"request_regen_{summary_msg_id}".encode('utf-8')
-            )],
-            [Button.inline(
-                "🔄 重新生成投票 (管理员)",
-                data=f"regen_poll_{summary_msg_id}".encode('utf-8')
-            )]
-        ]
+            )])
+        # 添加管理员重新生成按钮
+        button_markup.append([Button.inline(
+            "🔄 重新生成投票 (管理员)",
+            data=f"regen_poll_{summary_msg_id}".encode('utf-8')
+        )])
 
-        # 使用 edit_message 方法更新按钮
+        # 使用 edit_message 方法更新投票消息的按钮
         await event.client.edit_message(
             entity=event.chat_id,
-            message=button_msg_id,
+            message=poll_msg_id,
             buttons=button_markup
         )
-        logger.info(f"✅ 已更新按钮文本: {new_button_text}")
+        logger.info(f"✅ 已更新投票消息按钮文本: {new_button_text}")
     except Exception as e:
         logger.error(f"更新按钮文本失败: {e}")
         # 继续执行，按钮更新失败不影响投票逻辑
@@ -213,15 +215,19 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
     try:
         # 1. 删除旧的投票和按钮消息
         old_poll_id = regen_data['poll_message_id']
-        old_button_id = regen_data['button_message_id']
+        old_button_id = regen_data.get('button_message_id')  # 使用 .get() 兼容 None 值
 
         logger.info(f"删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
 
         try:
             if regen_data['send_to_channel']:
                 # 频道模式：从频道删除
-                await client.delete_messages(channel, [old_poll_id, old_button_id])
-                logger.info(f"从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
+                if old_button_id:
+                    await client.delete_messages(channel, [old_poll_id, old_button_id])
+                    logger.info(f"从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
+                else:
+                    await client.delete_messages(channel, [old_poll_id])
+                    logger.info(f"从频道删除旧投票: poll_id={old_poll_id}")
             else:
                 # 讨论组模式：需要先获取讨论组ID，然后从讨论组删除
                 # 使用缓存版本避免频繁调用GetFullChannelRequest
@@ -230,13 +236,21 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
 
                 if discussion_group_id:
                     # 从讨论组删除消息
-                    await client.delete_messages(discussion_group_id, [old_poll_id, old_button_id])
-                    logger.info(f"从讨论组删除旧投票和按钮: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}, button_id={old_button_id}")
+                    if old_button_id:
+                        await client.delete_messages(discussion_group_id, [old_poll_id, old_button_id])
+                        logger.info(f"从讨论组删除旧投票和按钮: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}, button_id={old_button_id}")
+                    else:
+                        await client.delete_messages(discussion_group_id, [old_poll_id])
+                        logger.info(f"从讨论组删除旧投票: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}")
                 else:
                     # 回退到频道删除
                     logger.warning(f"无法获取讨论组ID，回退到从频道删除")
-                    await client.delete_messages(channel, [old_poll_id, old_button_id])
-                    logger.info(f"回退：从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
+                    if old_button_id:
+                        await client.delete_messages(channel, [old_poll_id, old_button_id])
+                        logger.info(f"回退：从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
+                    else:
+                        await client.delete_messages(channel, [old_poll_id])
+                        logger.info(f"回退：从频道删除旧投票: poll_id={old_poll_id}")
 
             logger.info("✅ 成功删除旧投票和按钮")
         except Exception as e:
@@ -273,7 +287,7 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
 async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
     """发送新投票到频道并更新按钮
 
-    完全复制telegram_client.py中send_poll_to_channel的逻辑
+    使用高层 API 发送投票并附加按钮
 
     Args:
         client: Telegram客户端实例
@@ -285,11 +299,8 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
         bool: 是否成功
     """
     try:
-        from telethon.tl.types import (
-            InputMediaPoll, Poll, PollAnswer, TextWithEntities,
-            InputReplyToMessage
-        )
-        from telethon.tl.functions.messages import SendMediaRequest
+        from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
+        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 
         # 1. 构造投票对象
         question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
@@ -312,82 +323,55 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
             quiz=False
         )
 
-        reply_header = InputReplyToMessage(reply_to_msg_id=int(summary_msg_id))
-
-        # 2. 发送投票到频道
-        poll_result = await client(SendMediaRequest(
-            peer=channel,
-            media=InputMediaPoll(poll=poll_obj),
-            message='',
-            reply_to=reply_header
-        ))
-
-        # 3. 提取投票消息ID
-        # poll_result是Updates类型,updates[0]可能是UpdateNewMessage或UpdateMessageID
-        update = poll_result.updates[0]
-        if hasattr(update, 'message'):
-            # UpdateNewMessage类型
-            poll_msg_id = update.message.id
-        elif hasattr(update, 'id'):
-            # UpdateMessageID类型
-            poll_msg_id = update.id
-        else:
-            logger.error(f"无法从更新中提取消息ID: {update}")
-            return False
-
-        logger.info(f"✅ 新投票已发送到频道,消息ID: {poll_msg_id}")
-
-        # 4. 发送新按钮
-        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        # 2. 构造内联按钮
         button_markup = []
-        
         # 如果启用投票重新生成请求功能，添加请求按钮
         if ENABLE_VOTE_REGEN_REQUEST:
             button_markup.append([Button.inline(
                 f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
                 data=f"request_regen_{summary_msg_id}".encode('utf-8')
             )])
-        
         # 添加管理员重新生成按钮
         button_markup.append([Button.inline(
             "🔄 重新生成投票 (管理员)",
             data=f"regen_poll_{summary_msg_id}".encode('utf-8')
         )])
 
-        button_msg = await client.send_message(
+        # 3. 使用 send_message 发送投票并附加按钮
+        poll_msg = await client.send_message(
             channel,
-            "💡 投票效果不理想?点击下方按钮重新生成",
-            reply_to=poll_msg_id,
-            buttons=button_markup
+            file=InputMediaPoll(poll=poll_obj),
+            buttons=button_markup,
+            reply_to=int(summary_msg_id)
         )
 
-        logger.info(f"✅ 新按钮已发送,消息ID: {button_msg.id}")
+        logger.info(f"✅ 新投票已发送到频道,消息ID: {poll_msg.id}")
 
-        # 5. 更新 poll_regenerations.json 存储
+        # 更新 poll_regenerations.json 存储
         update_poll_regeneration(
             channel=channel,
             summary_msg_id=summary_msg_id,
-            poll_msg_id=poll_msg_id,
-            button_msg_id=button_msg.id
+            poll_msg_id=poll_msg.id,
+            button_msg_id=None  # 按钮直接附加在投票消息上，无需单独存储
         )
 
-        # 6. 更新 .last_summary_time.json 中的投票和按钮ID
+        # 4. 更新 .last_summary_time.json 中的投票ID
         from .summary_time_manager import load_last_summary_time, save_last_summary_time
         from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)
         if channel_data:
-            # 保留原有的 summary_message_ids，只更新投票和按钮ID
+            # 保留原有的 summary_message_ids，只更新投票ID
             summary_ids = channel_data.get("summary_message_ids", [])
-            # 更新投票和按钮ID为新的
+            # 更新投票ID为新的，按钮ID为None
             save_last_summary_time(
                 channel,
                 datetime.now(),
                 summary_message_ids=summary_ids,
-                poll_message_ids=[poll_msg_id],
-                button_message_ids=[button_msg.id]
+                poll_message_ids=[poll_msg.id],
+                button_message_ids=None
             )
-            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票和按钮ID")
+            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID")
         else:
             logger.warning(f"⚠️ 未找到频道 {channel} 的 .last_summary_time.json 记录")
 
@@ -414,11 +398,8 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
         bool: 是否成功
     """
     try:
-        from telethon.tl.types import (
-            InputMediaPoll, Poll, PollAnswer, TextWithEntities,
-            InputReplyToMessage
-        )
-        from telethon.tl.functions.messages import SendMediaRequest
+        from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
+        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 
         logger.info("开始处理投票发送到讨论组(重新生成模式)")
 
@@ -462,82 +443,55 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
             quiz=False
         )
 
-        reply_header = InputReplyToMessage(reply_to_msg_id=int(forward_msg_id))
-
-        # 发送投票
-        poll_result = await client(SendMediaRequest(
-            peer=int(discussion_group_id),
-            media=InputMediaPoll(poll=poll_obj),
-            message='',
-            reply_to=reply_header
-        ))
-
-        # 从返回结果中提取投票消息ID
-        # poll_result是Updates类型,updates[0]可能是UpdateNewMessage或UpdateMessageID
-        update = poll_result.updates[0]
-        if hasattr(update, 'message'):
-            # UpdateNewMessage类型
-            poll_msg_id = update.message.id
-        elif hasattr(update, 'id'):
-            # UpdateMessageID类型
-            poll_msg_id = update.id
-        else:
-            logger.error(f"无法从更新中提取消息ID: {update}")
-            return False
-
-        logger.info(f"✅ 新投票已发送到讨论组,消息ID: {poll_msg_id}")
-
-        # 5. 发送新按钮
-        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+        # 4. 构造内联按钮
         button_markup = []
-        
         # 如果启用投票重新生成请求功能，添加请求按钮
         if ENABLE_VOTE_REGEN_REQUEST:
             button_markup.append([Button.inline(
                 f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
                 data=f"request_regen_{summary_msg_id}".encode('utf-8')
             )])
-        
         # 添加管理员重新生成按钮
         button_markup.append([Button.inline(
             "🔄 重新生成投票 (管理员)",
             data=f"regen_poll_{summary_msg_id}".encode('utf-8')
         )])
 
-        button_msg = await client.send_message(
+        # 5. 使用 send_message 发送投票并附加按钮
+        poll_msg = await client.send_message(
             discussion_group_id,
-            "💡 投票效果不理想?点击下方按钮重新生成",
-            reply_to=poll_msg_id,
-            buttons=button_markup
+            file=InputMediaPoll(poll=poll_obj),
+            buttons=button_markup,
+            reply_to=int(forward_msg_id)
         )
 
-        logger.info(f"✅ 新按钮已发送到讨论组,消息ID: {button_msg.id}")
+        logger.info(f"✅ 新投票已发送到讨论组,消息ID: {poll_msg.id}")
 
-        # 6. 更新 poll_regenerations.json 存储
+        # 更新 poll_regenerations.json 存储
         update_poll_regeneration(
             channel=channel,
             summary_msg_id=summary_msg_id,
-            poll_msg_id=poll_msg_id,
-            button_msg_id=button_msg.id
+            poll_msg_id=poll_msg.id,
+            button_msg_id=None  # 按钮直接附加在投票消息上，无需单独存储
         )
 
-        # 7. 更新 .last_summary_time.json 中的投票和按钮ID
+        # 6. 更新 .last_summary_time.json 中的投票ID
         from .summary_time_manager import load_last_summary_time, save_last_summary_time
         from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)
         if channel_data:
-            # 保留原有的 summary_message_ids，只更新投票和按钮ID
+            # 保留原有的 summary_message_ids，只更新投票ID
             summary_ids = channel_data.get("summary_message_ids", [])
-            # 更新投票和按钮ID为新的
+            # 更新投票ID为新的，按钮ID为None
             save_last_summary_time(
                 channel,
                 datetime.now(),
                 summary_message_ids=summary_ids,
-                poll_message_ids=[poll_msg_id],
-                button_message_ids=[button_msg.id]
+                poll_message_ids=[poll_msg.id],
+                button_message_ids=None
             )
-            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票和按钮ID")
+            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID")
         else:
             logger.warning(f"⚠️ 未找到频道 {channel} 的 .last_summary_time.json 记录")
 
