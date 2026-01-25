@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'main.py'
+      - 'core/*.py'
       - 'CHANGELOG.md'
 
 jobs:
