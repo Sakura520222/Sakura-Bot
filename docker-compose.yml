@@ -7,18 +7,13 @@ services:
     environment:
       - TZ=Asia/Shanghai
     env_file:
-      - .env
+      - data/.env
     volumes:
-      # 持久化配置文件 - 更新为 data/ 子目录
-      - ./data/config.json:/app/data/config.json
-      - ./data/prompt.txt:/app/data/prompt.txt
-      - ./data/poll_prompt.txt:/app/data/poll_prompt.txt
-      - ./data/.last_summary_time.json:/app/data/.last_summary_time.json
-      - ./data/.poll_regenerations.json:/app/data/.poll_regenerations.json
-      # 持久化数据库文件 - 移至 data/
-      - ./data/summaries.db:/app/data/summaries.db
+      # 持久化整个 data 目录 - 避免单文件挂载错误
+      - ./data:/app/data
       # 持久化会话文件 - 保留在根目录
       - ./bot_session.session:/app/bot_session.session
+      - ./session_name.session:/app/session_name.session
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

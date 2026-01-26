@@ -14,7 +14,7 @@ import sqlite3
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -281,7 +281,7 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cutoff_date = datetime.now() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             cursor.execute("""
                 DELETE FROM summaries
@@ -350,7 +350,7 @@ class DatabaseManager:
             last_summary_time = cursor.fetchone()[0]
 
             # 本周统计
-            week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
             if channel_id:
                 cursor.execute("""
                     SELECT COUNT(*) FROM summaries
@@ -364,7 +364,7 @@ class DatabaseManager:
             week_count = cursor.fetchone()[0]
 
             # 本月统计
-            month_ago = (datetime.now() - timedelta(days=30)).isoformat()
+            month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
             if channel_id:
                 cursor.execute("""
                     SELECT COUNT(*) FROM summaries
@@ -455,7 +455,7 @@ class DatabaseManager:
                 return None
 
             # 生成文件名
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             channel_suffix = f"_{channel_id.split('/')[-1]}" if channel_id else ""
             filename = f"summaries_export{channel_suffix}_{timestamp}.{output_format}"
 
@@ -506,7 +506,7 @@ class DatabaseManager:
         """导出为md格式"""
         with open(filename, 'w', encoding='utf-8') as f:
             f.write("# 频道总结历史记录\n\n")
-            f.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"导出时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
             f.write(f"总记录数: {len(summaries)}\n\n")
             f.write("---\n\n")
 

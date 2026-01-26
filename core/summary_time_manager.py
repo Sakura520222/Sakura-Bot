@@ -14,7 +14,7 @@ import os
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import tempfile
 import shutil
 
@@ -65,7 +65,11 @@ def load_last_summary_time(channel=None, include_report_ids=False):
                         else:
                             # 只返回时间对象
                             time_obj = datetime.fromisoformat(channel_data["time"])
-                            logger.info(f"成功读取频道 {channel} 的上次总结时间: {time_obj}")
+                            # 兼容旧格式：如果读取的时间没有时区信息，强制视为UTC
+                            if time_obj.tzinfo is None:
+                                time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                logger.debug(f"检测到旧格式时间戳，已自动转换为UTC")
+                            logger.info(f"成功读取频道 {channel} 的上次总结时间: {time_obj.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
                             return time_obj
                     else:
                         logger.warning(f"频道 {channel} 的上次总结时间不存在")
@@ -77,21 +81,30 @@ def load_last_summary_time(channel=None, include_report_ids=False):
                         if include_report_ids:
                             # 兼容旧格式
                             if "report_message_ids" in data:
+                                time_obj = datetime.fromisoformat(data["time"])
+                                if time_obj.tzinfo is None:
+                                    time_obj = time_obj.replace(tzinfo=timezone.utc)
                                 converted_data[ch] = {
-                                    "time": datetime.fromisoformat(data["time"]),
+                                    "time": time_obj,
                                     "summary_message_ids": data.get("report_message_ids", []),
                                     "poll_message_ids": data.get("poll_message_ids", []),
                                     "button_message_ids": data.get("button_message_ids", [])
                                 }
                             else:
+                                time_obj = datetime.fromisoformat(data["time"])
+                                if time_obj.tzinfo is None:
+                                    time_obj = time_obj.replace(tzinfo=timezone.utc)
                                 converted_data[ch] = {
-                                    "time": datetime.fromisoformat(data["time"]),
+                                    "time": time_obj,
                                     "summary_message_ids": data.get("summary_message_ids", []),
                                     "poll_message_ids": data.get("poll_message_ids", []),
                                     "button_message_ids": data.get("button_message_ids", [])
                                 }
                         else:
-                            converted_data[ch] = datetime.fromisoformat(data["time"])
+                            time_obj = datetime.fromisoformat(data["time"])
+                            if time_obj.tzinfo is None:
+                                time_obj = time_obj.replace(tzinfo=timezone.utc)
+                            converted_data[ch] = time_obj
                     return converted_data
             else:
                 logger.warning(f"上次总结时间文件 {LAST_SUMMARY_FILE} 内容为空")
@@ -152,6 +165,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
             button_message_ids = []
 
         # 更新指定频道的时间和消息ID
+        # 使用UTC时间的isoformat()，会自动带上+00:00后缀
         channel_data = {
             "time": time_to_save.isoformat(),
             "summary_message_ids": summary_message_ids or [],
@@ -196,7 +210,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
                         pass
                     raise
                 
-                logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save}")
+                logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} (UTC: {time_to_save.strftime('%Y-%m-%d %H:%M:%S')})")
                 logger.debug(f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}")
                 return  # 成功则退出函数
                 

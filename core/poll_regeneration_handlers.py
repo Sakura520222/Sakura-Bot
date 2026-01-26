@@ -357,21 +357,21 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
 
         # 4. 更新 .last_summary_time.json 中的投票ID
         from .summary_time_manager import load_last_summary_time, save_last_summary_time
-        from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)
         if channel_data:
-            # 保留原有的 summary_message_ids，只更新投票ID
+            # 保留原有的总结时间戳，只更新投票ID
+            original_time = channel_data.get("time")
             summary_ids = channel_data.get("summary_message_ids", [])
-            # 更新投票ID为新的，按钮ID为None
+            # 更新投票ID为新的，按钮ID为None，使用原有的时间戳
             save_last_summary_time(
                 channel,
-                datetime.now(),
+                original_time,
                 summary_message_ids=summary_ids,
                 poll_message_ids=[poll_msg.id],
                 button_message_ids=None
             )
-            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID")
+            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID（保留原有时间戳）")
         else:
             logger.warning(f"⚠️ 未找到频道 {channel} 的 .last_summary_time.json 记录")
 
@@ -477,21 +477,21 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
 
         # 6. 更新 .last_summary_time.json 中的投票ID
         from .summary_time_manager import load_last_summary_time, save_last_summary_time
-        from datetime import datetime, timezone
 
         channel_data = load_last_summary_time(channel, include_report_ids=True)
         if channel_data:
-            # 保留原有的 summary_message_ids，只更新投票ID
+            # 保留原有的总结时间戳，只更新投票ID
+            original_time = channel_data.get("time")
             summary_ids = channel_data.get("summary_message_ids", [])
-            # 更新投票ID为新的，按钮ID为None
+            # 更新投票ID为新的，按钮ID为None，使用原有的时间戳
             save_last_summary_time(
                 channel,
-                datetime.now(),
+                original_time,
                 summary_message_ids=summary_ids,
                 poll_message_ids=[poll_msg.id],
                 button_message_ids=None
             )
-            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID")
+            logger.info(f"✅ 已更新 .last_summary_time.json 中的投票ID（保留原有时间戳）")
         else:
             logger.warning(f"⚠️ 未找到频道 {channel} 的 .last_summary_time.json 记录")
 

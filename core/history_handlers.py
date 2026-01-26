@@ -12,7 +12,7 @@
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from telethon.events import NewMessage
 
 from .config import ADMIN_LIST, CHANNELS
@@ -67,7 +67,7 @@ async def handle_history(event):
         # 如果指定了天数，计算起始日期
         start_date = None
         if days:
-            start_date = datetime.now() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         summaries = db.get_summaries(channel_id=channel_id, limit=10, start_date=start_date)
 
@@ -264,7 +264,9 @@ async def handle_stats(event):
             if last_time:
                 try:
                     dt = datetime.fromisoformat(last_time)
-                    time_diff = datetime.now() - dt
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    time_diff = datetime.now(timezone.utc) - dt
                     hours = time_diff.total_seconds() / 3600
                     if hours < 1:
                         time_str = f"{int(hours * 60)} 分钟前"

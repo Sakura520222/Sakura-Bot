@@ -49,7 +49,7 @@ from core.poll_regeneration_handlers import (
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.3.3"
+__version__ = "1.3.5"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""

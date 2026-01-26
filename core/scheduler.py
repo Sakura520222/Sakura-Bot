@@ -38,20 +38,20 @@ async def main_job(channel=None):
                 "details": str  # 详细结果描述
             }
     """
-    start_time = datetime.now()
+    start_time = datetime.now(timezone.utc)
     
     if channel:
-        logger.info(f"定时任务启动（单频道模式）: {start_time}，频道: {channel}")
+        logger.info(f"定时任务启动（单频道模式）: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，频道: {channel}")
         channels_to_process = [channel]
     else:
-        logger.info(f"定时任务启动（全频道模式）: {start_time}")
+        logger.info(f"定时任务启动（全频道模式）: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         channels_to_process = CHANNELS
     
     try:
         results = []
         # 按频道分别处理
         for channel in channels_to_process:
-            channel_start_time = datetime.now()
+            channel_start_time = datetime.now(timezone.utc)
             logger.info(f"开始处理频道: {channel}")
             
             # 读取该频道的上次总结时间和报告消息ID
@@ -102,7 +102,7 @@ async def main_job(channel=None):
             # 检查频道是否存在（如果频道不存在，messages_by_channel可能不包含该频道）
             if channel not in messages_by_channel:
                 # 频道不存在或无法访问
-                channel_end_time = datetime.now()
+                channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
                 
                 result = {
@@ -139,7 +139,7 @@ async def main_job(channel=None):
                 frequency = schedule_config.get('frequency', 'weekly')
 
                 # 计算起始日期和终止日期
-                end_date = datetime.now()
+                end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
                     start_date = channel_last_summary_time
                 else:
@@ -148,6 +148,8 @@ async def main_job(channel=None):
                 # 格式化日期为 月.日 格式
                 start_date_str = f"{start_date.month}.{start_date.day}"
                 end_date_str = f"{end_date.month}.{end_date.day}"
+                
+                logger.debug(f"总结时间范围: {start_date.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至 {end_date.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
                 # 根据频率生成报告标题
                 if frequency == 'daily':
@@ -209,13 +211,13 @@ async def main_job(channel=None):
 
                     save_last_summary_time(
                         channel,
-                        datetime.now(),
+                        datetime.now(timezone.utc),
                         summary_message_ids=summary_ids,
                         poll_message_ids=poll_ids,
                         button_message_ids=button_ids
                     )
                 
-                channel_end_time = datetime.now()
+                channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
                 
                 # 构建结果信息
@@ -233,7 +235,7 @@ async def main_job(channel=None):
                 logger.info(f"频道 {channel} 处理完成: {result['details']}")
             else:
                 logger.info(f"频道 {channel} 没有新消息需要总结")
-                channel_end_time = datetime.now()
+                channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
                 
                 result = {
@@ -247,13 +249,13 @@ async def main_job(channel=None):
                 }
                 results.append(result)
         
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         processing_time = (end_time - start_time).total_seconds()
         
         if channel:
-            logger.info(f"定时任务完成（单频道模式）: {end_time}，频道: {channel}，处理时间: {processing_time:.2f}秒")
+            logger.info(f"定时任务完成（单频道模式）: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，频道: {channel}，处理时间: {processing_time:.2f}秒")
         else:
-            logger.info(f"定时任务完成（全频道模式）: {end_time}，总处理时间: {processing_time:.2f}秒")
+            logger.info(f"定时任务完成（全频道模式）: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，总处理时间: {processing_time:.2f}秒")
         
         # 返回结果
         if len(results) == 1:
@@ -270,14 +272,14 @@ async def main_job(channel=None):
             }
             
     except Exception as e:
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         processing_time = (end_time - start_time).total_seconds()
         
         error_msg = f"{type(e).__name__}: {e}"
         if channel:
-            logger.error(f"定时任务执行失败（单频道模式）: {error_msg}，频道: {channel}，开始时间: {start_time}，结束时间: {end_time}，处理时间: {processing_time:.2f}秒", exc_info=True)
+            logger.error(f"定时任务执行失败（单频道模式）: {error_msg}，频道: {channel}，开始时间: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，结束时间: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，处理时间: {processing_time:.2f}秒", exc_info=True)
         else:
-            logger.error(f"定时任务执行失败（全频道模式）: {error_msg}，开始时间: {start_time}，结束时间: {end_time}，处理时间: {processing_time:.2f}秒", exc_info=True)
+            logger.error(f"定时任务执行失败（全频道模式）: {error_msg}，开始时间: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，结束时间: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，处理时间: {processing_time:.2f}秒", exc_info=True)
         
         # 返回错误结果
         return {

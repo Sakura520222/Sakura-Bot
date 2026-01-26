@@ -45,7 +45,7 @@ def extract_date_range_from_summary(summary_text):
             end_month = int(weekly_match.group(3))
             end_day = int(weekly_match.group(4))
 
-            current_year = datetime.now().year
+            current_year = datetime.now(timezone.utc).year
 
             start_time = datetime(current_year, start_month, start_day, tzinfo=timezone.utc)
             end_time = datetime(current_year, end_month, end_day, 23, 59, 59, tzinfo=timezone.utc)
@@ -63,7 +63,7 @@ def extract_date_range_from_summary(summary_text):
         if daily_match:
             month = int(daily_match.group(1))
             day = int(daily_match.group(2))
-            current_year = datetime.now().year
+            current_year = datetime.now(timezone.utc).year
 
             start_time = datetime(current_year, month, day, tzinfo=timezone.utc)
             end_time = datetime(current_year, month, day, 23, 59, 59, tzinfo=timezone.utc)
@@ -112,8 +112,10 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
     async with TelegramClient('session_name', int(API_ID), API_HASH) as client:
         # 如果没有提供开始时间，则默认抓取过去一周的消息
         if start_time is None:
-            start_time = datetime.now() - timedelta(days=7)
-            logger.info(f"未提供开始时间，默认抓取过去一周的消息")
+            start_time = datetime.now(timezone.utc) - timedelta(days=7)
+            logger.info(f"未提供开始时间，默认抓取过去一周的消息（从 {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今）")
+        else:
+            logger.info(f"抓取时间范围：{start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今")
         
         messages_by_channel = {}  # 按频道分组的消息字典
         report_message_ids = report_message_ids or {}

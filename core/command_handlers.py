@@ -147,7 +147,7 @@ async def handle_manual_summary(event):
                     # 使用频道链接的最后部分作为回退
                     channel_actual_name = channel.split('/')[-1]
                 # 计算起始日期和终止日期
-                end_date = datetime.now()
+                end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
                     start_date = channel_last_summary_time
                 else:
@@ -191,13 +191,13 @@ async def handle_manual_summary(event):
 
                     save_last_summary_time(
                         channel,
-                        datetime.now(),
+                        datetime.now(timezone.utc),
                         summary_message_ids=summary_ids,
                         poll_message_ids=poll_ids,
                         button_message_ids=button_ids
                     )
                 else:
-                    save_last_summary_time(channel, datetime.now())
+                    save_last_summary_time(channel, datetime.now(timezone.utc))
             else:
                 logger.info(f"频道 {channel} 没有新消息需要总结")
                 # 获取频道实际名称用于无消息提示
