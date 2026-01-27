@@ -11,8 +11,6 @@ services:
     volumes:
       # 持久化整个 data 目录 - 避免单文件挂载错误
       - ./data:/app/data
-      # 持久化会话文件目录 - 避免单文件挂载创建文件夹
-      - ./data/sessions:/app/sessions
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

@@ -109,7 +109,7 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
     # 确保 API_ID 是整数
     logger.info("开始抓取指定时间范围的频道消息")
     
-    async with TelegramClient('/app/sessions/session_name', int(API_ID), API_HASH) as client:
+    async with TelegramClient('data/sessions/session_name', int(API_ID), API_HASH) as client:
         # 如果没有提供开始时间，则默认抓取过去一周的消息
         if start_time is None:
             start_time = datetime.now(timezone.utc) - timedelta(days=7)

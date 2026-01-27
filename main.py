@@ -172,9 +172,14 @@ async def main():
         )
         logger.info("投票重新生成数据清理任务已配置：每天凌晨3点执行")
 
+        # 确保 sessions 目录存在
+        sessions_dir = 'data/sessions'
+        os.makedirs(sessions_dir, exist_ok=True)
+        logger.debug(f"会话目录已准备: {sessions_dir}")
+
         # 启动机器人客户端，处理命令
         logger.info("开始初始化Telegram机器人客户端...")
-        client = TelegramClient('/app/sessions/bot_session', int(API_ID), API_HASH)
+        client = TelegramClient('data/sessions/bot_session', int(API_ID), API_HASH)
         
         # 设置活动的客户端实例，供其他模块使用
         from core.telegram_client import set_active_client
