@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.6] - 2026-02-02
+
+### 修复
+- **分段消息标题问题**：移除了分段发送消息时的默认"更新日志"标题
+  - 修改 `send_long_message` 函数，当 `channel_title` 为 `None` 时不显示任何标题
+  - 只有明确指定 `channel_title` 参数时才会显示标题
+  - 修复了当 `channel_title` 为 `None` 且 `show_pagination=True` 时会生成 `📋 **None (1/3)**` 的问题
+  - 向管理员发送总结时（`show_pagination=False`）不显示标题，直接发送内容
+
 ## [1.3.5] - 2026-01-25
 
 ### 修复

@@ -200,25 +200,28 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
         await client.send_message(chat_id, text, link_preview=False)
         return
     
-    # 确定标题
+    # 如果没有指定标题，则不使用标题
     if channel_title is None:
-        channel_title = "更新日志"
-    
-    # 计算标题长度
-    if show_pagination:
-        # 标题格式：📋 **{channel_title} ({i+1}/{len(parts)})**\n\n
-        # 计算最大可能标题长度
-        max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
+        # 不添加标题，直接使用最大长度
+        content_max_length = max_length
+        logger.info(f"未指定标题，消息将直接发送内容，最大长度: {content_max_length}字符")
     else:
-        # 只在第一条消息显示标题，其他条不显示
-        # 第一条：📋 **{channel_title}**\n\n
-        # 其他：无标题
-        max_title_length = len(f"📋 **{channel_title}**\n\n")
+        # 计算标题长度
+        if show_pagination:
+            # 标题格式：📋 **{channel_title} ({i+1}/{len(parts)})**\n\n
+            # 计算最大可能标题长度
+            max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
+        else:
+            # 只在第一条消息显示标题，其他条不显示
+            # 第一条：📋 **{channel_title}**\n\n
+            # 其他：无标题
+            max_title_length = len(f"📋 **{channel_title}**\n\n")
+        
+        # 实际可用于内容的最大长度
+        content_max_length = max_length - max_title_length
+        logger.info(f"使用标题 '{channel_title}'，标题长度: {max_title_length}字符，内容最大长度: {content_max_length}字符")
     
-    # 实际可用于内容的最大长度
-    content_max_length = max_length - max_title_length
-    
-    logger.info(f"消息需要分段发送，开始分段处理，标题长度: {max_title_length}字符，内容最大长度: {content_max_length}字符")
+    logger.info(f"消息需要分段发送，开始分段处理，内容最大长度: {content_max_length}字符")
     
     # 使用智能分割算法
     try:
@@ -250,8 +253,8 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
     
     # 发送所有部分
     for i, part in enumerate(parts):
-        # 根据 show_pagination 参数决定标题格式
-        if show_pagination:
+        # 根据 show_pagination 参数和 channel_title 决定标题格式
+        if show_pagination and channel_title is not None:
             # 在每条消息显示分页标题
             full_message = f"📋 **{channel_title} ({i+1}/{len(parts)})**\n\n{part}"
         else:
