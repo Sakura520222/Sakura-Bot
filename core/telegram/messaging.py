@@ -12,6 +12,7 @@ from ..error_handler import retry_with_backoff, record_error
 from ..telegram_client_utils import split_message_smart, validate_message_entities
 from .client_management import get_active_client, extract_date_range_from_summary
 from .poll_handlers import send_poll
+from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -276,59 +277,10 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     # 使用频道链接的最后部分作为回退
                     channel_actual_name = source_channel.split('/')[-1]
             
-            # 提取日期范围和报告类型（从原总结文本中提取）
-            date_range = ""
-            report_type = ""
-            if ("周报" in summary_text or "日报" in summary_text) and "**" in summary_text:
-                # 尝试从原总结文本中提取日期范围和类型
-                import re
-                # 匹配周报或日报的日期范围
-                weekly_pattern = r"\*\*.*周报\s*([0-9.]+-[0-9.]+)\*\*"
-                daily_pattern = r"\*\*.*日报\s*([0-9.]+)\*\*"
-                weekly_match = re.search(weekly_pattern, summary_text)
-                daily_match = re.search(daily_pattern, summary_text)
-                if weekly_match:
-                    date_range = weekly_match.group(1)
-                    report_type = "周报"
-                elif daily_match:
-                    date_range = daily_match.group(1)
-                    report_type = "日报"
-
-            # 检查总结文本是否已经有正确的标题格式
-            # 如果总结文本已经以 "**" 开头，说明已经有标题，不需要重复添加
-            summary_text_for_admins = summary_text  # 管理员接收的文本
-            summary_text_for_source = summary_text  # 源频道接收的文本
-
-            # 如果提供了源频道，检查是否需要更新标题
-            if source_channel and channel_actual_name:
-                # 检查总结文本是否已经有标题（周报或日报）
-                if summary_text.startswith("**") and ("周报" in summary_text or "日报" in summary_text):
-                    # 已经有标题，检查是否需要更新为频道实际名称
-                    # 提取日期范围
-                    if date_range:
-                        expected_title = f"**{channel_actual_name} {report_type} {date_range}**"
-                    else:
-                        expected_title = f"**{channel_actual_name} {report_type}**"
-
-                    # 如果当前标题与预期标题不同，则更新
-                    if not summary_text.startswith(expected_title):
-                        # 找到原标题的结束位置
-                        if "** " in summary_text:
-                            start_idx = summary_text.index("**")
-                            end_idx = summary_text.index("** ", start_idx) + 2
-                            # 替换标题
-                            summary_text_for_source = expected_title + summary_text[end_idx:]
-                            summary_text_for_admins = summary_text_for_source
-                else:
-                    # 没有标题，添加标题（默认为周报）
-                    if not report_type:
-                        report_type = "周报"
-                    if date_range:
-                        new_title = f"**{channel_actual_name} {report_type} {date_range}**"
-                    else:
-                        new_title = f"**{channel_actual_name} {report_type}**"
-                    summary_text_for_source = new_title + "\n\n" + summary_text
-                    summary_text_for_admins = summary_text_for_source
+            # 总结文本已经包含了正确的标题（由scheduler.py或summary_commands.py生成）
+            # 不需要再添加或修改标题
+            summary_text_for_admins = summary_text
+            summary_text_for_source = summary_text
             
             # 向所有管理员发送消息（除非跳过）
             if not skip_admins:
@@ -516,49 +468,10 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         # 使用频道链接的最后部分作为回退
                         channel_actual_name = source_channel.split('/')[-1]
                 
-                # 提取日期范围（从原总结文本中提取）
-                date_range = ""
-                if "周报" in summary_text and "**" in summary_text:
-                    # 尝试从原总结文本中提取日期范围
-                    import re
-                    date_pattern = r"\*\*.*周报\s*([0-9.]+-[0-9.]+)\*\*"
-                    match = re.search(date_pattern, summary_text)
-                    if match:
-                        date_range = match.group(1)
-                
-                # 检查总结文本是否已经有正确的标题格式
-                # 如果总结文本已经以 "**" 开头，说明已经有标题，不需要重复添加
-                summary_text_for_admins = summary_text  # 管理员接收的文本
-                summary_text_for_source = summary_text  # 源频道接收的文本
-                
-                # 如果提供了源频道，检查是否需要更新标题
-                if source_channel and channel_actual_name:
-                    # 检查总结文本是否已经有标题
-                    if summary_text.startswith("**") and "周报" in summary_text:
-                        # 已经有标题，检查是否需要更新为频道实际名称
-                        # 提取日期范围
-                        if date_range:
-                            expected_title = f"**{channel_actual_name} 周报 {date_range}**"
-                        else:
-                            expected_title = f"**{channel_actual_name} 周报**"
-                        
-                        # 如果当前标题与预期标题不同，则更新
-                        if not summary_text.startswith(expected_title):
-                            # 找到原标题的结束位置
-                            if "** " in summary_text:
-                                start_idx = summary_text.index("**")
-                                end_idx = summary_text.index("** ", start_idx) + 2
-                                # 替换标题
-                                summary_text_for_source = expected_title + summary_text[end_idx:]
-                                summary_text_for_admins = summary_text_for_source
-                    else:
-                        # 没有标题，添加标题
-                        if date_range:
-                            new_title = f"**{channel_actual_name} 周报 {date_range}**"
-                        else:
-                            new_title = f"**{channel_actual_name} 周报**"
-                        summary_text_for_source = new_title + "\n\n" + summary_text
-                        summary_text_for_admins = summary_text_for_source
+                # 总结文本已经包含了正确的标题（由scheduler.py或summary_commands.py生成）
+                # 不需要再添加或修改标题
+                summary_text_for_admins = summary_text
+                summary_text_for_source = summary_text
                 
                 # 向所有管理员发送消息（除非跳过）
                 if not skip_admins:

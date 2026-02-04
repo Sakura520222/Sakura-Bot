@@ -114,7 +114,7 @@ python main.py
 | **🎯 频道级投票配置** | 为每个频道单独配置投票发送位置和启用状态 | ✅ |
 | **🔄 投票重新生成** | 管理员可通过一键按钮重新生成投票 | ✅ |
 | **📜 历史记录** | 自动保存所有总结到数据库，支持查询、导出和统计 | ✅ |
-| **🌍 国际化支持** | 支持中英文界面切换，灵活的语言配置 | ✅ |
+| **🌍 国际化支持** | 完整的多语言支持系统，所有模块已国际化 | ✅ |
 
 ---
 
@@ -205,6 +205,17 @@ python main.py
 ### 配置示例
 
 创建或编辑 `data/.env` 文件：
+
+```env
+# ===== Telegram配置 =====
+TELEGRAM_API_ID=your_api_id_here
+TELEGRAM_API_HASH=your_api_hash_here
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# ===== 语言配置 =====
+LANGUAGE=zh-CN  # 界面语言：zh-CN（简体中文）或 en-US（英语）
+
+# ===== AI配置（支持任意OpenAI兼容API） =====
 
 ```env
 # ===== Telegram配置 =====

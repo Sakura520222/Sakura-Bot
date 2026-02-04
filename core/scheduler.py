@@ -19,6 +19,7 @@ from .prompt_manager import load_prompt
 from .summary_time_manager import load_last_summary_time, save_last_summary_time
 from .ai_client import analyze_with_ai
 from .telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
+from .i18n import get_text
 
 async def main_job(channel=None):
     """定时任务主函数
@@ -153,9 +154,9 @@ async def main_job(channel=None):
 
                 # 根据频率生成报告标题
                 if frequency == 'daily':
-                    report_title = f"{channel_name} 日报 {end_date_str}"
+                    report_title = get_text('summary.daily_title', channel=channel_name, date=end_date_str)
                 else:  # weekly
-                    report_title = f"{channel_name} 周报 {start_date_str}-{end_date_str}"
+                    report_title = get_text('summary.weekly_title', channel=channel_name, start_date=start_date_str, end_date=end_date_str)
 
                 # 生成报告文本
                 report_text = f"**{report_title}**\n\n{summary}"

@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+# Copyright 2026 Sakura-频道总结助手
+#
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
+# 并附加非商业使用限制条款。
+#
+# - 署名：必须提供本项目的原始来源链接
+# - 非商业：禁止任何商业用途和分发
+# - 相同方式共享：衍生作品必须采用相同的许可证
+#
+# 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+# 许可证全文：参见 LICENSE 文件
+
 """
 其他命令处理（系统、调度、投票、数据管理、UI命令）
 """
@@ -16,7 +29,7 @@ from ..config import (
     get_channel_poll_config, set_channel_poll_config, delete_channel_poll_config,
     get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED,
     BOT_STATE_SHUTTING_DOWN, LOG_LEVEL_MAP, get_scheduler_instance,
-    clear_discussion_group_cache, LINKED_CHAT_CACHE
+    clear_discussion_group_cache, LINKED_CHAT_CACHE, ENABLE_POLL
 )
 from ..i18n import get_text, set_language, get_language, get_supported_languages
 from ..utils.message_utils import format_schedule_info
@@ -34,7 +47,7 @@ async def handle_show_log_level(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     import logging
@@ -43,7 +56,7 @@ async def handle_show_log_level(event):
     level_name = logging.getLevelName(current_level)
     
     logger.info(f"执行命令 {command} 成功")
-    await event.reply(f"当前日志级别：{level_name}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    await event.reply(get_text('loglevel.current', level=level_name))
 
 
 async def handle_set_log_level(event):
@@ -54,7 +67,7 @@ async def handle_set_log_level(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
@@ -62,7 +75,7 @@ async def handle_set_log_level(event):
         level_str = level_str.strip().upper()
         
         if level_str not in LOG_LEVEL_MAP:
-            await event.reply(f"无效的日志级别: {level_str}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+            await event.reply(get_text('loglevel.invalid', level=level_str))
             return
         
         import logging
@@ -76,13 +89,13 @@ async def handle_set_log_level(event):
         save_config(config)
         
         logger.info(f"日志级别已从 {logging.getLevelName(old_level)} 更改为 {logging.getLevelName(new_level)}")
-        await event.reply(f"日志级别已成功更改为：{level_str}\n\n之前的级别：{logging.getLevelName(old_level)}")
+        await event.reply(get_text('loglevel.set_success', level=level_str, old_level=logging.getLevelName(old_level)))
         
     except ValueError:
-        await event.reply("请提供有效的日志级别，例如：/setloglevel INFO\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
+        await event.reply(get_text('loglevel.invalid', level='INFO'))
     except Exception as e:
         logger.error(f"设置日志级别时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"设置日志级别时出错: {e}")
+        await event.reply(get_text('loglevel.set_error', error=e))
 
 
 async def handle_restart(event):
@@ -93,11 +106,11 @@ async def handle_restart(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     logger.info(f"开始执行 {command} 命令")
-    await event.reply("正在重启机器人...")
+    await event.reply(get_text('bot.restarting'))
     logger.info("机器人重启命令已执行，正在重启...")
     
     with open(RESTART_FLAG_FILE, 'w') as f:
@@ -116,11 +129,11 @@ async def handle_shutdown(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     logger.info(f"开始执行 {command} 命令")
-    await event.reply("正在关闭机器人...")
+    await event.reply(get_text('bot.shutting_down'))
     
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
     
@@ -134,7 +147,7 @@ async def handle_shutdown(event):
     try:
         for admin_id in ADMIN_LIST:
             if admin_id != 'me':
-                await event.client.send_message(admin_id, "机器人已执行关机命令，正在停止运行...", link_preview=False)
+                await event.client.send_message(admin_id, get_text('bot.shutting_down'), link_preview=False)
     except Exception as e:
         logger.error(f"发送关机通知失败: {e}")
     
@@ -151,17 +164,17 @@ async def handle_pause(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     current_state = get_bot_state()
     
     if current_state == BOT_STATE_PAUSED:
-        await event.reply("机器人已经处于暂停状态")
+        await event.reply(get_text('bot.already_paused'))
         return
     
     if current_state != BOT_STATE_RUNNING:
-        await event.reply(f"机器人当前状态为 {current_state}，无法暂停")
+        await event.reply(get_text('bot.invalid_state_pause', state=current_state))
         return
     
     scheduler = get_scheduler_instance()
@@ -172,7 +185,7 @@ async def handle_pause(event):
     set_bot_state(BOT_STATE_PAUSED)
     
     logger.info(f"执行命令 {command} 成功")
-    await event.reply("机器人已暂停。定时任务已停止，但手动命令仍可执行。\n使用 /resume 或 /恢复 恢复运行。")
+    await event.reply(get_text('bot.paused'))
 
 
 async def handle_resume(event):
@@ -183,17 +196,17 @@ async def handle_resume(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     current_state = get_bot_state()
 
     if current_state == BOT_STATE_RUNNING:
-        await event.reply("机器人已经在运行状态")
+        await event.reply(get_text('bot.already_running'))
         return
 
     if current_state != BOT_STATE_PAUSED:
-        await event.reply(f"机器人当前状态为 {current_state}，无法恢复")
+        await event.reply(get_text('bot.invalid_state_resume', state=current_state))
         return
 
     scheduler = get_scheduler_instance()
@@ -204,7 +217,7 @@ async def handle_resume(event):
     set_bot_state(BOT_STATE_RUNNING)
 
     logger.info(f"执行命令 {command} 成功")
-    await event.reply("机器人已恢复运行。定时任务将继续执行。")
+    await event.reply(get_text('bot.resumed'))
 
 
 # ==================== 调度配置命令 ====================
@@ -217,7 +230,7 @@ async def handle_show_channel_schedule(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
@@ -230,14 +243,14 @@ async def handle_show_channel_schedule(event):
                 channel = f"https://t.me/{channel_part}"
             
             if channel not in CHANNELS:
-                await event.reply(f"频道 {channel} 不在配置列表中")
+                await event.reply(get_text('error.channel_not_found', channel=channel))
                 return
         else:
             if not CHANNELS:
-                await event.reply("当前没有配置任何频道")
+                await event.reply(get_text('error.no_channels'))
                 return
             
-            schedule_msg = "所有频道的自动总结时间配置：\n\n"
+            schedule_msg = get_text('schedule.all_title') + "\n\n"
             for i, ch in enumerate(CHANNELS, 1):
                 schedule = get_channel_schedule(ch)
                 schedule_msg += format_schedule_info(ch, schedule, i)
@@ -247,18 +260,19 @@ async def handle_show_channel_schedule(event):
         
         schedule = get_channel_schedule(channel)
 
+        channel_name = channel.split('/')[-1]
         schedule_info = format_schedule_info(channel, schedule)
         schedule_info += f"\n使用格式：\n"
-        schedule_info += f"每天模式：/setchannelschedule {channel.split('/')[-1]} daily 23 0\n"
-        schedule_info += f"每周模式：/setchannelschedule {channel.split('/')[-1]} weekly mon,thu 14 30\n"
-        schedule_info += f"旧格式：/setchannelschedule {channel.split('/')[-1]} mon 9 0"
+        schedule_info += get_text('schedule.usage_daily', channel=channel_name) + "\n"
+        schedule_info += get_text('schedule.usage_weekly', channel=channel_name) + "\n"
+        schedule_info += get_text('schedule.usage_old', channel=channel_name)
 
         logger.info(f"执行命令 {command} 成功")
         await event.reply(schedule_info)
         
     except Exception as e:
         logger.error(f"查看频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"查看频道时间配置时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_set_channel_schedule(event):
@@ -269,22 +283,13 @@ async def handle_set_channel_schedule(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
         parts = command.split()
         if len(parts) < 4:
-            await event.reply(
-                "请提供完整的参数。可用格式：\n\n"
-                "每天模式：/setchannelschedule <频道> daily <小时> <分钟>\n"
-                "  例如：/setchannelschedule channel daily 23 0\n\n"
-                "每周模式：/setchannelschedule <频道> weekly <星期> <小时> <分钟>\n"
-                "  例如：/setchannelschedule channel weekly mon,thu 23 0\n"
-                "  例如：/setchannelschedule channel weekly sun 9 0\n\n"
-                "旧格式（向后兼容）：/setchannelschedule <频道> <星期> <小时> <分钟>\n"
-                "  例如：/setchannelschedule channel mon 9 0"
-            )
+            await event.reply(get_text('schedule.invalid_params'))
             return
 
         channel_part = parts[1]
@@ -294,7 +299,7 @@ async def handle_set_channel_schedule(event):
             channel = f"https://t.me/{channel_part}"
 
         if channel not in CHANNELS:
-            await event.reply(f"频道 {channel} 不在配置列表中，请先使用/addchannel命令添加频道")
+            await event.reply(get_text('error.channel_not_found', channel=channel))
             return
 
         frequency_or_day = parts[2].lower()
@@ -304,30 +309,30 @@ async def handle_set_channel_schedule(event):
 
             if frequency == 'daily':
                 if len(parts) < 5:
-                    await event.reply("每天模式需要提供小时和分钟：/setchannelschedule channel daily 23 0")
+                    await event.reply(get_text('schedule.daily_need_time', channel=channel.split('/')[-1]))
                     return
 
                 try:
                     hour = int(parts[3])
                     minute = int(parts[4])
                 except ValueError:
-                    await event.reply("小时和分钟必须是数字")
+                    await event.reply(get_text('schedule.invalid_time'))
                     return
 
                 success = set_channel_schedule_v2(channel, frequency='daily', hour=hour, minute=minute)
 
                 if success:
-                    success_msg = f"已成功设置频道 {channel.split('/')[-1]} 的自动总结时间：\n\n"
-                    success_msg += f"• 频率：每天\n"
-                    success_msg += f"• 时间：{hour:02d}:{minute:02d}\n"
-                    success_msg += f"\n下次自动总结将在每天 {hour:02d}:{minute:02d} 执行。"
-                    await event.reply(success_msg)
+                    await event.reply(get_text('schedule.set_success', 
+                        channel=channel.split('/')[-1], 
+                        frequency=get_text('channel.all'), 
+                        hour=hour, 
+                        minute=minute))
                 else:
-                    await event.reply("设置失败，请检查日志")
+                    await event.reply(get_text('schedule.set_failed'))
 
             elif frequency == 'weekly':
                 if len(parts) < 6:
-                    await event.reply("每周模式需要提供星期、小时和分钟：/setchannelschedule channel weekly mon,thu 23 0")
+                    await event.reply(get_text('schedule.weekly_need_params'))
                     return
 
                 days_str = parts[3]
@@ -335,7 +340,7 @@ async def handle_set_channel_schedule(event):
                     hour = int(parts[4])
                     minute = int(parts[5])
                 except ValueError:
-                    await event.reply("小时和分钟必须是数字")
+                    await event.reply(get_text('schedule.invalid_time'))
                     return
 
                 days = [d.strip() for d in days_str.split(',')]
@@ -344,26 +349,27 @@ async def handle_set_channel_schedule(event):
 
                 if success:
                     day_map = {
-                        'mon': '周一', 'tue': '周二', 'wed': '周三', 'thu': '周四',
-                        'fri': '周五', 'sat': '周六', 'sun': '周日'
+                        'mon': get_text('day.mon'), 'tue': get_text('day.tue'), 
+                        'wed': get_text('day.wed'), 'thu': get_text('day.thu'),
+                        'fri': get_text('day.fri'), 'sat': get_text('day.sat'), 
+                        'sun': get_text('day.sun')
                     }
                     days_cn = '、'.join([day_map.get(d, d) for d in days])
 
-                    success_msg = f"已成功设置频道 {channel.split('/')[-1]} 的自动总结时间：\n\n"
-                    success_msg += f"• 频率：每周\n"
-                    success_msg += f"• 星期：{days_cn}\n"
-                    success_msg += f"• 时间：{hour:02d}:{minute:02d}\n"
-                    success_msg += f"\n下次自动总结将在每周{days_cn} {hour:02d}:{minute:02d} 执行。"
-                    await event.reply(success_msg)
+                    await event.reply(get_text('schedule.set_success_weekly',
+                        channel=channel.split('/')[-1],
+                        days=days_cn,
+                        hour=hour,
+                        minute=minute))
                 else:
-                    await event.reply("设置失败，请检查日志")
+                    await event.reply(get_text('schedule.set_failed'))
         else:
             day = frequency_or_day
             try:
                 hour = int(parts[3])
                 minute = int(parts[4]) if len(parts) > 4 else 0
             except ValueError:
-                await event.reply("小时和分钟必须是数字")
+                await event.reply(get_text('schedule.invalid_time'))
                 return
 
             is_valid, error_msg = validate_schedule(day, hour, minute)
@@ -375,22 +381,25 @@ async def handle_set_channel_schedule(event):
 
             if success:
                 day_map = {
-                    'mon': '周一', 'tue': '周二', 'wed': '周三', 'thu': '周四',
-                    'fri': '周五', 'sat': '周六', 'sun': '周日'
+                    'mon': get_text('day.mon'), 'tue': get_text('day.tue'), 
+                    'wed': get_text('day.wed'), 'thu': get_text('day.thu'),
+                    'fri': get_text('day.fri'), 'sat': get_text('day.sat'), 
+                    'sun': get_text('day.sun')
                 }
                 day_cn = day_map.get(day, day)
 
-                success_msg = f"已成功设置频道 {channel.split('/')[-1]} 的自动总结时间：\n\n"
-                success_msg += f"• 星期几：{day_cn} ({day})\n"
-                success_msg += f"• 时间：{hour:02d}:{minute:02d}\n"
-                success_msg += f"\n下次自动总结将在每周{day_cn} {hour:02d}:{minute:02d}执行。"
-                await event.reply(success_msg)
+                await event.reply(get_text('schedule.set_success_old',
+                    channel=channel.split('/')[-1],
+                    day_cn=day_cn,
+                    day=day,
+                    hour=hour,
+                    minute=minute))
             else:
-                await event.reply("设置频道时间配置失败，请检查日志")
+                await event.reply(get_text('schedule.set_failed'))
 
     except Exception as e:
         logger.error(f"设置频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"设置频道时间配置时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_delete_channel_schedule(event):
@@ -401,13 +410,13 @@ async def handle_delete_channel_schedule(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
         parts = command.split()
         if len(parts) < 2:
-            await event.reply("请提供频道参数：/deletechannelschedule 频道\n\n例如：/deletechannelschedule examplechannel")
+            await event.reply(get_text('schedule.delete_channel_param'))
             return
         
         channel_part = parts[1]
@@ -417,23 +426,20 @@ async def handle_delete_channel_schedule(event):
             channel = f"https://t.me/{channel_part}"
         
         if channel not in CHANNELS:
-            await event.reply(f"频道 {channel} 不在配置列表中")
+            await event.reply(get_text('error.channel_not_found', channel=channel))
             return
         
         success = delete_channel_schedule(channel)
         
         if success:
-            success_msg = f"已成功删除频道 {channel.split('/')[-1]} 的自动总结时间配置。\n"
-            success_msg += f"该频道将使用默认时间配置：每周一 09:00"
-            
             logger.info(f"已删除频道 {channel} 的时间配置")
-            await event.reply(success_msg)
+            await event.reply(get_text('schedule.delete_success', channel=channel.split('/')[-1]))
         else:
-            await event.reply("删除频道时间配置失败，请检查日志")
+            await event.reply(get_text('schedule.set_failed'))
             
     except Exception as e:
         logger.error(f"删除频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"删除频道时间配置时出错: {e}")
+        await event.reply(get_text('schedule.delete_error', error=e))
 
 
 # ==================== 投票配置命令 ====================
@@ -446,7 +452,7 @@ async def handle_show_channel_poll(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
@@ -459,7 +465,7 @@ async def handle_show_channel_poll(event):
                 channel = f"https://t.me/{channel_part}"
 
             if channel not in CHANNELS:
-                await event.reply(f"频道 {channel} 不在配置列表中")
+                await event.reply(get_text('error.channel_not_found', channel=channel))
                 return
 
             poll_config = get_channel_poll_config(channel)
@@ -469,28 +475,25 @@ async def handle_show_channel_poll(event):
             send_to_channel = poll_config['send_to_channel']
 
             if enabled is None:
-                enabled_text = "使用全局配置"
+                enabled_text = get_text('poll.status_global')
             else:
-                enabled_text = "启用" if enabled else "禁用"
+                enabled_text = get_text('poll.status_enabled') if enabled else get_text('poll.status_disabled')
 
-            location_text = "频道" if send_to_channel else "讨论组"
+            location_text = get_text('poll.location_channel') if send_to_channel else get_text('poll.location_discussion')
 
-            poll_info = f"频道 {channel_name} 的投票配置：\n\n"
-            poll_info += f"• 状态：{enabled_text}\n"
-            poll_info += f"• 发送位置：{location_text}\n\n"
-
-            poll_info += f"使用格式：\n"
-            poll_info += f"/setchannelpoll {channel_name} true|false channel|discussion\n"
-            poll_info += f"/deletechannelpoll {channel_name}"
+            poll_info = get_text('poll.channel_title', channel=channel_name) + "\n\n"
+            poll_info += get_text('poll.info', status=enabled_text, location=location_text) + "\n\n"
+            poll_info += get_text('poll.usage_set', channel=channel_name) + "\n"
+            poll_info += get_text('poll.usage_delete', channel=channel_name)
 
             logger.info(f"执行命令 {command} 成功")
             await event.reply(poll_info)
         else:
             if not CHANNELS:
-                await event.reply("当前没有配置任何频道")
+                await event.reply(get_text('error.no_channels'))
                 return
 
-            poll_info = "所有频道的投票配置：\n\n"
+            poll_info = get_text('poll.all_title') + "\n\n"
             for i, ch in enumerate(CHANNELS, 1):
                 poll_config = get_channel_poll_config(ch)
                 channel_name = ch.split('/')[-1]
@@ -499,11 +502,11 @@ async def handle_show_channel_poll(event):
                 send_to_channel = poll_config['send_to_channel']
 
                 if enabled is None:
-                    enabled_text = "全局"
+                    enabled_text = get_text('poll.status_global')
                 else:
-                    enabled_text = "启用" if enabled else "禁用"
+                    enabled_text = get_text('poll.status_enabled') if enabled else get_text('poll.status_disabled')
 
-                location_text = "频道" if send_to_channel else "讨论组"
+                location_text = get_text('poll.location_channel') if send_to_channel else get_text('poll.location_discussion')
 
                 poll_info += f"{i}. {channel_name}: {enabled_text} / {location_text}\n"
 
@@ -511,7 +514,7 @@ async def handle_show_channel_poll(event):
 
     except Exception as e:
         logger.error(f"查看频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"查看频道投票配置时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_set_channel_poll(event):
@@ -522,24 +525,13 @@ async def handle_set_channel_poll(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
         parts = command.split()
         if len(parts) < 4:
-            await event.reply(
-                "请提供完整的参数。可用格式：\n\n"
-                "/setchannelpoll <频道> <enabled> <location>\n\n"
-                "参数说明：\n"
-                "• 频道：频道URL或名称\n"
-                "• enabled：true（启用）或 false（禁用）\n"
-                "• location：channel（频道）或 discussion（讨论组）\n\n"
-                "示例：\n"
-                "/setchannelpoll channel1 true channel\n"
-                "/setchannelpoll channel1 false discussion\n"
-                "/setchannelpoll channel1 false channel"
-            )
+            await event.reply(get_text('poll.invalid_params'))
             return
 
         channel_part = parts[1]
@@ -549,7 +541,7 @@ async def handle_set_channel_poll(event):
             channel = f"https://t.me/{channel_part}"
 
         if channel not in CHANNELS:
-            await event.reply(f"频道 {channel} 不在配置列表中，请先使用/addchannel命令添加频道")
+            await event.reply(get_text('error.channel_not_found', channel=channel))
             return
 
         enabled_str = parts[2].lower()
@@ -558,7 +550,7 @@ async def handle_set_channel_poll(event):
         elif enabled_str in ['false', '0', 'no']:
             enabled = False
         else:
-            await event.reply(f"无效的enabled参数: {enabled_str}\n\n有效值：true, false, 1, 0, yes, no")
+            await event.reply(get_text('poll.invalid_enabled', enabled=enabled_str))
             return
 
         location_str = parts[3].lower()
@@ -567,34 +559,32 @@ async def handle_set_channel_poll(event):
         elif location_str in ['discussion', 'd', 'discuss']:
             send_to_channel = False
         else:
-            await event.reply(f"无效的location参数: {location_str}\n\n有效值：channel, discussion")
+            await event.reply(get_text('poll.invalid_location', location=location_str))
             return
 
         success = set_channel_poll_config(channel, enabled=enabled, send_to_channel=send_to_channel)
 
         if success:
             channel_name = channel.split('/')[-1]
-            enabled_text = "启用" if enabled else "禁用"
-            location_text = "频道" if send_to_channel else "讨论组"
+            enabled_text = get_text('poll.status_enabled') if enabled else get_text('poll.status_disabled')
+            location_text = get_text('poll.location_channel') if send_to_channel else get_text('poll.location_discussion')
 
-            success_msg = f"已成功设置频道 {channel_name} 的投票配置：\n\n"
-            success_msg += f"• 状态：{enabled_text}\n"
-            success_msg += f"• 发送位置：{location_text}\n"
+            success_msg = get_text('poll.set_success', channel=channel_name, status=enabled_text, location=location_text)
 
             if not enabled:
-                success_msg += f"\n注意：投票功能已禁用，不会发送投票。"
+                success_msg += get_text('poll.set_note_disabled')
             elif send_to_channel:
-                success_msg += f"\n注意：投票将直接发送到频道，回复总结消息。"
+                success_msg += get_text('poll.set_note_channel')
             else:
-                success_msg += f"\n注意：投票将发送到讨论组，回复转发消息。"
+                success_msg += get_text('poll.set_note_discussion')
 
             await event.reply(success_msg)
         else:
-            await event.reply("设置失败，请检查日志")
+            await event.reply(get_text('poll.set_failed'))
 
     except Exception as e:
         logger.error(f"设置频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"设置频道投票配置时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_delete_channel_poll(event):
@@ -605,13 +595,13 @@ async def handle_delete_channel_poll(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
         parts = command.split()
         if len(parts) < 2:
-            await event.reply("请提供频道参数：/deletechannelpoll 频道\n\n例如：/deletechannelpoll examplechannel")
+            await event.reply(get_text('poll.delete_channel_param'))
             return
 
         channel_part = parts[1]
@@ -621,29 +611,26 @@ async def handle_delete_channel_poll(event):
             channel = f"https://t.me/{channel_part}"
 
         if channel not in CHANNELS:
-            await event.reply(f"频道 {channel} 不在配置列表中")
+            await event.reply(get_text('error.channel_not_found', channel=channel))
             return
 
         success = delete_channel_poll_config(channel)
 
         if success:
             channel_name = channel.split('/')[-1]
-            from .config import ENABLE_POLL
-            global_enabled = "启用" if ENABLE_POLL else "禁用"
+            global_enabled = get_text('poll.status_enabled') if ENABLE_POLL else get_text('poll.status_disabled')
             
-            success_msg = f"已成功删除频道 {channel_name} 的投票配置。\n\n"
-            success_msg += f"该频道将使用全局投票配置：\n"
-            success_msg += f"• 状态：{global_enabled}\n"
-            success_msg += f"• 发送位置：讨论组（默认）"
-
             logger.info(f"已删除频道 {channel} 的投票配置")
-            await event.reply(success_msg)
+            await event.reply(get_text('poll.delete_success', 
+                channel=channel_name, 
+                status=global_enabled,
+                location=get_text('poll.location_discussion')))
         else:
-            await event.reply("删除频道投票配置失败，请检查日志")
+            await event.reply(get_text('poll.delete_failed'))
 
     except Exception as e:
         logger.error(f"删除频道投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"删除频道投票配置时出错: {e}")
+        await event.reply(get_text('poll.delete_error', error=e))
 
 
 # ==================== 数据管理命令 ====================
@@ -656,7 +643,7 @@ async def handle_set_send_to_source(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
@@ -664,7 +651,7 @@ async def handle_set_send_to_source(event):
         value = value.strip().lower()
         
         if value not in ['true', 'false', '1', '0', 'yes', 'no']:
-            await event.reply(f"无效的值: {value}\n\n可用值：true, false, 1, 0, yes, no")
+            await event.reply(get_text('report.invalid_value', value=value))
             return
         
         new_value = value in ['true', '1', 'yes']
@@ -674,14 +661,16 @@ async def handle_set_send_to_source(event):
         save_config(config)
         
         logger.info(f"已将send_report_to_source设置为: {new_value}")
-        await event.reply(f"已成功将报告发送回源频道的设置更改为：{new_value}\n\n当前状态：{'开启' if new_value else '关闭'}")
+        status = get_text('status.enabled') if new_value else get_text('status.disabled')
+        await event.reply(get_text('report.set_success', value=new_value, status=status))
         
     except ValueError:
         current_value = load_config().get('send_report_to_source', SEND_REPORT_TO_SOURCE)
-        await event.reply(f"当前报告发送回源频道的设置：{current_value}\n\n当前状态：{'开启' if current_value else '关闭'}\n\n使用格式：/setsendtosource true|false")
+        status = get_text('status.enabled') if current_value else get_text('status.disabled')
+        await event.reply(get_text('report.current_status', value=current_value, status=status))
     except Exception as e:
         logger.error(f"设置报告发送回源频道选项时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"设置报告发送回源频道选项时出错: {e}")
+        await event.reply(get_text('report.set_error', error=e))
 
 
 async def handle_clear_cache(event):
@@ -691,7 +680,7 @@ async def handle_clear_cache(event):
 
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"用户 {sender_id} 尝试使用 /clearcache 命令，但没有管理员权限")
-        await event.reply("❌ 只有管理员可以清除缓存")
+        await event.reply(get_text('cache.admin_only'))
         return
 
     logger.info(f"收到 /clearcache 命令，发送者: {sender_id}")
@@ -701,17 +690,17 @@ async def handle_clear_cache(event):
         if len(parts) > 1:
             channel = parts[1]
             clear_discussion_group_cache(channel)
-            await event.reply(f"✅ 已清除频道 {channel} 的讨论组ID缓存")
+            await event.reply(get_text('cache.clear_channel_success', channel=channel))
             logger.info(f"管理员 {sender_id} 清除了频道 {channel} 的讨论组ID缓存")
         else:
             cache_size = len(LINKED_CHAT_CACHE)
             clear_discussion_group_cache()
-            await event.reply(f"✅ 已清除所有讨论组ID缓存（共 {cache_size} 条）")
+            await event.reply(get_text('cache.clear_all_success', count=cache_size))
             logger.info(f"管理员 {sender_id} 清除了所有讨论组ID缓存（共 {cache_size} 条）")
 
     except Exception as e:
         logger.error(f"清除缓存时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"❌ 清除缓存时出错: {e}")
+        await event.reply(get_text('cache.clear_error', error=e))
 
 
 # ==================== UI命令 ====================
@@ -749,7 +738,7 @@ async def handle_start(event):
 
     except Exception as e:
         logger.error(f"发送欢迎消息时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"发送欢迎消息时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_help(event):
@@ -823,7 +812,7 @@ async def handle_help(event):
 
     except Exception as e:
         logger.error(f"发送帮助信息时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"发送帮助信息时出错: {e}")
+        await event.reply(get_text('error.unknown'))
 
 
 async def handle_changelog(event):
@@ -834,7 +823,7 @@ async def handle_changelog(event):
     
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
@@ -842,13 +831,13 @@ async def handle_changelog(event):
         
         if not os.path.exists(changelog_file):
             logger.error(f"更新日志文件 {changelog_file} 不存在")
-            await event.reply(f"更新日志文件 {changelog_file} 不存在")
+            await event.reply(get_text('changelog.not_found', filename=changelog_file))
             return
         
         await event.client.send_file(
             sender_id,
             changelog_file,
-            caption="📄 项目的完整变更日志文件",
+            caption=get_text('changelog.caption'),
             file_name="CHANGELOG.md"
         )
         
@@ -856,7 +845,7 @@ async def handle_changelog(event):
         
     except Exception as e:
         logger.error(f"发送变更日志文件时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"发送变更日志文件时出错: {e}")
+        await event.reply(get_text('changelog.send_error', error=e))
 
 
 # ==================== 语言设置命令 ====================
@@ -876,7 +865,7 @@ async def handle_language(event):
             supported_langs = get_supported_languages()
             
             lang_names = {
-                'zh-CN': '简体中文',
+                'zh-CN': get_text('language.zh-CN') if 'language.zh-CN' in get_text('_') else '简体中文',
                 'en-US': 'English'
             }
             
@@ -923,4 +912,4 @@ async def handle_language(event):
 
     except Exception as e:
         logger.error(f"设置语言时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"设置语言时出错: {e}")
+        await event.reply(get_text('error.unknown'))

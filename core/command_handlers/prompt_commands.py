@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+# Copyright 2026 Sakura-频道总结助手
+#
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
+# 并附加非商业使用限制条款。
+#
+# - 署名：必须提供本项目的原始来源链接
+# - 非商业：禁止任何商业用途和分发
+# - 相同方式共享：衍生作品必须采用相同的许可证
+#
+# 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+# 许可证全文：参见 LICENSE 文件
+
 """
 提示词管理命令处理
 """
@@ -8,6 +21,7 @@ from ..config import ADMIN_LIST, logger
 from ..prompt_manager import load_prompt, save_prompt
 from ..poll_prompt_manager import load_poll_prompt, save_poll_prompt
 from ..states import get_user_context
+from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +35,13 @@ async def handle_show_prompt(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     logger.info(f"执行命令 {command} 成功")
     current_prompt = load_prompt()
-    await event.reply(f"当前提示词：\n\n{current_prompt}")
+    prompt_message = f"{get_text('prompt.current_title')}{get_text('prompt.current_content', content=current_prompt)}"
+    await event.reply(prompt_message)
 
 
 async def handle_set_prompt(event):
@@ -38,7 +53,7 @@ async def handle_set_prompt(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     # 使用状态管理器
@@ -46,7 +61,8 @@ async def handle_set_prompt(event):
     user_context.start_setting_prompt(sender_id)
     logger.info(f"添加用户 {sender_id} 到提示词设置集合")
     current_prompt = load_prompt()
-    await event.reply("请发送新的提示词，我将使用它来生成总结。\n\n当前提示词：\n" + current_prompt)
+    prompt_message = f"{get_text('prompt.setting')}\n\n{get_text('prompt.current_content', content=current_prompt)}"
+    await event.reply(prompt_message)
 
 
 async def handle_prompt_input(event):
@@ -64,7 +80,7 @@ async def handle_prompt_input(event):
     # 检查是否是命令消息，如果是则不处理
     if input_text.startswith('/'):
         logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
-        await event.reply("请发送提示词内容，不要发送命令。如果要取消设置，请重新发送命令。")
+        await event.reply(get_text('prompt.error_command'))
         return
     
     # 获取新提示词
@@ -79,7 +95,8 @@ async def handle_prompt_input(event):
     user_context.end_setting_prompt(sender_id)
     logger.info(f"从提示词设置集合中移除用户 {sender_id}")
     
-    await event.reply(f"提示词已更新为：\n\n{new_prompt}")
+    prompt_message = f"{get_text('prompt.set_success')}\n\n{get_text('prompt.current_content', content=new_prompt)}"
+    await event.reply(prompt_message)
 
 
 async def handle_show_poll_prompt(event):
@@ -91,12 +108,13 @@ async def handle_show_poll_prompt(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     logger.info(f"执行命令 {command} 成功")
     current_poll_prompt = load_poll_prompt()
-    await event.reply(f"当前投票提示词：\n\n{current_poll_prompt}")
+    prompt_message = f"{get_text('prompt.poll_current_title')}{get_text('prompt.current_content', content=current_poll_prompt)}"
+    await event.reply(prompt_message)
 
 
 async def handle_set_poll_prompt(event):
@@ -108,7 +126,7 @@ async def handle_set_poll_prompt(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     # 使用状态管理器
@@ -116,7 +134,8 @@ async def handle_set_poll_prompt(event):
     user_context.start_setting_poll_prompt(sender_id)
     logger.info(f"添加用户 {sender_id} 到投票提示词设置集合")
     current_poll_prompt = load_poll_prompt()
-    await event.reply("请发送新的投票提示词，我将使用它来生成投票。\n\n当前投票提示词：\n" + current_poll_prompt)
+    prompt_message = f"{get_text('prompt.poll_setting')}\n\n{get_text('prompt.current_content', content=current_poll_prompt)}"
+    await event.reply(prompt_message)
 
 
 async def handle_poll_prompt_input(event):
@@ -134,7 +153,7 @@ async def handle_poll_prompt_input(event):
     # 检查是否是命令消息，如果是则不处理
     if input_text.startswith('/'):
         logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
-        await event.reply("请发送提示词内容，不要发送命令。如果要取消设置，请重新发送命令。")
+        await event.reply(get_text('prompt.error_command'))
         return
 
     # 获取新提示词
@@ -149,4 +168,5 @@ async def handle_poll_prompt_input(event):
     user_context.end_setting_poll_prompt(sender_id)
     logger.info(f"从投票提示词设置集合中移除用户 {sender_id}")
 
-    await event.reply(f"投票提示词已更新为：\n\n{new_poll_prompt}")
+    prompt_message = f"{get_text('prompt.poll_set_success')}\n\n{get_text('prompt.current_content', content=new_poll_prompt)}"
+    await event.reply(prompt_message)

@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+# Copyright 2026 Sakura-频道总结助手
+#
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
+# 并附加非商业使用限制条款。
+#
+# - 署名：必须提供本项目的原始来源链接
+# - 非商业：禁止任何商业用途和分发
+# - 相同方式共享：衍生作品必须采用相同的许可证
+#
+# 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+# 许可证全文：参见 LICENSE 文件
+
 """
 总结相关命令处理
 """
@@ -16,6 +29,7 @@ from ..summary_time_manager import load_last_summary_time, save_last_summary_tim
 from ..prompt_manager import load_prompt
 from ..ai_client import analyze_with_ai
 from ..telegram_client import fetch_last_week_messages, send_long_message, send_report
+from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +43,11 @@ async def handle_manual_summary(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     # 发送正在处理的消息
-    await event.reply("正在为您生成总结...")
+    await event.reply(get_text('summary.generating'))
     logger.info(f"开始执行 {command} 命令")
     
     # 解析命令参数，支持指定频道
@@ -57,10 +71,10 @@ async def handle_manual_summary(event):
                 if channel in CHANNELS:
                     valid_channels.append(channel)
                 else:
-                    await event.reply(f"频道 {channel} 不在配置列表中，将跳过")
+                    await event.reply(get_text('channel.will_skip', channel=channel))
             
             if not valid_channels:
-                await event.reply("没有找到有效的指定频道")
+                await event.reply(get_text('channel.no_valid'))
                 return
             
             channels_to_process = valid_channels
@@ -115,7 +129,7 @@ async def handle_manual_summary(event):
             # 获取该频道的消息
             messages = messages_by_channel.get(channel, [])
             if messages:
-                logger.info(f"开始处理频道 {channel} 的消息")
+                logger.info(get_text('summary.start_processing', channel=channel, count=len(messages)))
                 current_prompt = load_prompt()
                 summary = analyze_with_ai(messages, current_prompt)
                 # 获取频道实际名称
@@ -143,9 +157,9 @@ async def handle_manual_summary(event):
 
                 # 根据频率生成报告标题
                 if frequency == 'daily':
-                    report_title = f"{channel_actual_name} 日报 {end_date_str}"
+                    report_title = get_text('summary.daily_title', channel=channel_actual_name, date=end_date_str)
                 else:  # weekly
-                    report_title = f"{channel_actual_name} 周报 {start_date_str}-{end_date_str}"
+                    report_title = get_text('summary.weekly_title', channel=channel_actual_name, start_date=start_date_str, end_date=end_date_str)
 
                 # 生成报告文本
                 report_text = f"**{report_title}**\n\n{summary}"
@@ -187,12 +201,12 @@ async def handle_manual_summary(event):
                     channel_actual_name = channel_entity.title
                 except Exception as e:
                     channel_actual_name = channel.split('/')[-1]
-                await send_long_message(event.client, sender_id, f"📋 **{channel_actual_name} 频道汇总**\n\n该频道自上次总结以来没有新消息。")
+                await send_long_message(event.client, sender_id, get_text('summary.no_messages', channel=channel_actual_name))
         
         logger.info(f"命令 {command} 执行成功")
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"生成总结时出错: {e}")
+        await event.reply(get_text('summary.error', error=e))
 
 
 async def handle_clear_summary_time(event):
@@ -206,7 +220,7 @@ async def handle_clear_summary_time(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
     
     try:
@@ -234,21 +248,21 @@ async def handle_clear_summary_time(event):
                             with open(LAST_SUMMARY_FILE, "w", encoding="utf-8") as f_write:
                                 json.dump(existing_data, f_write, ensure_ascii=False, indent=2)
                             logger.info(f"已清除频道 {specific_channel} 的上次总结时间记录")
-                            await event.reply(f"已成功清除频道 {specific_channel} 的上次总结时间记录。")
+                            await event.reply(get_text('summarytime.clear_channel_success', channel=specific_channel))
                         else:
                             logger.info(f"频道 {specific_channel} 的上次总结时间记录不存在，无需清除")
-                            await event.reply(f"频道 {specific_channel} 的上次总结时间记录不存在，无需清除。")
+                            await event.reply(get_text('summarytime.clear_channel_not_exist', channel=specific_channel))
                     else:
                         logger.info(f"上次总结时间记录文件 {LAST_SUMMARY_FILE} 内容为空，无需清除")
-                        await event.reply("上次总结时间记录文件内容为空，无需清除。")
+                        await event.reply(get_text('summarytime.clear_empty_file'))
             else:
                 # 清除所有频道的时间记录
                 os.remove(LAST_SUMMARY_FILE)
                 logger.info(f"已清除所有频道的上次总结时间记录，文件 {LAST_SUMMARY_FILE} 已删除")
-                await event.reply("已成功清除所有频道的上次总结时间记录。下次总结将重新抓取过去一周的消息。")
+                await event.reply(get_text('summarytime.clear_all_success'))
         else:
             logger.info(f"上次总结时间记录文件 {LAST_SUMMARY_FILE} 不存在，无需清除")
-            await event.reply("上次总结时间记录文件不存在，无需清除。")
+            await event.reply(get_text('summarytime.clear_all_failed'))
     except Exception as e:
         logger.error(f"清除上次总结时间记录时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"清除上次总结时间记录时出错: {e}")
+        await event.reply(get_text('summarytime.clear_error', error=e))

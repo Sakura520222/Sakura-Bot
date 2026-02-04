@@ -5,6 +5,128 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0] - 2026-02-04
+
+### 新增
+- **完整的国际化支持系统**：实现了全面的多语言支持，覆盖所有功能模块
+  - 扩展 `core/i18n.py` 翻译文本库，添加了 200+ 个缺失的翻译 key
+  - 新增投票重新生成相关翻译（10+ 个 key）
+  - 新增完整的欢迎消息、帮助消息翻译
+  - 提供完整的中英文对照翻译
+
+- **语言切换功能增强**：完善 `/language` 命令的运行时语言切换
+  - `/language` - 查看当前语言和支持的语言列表
+  - `/language zh-CN` - 切换为简体中文
+  - `/language en-US` - 切换为英语
+  - `/语言` - 中文别名支持
+  - 语言设置自动保存到 `config.json`，重启后保持
+
+- **模块国际化完成**：7个核心模块完成国际化改造
+  - `core/command_handlers/channel_commands.py` - 频道管理命令
+  - `core/command_handlers/summary_commands.py` - 总结相关命令
+  - `core/command_handlers/prompt_commands.py` - 提示词管理命令
+  - `core/command_handlers/ai_config_commands.py` - AI配置命令
+  - `core/history_handlers.py` - 历史记录处理器
+  - `core/command_handlers/other_commands.py` - 其他命令（系统、调度、投票等）
+  - `core/poll_regeneration_handlers.py` - 投票重新生成处理器
+
+### 改进
+- **翻译文本库扩展**：大幅扩展 `MESSAGE_ZH_CN` 和 `MESSAGE_EN_US` 字典
+  - 权限相关翻译（3个）
+  - 语言设置翻译（4个）
+  - 欢迎消息翻译（完整介绍）
+  - 帮助消息翻译（完整命令列表）
+  - 通用消息翻译（10+ 个）
+  - 频道管理翻译（8个）
+  - 总结相关翻译（5个）
+  - 总结时间管理翻译（5个）
+  - 日志级别管理翻译（3个）
+  - 机器人控制翻译（6个）
+  - 调度配置翻译（10+ 个）
+  - 投票配置翻译（15+ 个）
+  - 投票重新生成翻译（15+ 个）
+  - 报告发送配置翻译（3个）
+  - 缓存管理翻译（3个）
+  - 历史记录翻译（30+ 个）
+  - AI配置翻译（10+ 个）
+  - 提示词管理翻译（7个）
+  - 变更日志翻译（3个）
+  - 星期映射翻译（17个）
+  - 状态描述翻译（4个）
+
+- **占位符统一规范**：解决翻译参数名冲突问题
+  - 统一使用 `{value}` 作为通用占位符
+  - 修复 AI 配置显示时的参数冲突
+  - 确保所有翻译的参数命名一致
+
+### 修复
+- **英文环境总结标题重复问题**：修复了英文配置下总结标题重复显示硬编码中文的问题
+  - 问题描述：切换到英文后，总结标题显示为"测试 周报\n测试 Daily Report 2.4"
+  - 根本原因：`core/scheduler.py` 和 `core/telegram/messaging.py` 使用硬编码的中文"周报"、"日报"
+  - 修复方案：
+    - `core/scheduler.py`：将硬编码标题改为使用 i18n 系统（`get_text('summary.daily_title')`、`get_text('summary.weekly_title')`）
+    - `core/telegram/messaging.py`：删除重复添加标题的逻辑，直接使用传入的 summary_text（已包含正确的 i18n 标题）
+  - 修复效果：英文环境标题显示为"测试 Daily Report 2.4"或"测试 Weekly Report 1.28-2.4"，不再混入中文
+
+- **导入错误修复**：修复 `history_handlers.py` 的导入问题
+  - 将相对导入从 `from ..` 改为 `from .`
+  - 解决 "attempted relative import beyond top-level package" 错误
+  - 确保模块导入路径正确
+
+- **参数名冲突修复**：修复 `ai_config_commands.py` 中的参数名冲突
+  - 统一使用 `value` 参数名替代 `key`、`url`、`model`
+  - 解决 `get_text() got multiple values for argument 'key'` 错误
+  - 确保所有 AI 配置显示正常工作
+
+### 技术实现
+- **国际化模块设计**：
+  - 单例模式的 `I18nManager` 类
+  - 支持变量插值和回退机制
+  - 防止翻译缺失导致错误
+  - 提供便捷函数：`get_text()`, `set_language()`, `get_language()`, `t()`
+
+- **翻译回退机制**：
+  - 当前语言缺少 key 时自动回退到中文
+  - 防止因翻译缺失导致程序崩溃
+  - 提供完整的错误日志记录
+
+- **代码规范性**：
+  - 遵循 Python PEP 8 编码规范
+  - 所有模块存放在 `core/` 目录中
+  - 使用绝对导入避免相对导入问题
+
+### 用户体验改进
+- **多语言支持**：中文和英语用户都能获得母语体验
+- **灵活配置**：支持环境变量、配置文件、运行时切换三种方式
+- **持久化保存**：语言设置自动保存，重启后保持
+- **向后兼容**：所有现有功能保持不变，语言切换不影响核心功能
+- **易于扩展**：添加新语言只需在翻译字典中添加对应翻译
+
+### 配置示例
+**config.json 配置**：
+```json
+{
+  "language": "zh-CN"
+}
+```
+
+**使用示例**：
+```bash
+# 查看当前语言
+/language
+
+# 切换为中文
+/language zh-CN
+
+# 切换为英文
+/language en-US
+```
+
+### 文档更新
+- 更新 README.md 添加语言切换功能说明
+- 更新 README_EN.md 添加语言切换功能说明
+- 添加国际化功能的完整文档
+
 ## [1.3.9] - 2026-02-04
 
 ### 新增

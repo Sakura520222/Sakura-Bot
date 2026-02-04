@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-频道总结助手
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -10,14 +11,18 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
 # 许可证全文：参见 LICENSE 文件
 
+"""
+历史记录相关命令处理
+"""
+
 import logging
 import os
 from datetime import datetime, timezone, timedelta
-from telethon.events import NewMessage
 
-from .config import ADMIN_LIST, CHANNELS
+from .config import ADMIN_LIST, CHANNELS, logger
 from .telegram_client import send_long_message
 from .database import get_db_manager
+from .i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,7 @@ async def handle_history(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
@@ -50,7 +55,7 @@ async def handle_history(event):
 
             # 验证频道是否存在
             if channel_id not in CHANNELS:
-                await event.reply(f"频道 {channel_id} 不在配置列表中")
+                await event.reply(get_text('error.channel_not_found', channel=channel_id))
                 return
 
         if len(parts) > 2:
@@ -58,7 +63,7 @@ async def handle_history(event):
             try:
                 days = int(parts[2])
             except ValueError:
-                await event.reply("天数必须是数字，例如：/history channel1 30")
+                await event.reply(get_text('history.days_invalid'))
                 return
 
         # 查询数据库
@@ -73,27 +78,27 @@ async def handle_history(event):
 
         if not summaries:
             if channel_id:
-                await event.reply(f"❌ 频道 {channel_id.split('/')[-1]} 暂无历史总结记录")
+                await event.reply(get_text('history.no_records', channel=channel_id.split('/')[-1]))
             else:
-                await event.reply("❌ 暂无历史总结记录")
+                await event.reply(get_text('history.all_no_records'))
             return
 
         # 格式化输出
-        channel_name = summaries[0].get('channel_name', '未知频道') if channel_id else "所有频道"
+        channel_name = summaries[0].get('channel_name', get_text('channel.unknown')) if channel_id else get_text('channel.all')
         total_count = len(summaries)
 
-        result = f"📋 **{channel_name} 历史总结**\n\n"
-        result += f"共找到 {total_count} 条记录，显示最近 {min(total_count, 10)} 条:\n\n"
+        result = f"📋 **{channel_name} {get_text('history.title_suffix')}**\n\n"
+        result += get_text('history.found_count', count=total_count, display=min(total_count, 10))
 
         for i, summary in enumerate(summaries[:10], 1):
-            created_at = summary.get('created_at', '未知时间')
+            created_at = summary.get('created_at', get_text('history.unknown_time'))
             summary_type = summary.get('summary_type', 'weekly')
             message_count = summary.get('message_count', 0)
             summary_text = summary.get('summary_text', '')
             summary_message_ids = summary.get('summary_message_ids', [])
 
             # 类型中文映射
-            type_map = {'daily': '日报', 'weekly': '周报', 'manual': '手动总结'}
+            type_map = {'daily': get_text('history.type_daily'), 'weekly': get_text('history.type_weekly'), 'manual': get_text('history.type_manual')}
             type_cn = type_map.get(summary_type, summary_type)
 
             # 格式化时间
@@ -112,20 +117,20 @@ async def handle_history(event):
             if summary_message_ids and channel_link:
                 first_msg_id = summary_message_ids[0]
                 channel_part = channel_link.split('/')[-1]
-                msg_link = f"\n   📝 查看完整: https://t.me/{channel_part}/{first_msg_id}"
+                msg_link = get_text('history.view_full', channel=channel_part, msg_id=first_msg_id)
 
             result += f"🔹 **{time_str}** ({type_cn})\n"
-            result += f"   📊 处理消息: {message_count} 条\n"
-            result += f"   💬 核心要点:\n   {summary_preview}{msg_link}\n\n"
+            result += f"   📊 {get_text('history.processing')}: {message_count} {get_text('history.messages')}\n"
+            result += f"   💬 {get_text('history.key_points')}:\n   {summary_preview}{msg_link}\n\n"
 
-        result += f"💡 提示: 使用 /export 导出完整记录"
+        result += get_text('history.tip_export')
 
         logger.info(f"执行命令 {command} 成功，返回 {total_count} 条记录")
         await send_long_message(event.client, sender_id, result)
 
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"查询历史记录时出错: {e}")
+        await event.reply(get_text('history.query_error', error=e))
 
 
 async def handle_export(event):
@@ -137,7 +142,7 @@ async def handle_export(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
@@ -166,10 +171,10 @@ async def handle_export(event):
 
         # 如果指定了频道，验证是否存在
         if channel_id and channel_id not in CHANNELS:
-            await event.reply(f"频道 {channel_id} 不在配置列表中")
+            await event.reply(get_text('error.channel_not_found', channel=channel_id))
             return
 
-        await event.reply("📦 正在导出历史记录，请稍候...")
+        await event.reply(get_text('history.exporting'))
 
         # 导出数据
         db = get_db_manager()
@@ -180,7 +185,7 @@ async def handle_export(event):
             await event.client.send_file(
                 sender_id,
                 filename,
-                caption=f"✅ 导出成功\n格式: {output_format}\n文件: {filename}"
+                caption=get_text('history.export_success', format=output_format, filename=filename)
             )
 
             logger.info(f"成功导出历史记录: {filename}")
@@ -191,11 +196,11 @@ async def handle_export(event):
             except:
                 pass
         else:
-            await event.reply("❌ 导出失败：没有数据可导出或不支持的格式")
+            await event.reply(get_text('history.export_failed'))
 
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"导出历史记录时出错: {e}")
+        await event.reply(get_text('history.export_failed', error=e))
 
 
 async def handle_stats(event):
@@ -207,7 +212,7 @@ async def handle_stats(event):
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply("您没有权限执行此命令")
+        await event.reply(get_text('error.permission_denied'))
         return
 
     try:
@@ -225,7 +230,7 @@ async def handle_stats(event):
 
             # 验证频道是否存在
             if channel_id not in CHANNELS:
-                await event.reply(f"频道 {channel_id} 不在配置列表中")
+                await event.reply(get_text('error.channel_not_found', channel=channel_id))
                 return
 
         db = get_db_manager()
@@ -236,29 +241,29 @@ async def handle_stats(event):
             channel_name = channel_id.split('/')[-1]
 
             if not stats or stats.get('total_count', 0) == 0:
-                await event.reply(f"❌ 频道 {channel_name} 暂无统计数据")
+                await event.reply(get_text('history.stats_no_data', channel=channel_name))
                 return
 
-            result = f"📊 **{channel_name} 频道统计**\n\n"
+            result = get_text('history.stats_title', channel=channel_name) + "\n\n"
 
             # 总结统计
-            result += "📈 **总结统计**\n"
-            result += f"• 总总结次数: {stats['total_count']} 次\n"
+            result += get_text('history.stats_summary') + "\n"
+            result += f"• {get_text('history.total_summaries')}: {stats['total_count']} {get_text('history.times')}\n"
 
             type_stats = stats.get('type_stats', {})
-            type_map = {'daily': '日报', 'weekly': '周报', 'manual': '手动'}
+            type_map = {'daily': get_text('history.type_daily'), 'weekly': get_text('history.type_weekly'), 'manual': get_text('history.type_manual')}
             for type_key, type_name in type_map.items():
                 count = type_stats.get(type_key, 0)
                 if count > 0:
-                    result += f"  - {type_name}: {count} 次\n"
+                    result += f"  - {type_name}: {count} {get_text('history.times')}\n"
 
-            result += f"• 总处理消息: {stats['total_messages']:,} 条\n"
-            result += f"• 平均每次: {stats['avg_messages']} 条消息\n\n"
+            result += f"• {get_text('history.total_messages')}: {stats['total_messages']:,} {get_text('history.messages')}\n"
+            result += f"• {get_text('history.avg_per_summary')}: {stats['avg_messages']} {get_text('history.messages')}\n\n"
 
             # 时间分布
-            result += "⏰ **时间分布**\n"
-            result += f"• 本周: {stats['week_count']} 次\n"
-            result += f"• 本月: {stats['month_count']} 次\n"
+            result += get_text('history.time_distribution') + "\n"
+            result += get_text('history.week_count', count=stats['week_count']) + "\n"
+            result += get_text('history.month_count', count=stats['month_count']) + "\n"
 
             last_time = stats.get('last_summary_time')
             if last_time:
@@ -269,51 +274,48 @@ async def handle_stats(event):
                     time_diff = datetime.now(timezone.utc) - dt
                     hours = time_diff.total_seconds() / 3600
                     if hours < 1:
-                        time_str = f"{int(hours * 60)} 分钟前"
+                        time_str = get_text('history.minutes_ago', minutes=int(hours * 60))
                     elif hours < 24:
-                        time_str = f"{int(hours)} 小时前"
+                        time_str = get_text('history.hours_ago', hours=int(hours))
                     else:
-                        time_str = f"{int(hours / 24)} 天前"
-                    result += f"• 最近总结: {time_str}\n\n"
+                        time_str = get_text('history.days_ago', days=int(hours / 24))
+                    result += f"• {get_text('history.last_summary')}: {time_str}\n\n"
                 except:
-                    result += f"• 最近总结: {last_time}\n\n"
+                    result += f"• {get_text('history.last_summary')}: {last_time}\n\n"
 
             # 数据库信息
-            result += "💾 **数据库信息**\n"
-            result += f"• 记录数: {stats['total_count']} 条\n"
+            result += get_text('history.db_info') + "\n"
+            result += get_text('history.db_records', count=stats['total_count']) + "\n"
 
         else:
             # 显示所有频道的统计
-            result = "📊 **频道统计概览**\n\n"
+            result = get_text('history.overview_title') + "\n\n"
 
             # 获取各频道统计
             channel_ranking = db.get_channel_ranking(limit=10)
 
             if not channel_ranking:
-                await event.reply("❌ 暂无统计数据")
+                await event.reply(get_text('history.all_no_records'))
                 return
 
-            result += "🏆 **频道排行** (按总结次数)\n\n"
+            result += get_text('history.ranking_title') + "\n\n"
             for i, channel_stats in enumerate(channel_ranking, 1):
-                channel_name = channel_stats.get('channel_name', channel_stats.get('channel_id', '未知'))
+                channel_name = channel_stats.get('channel_name', channel_stats.get('channel_id', get_text('channel.unknown')))
                 summary_count = channel_stats.get('summary_count', 0)
                 total_messages = channel_stats.get('total_messages', 0)
                 avg_messages = int(total_messages / summary_count) if summary_count > 0 else 0
 
-                result += f"{i}. **{channel_name}**\n"
-                result += f"   总结: {summary_count} 次 | 消息: {total_messages:,} 条 | 平均: {avg_messages} 条/次\n\n"
+                result += get_text('history.ranking_item', index=i, name=channel_name, summary_count=summary_count, total_messages=total_messages, avg_messages=avg_messages) + "\n\n"
 
             # 总体统计
             overall_stats = db.get_statistics()
             result += "---\n\n"
-            result += "📈 **总体统计**\n"
-            result += f"• 总总结次数: {overall_stats['total_count']} 次\n"
-            result += f"• 总处理消息: {overall_stats['total_messages']:,} 条\n"
-            result += f"• 频道数量: {len(channel_ranking)} 个\n\n"
+            result += get_text('history.overall_stats') + "\n"
+            result += get_text('history.overall_summary', total=overall_stats['total_count'], messages=overall_stats['total_messages'], channels=len(channel_ranking)) + "\n\n"
 
         logger.info(f"执行命令 {command} 成功")
         await event.reply(result)
 
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(f"获取统计数据时出错: {e}")
+        await event.reply(get_text('history.stats_error', error=e))

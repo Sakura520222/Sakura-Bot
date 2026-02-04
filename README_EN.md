@@ -114,7 +114,7 @@ python main.py
 | **🎯 Per-Channel Polls** | Configure poll settings independently for each channel | ✅ |
 | **🔄 Poll Regeneration** | Admin can regenerate polls with a single button click | ✅ |
 | **📜 History Tracking** | Automatic database storage with query, export, and statistics | ✅ |
-| **🌍 Internationalization** | Multi-language UI support with flexible language configuration | ✅ |
+| **🌍 Internationalization** | Complete multi-language support system, all modules internationalized | ✅ |
 
 ---
 
@@ -205,6 +205,17 @@ python main.py
 ### Configuration Example
 
 Create or edit `data/.env`:
+
+```env
+# ===== Telegram Configuration =====
+TELEGRAM_API_ID=your_api_id_here
+TELEGRAM_API_HASH=your_api_hash_here
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# ===== Language Configuration =====
+LANGUAGE=en-US  # Interface language: en-US (English) or zh-CN (Simplified Chinese)
+
+# ===== AI Configuration (OpenAI-compatible APIs) =====
 
 ```env
 # ===== Telegram Configuration =====
