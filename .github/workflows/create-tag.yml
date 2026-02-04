@@ -151,6 +151,7 @@ jobs:
           [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/data/"
           [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/"
           [ -f "README.md" ] && cp README.md "$RELEASE_DIR/"
+          [ -f "README_EN.md" ] && cp README_EN.md "$RELEASE_DIR/"
           [ -f "CHANGELOG.md" ] && cp CHANGELOG.md "$RELEASE_DIR/"
           [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/"
           
