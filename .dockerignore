@@ -1,0 +1,50 @@
+# 版本控制
+.git
+.gitignore
+.github
+
+# 文档
+README.md
+CHANGELOG.md
+LICENSE
+wiki/
+
+# Python
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据和配置（这些应该在运行时挂载）
+data/config.json
+data/bot.db
+data/discussion_cache.json
+data/.last_summary_time.json
+data/.poll_regenerations.json
+data/.shutdown_flag
+data/sessions/*.session
+.env
+
+# 日志
+*.log
+
+# 其他
+.DS_Store
+Thumbs.db
+*.md
+tests/
+.pytest_cache/
+.coverage

@@ -12,7 +12,7 @@
 
 import logging
 from openai import OpenAI
-from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from .settings import get_llm_api_key, get_llm_base_url, get_llm_model
 from .error_handler import retry_with_backoff, record_error
 from .poll_prompt_manager import load_poll_prompt
 
@@ -20,11 +20,17 @@ logger = logging.getLogger(__name__)
 
 # 初始化 AI 客户端
 logger.info("开始初始化AI客户端...")
-logger.debug(f"AI客户端配置: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}, API Key={'***' if LLM_API_KEY else '未设置'}")
+
+# 获取 AI 配置
+api_key = get_llm_api_key()
+base_url = get_llm_base_url()
+model = get_llm_model()
+
+logger.debug(f"AI客户端配置: Base URL={base_url}, Model={model}, API Key={'***' if api_key else '未设置'}")
 
 client_llm = OpenAI(
-    api_key=LLM_API_KEY, 
-    base_url=LLM_BASE_URL
+    api_key=api_key, 
+    base_url=base_url
 )
 
 logger.info("AI客户端初始化完成")
@@ -52,14 +58,15 @@ def analyze_with_ai(messages, current_prompt):
     context_text = "\n\n---\n\n".join(messages)
     prompt = f"{current_prompt}{context_text}"
     
-    logger.debug(f"AI请求配置: 模型={LLM_MODEL}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符")
+    model = get_llm_model()
+    logger.debug(f"AI请求配置: 模型={model}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符")
     logger.debug(f"AI请求总长度: {len(prompt)}字符")
     
     try:
         from datetime import datetime
         start_time = datetime.now()
         response = client_llm.chat.completions.create(
-            model=LLM_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。"},
                 {"role": "user", "content": prompt},
@@ -109,7 +116,8 @@ def generate_poll_from_summary(summary_text):
     poll_prompt_template = load_poll_prompt()
     prompt = poll_prompt_template.format(summary_text=summary_text)
 
-    logger.debug(f"投票生成请求配置: 模型={LLM_MODEL}, 提示词长度={len(prompt)}字符")
+    model = get_llm_model()
+    logger.debug(f"投票生成请求配置: 模型={model}, 提示词长度={len(prompt)}字符")
     
     try:
         from datetime import datetime
@@ -118,7 +126,7 @@ def generate_poll_from_summary(summary_text):
         
         start_time = datetime.now()
         response = client_llm.chat.completions.create(
-            model=LLM_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": "你是一个幽默风趣的互动策划专家，擅长从枯燥的文字中挖掘槽点或亮点，创作让人忍不住想投票的双语投票。"},
                 {"role": "user", "content": prompt},

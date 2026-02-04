@@ -5,6 +5,76 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.8] - 2026-02-03
+
+### 改进
+- **配置管理系统重构**：基于 Pydantic Settings 实现现代化配置管理
+  - 新增 `core/constants.py` - 集中管理所有常量
+  - 新增 `core/exceptions.py` - 自定义异常类（9种异常类型）
+  - 新增 `core/settings.py` - Pydantic 配置管理（6个子配置）
+  - 新增 `core/cache_manager.py` - 讨论组 ID 缓存管理（持久化）
+  - 新增 `core/channel_config.py` - 频道时间配置管理
+  - 新增 `core/poll_config.py` - 投票配置管理
+  - 新增 `core/poll_data.py` - SQLite 数据库管理（异步）
+  
+- **数据库持久化**：使用 SQLite 实现投票重新生成数据持久化
+  - 使用 `aiosqlite` 实现异步数据库操作
+  - 创建 `poll_regenerations` 和 `poll_voters` 表
+  - 添加索引优化查询性能
+  - 支持并发访问和数据完整性保证
+
+- **依赖管理优化**：固定所有依赖版本，提升稳定性
+  - 更新 `requirements.txt`，固定所有依赖版本
+  - 新增 `aiosqlite==0.20.0`、`pydantic==2.10.6`、`pydantic-settings==2.7.1`
+  - 确保依赖版本兼容性
+
+### 修复
+- **配置验证问题**：修复 Pydantic Settings 验证错误
+  - 为所有子配置类添加 `extra = "ignore"` 配置
+  - 修复 `Settings` 类继承问题，改为普通类
+  - 解决环境变量读取冲突问题
+
+- **模块导入问题**：更新模块使用新的配置系统
+  - 更新 `core/ai_client.py` 使用 `core/settings`
+  - 更新 `main.py` 使用 `core/settings`
+  - 保持向后兼容性
+
+### 技术实现
+- **配置模块设计**：
+  - 使用 Pydantic Settings 进行配置验证
+  - 支持环境变量、配置文件、默认值三级配置
+  - 提供便捷函数访问配置项
+  - 单例模式确保配置唯一性
+
+- **数据库设计**：
+  - `poll_regenerations` 表：存储投票重新生成记录
+  - `poll_voters` 表：存储投票用户记录
+  - 索引优化：`(channel, summary_msg_id)`、`(poll_msg_id)`
+  - 异步操作：支持高并发场景
+
+### 代码质量
+- **类型安全**：使用 Pydantic 类型提示和验证
+- **模块化设计**：职责分离，易于维护和扩展
+- **向后兼容**：所有新功能保持向后兼容
+- **错误处理**：使用自定义异常类，错误信息更清晰
+
+### 配置文件优化
+- 更新 `.gitignore`，添加数据库和缓存文件忽略规则
+- 创建 `.dockerignore`，优化 Docker 构建
+- 添加配置验证函数，确保必要配置存在
+
+### 文档更新
+- 创建 `wiki/REFACTORING_SUMMARY.md`，详细记录重构内容
+- 更新项目结构说明
+- 添加新模块使用示例
+
+### 优化效果
+- **代码可维护性**：⬆️ 大幅提升（模块化，职责清晰）
+- **类型安全**：⬆️ 大幅提升（Pydantic 验证）
+- **性能**：⬆️ 提升（数据库索引，缓存持久化）
+- **可扩展性**：⬆️ 提升（接口抽象，易于扩展）
+- **错误处理**：⬆️ 提升（自定义异常类）
+
 ## [1.3.7] - 2026-02-02
 
 ### 改进

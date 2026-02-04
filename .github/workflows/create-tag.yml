@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - 'main.py'
-      - 'core/*.py'
+      - 'core/**/*.py'
       - 'CHANGELOG.md'
 
 jobs:
@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     
     steps:
       - name: Checkout code
@@ -22,7 +21,23 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
+      - name: Validate project structure
+        run: |
+          if [ ! -f "main.py" ]; then
+            echo "错误: main.py 文件不存在"
+            exit 1
+          fi
+          if [ ! -f "requirements.txt" ]; then
+            echo "错误: requirements.txt 文件不存在"
+            exit 1
+          fi
+          if [ ! -d "core" ]; then
+            echo "错误: core 目录不存在"
+            exit 1
+          fi
+          echo "项目结构验证通过"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -40,39 +55,41 @@ jobs:
             echo "错误: main.py文件不存在"
             exit 1
           fi
-      
+
+      - name: Check if version changed
+        id: check_version
+        run: |
+          VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
+          TAG_NAME="v${VERSION}"
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "版本 $VERSION 的发布已存在，将跳过创建"
+            echo "SHOULD_CREATE=false" >> $GITHUB_OUTPUT
+          else
+            echo "版本 $VERSION 是新版本，将创建发布"
+            echo "SHOULD_CREATE=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Generate release name
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         id: generate_release_info
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
-          
-          # 检查标签是否已存在
           TAG_NAME="v${VERSION}"
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "标签 $TAG_NAME 已存在，将更新现有发行版"
-            TAG_EXISTS=true
-          else
-            echo "标签 $TAG_NAME 不存在，将创建新标签"
-            TAG_EXISTS=false
-          fi
-          
-          # 使用标准标签名称
           echo "RELEASE_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "TAG_EXISTS=${TAG_EXISTS}" >> $GITHUB_OUTPUT
           echo "发布标签: ${TAG_NAME}"
           
-          # 生成标准发布标题
           RELEASE_TITLE="Release v${VERSION}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> $GITHUB_OUTPUT
       
       - name: Generate release notes from CHANGELOG
         id: generate_changelog
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           
-          # 从CHANGELOG.md中提取当前版本的更新日志
           if [ -f "CHANGELOG.md" ]; then
-            # 查找CHANGELOG.md中对应版本的部分
             awk -v version="$VERSION" '
               BEGIN { in_section=0; found=0 }
               index($0, "## [" version "]") == 1 { in_section=1; found=1; print; next }
@@ -81,13 +98,10 @@ jobs:
             ' CHANGELOG.md > release_notes.md
             
             if [ -s "release_notes.md" ]; then
-              echo "从CHANGELOG.md成功提取版本 $VERSION 的更新日志"
-              # 直接输出多行内容
               echo "notes<<EOF" >> $GITHUB_OUTPUT
               cat release_notes.md >> $GITHUB_OUTPUT
               echo "EOF" >> $GITHUB_OUTPUT
             else
-              echo "警告: 在CHANGELOG.md中未找到版本 $VERSION 的更新日志"
               COMMIT_MSG="${{ github.event.head_commit.message }}"
               echo "notes<<EOF" >> $GITHUB_OUTPUT
               echo "## [$VERSION] - $(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
@@ -96,7 +110,6 @@ jobs:
               echo "EOF" >> $GITHUB_OUTPUT
             fi
           else
-            echo "警告: CHANGELOG.md文件不存在"
             COMMIT_MSG="${{ github.event.head_commit.message }}"
             echo "notes<<EOF" >> $GITHUB_OUTPUT
             echo "## [$VERSION] - $(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
@@ -106,6 +119,7 @@ jobs:
           fi
       
       - name: Create GitHub Release
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.generate_release_info.outputs.RELEASE_NAME }}
@@ -114,100 +128,56 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: false
-          # 不再上传单个文件，只通过后续步骤上传压缩包
       
       - name: Create release assets
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
           RELEASE_DIR="sakura-channel-summary-assistant-${RELEASE_NAME}"
           
-          echo "创建发布资源包: 版本=$VERSION, 发布名称=$RELEASE_NAME"
           mkdir -p "$RELEASE_DIR"
           
-          # 创建子目录结构
-          mkdir -p "$RELEASE_DIR/core"
-          mkdir -p "$RELEASE_DIR/data"
+          # 复制核心代码
+          if [ -f "main.py" ]; then cp main.py "$RELEASE_DIR/"; fi
+          find core -name "*.py" -exec cp --parents {} "$RELEASE_DIR/" \;
+          rm -rf "$RELEASE_DIR/core/__pycache__"
           
-          # 复制主入口文件
-          if [ -f "main.py" ]; then
-            cp main.py "$RELEASE_DIR/"
-          fi
+          # 复制配置文件及其他必要资源
+          [ -f "data/.env.example" ] && cp "data/.env.example" "$RELEASE_DIR/"
+          [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/"
+          [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/"
+          [ -f "README.md" ] && cp README.md "$RELEASE_DIR/"
+          [ -f "CHANGELOG.md" ] && cp CHANGELOG.md "$RELEASE_DIR/"
+          [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/"
           
-          # 复制 Python 核心模块文件
-          for py_file in ai_client.py command_handlers.py config.py database.py error_handler.py \
-                         history_handlers.py poll_prompt_manager.py \
-                         poll_regeneration_handlers.py prompt_manager.py scheduler.py \
-                         summary_time_manager.py telegram_client.py telegram_client_utils.py; do
-            if [ -f "core/$py_file" ]; then
-              cp "core/$py_file" "$RELEASE_DIR/core/"
-            fi
+          # 脚本及 Docker
+          for f in start.bat start.sh Dockerfile docker-compose.yml docker-entrypoint.sh; do
+            [ -f "$f" ] && cp "$f" "$RELEASE_DIR/"
           done
           
-          # 复制配置文件
-          if [ -f "data/.env.example" ]; then
-            cp "data/.env.example" "$RELEASE_DIR/"
-          fi
-          if [ -f "data/config.example.json" ]; then
-            cp "data/config.example.json" "$RELEASE_DIR/"
-          fi
-          if [ -f "requirements.txt" ]; then
-            cp requirements.txt "$RELEASE_DIR/"
-          fi
+          # 提示词
+          [ -f "data/prompt.txt" ] && cp "data/prompt.txt" "$RELEASE_DIR/"
+          [ -f "data/poll_prompt.txt" ] && cp "data/poll_prompt.txt" "$RELEASE_DIR/"
           
-          # 复制文档文件（仅用户需要的）
-          if [ -f "README.md" ]; then
-            cp README.md "$RELEASE_DIR/"
-          fi
-          if [ -f "CHANGELOG.md" ]; then
-            cp CHANGELOG.md "$RELEASE_DIR/"
-          fi
-          if [ -f "LICENSE" ]; then
-            cp LICENSE "$RELEASE_DIR/"
-          fi
+          chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
+          chmod +x "$RELEASE_DIR/docker-entrypoint.sh" 2>/dev/null || true
           
-          # 复制启动脚本
-          for script_file in start.bat start.sh; do
-            if [ -f "$script_file" ]; then
-              cp "$script_file" "$RELEASE_DIR/"
-            fi
-          done
-          
-          # 复制 Docker 相关文件
-          for docker_file in Dockerfile docker-compose.yml docker-entrypoint.sh; do
-            if [ -f "$docker_file" ]; then
-              cp "$docker_file" "$RELEASE_DIR/"
-            fi
-          done
-          
-          # 复制提示词文件
-          if [ -f "data/prompt.txt" ]; then
-            cp "data/prompt.txt" "$RELEASE_DIR/"
-          fi
-          if [ -f "data/poll_prompt.txt" ]; then
-            cp "data/poll_prompt.txt" "$RELEASE_DIR/"
-          fi
-          
-          # 设置可执行权限
-          chmod +x "$RELEASE_DIR/start.sh"
-          chmod +x "$RELEASE_DIR/docker-entrypoint.sh"
-          echo "已设置可执行文件权限"
-          
-          # 创建压缩包
-          tar -czf "sakura-channel-summary-assistant-${RELEASE_NAME}.tar.gz" "$RELEASE_DIR/"
-          zip -r "sakura-channel-summary-assistant-${RELEASE_NAME}.zip" "$RELEASE_DIR/"
-          
-          echo "发布资源包创建完成，包含所有必要文件"
-      
+          tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR/"
+          zip -r "${RELEASE_DIR}.zip" "$RELEASE_DIR/"
+
       - name: Upload release assets
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         run: |
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
-          echo "上传发布资源到: $RELEASE_NAME"
-          
-          # 上传到release
-          gh release upload "$RELEASE_NAME" \
-            "sakura-channel-summary-assistant-${RELEASE_NAME}.tar.gz" \
-            "sakura-channel-summary-assistant-${RELEASE_NAME}.zip" \
-            --clobber
+          ASSET_NAME="sakura-channel-summary-assistant-${RELEASE_NAME}"
+          gh release upload "$RELEASE_NAME" "${ASSET_NAME}.tar.gz" "${ASSET_NAME}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f release_notes.md
+          rm -rf "sakura-channel-summary-assistant-v${{ steps.get_version.outputs.PY_VERSION }}"
+          rm -f sakura-channel-summary-assistant-v${{ steps.get_version.outputs.PY_VERSION }}.*

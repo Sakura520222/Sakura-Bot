@@ -25,8 +25,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.config import (
-    API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
-    RESTART_FLAG_FILE, logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST
+    CHANNELS, RESTART_FLAG_FILE, logger, 
+    get_channel_schedule, build_cron_trigger, ADMIN_LIST
+)
+from core.settings import (
+    get_api_id, get_api_hash, get_bot_token, 
+    get_llm_api_key, validate_required_settings
 )
 from core.scheduler import main_job
 from core.command_handlers import (
@@ -49,7 +53,7 @@ from core.poll_regeneration_handlers import (
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.3.7"
+__version__ = "1.3.8"
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -179,7 +183,13 @@ async def main():
 
         # 启动机器人客户端，处理命令
         logger.info("开始初始化Telegram机器人客户端...")
-        client = TelegramClient('data/sessions/bot_session', int(API_ID), API_HASH)
+        
+        # 从 settings 获取配置
+        api_id = get_api_id()
+        api_hash = get_api_hash()
+        bot_token = get_bot_token()
+        
+        client = TelegramClient('data/sessions/bot_session', int(api_id), api_hash)
         
         # 设置活动的客户端实例，供其他模块使用
         from core.telegram_client import set_active_client
@@ -260,7 +270,7 @@ async def main():
 
         # 启动客户端
         logger.info("正在启动Telegram机器人客户端...")
-        await client.start(bot_token=BOT_TOKEN)
+        await client.start(bot_token=bot_token)
         logger.info("Telegram机器人客户端启动成功")
         
         # 注册机器人命令
@@ -406,23 +416,14 @@ async def main():
         logger.critical(f"机器人服务初始化或运行失败: {type(e).__name__}: {e}", exc_info=True)
 
 if __name__ == "__main__":
-    logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ====")
+    logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ======")
     
-    # 检查必要变量是否存在
-    required_vars = [API_ID, API_HASH, BOT_TOKEN, LLM_API_KEY]
-    missing_vars = []
-    if not API_ID:
-        missing_vars.append("TELEGRAM_API_ID")
-    if not API_HASH:
-        missing_vars.append("TELEGRAM_API_HASH")
-    if not BOT_TOKEN:
-        missing_vars.append("TELEGRAM_BOT_TOKEN")
-    if not LLM_API_KEY:
-        missing_vars.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
+    # 验证必要配置
+    is_valid, missing = validate_required_settings()
     
-    if missing_vars:
-        logger.error(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing_vars)}")
-        print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing_vars)}")
+    if not is_valid:
+        logger.error(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
+        print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
     else:
         logger.info("所有必要的 API 凭证已配置完成")
         # 启动主函数

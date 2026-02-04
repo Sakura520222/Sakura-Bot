@@ -212,6 +212,12 @@ config.json
 data/config.json
 data/*.jsons
 
+# 数据库文件
+data/bot.db
+data/discussion_cache.json
+*.db
+*.db-journal
+
 # 提示词文件
 
 # 运行时文件

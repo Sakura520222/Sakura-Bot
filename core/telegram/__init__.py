@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Telegram客户端功能模块
 """
