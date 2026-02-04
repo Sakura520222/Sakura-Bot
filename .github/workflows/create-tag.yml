@@ -143,9 +143,12 @@ jobs:
           find core -name "*.py" -exec cp --parents {} "$RELEASE_DIR/" \;
           rm -rf "$RELEASE_DIR/core/__pycache__"
           
+          # 创建 data 目录
+          mkdir -p "$RELEASE_DIR/data"
+          
           # 复制配置文件及其他必要资源
-          [ -f "data/.env.example" ] && cp "data/.env.example" "$RELEASE_DIR/"
-          [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/"
+          [ -f "data/.env.example" ] && cp "data/.env.example" "$RELEASE_DIR/data/"
+          [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/data/"
           [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/"
           [ -f "README.md" ] && cp README.md "$RELEASE_DIR/"
           [ -f "CHANGELOG.md" ] && cp CHANGELOG.md "$RELEASE_DIR/"
@@ -157,8 +160,8 @@ jobs:
           done
           
           # 提示词
-          [ -f "data/prompt.txt" ] && cp "data/prompt.txt" "$RELEASE_DIR/"
-          [ -f "data/poll_prompt.txt" ] && cp "data/poll_prompt.txt" "$RELEASE_DIR/"
+          [ -f "data/prompt.txt" ] && cp "data/prompt.txt" "$RELEASE_DIR/data/"
+          [ -f "data/poll_prompt.txt" ] && cp "data/poll_prompt.txt" "$RELEASE_DIR/data/"
           
           chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
           chmod +x "$RELEASE_DIR/docker-entrypoint.sh" 2>/dev/null || true
