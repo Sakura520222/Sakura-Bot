@@ -15,6 +15,8 @@ import logging
 import os
 import sys
 import threading
+import subprocess
+import signal
 from telethon import TelegramClient
 from telethon.events import NewMessage, CallbackQuery
 from telethon.tl.functions.bots import SetBotCommandsRequest
@@ -53,7 +55,66 @@ from core.poll_regeneration_handlers import (
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.4.0"
+__version__ = "1.5.0"
+
+# 问答Bot进程管理
+qa_bot_process = None
+
+def start_qa_bot():
+    """在后台启动问答Bot"""
+    global qa_bot_process
+    try:
+        # 检查是否启用问答Bot
+        qa_bot_enabled = os.getenv("QA_BOT_ENABLED", "True").lower() == "true"
+        qa_bot_token = os.getenv("QA_BOT_TOKEN", "")
+        
+        if not qa_bot_enabled:
+            logger.info("问答Bot未启用 (QA_BOT_ENABLED=False)")
+            return
+        
+        if not qa_bot_token:
+            logger.warning("未配置QA_BOT_TOKEN，跳过启动问答Bot")
+            return
+        
+        logger.info("正在启动问答Bot...")
+        # 使用subprocess在后台运行qa_bot.py
+        # 注意：不重定向stdout/stderr，让子进程日志直接输出到控制台
+        qa_bot_process = subprocess.Popen(
+            [sys.executable, "qa_bot.py"],
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        logger.info(f"问答Bot已启动 (PID: {qa_bot_process.pid})")
+        
+    except Exception as e:
+        logger.error(f"启动问答Bot失败: {type(e).__name__}: {e}", exc_info=True)
+
+def stop_qa_bot():
+    """停止问答Bot"""
+    global qa_bot_process
+    if qa_bot_process:
+        try:
+            logger.info("正在停止问答Bot...")
+            qa_bot_process.terminate()
+            qa_bot_process.wait(timeout=5)
+            logger.info("问答Bot已停止")
+        except Exception as e:
+            logger.error(f"停止问答Bot失败: {type(e).__name__}: {e}")
+            try:
+                qa_bot_process.kill()
+            except:
+                pass
+        finally:
+            qa_bot_process = None
+
+def cleanup_handler(signum, frame):
+    """清理处理器"""
+    logger.info(f"收到信号 {signum}，正在清理资源...")
+    stop_qa_bot()
+    sys.exit(0)
+
+# 注册清理处理器
+signal.signal(signal.SIGTERM, cleanup_handler)
+signal.signal(signal.SIGINT, cleanup_handler)
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -431,6 +492,10 @@ if __name__ == "__main__":
         print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
     else:
         logger.info("所有必要的 API 凭证已配置完成")
+        
+        # 启动问答Bot
+        start_qa_bot()
+        
         # 启动主函数
         try:
             logger.info("开始启动主函数...")
@@ -439,3 +504,6 @@ if __name__ == "__main__":
             logger.info("机器人服务已通过键盘中断停止")
         except Exception as e:
             logger.critical(f"主函数执行失败: {type(e).__name__}: {e}", exc_info=True)
+        finally:
+            # 确保问答Bot被停止
+            stop_qa_bot()

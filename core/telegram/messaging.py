@@ -283,14 +283,30 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
             summary_text_for_source = summary_text
             
             # 向所有管理员发送消息（除非跳过）
+            # 收集管理员消息ID，用于数据库记录
+            admin_message_ids = []
             if not skip_admins:
                 for admin_id in ADMIN_LIST:
                     try:
                         logger.info(f"正在向管理员 {admin_id} 发送报告")
-                        await send_long_message(use_client, admin_id, summary_text_for_admins, show_pagination=False)
+                        # 发送消息并收集消息ID
+                        if len(summary_text_for_admins) <= 4000:
+                            msg = await use_client.send_message(admin_id, summary_text_for_admins, link_preview=False)
+                            admin_message_ids.append(msg.id)
+                        else:
+                            # 长消息分段发送
+                            parts = split_message_smart(summary_text_for_admins, 4000, preserve_md=True)
+                            for part in parts:
+                                msg = await use_client.send_message(admin_id, part, link_preview=False)
+                                admin_message_ids.append(msg.id)
                         logger.info(f"成功向管理员 {admin_id} 发送报告")
                     except Exception as e:
                         logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
+                
+                # 如果成功发送给管理员，使用这些消息ID作为 report_message_ids
+                if admin_message_ids and not report_message_ids:
+                    report_message_ids = admin_message_ids
+                    logger.info(f"使用管理员消息ID作为报告消息ID: {report_message_ids}")
             else:
                 logger.info("跳过向管理员发送报告")
             
@@ -574,8 +590,22 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
         
         # ✅ 新增：保存到数据库
-        # 如果成功发送总结到频道，保存到数据库
-        if source_channel and report_message_ids:
+        # 如果有消息ID（说明发送成功），就保存到数据库
+        # 即使 source_channel=None（只发给管理员的情况），也要保存
+        if report_message_ids:
+            # 确定 channel_id 和 channel_name
+            save_channel_id = source_channel
+            save_channel_name = channel_actual_name
+            
+            # 如果 source_channel 为空，尝试从配置中获取
+            if not save_channel_id and CHANNELS and len(CHANNELS) > 0:
+                save_channel_id = CHANNELS[0]
+                # 重新获取频道名称
+                try:
+                    channel_entity = await use_client.get_entity(save_channel_id)
+                    save_channel_name = channel_entity.title
+                except:
+                    save_channel_name = save_channel_id.split('/')[-1]
             try:
                 from ..database import get_db_manager
 
@@ -585,8 +615,8 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 # 保存到数据库
                 db = get_db_manager()
                 summary_id = db.save_summary(
-                    channel_id=source_channel,
-                    channel_name=channel_actual_name,
+                    channel_id=save_channel_id,
+                    channel_name=save_channel_name,
                     summary_text=summary_text_for_source,
                     message_count=message_count,
                     start_time=start_time,
@@ -600,6 +630,36 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
 
                 if summary_id:
                     logger.info(f"总结已保存到数据库，记录ID: {summary_id}")
+                    
+                    # ✅ v3.0.0新增：生成并保存向量
+                    try:
+                        from ..vector_store import get_vector_store
+                        vector_store = get_vector_store()
+                        
+                        if vector_store.is_available():
+                            # 保存向量
+                            success = vector_store.add_summary(
+                                summary_id=summary_id,
+                                text=summary_text_for_source,
+                                metadata={
+                                    "channel_id": source_channel,
+                                    "channel_name": channel_actual_name,
+                                    "created_at": datetime.now(timezone.utc).isoformat(),
+                                    "summary_type": "manual",
+                                    "message_count": message_count
+                                }
+                            )
+                            
+                            if success:
+                                logger.info(f"向量已成功保存，summary_id: {summary_id}")
+                            else:
+                                logger.warning(f"向量保存失败，但数据库记录已保存，summary_id: {summary_id}")
+                        else:
+                            logger.debug("向量存储不可用，跳过向量化")
+                    
+                    except Exception as vec_error:
+                        logger.error(f"保存向量时出错: {type(vec_error).__name__}: {vec_error}", exc_info=True)
+                        # 向量保存失败不影响数据库保存，只记录日志
                 else:
                     logger.warning("保存到数据库失败，但不影响总结发送")
 

@@ -21,6 +21,7 @@ Sakura-频道总结助手是一款基于Telegram API和AI技术的智能频道�
 ### ✨ 核心亮点
 
 - 🎯 **AI智能总结** - 先进的语言模型深度分析对话，提取核心要点
+- 🔍 **智能问答系统** - 基于RAG技术的自然语言问答，支持语义检索和历史查询
 - ⏰ **灵活调度** - 支持每天、每周或多天自动总结
 - 🌐 **多频道支持** - 同时管理多个频道的内容
 - 🤖 **自定义AI配置** - 支持多种OpenAI兼容API（DeepSeek、OpenAI等）
@@ -109,6 +110,9 @@ python main.py
 
 | 功能 | 描述 | 状态 |
 |------|------|------|
+| **🔍 智能问答系统** | 基于RAG技术的自然语言问答，支持语义检索历史总结 | ✅ |
+| **🧠 向量存储** | 使用ChromaDB存储总结向量，支持语义搜索 | ✅ |
+| **🎯 重排序优化** | 使用BGE-Reranker精排检索结果，提升准确率 | ✅ |
 | **🛡️ 错误恢复** | 智能重试机制、健康检查和优雅关闭 | ✅ |
 | **📊 互动投票** | 总结后自动在讨论组生成投票消息 | ✅ |
 | **🎯 频道级投票配置** | 为每个频道单独配置投票发送位置和启用状态 | ✅ |
@@ -242,7 +246,30 @@ LOG_LEVEL=INFO
 
 # ===== 投票功能 =====
 ENABLE_POLL=True
+
+# ===== RAG智能问答系统配置（可选） =====
+# Embedding模型配置（必需，用于向量搜索）
+EMBEDDING_API_KEY=your_siliconflow_api_key
+EMBEDDING_API_BASE=https://api.siliconflow.cn/v1
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DIMENSION=1024
+
+# Reranker配置（可选，用于提升检索准确率）
+RERANKER_API_KEY=your_siliconflow_api_key
+RERANKER_API_BASE=https://api.siliconflow.cn/v1/rerank
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_TOP_K=20
+RERANKER_FINAL=5
+
+# 向量数据库配置
+VECTOR_DB_PATH=data/vectors
+
+# 问答Bot配置
+QA_BOT_ENABLED=True
+QA_BOT_TOKEN=your_qa_bot_token_here  # 从@BotFather获取
 ```
+
+> **提示**：RAG系统需要额外的API密钥，推荐使用 [SiliconFlow](https://siliconflow.cn/) 获取Embedding和Reranker服务的API密钥。详细配置请参考 [RAG快速启动指南](wiki/RAG_QUICKSTART.md)。
 
 ---
 

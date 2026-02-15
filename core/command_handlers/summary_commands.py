@@ -30,6 +30,8 @@ from ..prompt_manager import load_prompt
 from ..ai_client import analyze_with_ai
 from ..telegram_client import fetch_last_week_messages, send_long_message, send_report
 from ..i18n import get_text
+from ..vector_store import get_vector_store
+from ..embedding_generator import get_embedding_generator
 
 logger = logging.getLogger(__name__)
 
@@ -163,16 +165,71 @@ async def handle_manual_summary(event):
 
                 # 生成报告文本
                 report_text = f"**{report_title}**\n\n{summary}"
+                
+                # ✅ v3.0.0新增：先保存到数据库和向量存储
+                try:
+                    from ..database import get_db_manager
+                    from ..telegram_client import extract_date_range_from_summary
+                    
+                    # 提取时间范围
+                    start_time, end_time = extract_date_range_from_summary(report_text)
+                    
+                    # 保存到数据库
+                    db = get_db_manager()
+                    summary_id = db.save_summary(
+                        channel_id=channel,
+                        channel_name=channel_actual_name,
+                        summary_text=report_text,
+                        message_count=len(messages),
+                        start_time=start_time,
+                        end_time=end_time,
+                        summary_message_ids=[],
+                        poll_message_id=None,
+                        button_message_id=None,
+                        ai_model=None,  # 使用默认配置
+                        summary_type='manual'
+                    )
+                    
+                    if summary_id:
+                        logger.info(f"总结已保存到数据库，记录ID: {summary_id}")
+                        
+                        # 生成并保存向量
+                        vector_store = get_vector_store()
+                        if vector_store.is_available():
+                            success = vector_store.add_summary(
+                                summary_id=summary_id,
+                                text=report_text,
+                                metadata={
+                                    "channel_id": channel,
+                                    "channel_name": channel_actual_name,
+                                    "created_at": datetime.now(timezone.utc).isoformat(),
+                                    "summary_type": "manual",
+                                    "message_count": len(messages)
+                                }
+                            )
+                            
+                            if success:
+                                logger.info(f"向量已成功保存，summary_id: {summary_id}")
+                            else:
+                                logger.warning(f"向量保存失败，但数据库记录已保存，summary_id: {summary_id}")
+                        else:
+                            logger.debug("向量存储不可用，跳过向量化")
+                    else:
+                        logger.warning("保存到数据库失败")
+                
+                except Exception as save_error:
+                    logger.error(f"保存总结到数据库/向量存储时出错: {type(save_error).__name__}: {save_error}", exc_info=True)
+                    # 保存失败不影响报告发送
+                
                 # 向请求者发送总结
                 await send_long_message(event.client, sender_id, report_text)
                 # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
                 # 如果请求者是管理员，跳过向管理员发送报告，避免重复发送
                 skip_admins = sender_id in ADMIN_LIST or ADMIN_LIST == ['me']
-                sent_report_ids = []
                 if SEND_REPORT_TO_SOURCE:
                     sent_report_ids = await send_report(report_text, channel, event.client, skip_admins=skip_admins, message_count=len(messages))
                 else:
-                    await send_report(report_text, None, event.client, skip_admins=skip_admins, message_count=len(messages))
+                    sent_report_ids = await send_report(report_text, None, event.client, skip_admins=skip_admins, message_count=len(messages))
                 
                 # 保存该频道的本次总结时间和所有相关消息ID
                 if sent_report_ids:

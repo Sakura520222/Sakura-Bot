@@ -21,6 +21,7 @@ Sakura Channel Summary Assistant is a sophisticated Telegram channel management 
 ### ✨ Key Highlights
 
 - 🎯 **AI-Powered Summarization** - Advanced language models extract key insights from conversations
+- 🔍 **Intelligent Q&A System** - RAG-based natural language Q&A with semantic search and history queries
 - ⏰ **Flexible Scheduling** - Daily, weekly, or multi-day automated summaries
 - 🌐 **Multi-Channel Support** - Manage multiple channels simultaneously
 - 🤖 **Customizable AI Configuration** - Support for OpenAI-compatible APIs (DeepSeek, OpenAI, etc.)
@@ -109,6 +110,9 @@ python main.py
 
 | Feature | Description | Status |
 |---------|-------------|--------|
+| **🔍 Intelligent Q&A System** | RAG-based natural language Q&A with semantic search and history queries | ✅ |
+| **🧠 Vector Storage** | ChromaDB-powered vector storage for semantic search | ✅ |
+| **🎯 Reranking** | BGE-Reranker for precise result reordering, improving accuracy | ✅ |
 | **🛡️ Error Recovery** | Intelligent retry mechanism, health checks, and graceful shutdown | ✅ |
 | **📊 Interactive Polls** | Auto-generate polls in discussion groups after summaries | ✅ |
 | **🎯 Per-Channel Polls** | Configure poll settings independently for each channel | ✅ |
@@ -242,7 +246,30 @@ LOG_LEVEL=INFO
 
 # ===== Poll Feature =====
 ENABLE_POLL=True
+
+# ===== RAG Intelligent Q&A System Configuration (Optional) =====
+# Embedding Model Configuration (Required for vector search)
+EMBEDDING_API_KEY=your_siliconflow_api_key
+EMBEDDING_API_BASE=https://api.siliconflow.cn/v1
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DIMENSION=1024
+
+# Reranker Configuration (Optional, for improving retrieval accuracy)
+RERANKER_API_KEY=your_siliconflow_api_key
+RERANKER_API_BASE=https://api.siliconflow.cn/v1/rerank
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_TOP_K=20
+RERANKER_FINAL=5
+
+# Vector Database Configuration
+VECTOR_DB_PATH=data/vectors
+
+# Q&A Bot Configuration
+QA_BOT_ENABLED=True
+QA_BOT_TOKEN=your_qa_bot_token_here  # Get from @BotFather
 ```
+
+> **Note**: The RAG system requires additional API keys. We recommend using [SiliconFlow](https://siliconflow.cn/) for Embedding and Reranker services. For detailed configuration, please refer to the [RAG Quick Start Guide](wiki/RAG_QUICKSTART.md).
 
 ---
 

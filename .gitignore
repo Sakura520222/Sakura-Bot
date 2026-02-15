@@ -254,3 +254,4 @@ Thumbs.db
 # 其他
 .claude
 tmpclaude-*-cwd
+data/vectors/

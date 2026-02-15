@@ -58,15 +58,17 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
             poll_answers = []
             for i, opt in enumerate(poll_data.get('options', [])[:10]):
                 opt_clean = str(opt).strip()[:100]
+                # 直接使用字符串，不包装为TextWithEntities
                 poll_answers.append(PollAnswer(
-                    text=TextWithEntities(text=opt_clean, entities=[]),
+                    text=opt_clean,
                     option=bytes([i])
                 ))
 
             # 构造投票对象
+            # 注意：Telethon的Poll构造函数直接接受字符串，不需要TextWithEntities包装
             poll_obj = Poll(
                 id=0,
-                question=TextWithEntities(text=question_text, entities=[]),
+                question=question_text,  # 直接使用字符串
                 answers=poll_answers,
                 closed=False,
                 public_voters=False,
@@ -223,19 +225,19 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                 # 1. 严格清洗并截断
                 question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
 
-                # 2. 构造选项，确保text字段被显式包装为TextWithEntities
+                # 2. 构造选项，直接使用字符串
                 poll_answers = []
                 for i, opt in enumerate(poll_data.get('options', [])[:10]):
                     opt_clean = str(opt).strip()[:100]
                     poll_answers.append(PollAnswer(
-                        text=TextWithEntities(text=opt_clean, entities=[]),
+                        text=opt_clean,  # 直接使用字符串
                         option=bytes([i])
                     ))
 
                 # 3. 手动构造Poll对象
                 poll_obj = Poll(
                     id=0,
-                    question=TextWithEntities(text=question_text, entities=[]),
+                    question=question_text,  # 直接使用字符串
                     answers=poll_answers,
                     closed=False,
                     public_voters=False,

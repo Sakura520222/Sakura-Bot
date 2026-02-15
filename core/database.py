@@ -42,7 +42,13 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            # 创建总结记录主表
+            # 启用WAL模式以支持多进程并发读写
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")  # 5秒超时
+            logger.info("已启用SQLite WAL模式以支持多进程并发")
+
+            # 创建总结记录主表（扩展元数据字段）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS summaries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,7 +63,11 @@ class DatabaseManager:
                     summary_type TEXT DEFAULT 'weekly',
                     summary_message_ids TEXT,
                     poll_message_id INTEGER,
-                    button_message_id INTEGER
+                    button_message_id INTEGER,
+                    keywords TEXT,
+                    topics TEXT,
+                    sentiment TEXT,
+                    entities TEXT
                 )
             """)
 
@@ -85,10 +95,48 @@ class DatabaseManager:
                 )
             """)
 
+            # 创建配额管理表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS usage_quota (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    query_date TEXT NOT NULL,
+                    usage_count INTEGER DEFAULT 0,
+                    last_reset TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, query_date)
+                )
+            """)
+            
+            # 创建频道画像表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS channel_profiles (
+                    channel_id TEXT PRIMARY KEY,
+                    channel_name TEXT,
+                    style TEXT DEFAULT 'neutral',
+                    topics TEXT,
+                    keywords_freq TEXT,
+                    tone TEXT,
+                    avg_message_length REAL DEFAULT 0,
+                    total_summaries INTEGER DEFAULT 0,
+                    last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 为新表创建索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_quota_user_date
+                ON usage_quota(user_id, query_date)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_quota_date
+                ON usage_quota(query_date)
+            """)
+
             # 插入或更新版本号
             cursor.execute("""
                 INSERT OR REPLACE INTO db_version (version, upgraded_at)
-                VALUES (1, CURRENT_TIMESTAMP)
+                VALUES (2, CURRENT_TIMESTAMP)
             """)
 
             conn.commit()
@@ -525,6 +573,354 @@ class DatabaseManager:
                 f.write(f"**消息数量**: {message_count}\n\n")
                 f.write(f"**总结内容**:\n\n{summary_text}\n\n")
                 f.write("---\n\n")
+
+    # ============ 配额管理方法 ============
+
+    def get_quota_usage(self, user_id: int, date: Optional[str] = None) -> Dict[str, Any]:
+        """
+        获取用户配额使用情况
+
+        Args:
+            user_id: 用户ID
+            date: 查询日期，格式YYYY-MM-DD，默认为今天
+
+        Returns:
+            配额使用信息字典
+        """
+        try:
+            if date is None:
+                date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT usage_count, last_reset
+                FROM usage_quota
+                WHERE user_id = ? AND query_date = ?
+            """, (user_id, date))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    "user_id": user_id,
+                    "date": date,
+                    "usage_count": row[0],
+                    "last_reset": row[1]
+                }
+            else:
+                return {
+                    "user_id": user_id,
+                    "date": date,
+                    "usage_count": 0,
+                    "last_reset": None
+                }
+
+        except Exception as e:
+            logger.error(f"获取配额使用失败: {type(e).__name__}: {e}", exc_info=True)
+            return {"user_id": user_id, "date": date, "usage_count": 0, "last_reset": None}
+
+    def check_and_increment_quota(self, user_id: int, daily_limit: int,
+                                 is_admin: bool = False) -> Dict[str, Any]:
+        """
+        检查并增加配额使用
+
+        Args:
+            user_id: 用户ID
+            daily_limit: 每日限额
+            is_admin: 是否为管理员（管理员无限制）
+
+        Returns:
+            {"allowed": bool, "remaining": int, "used": int}
+        """
+        try:
+            if is_admin:
+                # 管理员无限制
+                return {"allowed": True, "remaining": -1, "used": 0, "is_admin": True}
+
+            date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 获取当前使用次数
+            cursor.execute("""
+                SELECT usage_count FROM usage_quota
+                WHERE user_id = ? AND query_date = ?
+            """, (user_id, date))
+
+            row = cursor.fetchone()
+            current_usage = row[0] if row else 0
+
+            # 检查是否超限
+            if current_usage >= daily_limit:
+                conn.close()
+                return {
+                    "allowed": False,
+                    "remaining": 0,
+                    "used": current_usage,
+                    "daily_limit": daily_limit
+                }
+
+            # 增加使用次数
+            new_usage = current_usage + 1
+            if row:
+                cursor.execute("""
+                    UPDATE usage_quota
+                    SET usage_count = ?
+                    WHERE user_id = ? AND query_date = ?
+                """, (new_usage, user_id, date))
+            else:
+                cursor.execute("""
+                    INSERT INTO usage_quota (user_id, query_date, usage_count)
+                    VALUES (?, ?, ?)
+                """, (user_id, date, new_usage))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"用户 {user_id} 配额使用: {new_usage}/{daily_limit}")
+            return {
+                "allowed": True,
+                "remaining": daily_limit - new_usage,
+                "used": new_usage,
+                "daily_limit": daily_limit
+            }
+
+        except Exception as e:
+            logger.error(f"配额检查失败: {type(e).__name__}: {e}", exc_info=True)
+            return {"allowed": False, "error": str(e)}
+
+    def get_total_daily_usage(self, date: Optional[str] = None) -> int:
+        """
+        获取指定日期的总使用次数
+
+        Args:
+            date: 查询日期，格式YYYY-MM-DD，默认为今天
+
+        Returns:
+            总使用次数
+        """
+        try:
+            if date is None:
+                date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT SUM(usage_count) FROM usage_quota
+                WHERE query_date = ?
+            """, (date,))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result[0] if result and result[0] else 0
+
+        except Exception as e:
+            logger.error(f"获取总使用次数失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    def reset_quota_if_new_day(self, user_id: int) -> None:
+        """
+        如果是新的一天，重置用户配额
+
+        Args:
+            user_id: 用户ID
+        """
+        try:
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 检查最后记录日期
+            cursor.execute("""
+                SELECT query_date FROM usage_quota
+                WHERE user_id = ?
+                ORDER BY query_date DESC
+                LIMIT 1
+            """, (user_id,))
+
+            row = cursor.fetchone()
+            if row and row[0] != today:
+                # 最后记录不是今天，自动重置
+                logger.info(f"检测到新的一天，重置用户 {user_id} 配额")
+
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"重置配额失败: {type(e).__name__}: {e}", exc_info=True)
+
+    # ============ 频道画像方法 ============
+
+    def get_channel_profile(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """
+        获取频道画像
+
+        Args:
+            channel_id: 频道URL
+
+        Returns:
+            频道画像字典，不存在返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM channel_profiles WHERE channel_id = ?", (channel_id,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                profile = dict(row)
+                # 解析JSON字段
+                try:
+                    if profile.get('topics'):
+                        profile['topics'] = json.loads(profile['topics'])
+                    if profile.get('keywords_freq'):
+                        profile['keywords_freq'] = json.loads(profile['keywords_freq'])
+                except:
+                    pass
+                return profile
+            return None
+
+        except Exception as e:
+            logger.error(f"获取频道画像失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def update_channel_profile(self, channel_id: str, channel_name: str,
+                              keywords: List[str] = None,
+                              topics: List[str] = None,
+                              sentiment: str = None,
+                              entities: List[str] = None) -> None:
+        """
+        更新频道画像
+
+        Args:
+            channel_id: 频道URL
+            channel_name: 频道名称
+            keywords: 关键词列表
+            topics: 主题列表
+            sentiment: 情感倾向
+            entities: 实体列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 获取现有画像
+            cursor.execute("SELECT * FROM channel_profiles WHERE channel_id = ?", (channel_id,))
+            existing = cursor.fetchone()
+
+            # 统计该频道的总结数和平均消息长度
+            cursor.execute("""
+                SELECT COUNT(*) as count, AVG(message_count) as avg_len
+                FROM summaries
+                WHERE channel_id = ?
+            """, (channel_id,))
+            stats = cursor.fetchone()
+
+            total_summaries = stats[0] if stats else 0
+            avg_message_length = stats[1] if stats and stats[1] else 0
+
+            # 获取当前画像或创建新的
+            if existing:
+                # 更新关键词频率
+                try:
+                    keywords_freq = json.loads(existing[4]) if existing[4] else {}
+                except:
+                    keywords_freq = {}
+
+                if keywords:
+                    for kw in keywords:
+                        keywords_freq[kw] = keywords_freq.get(kw, 0) + 1
+            else:
+                keywords_freq = {}
+                if keywords:
+                    for kw in keywords:
+                        keywords_freq[kw] = 1
+
+            # 转换为JSON存储
+            topics_json = json.dumps(topics, ensure_ascii=False) if topics else None
+            keywords_json = json.dumps(keywords_freq, ensure_ascii=False) if keywords_freq else None
+            entities_json = json.dumps(entities, ensure_ascii=False) if entities else None
+
+            # 推断频道风格（简单规则）
+            if topics:
+                tech_keywords = ['AI', '编程', '技术', '开发', 'Python', 'GPT', 'API']
+                if any(kw in ' '.join(topics) for kw in tech_keywords):
+                    style = 'tech'
+                else:
+                    style = 'casual'
+            else:
+                style = 'neutral'
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            if existing:
+                cursor.execute("""
+                    UPDATE channel_profiles
+                    SET channel_name = ?, style = ?, topics = ?,
+                        keywords_freq = ?, tone = ?, avg_message_length = ?,
+                        total_summaries = ?, last_updated = ?
+                    WHERE channel_id = ?
+                """, (channel_name, style, topics_json, keywords_json,
+                       sentiment or 'neutral', avg_message_length,
+                       total_summaries, now, channel_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO channel_profiles (
+                        channel_id, channel_name, style, topics, keywords_freq,
+                        tone, avg_message_length, total_summaries, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (channel_id, channel_name, style, topics_json, keywords_json,
+                       sentiment or 'neutral', avg_message_length, total_summaries, now))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新频道画像: {channel_name} ({channel_id})")
+
+        except Exception as e:
+            logger.error(f"更新频道画像失败: {type(e).__name__}: {e}", exc_info=True)
+
+    def update_summary_metadata(self, summary_id: int, keywords: List[str] = None,
+                               topics: List[str] = None, sentiment: str = None,
+                               entities: List[str] = None) -> None:
+        """
+        更新总结的元数据
+
+        Args:
+            summary_id: 总结ID
+            keywords: 关键词列表
+            topics: 主题列表
+            sentiment: 情感倾向
+            entities: 实体列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            keywords_json = json.dumps(keywords, ensure_ascii=False) if keywords else None
+            topics_json = json.dumps(topics, ensure_ascii=False) if topics else None
+            entities_json = json.dumps(entities, ensure_ascii=False) if entities else None
+
+            cursor.execute("""
+                UPDATE summaries
+                SET keywords = ?, topics = ?, sentiment = ?, entities = ?
+                WHERE id = ?
+            """, (keywords_json, topics_json, sentiment, entities_json, summary_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新总结元数据: ID={summary_id}")
+
+        except Exception as e:
+            logger.error(f"更新总结元数据失败: {type(e).__name__}: {e}", exc_info=True)
 
 
 # 创建全局数据库管理器实例
