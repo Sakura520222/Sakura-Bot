@@ -121,6 +121,19 @@ class DatabaseManager:
                     last_updated TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # 创建对话历史表（多轮对话支持）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    metadata TEXT
+                )
+            """)
 
             # 为新表创建索引
             cursor.execute("""
@@ -921,6 +934,227 @@ class DatabaseManager:
 
         except Exception as e:
             logger.error(f"更新总结元数据失败: {type(e).__name__}: {e}", exc_info=True)
+
+    # ============ 对话历史管理方法 ============
+
+    def save_conversation(self, user_id: int, session_id: str, 
+                         role: str, content: str, 
+                         metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        保存对话记录
+
+        Args:
+            user_id: 用户ID
+            session_id: 会话ID
+            role: 角色 ('user' 或 'assistant')
+            content: 内容
+            metadata: 可选的元数据字典
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
+
+            cursor.execute("""
+                INSERT INTO conversation_history 
+                (user_id, session_id, role, content, metadata)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, session_id, role, content, metadata_json))
+
+            conn.commit()
+            conn.close()
+
+            logger.debug(f"保存对话记录: user_id={user_id}, session={session_id}, role={role}")
+            return True
+
+        except Exception as e:
+            logger.error(f"保存对话记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_conversation_history(self, user_id: int, session_id: str, 
+                                limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        获取用户的对话历史
+
+        Args:
+            user_id: 用户ID
+            session_id: 会话ID
+            limit: 返回记录数量（默认20条，即10轮对话）
+
+        Returns:
+            对话历史列表，按时间升序排列
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT role, content, timestamp, metadata
+                FROM conversation_history
+                WHERE user_id = ? AND session_id = ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (user_id, session_id, limit))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            history = []
+            for row in rows:
+                item = {
+                    'role': row['role'],
+                    'content': row['content'],
+                    'timestamp': row['timestamp']
+                }
+                # 解析元数据
+                if row['metadata']:
+                    try:
+                        item['metadata'] = json.loads(row['metadata'])
+                    except:
+                        pass
+                history.append(item)
+
+            logger.debug(f"获取对话历史: user_id={user_id}, session={session_id}, 条数={len(history)}")
+            return history
+
+        except Exception as e:
+            logger.error(f"获取对话历史失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def get_last_session_time(self, user_id: int) -> Optional[str]:
+        """
+        获取用户最后一次对话时间
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            最后一次对话时间（ISO格式），不存在返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT timestamp
+                FROM conversation_history
+                WHERE user_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (user_id,))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result[0] if result else None
+
+        except Exception as e:
+            logger.error(f"获取最后会话时间失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def clear_user_conversations(self, user_id: int, 
+                                session_id: Optional[str] = None) -> int:
+        """
+        清除用户的对话历史
+
+        Args:
+            user_id: 用户ID
+            session_id: 可选，指定会话ID，不指定则清除所有会话
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            if session_id:
+                cursor.execute("""
+                    DELETE FROM conversation_history
+                    WHERE user_id = ? AND session_id = ?
+                """, (user_id, session_id))
+            else:
+                cursor.execute("""
+                    DELETE FROM conversation_history
+                    WHERE user_id = ?
+                """, (user_id,))
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"清除对话历史: user_id={user_id}, session={session_id}, 删除{deleted_count}条")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"清除对话历史失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    def get_session_count(self, user_id: int) -> int:
+        """
+        获取用户的会话总数
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            会话数量
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT COUNT(DISTINCT session_id)
+                FROM conversation_history
+                WHERE user_id = ?
+            """, (user_id,))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result[0] if result else 0
+
+        except Exception as e:
+            logger.error(f"获取会话数量失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    def delete_old_conversations(self, days: int = 7) -> int:
+        """
+        删除旧的对话记录（定期清理）
+
+        Args:
+            days: 保留天数，默认7天
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+            cursor.execute("""
+                DELETE FROM conversation_history
+                WHERE timestamp < ?
+            """, (cutoff_date.isoformat(),))
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"已删除 {deleted_count} 条旧对话记录 (超过 {days} 天)")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"删除旧对话记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
 
 
 # 创建全局数据库管理器实例

@@ -25,12 +25,13 @@ from .vector_store import get_vector_store
 from .reranker import get_reranker
 from .ai_client import client_llm
 from .settings import get_llm_model
+from .conversation_manager import get_conversation_manager
 
 logger = logging.getLogger(__name__)
 
 
 class QAEngineV3:
-    """问答引擎 v3.0.0 - 向量搜索版本"""
+    """问答引擎 v3.0.0 - 向量搜索版本 + 多轮对话支持"""
 
     def __init__(self):
         """初始化问答引擎"""
@@ -39,11 +40,12 @@ class QAEngineV3:
         self.memory_manager = get_memory_manager()
         self.vector_store = get_vector_store()
         self.reranker = get_reranker()
-        logger.info("问答引擎v3.0.0初始化完成")
+        self.conversation_mgr = get_conversation_manager()
+        logger.info("问答引擎v3.0.0初始化完成（支持多轮对话）")
 
     async def process_query(self, query: str, user_id: int) -> str:
         """
-        处理用户查询
+        处理用户查询（支持多轮对话）
 
         Args:
             query: 用户查询
@@ -55,19 +57,44 @@ class QAEngineV3:
         try:
             logger.info(f"处理查询: user_id={user_id}, query={query}")
 
-            # 1. 解析查询意图
+            # 1. 获取或创建会话
+            session_id, is_new_session = self.conversation_mgr.get_or_create_session(user_id)
+            
+            # 2. 保存用户消息
+            self.conversation_mgr.save_message(
+                user_id=user_id,
+                session_id=session_id,
+                role='user',
+                content=query
+            )
+
+            # 3. 解析查询意图
             parsed = self.intent_parser.parse_query(query)
             logger.info(f"查询意图: {parsed['intent']}, 置信度: {parsed['confidence']}")
 
-            # 2. 根据意图处理
+            # 4. 根据意图处理
             intent = parsed["intent"]
 
             if intent == "status":
-                return await self._handle_status_query()
+                answer = await self._handle_status_query()
             elif intent == "stats":
-                return await self._handle_stats_query(parsed)
+                answer = await self._handle_stats_query(parsed)
             else:
-                return await self._handle_content_query_v3(parsed)
+                answer = await self._handle_content_query_v3(parsed, user_id, session_id)
+
+            # 5. 保存助手回复
+            self.conversation_mgr.save_message(
+                user_id=user_id,
+                session_id=session_id,
+                role='assistant',
+                content=answer
+            )
+
+            # 6. 如果是新会话，添加提示
+            if is_new_session and intent not in ["status", "stats"]:
+                answer = "🍃 *感知到了新的思绪脉络，让我们重新开始吧。*\n\n" + answer
+
+            return answer
 
         except Exception as e:
             logger.error(f"处理查询失败: {type(e).__name__}: {e}", exc_info=True)
@@ -111,20 +138,26 @@ class QAEngineV3:
             f"  • {t}: {c} 条" for t, c in stats.get('type_stats', {}).items()
         )
 
-    async def _handle_content_query_v3(self, parsed: Dict[str, Any]) -> str:
+    async def _handle_content_query_v3(self, parsed: Dict[str, Any], 
+                                       user_id: int, session_id: str) -> str:
         """
-        处理内容查询（v3.0.0向量搜索版本）
+        处理内容查询（v3.0.0向量搜索版本 + 多轮对话支持）
 
         实现混合检索策略：
         1. 语义检索（Dense）
         2. 关键词检索（Sparse）作为备选
         3. RRF融合
         4. 重排序
+        5. 多轮对话上下文注入
         """
         try:
             query = parsed["original_query"]
             keywords = parsed.get("keywords", [])
             time_range = parsed.get("time_range", 7)
+
+            # 获取对话历史
+            conversation_history = self.conversation_mgr.get_conversation_history(user_id, session_id)
+            logger.debug(f"用户 {user_id} 的对话历史: {len(conversation_history)} 条")
 
             # 步骤1: 语义检索（召回Top-20）
             semantic_results = []
@@ -194,11 +227,12 @@ class QAEngineV3:
             else:
                 final_candidates = final_candidates[:5]
 
-            # 步骤5: AI生成回答（RAG）
+            # 步骤5: AI生成回答（RAG + 对话历史）
             answer = await self._generate_answer_with_rag(
                 query=query,
                 summaries=final_candidates,
-                keywords=keywords
+                keywords=keywords,
+                conversation_history=conversation_history
             )
 
             return answer
@@ -270,14 +304,16 @@ class QAEngineV3:
 
     async def _generate_answer_with_rag(self, query: str,
                                         summaries: List[Dict[str, Any]],
-                                        keywords: List[str] = None) -> str:
+                                        keywords: List[str] = None,
+                                        conversation_history: List[Dict] = None) -> str:
         """
-        使用RAG生成回答
+        使用RAG生成回答（支持多轮对话）
 
         Args:
             query: 用户查询
             summaries: 相关总结列表
             keywords: 关键词
+            conversation_history: 对话历史列表
 
         Returns:
             生成的回答
@@ -297,22 +333,33 @@ class QAEngineV3:
             elif len(channel_ids) > 1:
                 channel_context = "多频道综合查询"
 
+            # 准备对话历史上下文
+            conversation_context = ""
+            if conversation_history and len(conversation_history) > 0:
+                # 排除当前查询（历史中的最后一条是当前用户消息）
+                history_excluding_current = conversation_history[:-1] if len(conversation_history) > 1 else []
+                
+                if history_excluding_current:
+                    conversation_context = self.conversation_mgr.format_conversation_context(history_excluding_current)
+                    conversation_context = f"\n【对话历史】\n{conversation_context}\n"
+                    logger.debug(f"对话历史上下文长度: {len(conversation_context)} 字符")
+
             # 构建提示词
             prompt = f"""你是一个专业的资讯助手，负责根据历史总结回答用户问题。
 
-{channel_context}
-
-用户查询：{query}
+{channel_context}{conversation_context}
+用户当前查询：{query}
 
 相关历史总结（共{len(summaries)}条，已通过语义搜索和重排序精选）：
 {context}
 
 要求（严格遵循）：
 1. 基于上述总结内容回答问题，不要编造信息
-2. 如果总结中没有相关信息，明确说明
-3. 使用清晰的结构和要点
-4. 语言简洁专业
-5. **Markdown格式要求**：
+2. 如果有对话历史，优先利用历史上下文理解用户的代词（如"它"、"那个"、"这个"等）
+3. 如果总结中没有相关信息，明确说明
+4. 使用清晰的结构和要点
+5. 语言简洁专业
+6. **Markdown格式要求**：
    - 粗体：使用 **文本** （注意两边各两个星号）
    - 斜体：使用 *文本* （注意两边各一个星号）
    - 代码：使用 `代码` （反引号）
@@ -324,14 +371,14 @@ class QAEngineV3:
 
 请用严格的Markdown格式回答（不使用#标题）："""
 
-            logger.info(f"调用AI生成回答（RAG），总结数: {len(summaries)}")
+            logger.info(f"调用AI生成回答（RAG+对话历史），总结数: {len(summaries)}, 历史消息: {len(conversation_history) if conversation_history else 0}")
 
             response = client_llm.chat.completions.create(
                 model=get_llm_model(),
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个专业的资讯助手，擅长从历史记录中提取关键信息并回答用户问题。"
+                        "content": "你是一个专业的资讯助手，擅长从历史记录中提取关键信息并回答用户问题。你能够理解对话上下文，准确识别代词指代。"
                     },
                     {"role": "user", "content": prompt}
                 ],

@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.quota_manager import get_quota_manager
 from core.qa_engine_v3 import get_qa_engine_v3
+from core.conversation_manager import get_conversation_manager
 from core.config import REPORT_ADMIN_IDS
 
 # 配置日志 - 添加[QA]前缀以便区分
@@ -77,15 +78,16 @@ class QABot:
         """初始化Bot"""
         self.quota_manager = get_quota_manager()
         self.qa_engine = get_qa_engine_v3()
+        self.conversation_mgr = get_conversation_manager()
         self.application = None
 
-        logger.info("问答Bot初始化完成（v3.0.0向量搜索版本）")
+        logger.info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持）")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/start命令"""
         user_id = update.effective_user.id
 
-        welcome_message = """🍀 **你好，旅者。我是纳西妲。**
+        welcome_message = """🍀 **你好，旅行者。我是纳西妲。**
 
 你可以把我当成世界树的一条嫩芽，我连接着这个频道的所有记忆与知识。
 无论是过去散落的碎片，还是刚刚结出的总结果实，只要你发问，我就会从记忆的根系中为你寻找答案。
@@ -106,7 +108,8 @@ class QABot:
 **基础命令：**
 • `/start` - 重新认识我
 • `/help` - 显示这份手册
-• `/status` - 感知世界树的脉动
+• `/status` - 感知世界树的脉动和会话状态
+• `/clear` - 清除对话记忆，重新开始
 
 **自然语言查询：**
 直接发送问题，例如：
@@ -114,6 +117,11 @@ class QABot:
 • "最近有什么技术讨论？"
 • "今天有什么更新？"
 • "纳西妲相关的内容"
+
+**多轮对话：**
+• 我会记住你的对话上下文（30分钟内）
+• 你可以使用代词追问："那它呢？"、"这个怎么样？"
+• 对话超时后会自动开始新会话
 
 **时间关键词：**
 • 今天、昨天、前天
@@ -123,7 +131,7 @@ class QABot:
 
 **功能特点：**
 ✅ 智能意图识别
-✅ 上下文感知
+✅ 上下文感知（多轮对话）
 ✅ 频道画像注入
 ✅ 多频道综合查询
 
@@ -135,13 +143,65 @@ class QABot:
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/status命令"""
         user_id = update.effective_user.id
-        status = self.quota_manager.get_usage_status(user_id)
+        status_info = self.quota_manager.get_usage_status(user_id)
 
-        message = f"""🍀 **正在感知世界树的脉动...**
+        # 构建配额状态文本
+        if status_info.get('is_admin'):
+            quota_text = """🌟 <b>守护者状态</b>
 
-{status.get('message', 'N/A')}
+你拥有访问世界树根系的特权，智慧的大门永远为你敞开。
+
+📊 今日总使用：{}次""".format(status_info.get('total_used', 0))
+        else:
+            quota_text = """📊 <b>配额状态</b>
+
+• 今日已使用: {used}/{limit} 次
+• 剩余次数: {remaining} 次
+• 使用率: {utilization}""".format(
+                used=status_info.get('used_today', 0),
+                limit=status_info.get('daily_limit', 50),
+                remaining=status_info.get('remaining', 50),
+                utilization=status_info.get('utilization', '0%')
+            )
+
+        # 获取会话信息
+        session_info = self.conversation_mgr.get_session_info(user_id)
+        
+        session_text = ""
+        if session_info:
+            is_active = session_info.get('is_active', False)
+            status_emoji = "🟢 活跃中" if is_active else "⚪ 已超时"
+            # 使用代码块显示会话ID，避免Markdown解析问题
+            session_id_preview = session_info['session_id'][:8]
+            session_text = f"""
+
+🧠 <b>当前会话状态</b>
+• 会话ID: <code>{session_id_preview}...</code>
+• 消息数: {session_info['message_count']} 条
+• 状态: {status_emoji}"""
+
+        message = f"""🍀 <b>正在感知世界树的脉动...</b>
+
+{quota_text}{session_text}
 
 📅 重置时间：每日 00:00 (UTC)"""
+
+        # 使用HTML模式以避免Markdown解析错误
+        await update.message.reply_text(message, parse_mode='HTML')
+
+    async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/clear命令 - 清除对话历史"""
+        user_id = update.effective_user.id
+
+        # 清除所有对话历史
+        deleted_count = self.conversation_mgr.clear_user_history(user_id)
+
+        message = f"""🍃 **所有的记忆已回归世界树。**
+
+已清除 **{deleted_count}** 条对话记录。
+
+现在，我的意识中只有此时此刻的你。
+让我们重新开始吧，旅行者。"""
 
         await update.message.reply_text(message, parse_mode='Markdown')
 
@@ -279,6 +339,7 @@ class QABot:
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("status", self.status_command))
+        self.application.add_handler(CommandHandler("clear", self.clear_command))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
         # 启动Bot

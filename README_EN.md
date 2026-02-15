@@ -113,6 +113,7 @@ python main.py
 | **🔍 Intelligent Q&A System** | RAG-based natural language Q&A with semantic search and history queries | ✅ |
 | **🧠 Vector Storage** | ChromaDB-powered vector storage for semantic search | ✅ |
 | **🎯 Reranking** | BGE-Reranker for precise result reordering, improving accuracy | ✅ |
+| **💬 Multi-Turn Conversations** | Context-aware dialogue, AI understands pronoun references and conversation history | ✅ |
 | **🛡️ Error Recovery** | Intelligent retry mechanism, health checks, and graceful shutdown | ✅ |
 | **📊 Interactive Polls** | Auto-generate polls in discussion groups after summaries | ✅ |
 | **🎯 Per-Channel Polls** | Configure poll settings independently for each channel | ✅ |
