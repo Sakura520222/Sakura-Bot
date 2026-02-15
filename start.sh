@@ -150,6 +150,84 @@ check_config() {
     print_success "配置文件检查完成"
 }
 
+# 更新代码
+update_code() {
+    print_info "检查是否为 Git 仓库..."
+    
+    # 检查是否在 git 仓库中
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        print_warning "当前目录不是 Git 仓库，跳过更新"
+        return 0
+    fi
+    
+    print_success "检测到 Git 仓库"
+    
+    # 显示当前 commit 信息
+    CURRENT_COMMIT=$(git rev-parse --short HEAD)
+    CURRENT_BRANCH=$(git branch --show-current)
+    print_info "当前分支: $CURRENT_BRANCH"
+    print_info "当前版本: $CURRENT_COMMIT"
+    
+    # 警告用户
+    echo ""
+    print_warning "⚠️  警告：此操作将放弃所有已跟踪文件的本地更改！"
+    print_warning "受影响的文件："
+    print_warning "  - 所有已跟踪的代码文件修改"
+    print_warning "  - 已提交到 Git 的配置文件更改"
+    print_info "ℹ️  未跟踪的文件（如 data/.env）将被保留"
+    echo ""
+    
+    # 询问是否继续
+    read -p "是否继续从远程拉取最新代码？ [y/N]: " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_info "跳过代码更新"
+        return 0
+    fi
+    
+    # 获取远程分支名
+    print_info "获取远程更新..."
+    git fetch origin
+    
+    # 检测远程主分支名称（main 或 master）
+    if git show-ref --verify --quiet refs/remotes/origin/main; then
+        REMOTE_BRANCH="origin/main"
+    elif git show-ref --verify --quiet refs/remotes/origin/master; then
+        REMOTE_BRANCH="origin/master"
+    else
+        print_error "未找到远程 main 或 master 分支"
+        return 1
+    fi
+    
+    print_info "远程分支: $REMOTE_BRANCH"
+    
+    # 重置到远程最新代码
+    print_warning "正在重置到远程最新代码（放弃本地更改）..."
+    git reset --hard "$REMOTE_BRANCH"
+    
+    if [ $? -eq 0 ]; then
+        # 获取最新 commit 信息
+        NEW_COMMIT=$(git rev-parse --short HEAD)
+        NEW_COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+        
+        print_success "代码更新成功！"
+        print_info "新版本: $NEW_COMMIT"
+        print_info "更新内容: $NEW_COMMIT_MSG"
+        
+        # 赋予自身执行权限
+        print_info "赋予脚本执行权限..."
+        chmod +x "$0"
+        if [ $? -eq 0 ]; then
+            print_success "脚本执行权限已设置"
+        else
+            print_warning "设置执行权限失败，请手动执行: chmod +x start.sh"
+        fi
+    else
+        print_error "代码更新失败"
+        return 1
+    fi
+}
+
 # 使用 PM2 启动应用
 start_with_pm2() {
     print_info "使用 PM2 启动应用..."
@@ -188,6 +266,10 @@ main() {
     echo "  Sakura Channel Summary Assistant"
     echo "  Linux 一键部署脚本"
     echo "=========================================="
+    echo ""
+    
+    # 更新代码（可选）
+    update_code
     echo ""
     
     # 检查 Python
