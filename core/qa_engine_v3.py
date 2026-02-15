@@ -393,12 +393,7 @@ class QAEngineV3:
         sources = [f"• {info['name']}: {info['count']}条"
                   for info in channels.values()]
 
-        # 添加检索模式说明
-        mode_info = "🔍 语义检索 + Reranker"
-        if any('rerank_score' in s for s in summaries):
-            mode_info += " ✅"
-
-        return f"{mode_info}\n📚 数据来源: {len(sources)}个频道\n" + "\n".join(sources)
+        return f"📚 数据来源: {len(sources)}个频道\n" + "\n".join(sources)
 
     def _fallback_answer_v3(self, summaries: List[Dict[str, Any]]) -> str:
         """降级方案：直接返回总结摘要（v3版本）"""

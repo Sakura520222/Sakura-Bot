@@ -18,8 +18,8 @@
 
 import logging
 import os
+import httpx
 from typing import List, Dict, Any, Optional
-from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -37,21 +37,12 @@ class Reranker:
 
         if not self.api_key:
             logger.warning("未设置RERANKER_API_KEY，重排序功能将不可用")
-            self.client = None
         else:
-            try:
-                self.client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base
-                )
-                logger.info(f"Reranker初始化成功: {self.model}")
-            except Exception as e:
-                logger.error(f"Reranker初始化失败: {type(e).__name__}: {e}")
-                self.client = None
+            logger.info(f"Reranker初始化成功: {self.model}")
 
     def is_available(self) -> bool:
         """检查Reranker服务是否可用"""
-        return self.client is not None
+        return self.api_key is not None
 
     def rerank(self, query: str, candidates: List[Dict[str, Any]],
                top_k: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -66,7 +57,7 @@ class Reranker:
         Returns:
             重排序后的文档列表
         """
-        if not self.client:
+        if not self.api_key:
             logger.warning("Reranker服务不可用，返回原始结果")
             return candidates[:top_k or self.final_k]
 
@@ -80,38 +71,39 @@ class Reranker:
             # 准备文档列表
             documents = [doc.get('summary_text', '') for doc in candidates]
 
-            # 调用Reranker API
-            response = self.client.requests.post(
-                f"{self.api_base}",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": self.model,
-                    "query": query,
-                    "documents": documents,
-                    "top_n": min(len(documents), top_k)
-                }
-            )
+            # 调用Reranker API（使用httpx）
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    self.api_base,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "query": query,
+                        "documents": documents,
+                        "top_n": min(len(documents), top_k)
+                    }
+                )
 
-            result = response.json()
+                result = response.json()
 
-            # 提取排序结果
-            if 'results' in result:
-                reranked_results = []
-                for item in result['results']:
-                    index = item['index']
-                    score = item.get('relevance_score', 0)
-                    doc = candidates[index].copy()
-                    doc['rerank_score'] = score
-                    reranked_results.append(doc)
+                # 提取排序结果
+                if 'results' in result:
+                    reranked_results = []
+                    for item in result['results']:
+                        index = item['index']
+                        score = item.get('relevance_score', 0)
+                        doc = candidates[index].copy()
+                        doc['rerank_score'] = score
+                        reranked_results.append(doc)
 
-                logger.info(f"重排序完成: {len(reranked_results)} 个结果")
-                return reranked_results
-            else:
-                logger.warning(f"Reranker API返回格式异常: {result}")
-                return candidates[:top_k]
+                    logger.info(f"重排序完成: {len(reranked_results)} 个结果")
+                    return reranked_results
+                else:
+                    logger.warning(f"Reranker API返回格式异常: {result}")
+                    return candidates[:top_k]
 
         except Exception as e:
             logger.error(f"重排序失败: {type(e).__name__}: {e}")

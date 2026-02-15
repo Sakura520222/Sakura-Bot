@@ -5,6 +5,59 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.1] - 2026-02-15
+
+### 修复
+- **投票发送失败问题**：修复了Telethon投票对象构造导致的`TypeError: a TLObject was expected but found something else`错误
+  - **问题**：在频道模式和讨论组模式下发送投票时，Telethon抛出`AttributeError: 'str' object has no attribute '_bytes'`
+  - **原因**：Telethon的`Poll`构造函数在某些版本中要求`question`参数必须是`TextWithEntities`类型，而不是纯字符串
+  - **修复**：将`question=question_text`改为`question=TextWithEntities(question_text)`，正确包装为TLObject
+  - **影响范围**：
+    - `core/telegram/poll_handlers.py`中的`send_poll_to_channel()`函数
+    - `core/telegram/poll_handlers.py`中的`send_poll_to_discussion_group()`函数
+  - **修复效果**：
+    - 频道模式投票现在可以正常发送
+    - 讨论组模式投票现在可以正常发送
+    - 投票消息成功附加内联按钮（请求重新生成 + 管理员重新生成）
+    - 投票数据正确保存到`poll_regenerations.json`
+
+### 技术细节
+- **Telethon版本兼容性**：
+  - 问题版本：Telethon 1.34+
+  - 修复方案：使用`TextWithEntities`包装字符串，确保类型兼容性
+  - 测试环境：Python 3.13, Telethon 1.34+
+
+- **代码变更**：
+  ```python
+  # 修复前（错误）
+  poll_obj = Poll(
+      id=0,
+      question=question_text,  # ❌ 字符串类型
+      answers=poll_answers,
+      ...
+  )
+
+  # 修复后（正确）
+  poll_obj = Poll(
+      id=0,
+      question=TextWithEntities(question_text),  # ✅ TextWithEntities类型
+      answers=poll_answers,
+      ...
+  )
+  ```
+
+### 验证结果
+- ✅ **Firefly频道**：投票成功发送，消息ID正常记录
+- ✅ **Nahida频道**：投票成功发送，消息ID正常记录
+- ✅ **ZZZ Leak频道**：投票成功发送，消息ID正常记录
+- ✅ **按钮功能**：内联按钮正确附加在投票消息上
+- ✅ **数据持久化**：投票数据正确保存到存储文件
+
+### 向后兼容
+- **完全兼容**：修复不影响任何现有功能
+- **无需配置**：无需修改配置文件或环境变量
+- **自动生效**：重启Bot后自动应用修复
+
 ## [1.5.0] - 2026-02-15
 
 ### 新增
