@@ -85,47 +85,35 @@ class QABot:
         """处理/start命令"""
         user_id = update.effective_user.id
 
-        welcome_message = """🤖 **Sakura 智能问答助手**
+        welcome_message = """🍀 **你好，旅者。我是纳西妲。**
 
-我可以帮你查询频道历史总结，支持自然语言提问！
+你可以把我当成世界树的一条嫩芽，我连接着这个频道的所有记忆与知识。
+无论是过去散落的碎片，还是刚刚结出的总结果实，只要你发问，我就会从记忆的根系中为你寻找答案。
 
-**示例查询：**
-• 频道上周发生了什么？
-• 最近有什么关于AI的讨论？
-• 今天有什么新动态？
-• 我的配额还剩多少？
+🌟 **你可以试着对我提问：**
+• "最近频道里发生了什么新鲜事？"
+• "帮我分析一下关于 [关键词] 的讨论。"
+• "查看本周的精华总结。"
 
-💡 提示：
-- 直接发送问题即可，无需命令前缀
-- 支持时间范围查询（今天、昨天、本周、上周等）
-- 支持关键词和主题搜索
-
-⚠️ 使用限制：
-- 普通用户: 每日3次
-- 每日总限额: 200次
-- 管理员: 无限制
-- 每日00:00自动重置
-
----
-由 Sakura-频道总结助手 提供"""
+"如果你感到迷茫，就让智慧的微风为你指引方向吧。\""""
 
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/help命令"""
-        help_text = """📖 **使用帮助**
+        help_text = """🍀 **需要一些指引吗？这是我的"世界树使用手册"：**
 
 **基础命令：**
-• `/start` - 查看欢迎信息
-• `/help` - 显示此帮助
-• `/status` - 查看配额状态
+• `/start` - 重新认识我
+• `/help` - 显示这份手册
+• `/status` - 感知世界树的脉动
 
 **自然语言查询：**
 直接发送问题，例如：
 • "上周发生了什么？"
 • "最近有什么技术讨论？"
 • "今天有什么更新？"
-• "GPT相关的内容"
+• "纳西妲相关的内容"
 
 **时间关键词：**
 • 今天、昨天、前天
@@ -139,8 +127,8 @@ class QABot:
 ✅ 频道画像注入
 ✅ 多频道综合查询
 
----
-如有问题，请联系管理员"""
+⚠️ **注意：**
+由于我的力量有限，请尽量提出与频道总结相关的问题。过度偏离的查询可能会被世界树的防火墙拦截哦。"""
 
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -149,7 +137,7 @@ class QABot:
         user_id = update.effective_user.id
         status = self.quota_manager.get_usage_status(user_id)
 
-        message = f"""📊 **你的使用状态**
+        message = f"""🍀 **正在感知世界树的脉动...**
 
 {status.get('message', 'N/A')}
 
@@ -181,7 +169,7 @@ class QABot:
                 return
 
             # 2. 显示"正在思考"消息
-            thinking_msg = await update.message.reply_text("🤔 正在思考...")
+            thinking_msg = await update.message.reply_text("🍃 正在世界树的记忆中检索...")
 
             # 3. 处理查询
             answer = await self.qa_engine.process_query(query, user_id)
@@ -215,7 +203,7 @@ class QABot:
 
         except Exception as e:
             logger.error(f"处理消息失败: {type(e).__name__}: {e}", exc_info=True)
-            await update.message.reply_text("❌ 处理查询时出错，请稍后重试。")
+            await update.message.reply_text("🍃 抱歉，世界树的迷雾暂时遮蔽了答案。请稍后再试吧。")
 
     def _split_long_message(self, text: str, max_length: int = 4096) -> list:
         """将长消息分割为多个部分"""
