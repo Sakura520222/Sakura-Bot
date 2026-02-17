@@ -95,6 +95,7 @@ python main.py
 | **🔧 Custom AI Config** | Support for multiple OpenAI-compatible API services | ✅ |
 | **🎯 Custom Prompts** | Tailor summary style with customizable AI prompts | ✅ |
 | **🎯 Poll Prompts** | Configure AI-generated poll content independently | ✅ |
+| **🤖 QA Bot Persona** | Customizable persona for QA bot with tailored response style | ✅ |
 
 ### Channel Management
 

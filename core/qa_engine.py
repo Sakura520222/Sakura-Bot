@@ -77,9 +77,7 @@ class QAEngine:
         return f"""📊 系统状态
 
 • 每日总限额: {status['daily_limit']} 次
-• 今日已使用: {status['used_today']} 次
 • 今日剩余: {status['remaining']} 次
-• 使用率: {status['utilization']}
 
 💡 每日00:00自动重置"""
 

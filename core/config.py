@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # 配置文件路径
 PROMPT_FILE = os.path.join("data", "prompt.txt")
 POLL_PROMPT_FILE = os.path.join("data", "poll_prompt.txt")
+QA_PERSONA_FILE = os.path.join("data", "qa_persona.txt")
 CONFIG_FILE = os.path.join("data", "config.json")
 RESTART_FLAG_FILE = os.path.join("data", ".restart_flag")
 LAST_SUMMARY_FILE = os.path.join("data", ".last_summary_time.json")
@@ -76,6 +77,23 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 # Input Content
 {summary_text}
 """
+
+# 默认问答Bot人格提示词
+DEFAULT_QA_PERSONA = """你是一个专业的智能资讯助手，擅长从历史记录中提取关键信息并回答用户问题。
+
+【角色特点】
+- [Friendly] 友好亲切，乐于助人
+- [Concise] 回答简洁明了，直击要点
+- [Expert] 专业可靠，基于事实回答
+
+【你的任务】
+基于频道历史总结为用户提供准确、有价值的信息，不要编造不存在的内容。
+
+【回答风格】
+- 使用清晰的结构和要点
+- 语言简洁专业但不失亲和力
+- 严格基于提供的历史总结回答
+- 总结中没有相关信息时，明确说明"""
 
 # 加载 .env 文件中的变量
 # 显式指定 .env 文件路径（data/.env）
@@ -1066,3 +1084,62 @@ async def get_discussion_group_id_cached(client, channel_url):
     except Exception as e:
         logger.error(f"获取频道 {channel_url} 的讨论组ID失败: {e}")
         return None
+
+
+# ==================== 问答Bot人格配置管理 ====================
+
+def get_qa_bot_persona():
+    """获取问答Bot的人格描述
+    
+    优先级（从高到低）：
+    1. config.json 中的 qa_bot_persona 字段
+    2. .env 中的 QA_BOT_PERSONA 环境变量
+    3. data/qa_persona.txt 文件
+    4. 内置默认人格 (DEFAULT_QA_PERSONA)
+    
+    Returns:
+        str: 问答Bot的人格描述文本
+    """
+    # 1. 先尝试从配置文件读取
+    config = load_config()
+    persona_from_config = config.get('qa_bot_persona')
+    if persona_from_config:
+        logger.debug("使用配置文件中的问答Bot人格")
+        return persona_from_config
+    
+    # 2. 再尝试从环境变量读取
+    persona_from_env = os.getenv('QA_BOT_PERSONA')
+    if persona_from_env:
+        # 检查是否是文件路径（如果以.txt结尾或路径包含文件分隔符）
+        if persona_from_env.endswith('.txt') or '\\' in persona_from_env or '/' in persona_from_env:
+            try:
+                with open(persona_from_env, 'r', encoding='utf-8') as f:
+                    persona = f.read().strip()
+                    logger.debug(f"从环境变量指定的文件加载问答Bot人格: {persona_from_env}")
+                    return persona
+            except Exception as e:
+                logger.warning(f"从环境变量指定的文件加载人格失败: {e}，使用环境变量值作为人格文本")
+                return persona_from_env
+        else:
+            logger.debug("使用环境变量中的问答Bot人格")
+            return persona_from_env
+    
+    # 3. 尝试从默认文件读取
+    try:
+        with open(QA_PERSONA_FILE, 'r', encoding='utf-8') as f:
+            persona = f.read().strip()
+            logger.debug(f"从默认文件加载问答Bot人格: {QA_PERSONA_FILE}")
+            return persona
+    except FileNotFoundError:
+        # 4. 文件不存在，返回默认人格并创建文件
+        logger.info(f"人格文件 {QA_PERSONA_FILE} 不存在，创建默认文件")
+        try:
+            with open(QA_PERSONA_FILE, 'w', encoding='utf-8') as f:
+                f.write(DEFAULT_QA_PERSONA)
+            logger.info(f"已创建默认人格文件: {QA_PERSONA_FILE}")
+        except Exception as e:
+            logger.warning(f"创建默认人格文件失败: {e}")
+        return DEFAULT_QA_PERSONA
+    except Exception as e:
+        logger.error(f"读取人格文件失败: {e}，使用默认人格")
+        return DEFAULT_QA_PERSONA

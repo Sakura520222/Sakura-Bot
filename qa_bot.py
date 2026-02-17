@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core.quota_manager import get_quota_manager
 from core.qa_engine_v3 import get_qa_engine_v3
 from core.conversation_manager import get_conversation_manager
-from core.config import REPORT_ADMIN_IDS
+from core.config import REPORT_ADMIN_IDS, get_qa_bot_persona
 
 # 配置日志 - 添加[QA]前缀以便区分
 class QAFormatter(logging.Formatter):
@@ -87,58 +87,61 @@ class QABot:
         """处理/start命令"""
         user_id = update.effective_user.id
 
-        welcome_message = """🍀 **你好，旅行者。我是纳西妲。**
+        welcome_message = """🤖 **你好！我是智能资讯助手。**
 
-你可以把我当成世界树的一条嫩芽，我连接着这个频道的所有记忆与知识。
-无论是过去散落的碎片，还是刚刚结出的总结果实，只要你发问，我就会从记忆的根系中为你寻找答案。
+我可以帮你从频道的历史记录中快速查找信息和知识。
+无论是最近的讨论，还是过去的精华总结，只要你提问，我就能为你找到答案。
 
 🌟 **你可以试着对我提问：**
 • "最近频道里发生了什么新鲜事？"
-• "帮我分析一下关于 [关键词] 的讨论。"
+• "帮我分析一下关于某个关键词的讨论。"
 • "查看本周的精华总结。"
+• "今天有什么更新？"
 
-"如果你感到迷茫，就让智慧的微风为你指引方向吧。\""""
+💡 **小提示：**
+我会记住我们的对话上下文（30分钟内），所以你可以用代词追问，比如"那它呢？"、"这个怎么样？"。"""
 
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/help命令"""
-        help_text = """🍀 **需要一些指引吗？这是我的"世界树使用手册"：**
+        help_text = """📚 <b>使用帮助</b>
 
-**基础命令：**
-• `/start` - 重新认识我
-• `/help` - 显示这份手册
-• `/status` - 感知世界树的脉动和会话状态
-• `/clear` - 清除对话记忆，重新开始
+<b>基础命令：</b>
+• /start - 查看欢迎信息
+• /help - 显示这份帮助文档
+• /status - 查看使用配额和会话状态
+• /clear - 清除对话记忆，重新开始
+• /view_persona - 查看当前助手人格设定
 
-**自然语言查询：**
+<b>自然语言查询：</b>
 直接发送问题，例如：
 • "上周发生了什么？"
 • "最近有什么技术讨论？"
 • "今天有什么更新？"
-• "纳西妲相关的内容"
+• "关于特定关键词的内容"
 
-**多轮对话：**
+<b>多轮对话：</b>
 • 我会记住你的对话上下文（30分钟内）
 • 你可以使用代词追问："那它呢？"、"这个怎么样？"
 • 对话超时后会自动开始新会话
 
-**时间关键词：**
+<b>时间关键词：</b>
 • 今天、昨天、前天
 • 本周、上周
 • 本月、上月
 • 最近7天、最近30天
 
-**功能特点：**
+<b>功能特点：</b>
 ✅ 智能意图识别
 ✅ 上下文感知（多轮对话）
 ✅ 频道画像注入
 ✅ 多频道综合查询
 
-⚠️ **注意：**
-由于我的力量有限，请尽量提出与频道总结相关的问题。过度偏离的查询可能会被世界树的防火墙拦截哦。"""
+⚠️ <b>注意：</b>
+请尽量提出与频道总结相关的问题。过度偏离的查询可能会被拦截。"""
 
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.message.reply_text(help_text, parse_mode='HTML')
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/status命令"""
@@ -147,21 +150,17 @@ class QABot:
 
         # 构建配额状态文本
         if status_info.get('is_admin'):
-            quota_text = """🌟 <b>守护者状态</b>
+            quota_text = """🌟 <b>管理员状态</b>
 
-你拥有访问世界树根系的特权，智慧的大门永远为你敞开。
+你拥有无限制访问的特权。
 
-📊 今日总使用：{}次""".format(status_info.get('total_used', 0))
+📊 今日总使用：{}次""".format(status_info.get('total_used_today', 0))
         else:
             quota_text = """📊 <b>配额状态</b>
 
-• 今日已使用: {used}/{limit} 次
-• 剩余次数: {remaining} 次
-• 使用率: {utilization}""".format(
+• 剩余次数: {remaining} 次""".format(
                 used=status_info.get('used_today', 0),
-                limit=status_info.get('daily_limit', 50),
-                remaining=status_info.get('remaining', 50),
-                utilization=status_info.get('utilization', '0%')
+                remaining=status_info.get('remaining', 50)
             )
 
         # 获取会话信息
@@ -180,7 +179,7 @@ class QABot:
 • 消息数: {session_info['message_count']} 条
 • 状态: {status_emoji}"""
 
-        message = f"""🍀 <b>正在感知世界树的脉动...</b>
+        message = f"""📊 <b>系统状态</b>
 
 {quota_text}{session_text}
 
@@ -196,12 +195,38 @@ class QABot:
         # 清除所有对话历史
         deleted_count = self.conversation_mgr.clear_user_history(user_id)
 
-        message = f"""🍃 **所有的记忆已回归世界树。**
+        message = f"""🗑️ **对话记忆已清除**
 
 已清除 **{deleted_count}** 条对话记录。
 
-现在，我的意识中只有此时此刻的你。
-让我们重新开始吧，旅行者。"""
+现在，我们的对话是全新的开始。有什么可以帮你的吗？"""
+
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    async def view_persona_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/view_persona命令 - 查看当前人格设定"""
+        persona = get_qa_bot_persona()
+        
+        # 限制显示长度，避免消息过长
+        max_length = 3500
+        if len(persona) > max_length:
+            persona_preview = persona[:max_length] + "\n\n... (内容过长，已截断)"
+        else:
+            persona_preview = persona
+        
+        message = f"""📋 **当前助手人格设定**
+
+```
+{persona_preview}
+```
+
+💡 **提示**：
+人格设定可通过以下方式修改：
+1. 修改 `data/qa_persona.txt` 文件
+2. 在 `data/config.json` 中设置 `qa_bot_persona` 字段
+3. 在 `.env` 文件中设置 `QA_BOT_PERSONA` 环境变量
+
+修改后需重启Bot生效。"""
 
         await update.message.reply_text(message, parse_mode='Markdown')
 
@@ -229,7 +254,7 @@ class QABot:
                 return
 
             # 2. 显示"正在思考"消息
-            thinking_msg = await update.message.reply_text("🍃 正在世界树的记忆中检索...")
+            thinking_msg = await update.message.reply_text("🔍 正在检索相关记录...")
 
             # 3. 处理查询
             answer = await self.qa_engine.process_query(query, user_id)
@@ -263,7 +288,7 @@ class QABot:
 
         except Exception as e:
             logger.error(f"处理消息失败: {type(e).__name__}: {e}", exc_info=True)
-            await update.message.reply_text("🍃 抱歉，世界树的迷雾暂时遮蔽了答案。请稍后再试吧。")
+            await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
 
     def _split_long_message(self, text: str, max_length: int = 4096) -> list:
         """将长消息分割为多个部分"""
@@ -340,6 +365,7 @@ class QABot:
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("status", self.status_command))
         self.application.add_handler(CommandHandler("clear", self.clear_command))
+        self.application.add_handler(CommandHandler("view_persona", self.view_persona_command))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
         # 启动Bot

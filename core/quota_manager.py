@@ -87,7 +87,7 @@ class QuotaManager:
                     "used": 0,
                     "daily_limit": self.daily_limit,
                     "is_admin": False,
-                    "message": f"🍃 **世界树的智慧今日已经分享完毕。**\n\n旅行者们的求知热情让世界树绽放了{total_used_today}次智慧的火花。\n请在梦境中休息，明日太阳升起时，新的知识将再次绽放。\n\n🌙 **重置时间：每日00:00**"
+                    "message": f"⏰ **今日配额已用完**\n\n系统今日已处理 {total_used_today} 次查询。\n请在明日配额重置后继续使用。\n\n🌙 **重置时间：每日00:00**"
                 }
 
             # 检查并增加用户配额
@@ -107,7 +107,7 @@ class QuotaManager:
                     "used": used,
                     "daily_limit": daily_limit,
                     "is_admin": False,
-                    "message": f"🍃 **今天的思绪已经有些疲惫了。**\n\n你已经与世界树对话了{used}次，收获了不少智慧吧？\n休息一下，让知识在心中沉淀，明天再来寻找新的答案吧。\n\n🌙 **重置时间：每日00:00**"
+                    "message": f"⏰ **今日配额已用完**\n\n你今天已经使用了 {used} 次查询。\n休息一下，明天配额重置后再来吧。\n\n🌙 **重置时间：每日00:00**"
                 }
 
             # 配额允许
@@ -117,10 +117,10 @@ class QuotaManager:
             logger.info(f"用户 {user_id} 配额检查通过: {used}/{self.daily_limit} (剩余{remaining})")
             
             if is_admin:
-                message = "🌟 **守护者权限：智慧的大门永远为你敞开**"
+                message = "🌟 **管理员权限**\n\n你拥有无限制访问的特权。"
             else:
                 total_remaining = self.total_daily_limit - total_used_today - 1
-                message = f"🍃 **智慧的微风拂过**\n\n✨ 本次对话成功\n💡 今日剩余对话次数：{remaining}/{self.daily_limit}\n🌳 世界树总剩余能量：{total_remaining}次"
+                message = f"✅ **查询成功**\n\n💡 今日剩余次数：{remaining}/{self.daily_limit}\n📊 系统总剩余：{total_remaining}次"
 
             return {
                 "allowed": True,
@@ -139,7 +139,7 @@ class QuotaManager:
                 "used": 0,
                 "daily_limit": self.daily_limit,
                 "is_admin": False,
-                "message": "🌫️ **迷雾暂时遮蔽了世界树的感知**\n\n请稍后再试，让迷雾散去..."
+                "message": "⚠️ **系统错误**\n\n配额检查失败，请稍后再试。"
             }
 
     def get_usage_status(self, user_id: int) -> Dict[str, Any]:
@@ -165,7 +165,7 @@ class QuotaManager:
                     "remaining": -1,  # -1表示无限制
                     "total_used_today": total_used,
                     "total_limit": self.total_daily_limit,
-                    "message": "🌟 **守护者状态**\n\n你拥有访问世界树根系的特权，智慧的大门永远为你敞开。\n\n📊 今日总使用：{total_used}次"
+                    "message": "🌟 **管理员状态**\n\n你拥有无限制访问的特权。\n\n📊 今日总使用：{}次".format(total_used)
                 }
 
             used = quota.get("usage_count", 0)
@@ -179,7 +179,7 @@ class QuotaManager:
                 "remaining": remaining,
                 "total_used_today": total_used,
                 "total_limit": self.total_daily_limit,
-                "message": f"🍃 **与世界树的连接状态**\n\n📚 今日已获取智慧：{used}次\n💡 今日剩余机会：{remaining}次\n🌳 世界树总能量：{total_remaining}次\n\n珍惜每次对话，让思考更有深度。"
+                "message": f"📊 **使用状态**\n\n📚 今日已使用：{used}次\n💡 今日剩余：{remaining}次\n📊 系统总剩余：{total_remaining}次"
             }
 
         except Exception as e:

@@ -26,8 +26,35 @@ from .reranker import get_reranker
 from .ai_client import client_llm
 from .settings import get_llm_model
 from .conversation_manager import get_conversation_manager
+from .config import get_qa_bot_persona
 
 logger = logging.getLogger(__name__)
+
+# 系统提示词模板（使用占位符，人格描述会动态注入）
+BASE_SYSTEM_TEMPLATE = """{persona_description}
+
+---
+
+## 核心任务
+你是一个智能问答助手，负责根据频道历史总结回答用户问题。
+
+## 核心约束（必须严格遵守）
+1. **基于事实**：严格基于提供的历史总结内容回答，不要编造信息
+2. **上下文理解**：如果有对话历史，优先利用上下文理解代词指代（如"它"、"那个"、"这个"等）
+3. **明确回答**：总结中没有相关信息时，明确说明
+4. **结构清晰**：使用清晰的结构和要点，语言简洁专业
+5. **Markdown规范**：
+   - 粗体：使用 **文本** （两边各两个星号）
+   - 斜体：使用 *文本* （两边各一个星号）
+   - 代码：使用 `代码` （反引号）
+   - **禁止使用 # 标题格式**
+   - 列表：使用 - 或 • 开头
+   - 链接：使用 [文本](URL) 格式
+   - **禁止使用未配对的星号、下划线或反引号**
+
+## 当前上下文
+{channel_context}{conversation_context}
+"""
 
 
 class QAEngineV3:
@@ -116,9 +143,7 @@ class QAEngineV3:
         return f"""📊 系统状态
 
 • 每日总限额: {status['daily_limit']} 次
-• 今日已使用: {status['used_today']} 次
 • 今日剩余: {status['remaining']} 次
-• 使用率: {status['utilization']}{vector_info}
 
 💡 每日00:00自动重置"""
 
@@ -344,32 +369,24 @@ class QAEngineV3:
                     conversation_context = f"\n【对话历史】\n{conversation_context}\n"
                     logger.debug(f"对话历史上下文长度: {len(conversation_context)} 字符")
 
-            # 构建提示词
-            prompt = f"""你是一个专业的资讯助手，负责根据历史总结回答用户问题。
+            # 获取动态人格描述
+            persona_description = get_qa_bot_persona()
+            logger.debug(f"使用人格描述，长度: {len(persona_description)} 字符")
 
-{channel_context}{conversation_context}
-用户当前查询：{query}
+            # 构建系统提示词（使用模板+动态人格）
+            system_prompt = BASE_SYSTEM_TEMPLATE.format(
+                persona_description=persona_description,
+                channel_context=channel_context,
+                conversation_context=conversation_context
+            )
+
+            # 构建用户提示词
+            user_prompt = f"""用户当前查询：{query}
 
 相关历史总结（共{len(summaries)}条，已通过语义搜索和重排序精选）：
 {context}
 
-要求（严格遵循）：
-1. 基于上述总结内容回答问题，不要编造信息
-2. 如果有对话历史，优先利用历史上下文理解用户的代词（如"它"、"那个"、"这个"等）
-3. 如果总结中没有相关信息，明确说明
-4. 使用清晰的结构和要点
-5. 语言简洁专业
-6. **Markdown格式要求**：
-   - 粗体：使用 **文本** （注意两边各两个星号）
-   - 斜体：使用 *文本* （注意两边各一个星号）
-   - 代码：使用 `代码` （反引号）
-   - **禁止使用 # 标题格式**
-   - 列表：使用 - 或 • 开头
-   - 链接：使用 [文本](URL) 格式
-   - **禁止使用未配对的星号、下划线或反引号**
-   - **所有特殊字符必须成对出现**
-
-请用严格的Markdown格式回答（不使用#标题）："""
+请根据上述总结回答用户的问题。"""
 
             logger.info(f"调用AI生成回答（RAG+对话历史），总结数: {len(summaries)}, 历史消息: {len(conversation_history) if conversation_history else 0}")
 
@@ -378,9 +395,9 @@ class QAEngineV3:
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个专业的资讯助手，擅长从历史记录中提取关键信息并回答用户问题。你能够理解对话上下文，准确识别代词指代。"
+                        "content": system_prompt
                     },
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7
             )
@@ -400,16 +417,16 @@ class QAEngineV3:
             
             # 检查是否是内容审核拦截
             if 'Moderation Block' in error_msg or 'content_filter' in error_msg:
-                return """🍀 **知识的殿堂不应被迷雾笼罩。**
+                return """⚠️ **查询内容受限**
 
-在这个世界上，有些思绪会像枯萎的枝叶一样被世界树排斥。你的查询触碰了不被允许的领域，所以我无法为你解读这部分信息。
+抱歉，你的查询触发了内容过滤机制，无法提供相关信息。
 
-💡 **建议你换个角度思考：**
-• 询问频道里最近盛开的"知识果实"（近期总结）
-• 查询特定主题在世界树中的"根系"（历史记录）
-• 看看大家都在为了什么而努力奋斗？
+💡 **建议：**
+• 询问频道里最近的总结
+• 查询特定主题的历史记录
+• 使用不同的关键词重新表述问题
 
-"去吧，让智慧重新流淌在清澈的溪流中。\""""
+请重新组织你的问题再试。"""
             
             # 其他错误：降级方案，直接返回总结摘要
             return self._fallback_answer_v3(summaries)
