@@ -134,7 +134,7 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
-          RELEASE_DIR="sakura-channel-summary-assistant-${RELEASE_NAME}"
+          RELEASE_DIR="Sakura-Bot-${RELEASE_NAME}"
           
           mkdir -p "$RELEASE_DIR"
           
@@ -174,7 +174,7 @@ jobs:
         if: steps.check_version.outputs.SHOULD_CREATE == 'true'
         run: |
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
-          ASSET_NAME="sakura-channel-summary-assistant-${RELEASE_NAME}"
+          ASSET_NAME="Sakura-Bot-${RELEASE_NAME}"
           gh release upload "$RELEASE_NAME" "${ASSET_NAME}.tar.gz" "${ASSET_NAME}.zip" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -183,5 +183,5 @@ jobs:
         if: always()
         run: |
           rm -f release_notes.md
-          rm -rf "sakura-channel-summary-assistant-v${{ steps.get_version.outputs.PY_VERSION }}"
-          rm -f sakura-channel-summary-assistant-v${{ steps.get_version.outputs.PY_VERSION }}.*
+          rm -rf "Sakura-Bot-v${{ steps.get_version.outputs.PY_VERSION }}"
+          rm -f Sakura-Bot-v${{ steps.get_version.outputs.PY_VERSION }}.*

@@ -8,7 +8,7 @@
 # - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
-# 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+# 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
 """
@@ -55,7 +55,7 @@ MESSAGE_ZH_CN = {
     'welcome.command_config': '**配置命令**\n/showchannels - 查看频道列表\n/addchannel - 添加监控频道\n/setchannelschedule - 设置自动总结时间',
     'welcome.command_history': '**历史记录**\n/history - 查看历史总结\n/export - 导出历史记录\n/stats - 查看统计数据',
     'welcome.command_admin': '**管理命令**\n/pause - 暂停定时任务\n/resume - 恢复定时任务\n/changelog - 查看更新日志',
-    'welcome.tip': '💡 **提示**\n• 发送 /help 查看完整命令列表\n• 更多信息请访问项目[开源仓库](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant)',
+    'welcome.tip': '💡 **提示**\n• 发送 /help 查看完整命令列表\n• 更多信息请访问项目[开源仓库](https://github.com/Sakura520222/Sakura-Bot)',
 
     # ========== 帮助消息 ==========
     'help.title': '📚 **Sakura-频道总结助手 - 完整命令列表**',
@@ -392,7 +392,7 @@ MESSAGE_EN_US = {
     'welcome.command_config': '**Configuration Commands**\n/showchannels - View channel list\n/addchannel - Add monitoring channel\n/setchannelschedule - Set automatic summary time',
     'welcome.command_history': '**History**\n/history - View summary history\n/export - Export history records\n/stats - View statistics',
     'welcome.command_admin': '**Management Commands**\n/pause - Pause scheduled tasks\n/resume - Resume scheduled tasks\n/changelog - View changelog',
-    'welcome.tip': '💡 **Tips**\n• Send /help to view complete command list\n• Visit [GitHub repository](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant) for more information',
+    'welcome.tip': '💡 **Tips**\n• Send /help to view complete command list\n• Visit [GitHub repository](https://github.com/Sakura520222/Sakura-Bot) for more information',
 
     # ========== Help Message ==========
     'help.title': '📚 **Sakura-Channel Summary Assistant - Complete Command List**',

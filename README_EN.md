@@ -1,16 +1,16 @@
-# 🌸 Sakura Channel Summary Assistant
+# 🌸 Sakura-Bot
 
-[![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Channel-Summary-Assistant?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/releases)
+[![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
 [![License](https://img.shields.io/badge/License-AGPL--3.0%20%2B%20Non--Commercial-blue?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000?style=flat-square)](https://github.com/psf/black)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/pulls)
-[![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-Channel-Summary-Assistant?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/stargazers)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/pulls)
+[![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/stargazers)
 
 > **An intelligent Telegram channel management tool powered by AI** 🤖✨
 
-[中文文档](README.md) | [Documentation](wiki) | [Report Bug](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues) | [Request Feature](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
+[中文文档](README.md) | [Documentation](wiki) | [Report Bug](https://github.com/Sakura520222/Sakura-Bot/issues) | [Request Feature](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 ---
 
@@ -43,8 +43,8 @@ Sakura Channel Summary Assistant is a sophisticated Telegram channel management 
 
 ```bash
 # Clone the repository
-git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant.git
-cd Sakura-Channel-Summary-Assistant
+git clone https://github.com/Sakura520222/Sakura-Bot.git
+cd Sakura-Bot
 
 # Configure environment variables
 cp data/.env.example data/.env
@@ -61,8 +61,8 @@ docker-compose logs -f
 
 ```bash
 # Clone the repository
-git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant.git
-cd Sakura-Channel-Summary-Assistant
+git clone https://github.com/Sakura520222/Sakura-Bot.git
+cd Sakura-Bot
 
 # Install dependencies
 pip install -r requirements.txt
@@ -277,7 +277,7 @@ QA_BOT_TOKEN=your_qa_bot_token_here  # Get from @BotFather
 ## 🏗️ Project Structure
 
 ```
-Sakura-Channel-Summary-Assistant/
+Sakura-Bot/
 │
 ├── 📁 core/                          # Core modules
 │   ├── ai_client.py                  # AI client module
@@ -377,7 +377,7 @@ This project is licensed under **GNU Affero General Public License Version 3.0 (
 - This project is for **personal learning only**, commercial use is prohibited
 - When using code or derivatives, must cite the original repository
 - Network service providers must provide source code per AGPL-3.0
-- Project source: https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+- Project source: https://github.com/Sakura520222/Sakura-Bot
 
 See [LICENSE](LICENSE) for the full license text.
 
@@ -388,15 +388,15 @@ See [LICENSE](LICENSE) for the full license text.
 - [Telethon](https://github.com/LonamiWebs/Telethon) - Powerful Telegram MTProto API framework
 - [OpenAI](https://openai.com/) - Leading AI research and API services
 - [DeepSeek](https://www.deepseek.com/) - Cost-effective AI API provider
-- All [contributors](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/graphs/contributors) who helped improve this project
+- All [contributors](https://github.com/Sakura520222/Sakura-Bot/graphs/contributors) who helped improve this project
 
 ---
 
 ## 📞 Support
 
 - 📧 Email: [sakura520222@outlook.com](mailto:sakura520222@outlook.com)
-- 🐛 Issues: [GitHub Issues](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/discussions)
+- 🐛 Issues: [GitHub Issues](https://github.com/Sakura520222/Sakura-Bot/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/Sakura520222/Sakura-Bot/discussions)
 
 ---
 
@@ -406,6 +406,6 @@ See [LICENSE](LICENSE) for the full license text.
 
 Made with ❤️ by [Sakura520222](https://github.com/Sakura520222)
 
-[⭐ Star](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/fork) · [📖 Documentation](wiki) · [🐛 Report Issues](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
+[⭐ Star](https://github.com/Sakura520222/Sakura-Bot) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Bot/fork) · [📖 Documentation](wiki) · [🐛 Report Issues](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 </div>

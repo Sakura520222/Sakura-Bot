@@ -1,16 +1,16 @@
-# 🌸 Sakura-频道总结助手
+# 🌸 Sakura-Bot
 
-[![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Channel-Summary-Assistant?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/releases)
+[![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
 [![License](https://img.shields.io/badge/License-AGPL--3.0%20%2B%20Non--Commercial-blue?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000?style=flat-square)](https://github.com/psf/black)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/pulls)
-[![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-Channel-Summary-Assistant?style=flat-square)](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/stargazers)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/pulls)
+[![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/stargazers)
 
 > **基于AI技术的智能Telegram频道管理工具** 🤖✨
 
-[English](README_EN.md) | [文档](wiki) | [报告问题](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues) | [功能建议](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
+[English](README_EN.md) | [文档](wiki) | [报告问题](https://github.com/Sakura520222/Sakura-Bot/issues) | [功能建议](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 ---
 
@@ -43,8 +43,8 @@ Sakura-频道总结助手是一款基于Telegram API和AI技术的智能频道�
 
 ```bash
 # 克隆项目
-git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant.git
-cd Sakura-Channel-Summary-Assistant
+git clone https://github.com/Sakura520222/Sakura-Bot.git
+cd Sakura-Bot
 
 # 配置环境变量
 cp data/.env.example data/.env
@@ -61,8 +61,8 @@ docker-compose logs -f
 
 ```bash
 # 克隆项目
-git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant.git
-cd Sakura-Channel-Summary-Assistant
+git clone https://github.com/Sakura520222/Sakura-Bot.git
+cd Sakura-Bot
 
 # 安装依赖
 pip install -r requirements.txt
@@ -277,7 +277,7 @@ QA_BOT_TOKEN=your_qa_bot_token_here  # 从@BotFather获取
 ## 🏗️ 项目结构
 
 ```
-Sakura-Channel-Summary-Assistant/
+Sakura-Bot/
 │
 ├── 📁 core/                          # 核心模块目录
 │   ├── ai_client.py                  # AI客户端模块
@@ -377,7 +377,7 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 - 本项目仅供**个人学习使用**，禁止任何商业用途
 - 使用本项目的代码或衍生作品时，必须标注本仓库的原始来源地址
 - 基于 AGPL-3.0 的网络交互条款，通过服务器提供服务的必须提供源代码
-- 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+- 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 - 完整许可证内容请参阅 [LICENSE](LICENSE) 文件
 
 ---
@@ -387,15 +387,15 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 - [Telethon](https://github.com/LonamiWebs/Telethon) - 强大的Telegram MTProto API框架
 - [OpenAI](https://openai.com/) - 领先的AI研究和API服务
 - [DeepSeek](https://www.deepseek.com/) - 高性价比的AI API提供商
-- 所有为改进本项目做出贡献的[贡献者](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/graphs/contributors)
+- 所有为改进本项目做出贡献的[贡献者](https://github.com/Sakura520222/Sakura-Bot/graphs/contributors)
 
 ---
 
 ## 📞 支持
 
 - 📧 电子邮件：[sakura520222@outlook.com](mailto:sakura520222@outlook.com)
-- 🐛 问题反馈：[GitHub Issues](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
-- 💬 讨论交流：[GitHub Discussions](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/discussions)
+- 🐛 问题反馈：[GitHub Issues](https://github.com/Sakura520222/Sakura-Bot/issues)
+- 💬 讨论交流：[GitHub Discussions](https://github.com/Sakura520222/Sakura-Bot/discussions)
 
 ---
 
@@ -405,6 +405,6 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 Made with ❤️ by [Sakura520222](https://github.com/Sakura520222)
 
-[⭐ Star](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/fork) · [📖 文档](wiki) · [🐛 报告问题](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
+[⭐ Star](https://github.com/Sakura520222/Sakura-Bot) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Bot/fork) · [📖 文档](wiki) · [🐛 报告问题](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 </div>

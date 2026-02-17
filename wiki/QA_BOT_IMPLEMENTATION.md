@@ -457,8 +457,8 @@ docker-compose up -d qa_bot
 
 ### 问题反馈
 
-- **GitHub Issues**: [提交问题](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
-- **Discussions**: [参与讨论](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/discussions)
+- **GitHub Issues**: [提交问题](https://github.com/Sakura520222/Sakura-Bot/issues)
+- **Discussions**: [参与讨论](https://github.com/Sakura520222/Sakura-Bot/discussions)
 - **Email**: [sakura520222@outlook.com](mailto:sakura520222@outlook.com)
 
 ---
@@ -496,6 +496,6 @@ docker-compose up -d qa_bot
 
 让频道管理更智能 · 让信息查询更便捷
 
-[⭐ Star](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/fork) · [📖 文档](../wiki)
+[⭐ Star](https://github.com/Sakura520222/Sakura-Bot) · [🍴 Fork](https://github.com/Sakura520222/Sakura-Bot/fork) · [📖 文档](../wiki)
 
 </div>

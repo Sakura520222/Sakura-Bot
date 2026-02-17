@@ -7,7 +7,7 @@
 # - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
-# 本项目源代码：https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant
+# 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
 """投票数据管理模块

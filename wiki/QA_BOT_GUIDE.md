@@ -438,14 +438,14 @@ docker-compose up -d qa_bot
 
 欢迎贡献代码和想法！请查看：
 - [贡献指南](CODE_OF_CONDUCT.md)
-- [开发文档](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant)
+- [开发文档](https://github.com/Sakura520222/Sakura-Bot)
 
 ---
 
 ## 📞 支持
 
-- 📧 **Issues**: [GitHub Issues](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant/discussions)
+- 📧 **Issues**: [GitHub Issues](https://github.com/Sakura520222/Sakura-Bot/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/Sakura520222/Sakura-Bot/discussions)
 - 📧 **Email**: [sakura520222@outlook.com](mailto:sakura520222@outlook.com)
 
 ---
