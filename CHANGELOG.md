@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.3] - 2026-02-18
+
+### 新增
+- **项目更名为 Sakura-Bot**：项目正式更名为 Sakura-Bot，开启新的发展篇章
+  - 项目名称从之前的名称更改为 Sakura-Bot
+  - GitHub 仓库地址更新为：https://github.com/Sakura520222/Sakura-Bot
+  - 保持原有所有功能特性不变
+  - 继续致力于为 Telegram 频道提供智能总结服务
+  - 感谢所有用户的支持与陪伴 🌸
+
+### 说明
+- 本次更新主要为品牌重塑，不影响任何现有功能
+- 所有配置、命令、API 保持完全兼容
+- 代码结构和项目文档保持不变
+- 未来将继续优化和增强功能
+
 ## [1.5.2] - 2026-02-16
 
 ### 新增
