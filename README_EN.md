@@ -282,6 +282,7 @@ Sakura-Bot/
 │
 ├── 📁 core/                          # Core modules
 │   ├── ai_client.py                  # AI client module
+│   ├── process_manager.py            # Process manager (QA Bot subprocess)
 │   ├── command_handlers/             # Command handlers
 │   ├── telegram/                     # Telegram client
 │   └── utils/                        # Utility functions

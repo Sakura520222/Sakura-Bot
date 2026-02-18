@@ -16,6 +16,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
+from .i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -578,9 +579,8 @@ class DatabaseManager:
                 message_count = summary.get('message_count', 0)
                 summary_text = summary.get('summary_text', '')
 
-                # 类型中文映射
-                type_map = {'daily': '日报', 'weekly': '周报', 'manual': '手动总结'}
-                type_cn = type_map.get(summary_type, summary_type)
+                # 类型国际化映射
+                type_cn = get_text(f'summary_type.{summary_type}')
 
                 f.write(f"## {channel_name} - {created_at} ({type_cn})\n\n")
                 f.write(f"**消息数量**: {message_count}\n\n")

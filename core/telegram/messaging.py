@@ -336,7 +336,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     else:
                         # 长消息分段发送，收集每个分段的消息ID
                         # 使用频道实际名称作为分段消息标题
-                        channel_title = channel_actual_name if channel_actual_name else "频道周报汇总"
+                        channel_title = channel_actual_name if channel_actual_name else get_text('messaging.channel_title_fallback')
                         
                         # 使用send_long_message函数进行智能分割和发送
                         # 但需要收集消息ID，所以需要自定义实现
@@ -395,7 +395,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             try:
                                 await use_client.send_message(
                                     admin_id,
-                                    f"✅ 总结已成功发送到频道 {channel_actual_name or source_channel}",
+                                    get_text('messaging.send_success', channel=channel_actual_name or source_channel),
                                     link_preview=False
                                 )
                             except Exception as e:
@@ -440,16 +440,8 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             for admin_id in ADMIN_LIST:
                                 try:
                                     notification = (
-                                        f"⚠️ **频道发送失败**\n\n"
-                                        f"频道：{channel_actual_name or source_channel}\n"
-                                        f"原因：机器人没有在该频道发送消息的权限\n\n"
-                                        f"可能原因：\n"
-                                        f"• 频道设置为仅讨论组模式\n"
-                                        f"• 机器人未获得发送消息的权限\n"
-                                        f"• 频道未启用机器人功能\n\n"
-                                        f"建议：检查频道管理员权限设置\n\n"
-                                        f"📊 **总结内容如下：**\n\n"
-                                        f"{summary_text_for_source}"
+                                        get_text('messaging.send_forbidden', channel=channel_actual_name or source_channel)
+                                        + f"\n\n{summary_text_for_source}"
                                     )
                                     await use_client.send_message(admin_id, notification, link_preview=False)
                                 except Exception as notify_error:
@@ -461,7 +453,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 try:
                                     await use_client.send_message(
                                         admin_id,
-                                        f"❌ 向频道 {channel_actual_name or source_channel} 发送报告失败：\n{type(e).__name__}: {e}",
+                                        get_text('messaging.send_error', channel=channel_actual_name or source_channel, error=f"{type(e).__name__}: {e}"),
                                         link_preview=False
                                     )
                                 except Exception as notify_error:
@@ -514,7 +506,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         else:
                             # 长消息分段发送，收集每个分段的消息ID
                             # 使用频道实际名称作为分段消息标题
-                            channel_title = channel_actual_name if channel_actual_name else "频道周报汇总"
+                            channel_title = channel_actual_name if channel_actual_name else get_text('messaging.channel_title_fallback')
                             
                             # 使用智能分割算法
                             max_length = 4000

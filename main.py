@@ -55,56 +55,9 @@ from core.poll_regeneration_handlers import (
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.5.4"
+__version__ = "1.5.5"
 
-# 问答Bot进程管理
-qa_bot_process = None
-
-def start_qa_bot():
-    """在后台启动问答Bot"""
-    global qa_bot_process
-    try:
-        # 检查是否启用问答Bot
-        qa_bot_enabled = os.getenv("QA_BOT_ENABLED", "True").lower() == "true"
-        qa_bot_token = os.getenv("QA_BOT_TOKEN", "")
-        
-        if not qa_bot_enabled:
-            logger.info("问答Bot未启用 (QA_BOT_ENABLED=False)")
-            return
-        
-        if not qa_bot_token:
-            logger.warning("未配置QA_BOT_TOKEN，跳过启动问答Bot")
-            return
-        
-        logger.info("正在启动问答Bot...")
-        # 使用subprocess在后台运行qa_bot.py
-        # 注意：不重定向stdout/stderr，让子进程日志直接输出到控制台
-        qa_bot_process = subprocess.Popen(
-            [sys.executable, "qa_bot.py"],
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        logger.info(f"问答Bot已启动 (PID: {qa_bot_process.pid})")
-        
-    except Exception as e:
-        logger.error(f"启动问答Bot失败: {type(e).__name__}: {e}", exc_info=True)
-
-def stop_qa_bot():
-    """停止问答Bot"""
-    global qa_bot_process
-    if qa_bot_process:
-        try:
-            logger.info("正在停止问答Bot...")
-            qa_bot_process.terminate()
-            qa_bot_process.wait(timeout=5)
-            logger.info("问答Bot已停止")
-        except Exception as e:
-            logger.error(f"停止问答Bot失败: {type(e).__name__}: {e}")
-            try:
-                qa_bot_process.kill()
-            except:
-                pass
-        finally:
-            qa_bot_process = None
+from core.process_manager import start_qa_bot, stop_qa_bot
 
 def cleanup_handler(signum, frame):
     """清理处理器"""
@@ -118,8 +71,9 @@ signal.signal(signal.SIGINT, cleanup_handler)
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
+    from core.i18n import get_text
     try:
-        # 构建帮助信息
+        # 构建帮助信息（使用 i18n，支持多语言）
         help_text = f"""🤖 **Sakura频道总结助手 v{__version__} 已启动**
 
 **核心功能**
@@ -130,35 +84,39 @@ async def send_startup_message(client):
 • 定时任务调度
 
 **可用命令**
-/summary - 立即生成本周频道消息汇总
-/showprompt - 查看当前提示词
-/setprompt - 设置自定义提示词
-/showpollprompt - 查看当前投票提示词
-/setpollprompt - 设置投票提示词
-/showaicfg - 查看AI配置
-/setaicfg - 设置AI配置
-/showloglevel - 查看当前日志级别
-/setloglevel - 设置日志级别
-/restart - 重启机器人
-/shutdown - 彻底停止机器人
-/pause - 暂停所有定时任务
-/resume - 恢复所有定时任务
-/showchannels - 查看当前频道列表
-/addchannel - 添加频道
-/deletechannel - 删除频道
-/clearsummarytime - 清除上次总结时间记录
-/setsendtosource - 设置是否将报告发送回源频道
-/showchannelschedule - 查看频道自动总结时间配置
-/setchannelschedule - 设置频道自动总结时间
-/deletechannelschedule - 删除频道自动总结时间配置
-/channelpoll - 查看频道投票配置
-/setchannelpoll - 设置频道投票配置
-/deletechannelpoll - 删除频道投票配置
-/clearcache - 清除讨论组ID缓存
+{get_text('cmd.summary')}
+{get_text('cmd.showprompt')}
+{get_text('cmd.setprompt')}
+{get_text('cmd.showpollprompt')}
+{get_text('cmd.setpollprompt')}
+{get_text('cmd.showaicfg')}
+{get_text('cmd.setaicfg')}
+{get_text('cmd.showloglevel')}
+{get_text('cmd.setloglevel')}
+{get_text('cmd.restart')}
+{get_text('cmd.shutdown')}
+{get_text('cmd.pause')}
+{get_text('cmd.resume')}
+{get_text('cmd.showchannels')}
+{get_text('cmd.addchannel')}
+{get_text('cmd.deletechannel')}
+{get_text('cmd.clearsummarytime')}
+{get_text('cmd.setsendtosource')}
+{get_text('cmd.showchannelschedule')}
+{get_text('cmd.setchannelschedule')}
+{get_text('cmd.deletechannelschedule')}
+{get_text('cmd.channelpoll')}
+{get_text('cmd.setchannelpoll')}
+{get_text('cmd.deletechannelpoll')}
+{get_text('cmd.clearcache')}
+{get_text('cmd.history')}
+{get_text('cmd.export')}
+{get_text('cmd.stats')}
+{get_text('cmd.language')}
+{get_text('cmd.changelog')}
 
 **版本信息**
 当前版本: v{__version__}
-查看更新日志: /changelog
 
 机器人运行正常，随时为您服务！"""
 

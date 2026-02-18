@@ -71,6 +71,7 @@ MESSAGE_ZH_CN = {
     'help.section_poll': '**🗳️ 投票配置**',
     'help.section_cache': '**💾 缓存管理**',
     'help.section_history': '**📜 历史记录**',
+    'help.section_language': '**🌐 语言设置**',
     'help.new_feature': ' (新功能)',
     'help.tip': '---\n💡 **提示**\n• 大多数命令支持中英文别名\n• 配置类命令需要管理员权限\n• 使用 /start 查看快速入门指南',
 
@@ -261,8 +262,8 @@ MESSAGE_ZH_CN = {
     'history.tip_export': '💡 提示: 使用 /export 导出完整记录',
     'history.query_error': '查询历史记录时出错：{error}',
     'history.exporting': '📦 正在导出历史记录，请稍候...',
-    'history.export_success': '✅ 导出成功\n格式: {format}\n文件: {filename}',
-    'history.export_failed': '❌ 导出失败：没有数据可导出或不支持的格式',
+    'history.export_done': '✅ 导出成功\n格式: {format}\n文件: {filename}',
+    'history.export_no_data': '❌ 导出失败：没有数据可导出或不支持的格式',
     'history.overview_title': '📊 **频道统计概览**',
     'history.ranking_title': '🏆 **频道排行** (按总结次数)',
     'history.ranking_item': '{index}. **{name}**\n   总结: {summary_count} 次 | 消息: {total_messages} 条 | 平均: {avg_messages} 条/次',
@@ -281,7 +282,6 @@ MESSAGE_ZH_CN = {
     'history.type_manual': '手动总结',
     'history.unknown_time': '未知时间',
     'history.view_full': '\n   📝 查看完整: https://t.me/{channel}/{msg_id}',
-    'history.export_failed': '导出历史记录时出错：{error}',
     'history.stats_no_data': '❌ 频道 {channel} 暂无统计数据',
     'history.stats_title': '📊 **频道统计数据** - {channel}',
     'history.stats_summary': '📈 总体统计\n• 总总结数：{total}\n• 总处理消息数：{messages}',
@@ -291,9 +291,14 @@ MESSAGE_ZH_CN = {
     'history.stats_ranking_title': '\n🏆 频道排行',
     'history.stats_ranking_item': '{index}. {channel} - {summary_count} 次总结，{total_messages} 条消息，平均 {avg_messages} 条/次',
     'history.stats_error': '获取统计数据时出错：{error}',
-    'history.export_success': '✅ 导出成功！文件：{filename}',
     'history.export_error': '❌ 导出历史记录时出错：{error}',
     'history.invalid_format': '❌ 不支持的导出格式：{format}\n支持的格式：json, csv, md',
+
+    # ========== 消息发送相关 ==========
+    'messaging.channel_title_fallback': '频道周报汇总',
+    'messaging.send_success': '✅ 总结已成功发送到频道 {channel}',
+    'messaging.send_forbidden': '⚠️ **频道发送失败**\n\n频道：{channel}\n原因：机器人没有在该频道发送消息的权限\n\n可能原因：\n• 频道设置为仅讨论组模式\n• 机器人未获得发送消息的权限\n• 频道未启用机器人功能\n\n建议：检查频道管理员权限设置\n\n📊 **总结内容如下：**',
+    'messaging.send_error': '❌ 向频道 {channel} 发送报告失败：\n{error}',
 
     # ========== AI 配置 ==========
     'aicfg.title': '🤖 **当前 AI 配置**',
@@ -361,6 +366,42 @@ MESSAGE_ZH_CN = {
     'status.disabled': '关闭',
     'status.on': '开启',
     'status.off': '关闭',
+
+    # ========== 日期/时间相关 ==========
+    'date.weekday.monday': '星期一',
+    'date.weekday.tuesday': '星期二',
+    'date.weekday.wednesday': '星期三',
+    'date.weekday.thursday': '星期四',
+    'date.weekday.friday': '星期五',
+    'date.weekday.saturday': '星期六',
+    'date.weekday.sunday': '星期日',
+    'date.frequency.daily': '每天',
+    'date.frequency.weekly': '每周',
+
+    # ========== 投票相关（补充） ==========
+    'poll.generating': '正在生成投票内容...',
+    'poll.default_question': '你对本周总结有什么看法？',
+    'poll.default_options.0': '非常满意',
+    'poll.default_options.1': '比较满意',
+    'poll.default_options.2': '一般',
+    'poll.default_options.3': '有待改进',
+    'poll.send_success': '✅ 投票已发送',
+    'poll.send_failed': '❌ 投票发送失败',
+    'poll.waiting_forward': '⏳ 等待频道消息转发到讨论组...',
+    'poll.forward_timeout': '⏱️ 等待转发消息超时（10秒），可能转发延迟或未成功',
+    'poll.no_discussion_group': '⚠️ 频道 {channel} 没有绑定讨论组，无法发送投票到评论区',
+    'poll.bot_not_in_discussion': '⚠️ 机器人未加入讨论组 {group_id} 或没有权限',
+
+    # ========== 总结类型 ==========
+    'summary_type.daily': '日报',
+    'summary_type.weekly': '周报',
+    'summary_type.manual': '手动总结',
+
+    # ========== 调度格式标题 ==========
+    'schedule.format_header': '\n使用格式：\n',
+
+    # ========== 投票超时回退 ==========
+    'poll.timeout_fallback': '📊 **投票：{question}**\n\n{options}',
 }
 
 # 英文翻译
@@ -408,6 +449,7 @@ MESSAGE_EN_US = {
     'help.section_poll': '**🗳️ Poll Configuration**',
     'help.section_cache': '**💾 Cache Management**',
     'help.section_history': '**📜 History**',
+    'help.section_language': '**🌐 Language Settings**',
     'help.new_feature': ' (New Feature)',
     'help.tip': '---\n💡 **Tips**\n• Most commands support Chinese/English aliases\n• Configuration commands require admin permissions\n• Use /start for quick start guide',
 
@@ -598,8 +640,8 @@ MESSAGE_EN_US = {
     'history.tip_export': '💡 Tip: Use /export to export complete records',
     'history.query_error': 'Error querying history records: {error}',
     'history.exporting': '📦 Exporting history records, please wait...',
-    'history.export_success': '✅ Export successful\nFormat: {format}\nFile: {filename}',
-    'history.export_failed': '❌ Export failed: No data to export or unsupported format',
+    'history.export_done': '✅ Export successful\nFormat: {format}\nFile: {filename}',
+    'history.export_no_data': '❌ Export failed: No data to export or unsupported format',
     'history.overview_title': '📊 **Channel Statistics Overview**',
     'history.ranking_title': '🏆 **Channel Ranking** (by summary count)',
     'history.ranking_item': '{index}. **{name}**\n   Summaries: {summary_count} | Messages: {total_messages} | Average: {avg_messages} messages/summary',
@@ -618,7 +660,6 @@ MESSAGE_EN_US = {
     'history.type_manual': 'Manual Summary',
     'history.unknown_time': 'Unknown time',
     'history.view_full': '\n   📝 View full: https://t.me/{channel}/{msg_id}',
-    'history.export_failed': 'Error exporting history records: {error}',
     'history.stats_no_data': '❌ Channel {channel} has no statistical data',
     'history.stats_title': '📊 **Channel Statistics** - {channel}',
     'history.stats_summary': '📈 Overall Statistics\n• Total summaries: {total}\n• Total messages processed: {messages}',
@@ -628,9 +669,14 @@ MESSAGE_EN_US = {
     'history.stats_ranking_title': '\n🏆 Channel Ranking',
     'history.stats_ranking_item': '{index}. {channel} - {summary_count} summaries, {total_messages} messages, average {avg_messages} messages/summary',
     'history.stats_error': 'Error getting statistics: {error}',
-    'history.export_success': '✅ Export successful! File: {filename}',
     'history.export_error': '❌ Error exporting history records: {error}',
     'history.invalid_format': '❌ Unsupported export format: {format}\nSupported formats: json, csv, md',
+
+    # ========== Messaging Related ==========
+    'messaging.channel_title_fallback': 'Channel Weekly Summary',
+    'messaging.send_success': '✅ Summary successfully sent to channel {channel}',
+    'messaging.send_forbidden': '⚠️ **Channel Send Failed**\n\nChannel: {channel}\nReason: Bot does not have permission to send messages in this channel\n\nPossible reasons:\n• Channel is set to discussion-only mode\n• Bot has not been granted message sending permission\n• Channel has not enabled bot functionality\n\nSuggestion: Check channel administrator permission settings\n\n📊 **Summary content:**',
+    'messaging.send_error': '❌ Failed to send report to channel {channel}:\n{error}',
 
     # ========== AI Configuration ==========
     'aicfg.title': '🤖 **Current AI Configuration**',
@@ -698,6 +744,42 @@ MESSAGE_EN_US = {
     'status.disabled': 'Disabled',
     'status.on': 'On',
     'status.off': 'Off',
+
+    # ========== Date/Time Related ==========
+    'date.weekday.monday': 'Monday',
+    'date.weekday.tuesday': 'Tuesday',
+    'date.weekday.wednesday': 'Wednesday',
+    'date.weekday.thursday': 'Thursday',
+    'date.weekday.friday': 'Friday',
+    'date.weekday.saturday': 'Saturday',
+    'date.weekday.sunday': 'Sunday',
+    'date.frequency.daily': 'Daily',
+    'date.frequency.weekly': 'Weekly',
+
+    # ========== Poll Related (Supplement) ==========
+    'poll.generating': 'Generating poll content...',
+    'poll.default_question': 'What do you think about this week\'s summary?',
+    'poll.default_options.0': 'Very satisfied',
+    'poll.default_options.1': 'Satisfied',
+    'poll.default_options.2': 'Average',
+    'poll.default_options.3': 'Needs improvement',
+    'poll.send_success': '✅ Poll sent',
+    'poll.send_failed': '❌ Poll send failed',
+    'poll.waiting_forward': '⏳ Waiting for channel message to be forwarded to discussion group...',
+    'poll.forward_timeout': '⏱️ Waiting for forward message timeout (10 seconds), possibly delayed or failed',
+    'poll.no_discussion_group': '⚠️ Channel {channel} has no linked discussion group, cannot send poll to comments',
+    'poll.bot_not_in_discussion': '⚠️ Bot not in discussion group {group_id} or no permission',
+
+    # ========== Summary Type ==========
+    'summary_type.daily': 'Daily Report',
+    'summary_type.weekly': 'Weekly Report',
+    'summary_type.manual': 'Manual Summary',
+
+    # ========== Schedule Format Header ==========
+    'schedule.format_header': '\nUsage format:\n',
+
+    # ========== Poll Timeout Fallback ==========
+    'poll.timeout_fallback': '📊 **Poll: {question}**\n\n{options}',
 }
 
 

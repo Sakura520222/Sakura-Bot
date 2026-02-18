@@ -131,7 +131,7 @@ async def handle_ai_config_input(event):
             api_key_display = f"{api_key_display[:10]}...{api_key_display[-10:] if len(api_key_display) > 20 else api_key_display}"
         else:
             api_key_display = get_text('aicfg.not_set')
-        await event.reply(get_text('aicfg.api_key_set', value=api_key_display))
+        await event.reply(get_text('aicfg.api_key_set', key=api_key_display))
     
     elif config_step == 2:
         # 处理Base URL

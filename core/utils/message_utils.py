@@ -3,6 +3,7 @@
 """
 
 import logging
+from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +19,16 @@ def format_schedule_info(channel, schedule, index=None):
     Returns:
         str: 格式化的配置信息字符串
     """
-    day_map = {
-        'mon': '周一', 'tue': '周二', 'wed': '周三', 'thu': '周四',
-        'fri': '周五', 'sat': '周六', 'sun': '周日'
+    # 使用 i18n 获取星期映射
+    weekday_keys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    weekday_map = {
+        'mon': get_text('date.weekday.monday'),
+        'tue': get_text('date.weekday.tuesday'),
+        'wed': get_text('date.weekday.wednesday'),
+        'thu': get_text('date.weekday.thursday'),
+        'fri': get_text('date.weekday.friday'),
+        'sat': get_text('date.weekday.saturday'),
+        'sun': get_text('date.weekday.sunday'),
     }
 
     channel_name = channel.split('/')[-1]
@@ -34,9 +42,12 @@ def format_schedule_info(channel, schedule, index=None):
         prefix = ""
 
     if frequency == 'daily':
-        return f"{prefix}{channel_name}: 每天 {hour:02d}:{minute:02d}\n"
+        daily_text = get_text('date.frequency.daily')
+        return f"{prefix}{channel_name}: {daily_text} {hour:02d}:{minute:02d}\n"
     elif frequency == 'weekly':
-        days_cn = '、'.join([day_map.get(d, d) for d in schedule.get('days', [])])
-        return f"{prefix}{channel_name}: 每周{days_cn} {hour:02d}:{minute:02d}\n"
+        weekly_text = get_text('date.frequency.weekly')
+        days_localized = '、'.join([weekday_map.get(d, d) for d in schedule.get('days', [])])
+        return f"{prefix}{channel_name}: {weekly_text}{days_localized} {hour:02d}:{minute:02d}\n"
     else:
-        return f"{prefix}{channel_name}: 未知频率 {frequency} {hour:02d}:{minute:02d}\n"
+        # 未知频率，回退到显示原始值
+        return f"{prefix}{channel_name}: {frequency} {hour:02d}:{minute:02d}\n"

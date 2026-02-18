@@ -5,6 +5,64 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.5] - 2026-02-18
+
+### 修复
+- **重启/停止时问答Bot未正确关闭**：修复了通过 `/restart` 和 `/shutdown` 命令操作时，问答Bot子进程未被正确终止的问题
+  - **问题**：`/restart` 和 `/shutdown` 命令在 `other_commands.py` 中直接调用 `sys.exit(0)`，未事先终止问答Bot子进程，导致 QA Bot 以孤儿进程形式继续运行
+  - **修复**：在重启/停止前主动调用 `stop_qa_bot()` 函数终止子进程
+  - **影响范围**：
+    - `core/command_handlers/other_commands.py` - `handle_restart()` 和 `handle_shutdown()` 函数
+  - **修复效果**：
+    - ✅ `/restart` 命令：重启前先终止旧的问答Bot，新进程启动后自动重新创建
+    - ✅ `/shutdown` 命令：停止时同步终止问答Bot，不留孤儿进程
+
+- **i18n 翻译键重复与命名问题**：修复 `core/i18n.py` 中存在重复定义和命名不一致的翻译键
+  - 删除重复的 `history.export_success` 和 `history.export_failed` 键（分别存在两处定义）
+  - 统一重命名为 `history.export_done`（导出成功提示）和 `history.export_no_data`（无数据提示），避免冲突
+
+### 新增文件
+- **core/process_manager.py** - 进程管理模块
+  - 将问答Bot子进程管理逻辑从 `main.py` 中分离为独立模块
+  - 提供 `start_qa_bot()`、`stop_qa_bot()`、`get_qa_bot_process()` 函数
+  - 供 `main.py` 和命令处理模块共同调用，避免代码重复
+
+### 改进
+- **代码结构优化**：将 `main.py` 中内联的进程管理代码迁移至 `core/process_manager.py`
+  - `main.py` 改为从 `core.process_manager` 导入，减少主文件复杂度
+  - `other_commands.py` 中的 `handle_restart` 和 `handle_shutdown` 统一通过 `process_manager` 管理子进程生命周期
+  - 信号处理器（SIGTERM/SIGINT）和 `finally` 块仍正常工作，作为双重保障
+
+- **国际化（i18n）扩展**：大幅扩展 `core/i18n.py` 翻译文本库，覆盖更多模块
+  - **新增中英文翻译键**：
+    - `help.section_language` - 语言设置帮助分类标题
+    - `messaging.*` - 消息发送相关提示（成功/权限不足/错误）
+    - `date.weekday.*` / `date.frequency.*` - 日期/频率本地化文本
+    - `poll.generating`, `poll.send_success`, `poll.send_failed` 等投票状态文本
+    - `poll.default_question` / `poll.default_options.*` - 默认投票内容（支持多语言）
+    - `poll.waiting_forward`, `poll.forward_timeout`, `poll.no_discussion_group` 等投票流程提示
+    - `summary_type.*` - 总结类型（日报/周报/手动总结）本地化
+    - `schedule.format_header` - 调度配置帮助头部文本
+    - `poll.timeout_fallback` - 投票转发超时回退文本模板
+
+- **constants.py 重构**：将硬编码的语言相关常量迁移至 i18n 模块
+  - 删除 `DAY_NAMES_CN`（星期名称中文映射），改为通过 `get_text('date.weekday.*')` 获取
+  - 删除 `DEFAULT_POLL_OPTIONS` 和 `DEFAULT_POLL_QUESTION`，改为通过 `get_text('poll.default_*')` 获取
+  - 保留 `VALID_DAYS` 和 `VALID_FREQUENCIES` 等纯逻辑常量，不涉及语言
+
+- **main.py 重构**：精简主程序文件
+  - 进程管理相关代码（启动/停止 QA Bot 子进程）移至 `core/process_manager.py`
+  - `send_startup_message()` 改为使用 i18n 接口（`get_text()`）构建命令列表，支持多语言启动消息
+
+- **ai_client.py 改进**：优化启动消息与模块导入
+  - 导入语句整理，格式规范化
+  - 启动消息中命令列表统一改为通过 `get_text()` 动态获取，实现多语言支持
+
+### 向后兼容
+- **完全兼容现有功能**：不影响任何现有的总结、问答、投票等功能
+- **无需修改配置**：无需更改 `.env` 或 `config.json`
+- **i18n 回退机制保障**：新翻译键在当前语言缺失时自动回退到中文，不会引发运行时错误
+
 ## [1.5.4] - 2026-02-18
 
 ### 新增

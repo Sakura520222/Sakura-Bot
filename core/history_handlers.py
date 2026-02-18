@@ -185,7 +185,7 @@ async def handle_export(event):
             await event.client.send_file(
                 sender_id,
                 filename,
-                caption=get_text('history.export_success', format=output_format, filename=filename)
+                caption=get_text('history.export_done', format=output_format, filename=filename)
             )
 
             logger.info(f"成功导出历史记录: {filename}")
@@ -196,11 +196,11 @@ async def handle_export(event):
             except:
                 pass
         else:
-            await event.reply(get_text('history.export_failed'))
+            await event.reply(get_text('history.export_no_data'))
 
     except Exception as e:
         logger.error(f"执行命令 {command} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        await event.reply(get_text('history.export_failed', error=e))
+        await event.reply(get_text('history.export_error', error=e))
 
 
 async def handle_stats(event):

@@ -15,6 +15,7 @@ from openai import OpenAI
 from .settings import get_llm_api_key, get_llm_base_url, get_llm_model
 from .error_handler import retry_with_backoff, record_error
 from .poll_prompt_manager import load_poll_prompt
+from .i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,13 @@ def generate_poll_from_summary(summary_text):
     if not summary_text or len(summary_text.strip()) < 10:
         logger.warning("总结文本太短，无法生成有意义的投票")
         return {
-            "question": "你对本周总结有什么看法？",
-            "options": ["非常满意", "比较满意", "一般", "有待改进"]
+            "question": get_text('poll.default_question'),
+            "options": [
+                get_text('poll.default_options.0'),
+                get_text('poll.default_options.1'),
+                get_text('poll.default_options.2'),
+                get_text('poll.default_options.3')
+            ]
         }
     
     # 使用可配置的投票提示词
@@ -189,8 +195,13 @@ def generate_poll_from_summary(summary_text):
         # 如果JSON解析失败，返回默认投票
         logger.warning("使用默认投票作为备选")
         return {
-            "question": "你对本周总结有什么看法？",
-            "options": ["非常满意", "比较满意", "一般", "有待改进"]
+            "question": get_text('poll.default_question'),
+            "options": [
+                get_text('poll.default_options.0'),
+                get_text('poll.default_options.1'),
+                get_text('poll.default_options.2'),
+                get_text('poll.default_options.3')
+            ]
         }
         
     except Exception as e:
@@ -198,6 +209,11 @@ def generate_poll_from_summary(summary_text):
         logger.error(f"AI投票生成失败: {type(e).__name__}: {e}", exc_info=True)
         # 返回默认投票
         return {
-            "question": "你对本周总结有什么看法？",
-            "options": ["非常满意", "比较满意", "一般", "有待改进"]
+            "question": get_text('poll.default_question'),
+            "options": [
+                get_text('poll.default_options.0'),
+                get_text('poll.default_options.1'),
+                get_text('poll.default_options.2'),
+                get_text('poll.default_options.3')
+            ]
         }

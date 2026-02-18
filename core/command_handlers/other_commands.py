@@ -92,7 +92,11 @@ async def handle_set_log_level(event):
         await event.reply(get_text('loglevel.set_success', level=level_str, old_level=logging.getLevelName(old_level)))
         
     except ValueError:
-        await event.reply(get_text('loglevel.invalid', level='INFO'))
+        # 无参数时，显示当前日志级别和用法提示
+        import logging as _logging
+        root_logger = _logging.getLogger()
+        current_level = _logging.getLevelName(root_logger.getEffectiveLevel())
+        await event.reply(get_text('loglevel.current', level=current_level))
     except Exception as e:
         logger.error(f"设置日志级别时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(get_text('loglevel.set_error', error=e))
@@ -115,6 +119,10 @@ async def handle_restart(event):
     
     with open(RESTART_FLAG_FILE, 'w') as f:
         f.write(str(sender_id))
+    
+    # 重启前先停止问答Bot，新进程启动后会重新创建
+    from core.process_manager import stop_qa_bot
+    stop_qa_bot()
     
     python = sys.executable
     subprocess.Popen([python] + sys.argv)
@@ -150,6 +158,10 @@ async def handle_shutdown(event):
                 await event.client.send_message(admin_id, get_text('bot.shutting_down'), link_preview=False)
     except Exception as e:
         logger.error(f"发送关机通知失败: {e}")
+    
+    # 停止问答Bot
+    from core.process_manager import stop_qa_bot
+    stop_qa_bot()
     
     import time
     time.sleep(1)
@@ -262,7 +274,7 @@ async def handle_show_channel_schedule(event):
 
         channel_name = channel.split('/')[-1]
         schedule_info = format_schedule_info(channel, schedule)
-        schedule_info += f"\n使用格式：\n"
+        schedule_info += get_text('schedule.format_header')
         schedule_info += get_text('schedule.usage_daily', channel=channel_name) + "\n"
         schedule_info += get_text('schedule.usage_weekly', channel=channel_name) + "\n"
         schedule_info += get_text('schedule.usage_old', channel=channel_name)
@@ -322,10 +334,10 @@ async def handle_set_channel_schedule(event):
                 success = set_channel_schedule_v2(channel, frequency='daily', hour=hour, minute=minute)
 
                 if success:
-                    await event.reply(get_text('schedule.set_success', 
-                        channel=channel.split('/')[-1], 
-                        frequency=get_text('channel.all'), 
-                        hour=hour, 
+                    await event.reply(get_text('schedule.set_success',
+                        channel=channel.split('/')[-1],
+                        frequency=get_text('date.frequency.daily'),
+                        hour=hour,
                         minute=minute))
                 else:
                     await event.reply(get_text('schedule.set_failed'))
@@ -805,6 +817,9 @@ async def handle_help(event):
 {get_text('cmd.export')}
 {get_text('cmd.stats')}
 
+{get_text('help.section_language')}
+{get_text('cmd.language')}
+
 {get_text('help.tip')}"""
 
         await event.reply(help_message, link_preview=False)
@@ -862,13 +877,12 @@ async def handle_language(event):
         # 如果没有提供参数，显示当前语言和支持的语言列表
         if len(parts) < 2:
             current_lang = get_language()
-            supported_langs = get_supported_languages()
-            
+
             lang_names = {
-                'zh-CN': get_text('language.zh-CN') if 'language.zh-CN' in get_text('_') else '简体中文',
+                'zh-CN': '简体中文',
                 'en-US': 'English'
             }
-            
+
             language_info = get_text('language.supported') + "\n\n"
             language_info += get_text('language.current', language=f"{lang_names.get(current_lang, current_lang)} ({current_lang})") + "\n\n"
             language_info += get_text('language.usage')

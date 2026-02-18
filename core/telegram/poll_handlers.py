@@ -11,6 +11,7 @@ from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
 from ..config import ENABLE_POLL, get_channel_poll_config, POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 from ..ai_client import generate_poll_from_summary
 from ..error_handler import record_error
+from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,13 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
         if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")
             poll_data = {
-                "question": "你对本周总结有什么看法？",
-                "options": ["非常满意", "比较满意", "一般", "有待改进"]
+                "question": get_text('poll.default_question'),
+                "options": [
+                    get_text('poll.default_options.0'),
+                    get_text('poll.default_options.1'),
+                    get_text('poll.default_options.2'),
+                    get_text('poll.default_options.3')
+                ]
             }
 
         # 发送投票，使用 reply_to 参数回复总结消息
@@ -52,7 +58,7 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
         # 使用高层 API 发送投票并附加按钮
         try:
             # 清洗并截断问题文本
-            question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
+            question_text = str(poll_data.get('question', get_text('poll_regen.default_question'))).strip()[:250]
 
             # 构造选项
             poll_answers = []
@@ -81,12 +87,12 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
             # 如果启用投票重新生成请求功能，添加请求按钮
             if ENABLE_VOTE_REGEN_REQUEST:
                 button_markup.append([Button.inline(
-                    f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                    get_text('poll_regen.request_button', count=0, threshold=POLL_REGEN_THRESHOLD),
                     data=f"request_regen_{summary_message_id}".encode('utf-8')
                 )])
             # 添加管理员重新生成按钮
             button_markup.append([Button.inline(
-                "🔄 重新生成投票 (管理员)",
+                get_text('poll_regen.admin_button'),
                 data=f"regen_poll_{summary_message_id}".encode('utf-8')
             )])
 
@@ -182,8 +188,13 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
         if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")
             poll_data = {
-                "question": "你对本周总结有什么看法？",
-                "options": ["非常满意", "比较满意", "一般", "有待改进"]
+                "question": get_text('poll.default_question'),
+                "options": [
+                    get_text('poll.default_options.0'),
+                    get_text('poll.default_options.1'),
+                    get_text('poll.default_options.2'),
+                    get_text('poll.default_options.3')
+                ]
             }
 
         # 使用事件监听方式等待转发消息
@@ -223,7 +234,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
 
             try:
                 # 1. 严格清洗并截断
-                question_text = str(poll_data.get('question', '频道调研')).strip()[:250]
+                question_text = str(poll_data.get('question', get_text('poll_regen.default_question'))).strip()[:250]
 
                 # 2. 构造选项，选项的text也必须是TextWithEntities类型
                 poll_answers = []
@@ -250,12 +261,12 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                 # 如果启用投票重新生成请求功能，添加请求按钮
                 if ENABLE_VOTE_REGEN_REQUEST:
                     button_markup.append([Button.inline(
-                        f"👍 请求重新生成 (0/{POLL_REGEN_THRESHOLD})",
+                        get_text('poll_regen.request_button', count=0, threshold=POLL_REGEN_THRESHOLD),
                         data=f"request_regen_{summary_message_id}".encode('utf-8')
                     )])
                 # 添加管理员重新生成按钮
                 button_markup.append([Button.inline(
-                    "🔄 重新生成投票 (管理员)",
+                    get_text('poll_regen.admin_button'),
                     data=f"regen_poll_{summary_message_id}".encode('utf-8')
                 )])
 
@@ -302,10 +313,10 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
             # 尝试发送独立消息
             try:
                 logger.info(f"尝试发送独立投票消息")
+                options_text = "\n".join([f"• {opt}" for opt in poll_data['options']])
                 await client.send_message(
                     discussion_group_id,
-                    f"📊 **投票：{poll_data['question']}**\n\n" +
-                    "\n".join([f"• {opt}" for opt in poll_data['options']])
+                    get_text('poll.timeout_fallback', question=poll_data['question'], options=options_text)
                 )
                 logger.info("成功发送独立投票消息")
                 return None

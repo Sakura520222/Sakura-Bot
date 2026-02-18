@@ -45,15 +45,6 @@ DEFAULT_SUMMARY_MINUTE = 0  # 分钟：0-59
 
 # 有效的星期几
 VALID_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-DAY_NAMES_CN = {
-    'mon': '周一',
-    'tue': '周二',
-    'wed': '周三',
-    'thu': '周四',
-    'fri': '周五',
-    'sat': '周六',
-    'sun': '周日'
-}
 
 # 有效的频率类型
 VALID_FREQUENCIES = ['daily', 'weekly']
@@ -96,15 +87,10 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 {summary_text}
 """
 
-# ==================== 默认投票选项 ====================
-DEFAULT_POLL_OPTIONS = [
-    "非常满意",
-    "比较满意",
-    "一般",
-    "有待改进"
-]
-
-DEFAULT_POLL_QUESTION = "你对本周总结有什么看法？"
+# ==================== 默认投票配置 ====================
+# 注意：默认投票文本已移至 i18n 模块，使用 get_text() 获取
+# get_text('poll.default_question')
+# get_text('poll.default_options.0') - get_text('poll.default_options.3')
 
 # ==================== AI 配置默认值 ====================
 DEFAULT_LLM_BASE_URL = 'https://api.deepseek.com'

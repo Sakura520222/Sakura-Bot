@@ -22,6 +22,7 @@ from typing import Literal
 
 from .constants import CONFIG_FILE
 from .exceptions import ConfigurationError
+from .i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -209,13 +210,15 @@ class ChannelPollConfigManager:
         enabled = config['enabled']
         if enabled is None:
             enabled = global_enabled
-            enabled_text = f"全局配置 ({'启用' if enabled else '禁用'})"
+            enabled_text = get_text('poll.status_global').format(
+                status=get_text('poll.status_enabled' if enabled else 'poll.status_disabled')
+            )
         else:
-            enabled_text = '启用' if enabled else '禁用'
+            enabled_text = get_text('poll.status_enabled' if enabled else 'poll.status_disabled')
         
         # 确定发送位置
         send_to_channel = config['send_to_channel']
-        location_text = '频道模式' if send_to_channel else '讨论组模式'
+        location_text = get_text('poll.location_channel' if send_to_channel else 'poll.location_discussion')
         
         return f"{enabled_text} | {location_text}"
 
