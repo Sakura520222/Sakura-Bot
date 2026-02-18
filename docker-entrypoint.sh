@@ -77,11 +77,11 @@ if [ ! -f /app/data/.poll_regenerations.json ]; then
     echo '{}' > /app/data/.poll_regenerations.json
 fi
 
-# 确保会话目录存在
-mkdir -p /app/sessions
+# 确保会话目录存在并设置权限
+mkdir -p /app/data/sessions && chmod 755 /app/data/sessions
 
 # 检查会话文件
-if [ ! -f /app/sessions/bot_session.session ]; then
+if [ ! -f /app/data/sessions/bot_session.session ]; then
     echo "注意: 未找到会话文件 bot_session.session"
     echo "首次运行需要Telegram登录授权"
     echo "请按照提示完成登录流程"

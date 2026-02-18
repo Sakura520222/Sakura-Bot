@@ -1,7 +1,7 @@
 services:
   sakura-summary-bot:
     build: .
-    container_name: sakura-summary-bot
+    container_name: sakura-bot
     user: "root:root"
     restart: unless-stopped
     environment:
@@ -22,7 +22,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M
         reservations:
           memory: 256M
     # 日志配置
