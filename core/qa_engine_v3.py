@@ -400,6 +400,60 @@ class QAEngineV3:
 
         return [item['summary'] for item in sorted_results]
 
+    def _build_rag_prompts(self, query: str, summaries: List[Dict[str, Any]],
+                           keywords: List[str] = None,
+                           conversation_history: List[Dict] = None,
+                           search_query: str = None,
+                           query_rewritten: bool = False) -> tuple:
+        """
+        构建 RAG 所需的 system_prompt 和 user_prompt（供流式与非流式共用）
+
+        Returns:
+            (system_prompt, user_prompt)
+        """
+        context = self._prepare_rag_context(summaries)
+
+        channel_ids = list(set(
+            s.get('metadata', {}).get('channel_id') or s.get('channel_id', '')
+            for s in summaries
+        ))
+        channel_context = ""
+        if len(channel_ids) == 1 and channel_ids[0]:
+            channel_context = self.memory_manager.get_channel_context(channel_ids[0])
+        elif len(channel_ids) > 1:
+            channel_context = "多频道综合查询"
+
+        conversation_context = ""
+        if conversation_history and len(conversation_history) > 0:
+            history_excluding_current = (
+                conversation_history[:-1] if len(conversation_history) > 1 else []
+            )
+            if history_excluding_current:
+                conversation_context = self.conversation_mgr.format_conversation_context(
+                    history_excluding_current
+                )
+                conversation_context = f"\n【对话历史】\n{conversation_context}\n"
+
+        persona_description = get_qa_bot_persona()
+        system_prompt = BASE_SYSTEM_TEMPLATE.format(
+            persona_description=persona_description,
+            channel_context=channel_context,
+            conversation_context=conversation_context
+        )
+
+        rewrite_note = ""
+        if query_rewritten and search_query and search_query != query:
+            rewrite_note = f"\n（已根据对话上下文将查询理解为：「{search_query}」）"
+
+        user_prompt = (
+            f"用户当前查询：{query}{rewrite_note}\n\n"
+            f"相关历史总结（共{len(summaries)}条，已通过语义搜索和重排序精选）：\n"
+            f"{context}\n\n"
+            f"请根据上述总结回答用户的问题。"
+        )
+
+        return system_prompt, user_prompt
+
     async def _generate_answer_with_rag(self, query: str,
                                         summaries: List[Dict[str, Any]],
                                         keywords: List[str] = None,
@@ -421,54 +475,14 @@ class QAEngineV3:
             生成的回答
         """
         try:
-            # 准备RAG上下文（动态分配长度）
-            context = self._prepare_rag_context(summaries)
-
-            # 获取频道画像
-            channel_ids = list(set(
-                s.get('metadata', {}).get('channel_id') or s.get('channel_id', '')
-                for s in summaries
-            ))
-            channel_context = ""
-            if len(channel_ids) == 1 and channel_ids[0]:
-                channel_context = self.memory_manager.get_channel_context(channel_ids[0])
-            elif len(channel_ids) > 1:
-                channel_context = "多频道综合查询"
-
-            # 准备对话历史上下文
-            conversation_context = ""
-            if conversation_history and len(conversation_history) > 0:
-                # 排除当前查询（历史中的最后一条是当前用户消息）
-                history_excluding_current = conversation_history[:-1] if len(conversation_history) > 1 else []
-
-                if history_excluding_current:
-                    conversation_context = self.conversation_mgr.format_conversation_context(
-                        history_excluding_current
-                    )
-                    conversation_context = f"\n【对话历史】\n{conversation_context}\n"
-                    logger.debug(f"对话历史上下文长度: {len(conversation_context)} 字符")
-
-            # 获取动态人格描述
-            persona_description = get_qa_bot_persona()
-
-            # 构建系统提示词
-            system_prompt = BASE_SYSTEM_TEMPLATE.format(
-                persona_description=persona_description,
-                channel_context=channel_context,
-                conversation_context=conversation_context
+            system_prompt, user_prompt = self._build_rag_prompts(
+                query=query,
+                summaries=summaries,
+                keywords=keywords,
+                conversation_history=conversation_history,
+                search_query=search_query,
+                query_rewritten=query_rewritten
             )
-
-            # 构建用户提示词
-            rewrite_note = ""
-            if query_rewritten and search_query and search_query != query:
-                rewrite_note = f"\n（已根据对话上下文将查询理解为：「{search_query}」）"
-
-            user_prompt = f"""用户当前查询：{query}{rewrite_note}
-
-相关历史总结（共{len(summaries)}条，已通过语义搜索和重排序精选）：
-{context}
-
-请根据上述总结回答用户的问题。"""
 
             logger.info(
                 f"调用AI生成回答（RAG+对话历史），总结数: {len(summaries)}, "
@@ -513,6 +527,258 @@ class QAEngineV3:
 请重新组织你的问题再试。"""
 
             return self._fallback_answer_v3(summaries)
+
+    async def generate_answer_stream(self, query: str,
+                                     summaries: List[Dict[str, Any]],
+                                     keywords: List[str] = None,
+                                     conversation_history: List[Dict] = None,
+                                     search_query: str = None,
+                                     query_rewritten: bool = False):
+        """
+        使用RAG流式生成回答（异步生成器）
+
+        Args:
+            query: 用户原始查询
+            summaries: 相关总结列表
+            keywords: 关键词列表
+            conversation_history: 对话历史
+            search_query: 改写后的检索查询
+            query_rewritten: 是否经过查询改写
+
+        Yields:
+            str: 逐步生成的文本片段
+        """
+        import asyncio
+
+        system_prompt, user_prompt = self._build_rag_prompts(
+            query=query,
+            summaries=summaries,
+            keywords=keywords,
+            conversation_history=conversation_history,
+            search_query=search_query,
+            query_rewritten=query_rewritten
+        )
+
+        logger.info(
+            f"调用AI流式生成回答（RAG），总结数: {len(summaries)}, "
+            f"历史消息: {len(conversation_history) if conversation_history else 0}, "
+            f"查询改写: {query_rewritten}"
+        )
+
+        loop = asyncio.get_event_loop()
+
+        def _do_stream():
+            return client_llm.chat.completions.create(
+                model=get_llm_model(),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                stream=True
+            )
+
+        # 在线程池中调用同步 SDK，避免阻塞事件循环
+        stream = await loop.run_in_executor(None, _do_stream)
+
+        full_text = ""
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content if chunk.choices[0].delta.content else ""
+            if delta:
+                full_text += delta
+                yield delta
+
+        # 追加来源信息
+        if "📚 数据来源" not in full_text:
+            source_info = self._format_source_info_v3(summaries)
+            suffix = f"\n\n{source_info}"
+            yield suffix
+
+    async def process_query_stream(self, query: str, user_id: int):
+        """
+        流式处理用户查询（异步生成器版本）
+
+        先完成检索/改写等预处理阶段，然后流式 yield AI 生成的文本。
+
+        Yields:
+            str: 文本片段，以 "__DONE__" 结尾表示完成，
+                 以 "__ERROR__:<msg>" 表示出错，
+                 以 "__NEW_SESSION__" 表示开始了新会话。
+        """
+        try:
+            logger.info(f"[stream] 处理查询: user_id={user_id}, query={query}")
+
+            # 1. 获取或创建会话
+            session_id, is_new_session = self.conversation_mgr.get_or_create_session(user_id)
+
+            # 2. 保存用户消息
+            self.conversation_mgr.save_message(
+                user_id=user_id,
+                session_id=session_id,
+                role='user',
+                content=query
+            )
+
+            # 3. 解析查询意图
+            parsed = self.intent_parser.parse_query(query)
+            intent = parsed["intent"]
+
+            # 4. 非内容查询直接返回（不使用流式）
+            if intent == "status":
+                answer = await self._handle_status_query()
+                yield answer
+                self.conversation_mgr.save_message(
+                    user_id=user_id, session_id=session_id,
+                    role='assistant', content=answer
+                )
+                yield "__DONE__"
+                return
+
+            if intent == "stats":
+                answer = await self._handle_stats_query(parsed)
+                yield answer
+                self.conversation_mgr.save_message(
+                    user_id=user_id, session_id=session_id,
+                    role='assistant', content=answer
+                )
+                yield "__DONE__"
+                return
+
+            # 5. 内容查询：先完成检索阶段，再流式生成
+            if is_new_session:
+                yield "__NEW_SESSION__"
+
+            original_query = parsed["original_query"]
+            keywords = parsed.get("keywords", [])
+            time_range = parsed.get("time_range")
+
+            conversation_history = self.conversation_mgr.get_conversation_history(
+                user_id, session_id
+            )
+
+            # 查询改写
+            search_query = original_query
+            query_rewritten = False
+            if (not is_new_session
+                    and len(conversation_history) >= 3
+                    and PRONOUN_PATTERNS.search(original_query)):
+                try:
+                    search_query = await self._rewrite_query(original_query, conversation_history)
+                    if search_query != original_query:
+                        query_rewritten = True
+                        logger.info(f"[stream] 查询改写: '{original_query}' → '{search_query}'")
+                except Exception as e:
+                    logger.warning(f"[stream] 查询改写失败: {e}")
+                    search_query = original_query
+
+            # 时间过滤
+            date_after: Optional[str] = None
+            if time_range is not None:
+                from datetime import datetime, timezone, timedelta
+                cutoff = datetime.now(timezone.utc) - timedelta(days=time_range)
+                date_after = cutoff.isoformat()
+
+            # 语义检索
+            semantic_results = []
+            if self.vector_store.is_available():
+                try:
+                    semantic_results = self.vector_store.search_similar(
+                        query=search_query, top_k=20, date_after=date_after
+                    )
+                except Exception as e:
+                    logger.error(f"[stream] 语义检索失败: {e}")
+
+            # 关键词检索
+            keyword_results = []
+            if keywords or len(semantic_results) < 5:
+                try:
+                    search_days = time_range if time_range is not None else 90
+                    keyword_results = self.memory_manager.search_summaries(
+                        keywords=keywords, time_range_days=search_days, limit=10
+                    )
+                except Exception as e:
+                    logger.error(f"[stream] 关键词检索失败: {e}")
+
+            # 融合
+            if semantic_results and keyword_results:
+                final_candidates = self._rrf_fusion(semantic_results, keyword_results)
+            elif semantic_results:
+                final_candidates = semantic_results
+            elif keyword_results:
+                final_candidates = [
+                    {
+                        'summary_id': r['id'],
+                        'summary_text': r['summary_text'],
+                        'metadata': {
+                            'channel_id': r.get('channel_id'),
+                            'channel_name': r.get('channel_name'),
+                            'created_at': r.get('created_at')
+                        }
+                    }
+                    for r in keyword_results
+                ]
+            else:
+                if time_range is not None and time_range <= 7:
+                    no_result = (
+                        f"🔍 在最近 {time_range} 天内未找到相关总结。\n\n"
+                        f"💡 提示：可以尝试扩大时间范围，例如'最近30天关于...'。"
+                    )
+                else:
+                    no_result = "🔍 未找到相关总结。\n\n💡 提示：尝试调整关键词或时间范围。"
+                yield no_result
+                self.conversation_mgr.save_message(
+                    user_id=user_id, session_id=session_id,
+                    role='assistant', content=no_result
+                )
+                yield "__DONE__"
+                return
+
+            # 重排序
+            if self.reranker.is_available() and len(final_candidates) > 5:
+                try:
+                    final_candidates = self.reranker.rerank(
+                        search_query, final_candidates, top_k=5
+                    )
+                except Exception as e:
+                    logger.error(f"[stream] 重排序失败: {e}")
+                    final_candidates = final_candidates[:5]
+            else:
+                final_candidates = final_candidates[:5]
+
+            # 流式生成回答
+            full_answer = ""
+            try:
+                async for chunk in self.generate_answer_stream(
+                    query=original_query,
+                    summaries=final_candidates,
+                    keywords=keywords,
+                    conversation_history=conversation_history,
+                    search_query=search_query,
+                    query_rewritten=query_rewritten
+                ):
+                    full_answer += chunk
+                    yield chunk
+            except Exception as e:
+                logger.error(f"[stream] AI生成失败，降级到非流式: {e}")
+                fallback = self._fallback_answer_v3(final_candidates)
+                yield fallback
+                full_answer = fallback
+
+            # 保存完整回答到对话历史
+            if is_new_session:
+                full_answer = "🍃 *开始新的对话。*\n\n" + full_answer
+            self.conversation_mgr.save_message(
+                user_id=user_id, session_id=session_id,
+                role='assistant', content=full_answer
+            )
+
+            yield "__DONE__"
+
+        except Exception as e:
+            logger.error(f"[stream] 处理查询失败: {type(e).__name__}: {e}", exc_info=True)
+            yield "__ERROR__:❌ 处理查询时出错，请稍后重试。"
 
     def _prepare_rag_context(self, summaries: List[Dict[str, Any]]) -> str:
         """

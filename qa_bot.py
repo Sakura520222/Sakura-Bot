@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -232,11 +233,11 @@ class QABot:
         await update.message.reply_text(message, parse_mode='Markdown')
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """处理用户消息（自然语言查询）"""
+        """处理用户消息（流式输出 - 单条消息动态编辑）"""
         # 防御性检查：忽略非用户消息（如频道事件、系统消息）
         if not update.effective_user or not update.message:
             return
-        
+
         user_id = update.effective_user.id
         query = update.message.text
 
@@ -248,47 +249,189 @@ class QABot:
         try:
             # 1. 检查配额
             quota_check = self.quota_manager.check_quota(user_id)
-
             if not quota_check.get("allowed", False):
-                # 配额不足
                 await update.message.reply_text(quota_check.get("message", "配额不足"))
                 return
 
-            # 2. 显示"正在思考"消息
-            thinking_msg = await update.message.reply_text("🔍 正在检索相关记录...")
+            # 2. 发送初始占位消息
+            placeholder = await update.message.reply_text("🔍 正在检索相关记录...")
 
-            # 3. 处理查询
-            answer = await self.qa_engine.process_query(query, user_id)
-
-            # 4. 删除"正在思考"消息
-            try:
-                await thinking_msg.delete()
-            except:
-                pass
-
-            # 5. 发送回答
-            # 检查消息长度，Telegram限制4096字符
-            # 支持Markdown，如果失败则降级到HTML，最后降级到纯文本
-            # 将配额提示内嵌到回答末尾（仅剩余次数不足2次时）
-            if not quota_check.get("is_admin", False):
-                remaining = quota_check.get("remaining", 99)
-                if remaining <= 1:
-                    quota_hint = f"\n\n_💡 提示：今日剩余查询次数：{remaining} 次_"
-                    answer = answer + quota_hint
-
-            if len(answer) <= 4096:
-                await self._send_with_fallback(update.message, answer)
-            else:
-                # 消息过长，分段发送
-                parts = self._split_long_message(answer)
-                for i, part in enumerate(parts):
-                    await self._send_with_fallback(update.message, part)
-                    if i > 0:
-                        await asyncio.sleep(0.5)  # 避免发送过快
+            # 3. 流式处理并实时编辑消息
+            await self._stream_and_edit(
+                placeholder=placeholder,
+                query=query,
+                user_id=user_id,
+                quota_check=quota_check
+            )
 
         except Exception as e:
             logger.error(f"处理消息失败: {type(e).__name__}: {e}", exc_info=True)
-            await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
+            try:
+                await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
+            except Exception:
+                pass
+
+    async def _stream_and_edit(self, placeholder, query: str,
+                               user_id: int, quota_check: dict) -> None:
+        """
+        流式接收 QA 引擎输出，并实时编辑 Telegram 消息。
+
+        策略：
+        - 流式阶段：以纯文本实时更新（避免不完整 Markdown 报错），
+          每积累 STREAM_EDIT_THRESHOLD 字符或超过 STREAM_EDIT_INTERVAL 秒则编辑一次。
+        - 完成阶段：用完整文本做最终编辑，并尝试启用 Markdown 格式。
+        - 如果单条消息超过 4096 字符，则继续追加新消息。
+        """
+        # ── 可调参数 ─────────────────────────────────────────────────────────
+        # 每积累多少字符触发一次编辑
+        STREAM_EDIT_THRESHOLD = 80
+        # 距离上次编辑超过多少秒也触发一次编辑（防止长时间无更新）
+        STREAM_EDIT_INTERVAL = 1.5
+        # Telegram 单条消息最大字符数
+        MAX_MSG_LEN = 4096
+        # ─────────────────────────────────────────────────────────────────────
+
+        accumulated = ""       # 当前消息已累积的完整文本
+        last_edit_len = 0      # 上次编辑时的文本长度
+        last_edit_time = time.monotonic()
+        is_new_session = False
+        current_msg = placeholder   # 当前正在编辑的消息对象
+        extra_msgs = []             # 超长时追加的额外消息
+
+        async def _safe_edit(msg, text: str, use_markdown: bool = False):
+            """安全地编辑消息，失败时静默处理。"""
+            if not text.strip():
+                return
+            try:
+                if use_markdown:
+                    await msg.edit_text(text, parse_mode='Markdown')
+                else:
+                    await msg.edit_text(text)
+            except Exception as e:
+                err = str(e)
+                # 内容与当前内容相同时忽略
+                if "Message is not modified" in err:
+                    return
+                if use_markdown:
+                    # Markdown 失败，尝试修复
+                    try:
+                        fixed = self._fix_markdown(text)
+                        await msg.edit_text(fixed, parse_mode='Markdown')
+                    except Exception:
+                        try:
+                            await msg.edit_text(text)
+                        except Exception:
+                            pass
+                else:
+                    logger.debug(f"编辑消息失败（已忽略）: {e}")
+
+        async def _flush_edit(final: bool = False):
+            """将 accumulated 写入当前消息（或追加新消息）。"""
+            nonlocal last_edit_len, last_edit_time, current_msg
+
+            text = accumulated
+            if not text.strip():
+                return
+
+            # 超过单条消息长度限制时，把超出部分作为新消息追加
+            if len(text) > MAX_MSG_LEN:
+                # 保留当前消息不变（已是完整内容），超出部分作为新消息
+                # 此处只在 final 阶段处理，避免流式中频繁拆分
+                if final:
+                    parts = self._split_long_message(text, MAX_MSG_LEN)
+                    # 编辑当前消息为第一部分
+                    await _safe_edit(current_msg, parts[0], use_markdown=True)
+                    # 追加其余部分
+                    for part in parts[1:]:
+                        try:
+                            new_msg = await current_msg.reply_text(part, parse_mode='Markdown')
+                            extra_msgs.append(new_msg)
+                            current_msg = new_msg
+                        except Exception:
+                            try:
+                                new_msg = await current_msg.reply_text(
+                                    self._fix_markdown(part), parse_mode='Markdown'
+                                )
+                                extra_msgs.append(new_msg)
+                                current_msg = new_msg
+                            except Exception:
+                                pass
+                else:
+                    # 流式阶段：截断显示，末尾加省略号
+                    truncated = text[:MAX_MSG_LEN - 30] + "\n\n_（内容生成中…）_"
+                    await _safe_edit(current_msg, truncated)
+            else:
+                await _safe_edit(current_msg, text, use_markdown=final)
+
+            last_edit_len = len(accumulated)
+            last_edit_time = time.monotonic()
+
+        try:
+            async for chunk in self.qa_engine.process_query_stream(query, user_id):
+                # ── 处理特殊控制标记 ─────────────────────────────────────────
+                if chunk == "__DONE__":
+                    break
+
+                if chunk == "__NEW_SESSION__":
+                    is_new_session = True
+                    continue
+
+                if chunk.startswith("__ERROR__:"):
+                    error_msg = chunk[len("__ERROR__:"):]
+                    await _safe_edit(current_msg, error_msg)
+                    return
+
+                # ── 首个真实文本块：更新占位消息状态 ────────────────────────
+                if not accumulated:
+                    # 将占位符从"检索中"更新为新会话提示或开始生成
+                    if is_new_session:
+                        prefix = "🍃 _开始新的对话。_\n\n"
+                        accumulated = prefix + chunk
+                    else:
+                        accumulated += chunk
+                    await _safe_edit(current_msg, accumulated + " ✍️")
+                    last_edit_len = len(accumulated)
+                    last_edit_time = time.monotonic()
+                    continue
+
+                # ── 累积文本 ─────────────────────────────────────────────────
+                accumulated += chunk
+
+                # ── 判断是否需要触发编辑 ─────────────────────────────────────
+                chars_since_edit = len(accumulated) - last_edit_len
+                time_since_edit = time.monotonic() - last_edit_time
+                should_edit = (
+                    chars_since_edit >= STREAM_EDIT_THRESHOLD
+                    or time_since_edit >= STREAM_EDIT_INTERVAL
+                )
+
+                if should_edit:
+                    # 流式阶段：纯文本 + 光标提示
+                    display = accumulated + " ✍️"
+                    await _safe_edit(current_msg, display)
+                    last_edit_len = len(accumulated)
+                    last_edit_time = time.monotonic()
+
+        except Exception as e:
+            logger.error(f"流式接收失败: {type(e).__name__}: {e}", exc_info=True)
+            if not accumulated:
+                await _safe_edit(current_msg, "❌ 抱歉，处理查询时出错。请稍后再试。")
+                return
+
+        # ── 生成完成：最终编辑，追加配额提示并启用 Markdown ─────────────────
+        if not accumulated.strip():
+            await _safe_edit(current_msg, "❌ 未能获取回答，请稍后再试。")
+            return
+
+        # 追加配额提示（剩余次数不足时）
+        if not quota_check.get("is_admin", False):
+            remaining = quota_check.get("remaining", 99)
+            if remaining <= 1:
+                accumulated += f"\n\n_💡 提示：今日剩余查询次数：{remaining} 次_"
+
+        # 最终写入（启用 Markdown）
+        await _flush_edit(final=True)
+        logger.info(f"流式回答完成，总长度: {len(accumulated)} 字符")
 
     def _split_long_message(self, text: str, max_length: int = 4096) -> list:
         """将长消息分割为多个部分"""

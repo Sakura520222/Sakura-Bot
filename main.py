@@ -55,7 +55,7 @@ from core.poll_regeneration_handlers import (
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
-__version__ = "1.5.6"
+__version__ = "1.5.7"
 
 from core.process_manager import start_qa_bot, stop_qa_bot
 
