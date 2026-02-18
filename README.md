@@ -16,7 +16,7 @@
 
 ## 📖 项目简介
 
-Sakura-频道总结助手是一款基于Telegram API和AI技术的智能频道内容管理工具，专为Telegram频道管理员设计。它利用先进的人工智能技术自动监控、分析和总结频道内容，为频道管理员提供高效的内容管理解决方案。
+Sakura-Bot是一款基于Telegram API和AI技术的智能频道内容管理工具，专为Telegram频道管理员设计。它利用先进的人工智能技术自动监控、分析和总结频道内容，为频道管理员提供高效的内容管理解决方案。
 
 ### ✨ 核心亮点
 
@@ -208,6 +208,18 @@ python main.py
 |------|------|------|------|
 | `/language` | `/语言` | 查看或切换界面语言 | `/language` / `/language zh-CN` |
 
+### QA Bot 命令
+
+QA Bot 是独立运行的问答机器人（需单独配置 `QA_BOT_TOKEN`），支持以下命令：
+
+| 命令 | 功能 |
+|------|------|
+| `/start` | 查看欢迎消息和功能介绍 |
+| `/help` | 查看完整帮助文档 |
+| `/status` | 查看当前配额使用情况和会话状态 |
+| `/clear` | 清除当前对话历史，开始新会话 |
+| `/view_persona` | 查看当前问答Bot的人格设定 |
+
 ### 配置示例
 
 创建或编辑 `data/.env` 文件：
@@ -220,14 +232,6 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 
 # ===== 语言配置 =====
 LANGUAGE=zh-CN  # 界面语言：zh-CN（简体中文）或 en-US（英语）
-
-# ===== AI配置（支持任意OpenAI兼容API） =====
-
-```env
-# ===== Telegram配置 =====
-TELEGRAM_API_ID=your_api_id_here
-TELEGRAM_API_HASH=your_api_hash_here
-TELEGRAM_BOT_TOKEN=your_bot_token_here
 
 # ===== AI配置（支持任意OpenAI兼容API） =====
 # 方式1：使用DeepSeek（推荐）
@@ -249,11 +253,24 @@ LOG_LEVEL=INFO
 # ===== 投票功能 =====
 ENABLE_POLL=True
 
+# ===== 问答Bot配置（可选） =====
+QA_BOT_ENABLED=True
+QA_BOT_TOKEN=your_qa_bot_token_here  # 从@BotFather获取，必须与主Bot不同
+QA_BOT_USER_LIMIT=3                  # 每个用户每日限额（默认3次）
+QA_BOT_DAILY_LIMIT=200               # 每日总限额（默认200次）
+
+# 问答Bot人格配置（三选一，优先级从高到低）
+# 方式1：直接填写人格描述（最高优先级）
+# QA_BOT_PERSONA=你是一个专业的技术顾问...
+# 方式2：指向自定义人格文件
+# QA_BOT_PERSONA=data/custom_persona.txt
+# 方式3：不填则自动读取 data/qa_persona.txt（默认）
+
 # ===== RAG智能问答系统配置（可选） =====
 # Embedding模型配置（必需，用于向量搜索）
 EMBEDDING_API_KEY=your_siliconflow_api_key
 EMBEDDING_API_BASE=https://api.siliconflow.cn/v1
-EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIMENSION=1024
 
 # Reranker配置（可选，用于提升检索准确率）
@@ -265,10 +282,6 @@ RERANKER_FINAL=5
 
 # 向量数据库配置
 VECTOR_DB_PATH=data/vectors
-
-# 问答Bot配置
-QA_BOT_ENABLED=True
-QA_BOT_TOKEN=your_qa_bot_token_here  # 从@BotFather获取
 ```
 
 > **提示**：RAG系统需要额外的API密钥，推荐使用 [SiliconFlow](https://siliconflow.cn/) 获取Embedding和Reranker服务的API密钥。详细配置请参考 [RAG快速启动指南](wiki/RAG_QUICKSTART.md)。
@@ -292,6 +305,7 @@ Sakura-Bot/
 │   ├── config.json                   # AI配置文件
 │   ├── prompt.txt                    # 总结提示词
 │   ├── poll_prompt.txt               # 投票提示词
+│   ├── qa_persona.txt                # 问答Bot人格配置
 │   ├── summaries.db                  # SQLite数据库
 │   └── sessions/                     # Telegram会话目录
 │
@@ -299,10 +313,11 @@ Sakura-Bot/
 ├── 📁 .github/                       # GitHub工作流
 │
 ├── 📄 main.py                        # 主程序入口
+├── 📄 qa_bot.py                      # 问答Bot入口
 ├── 📄 requirements.txt               # Python依赖
 ├── 📄 docker-compose.yml             # Docker Compose配置
 ├── 📄 Dockerfile                     # Docker镜像构建
-└── 📄 README_CN.md                   # 本文件
+└── 📄 README.md                      # 本文件
 ```
 
 ---
@@ -312,9 +327,14 @@ Sakura-Bot/
 | 技术 | 用途 | 版本 |
 |------|------|------|
 | **Python** | 主编程语言 | 3.13+ |
-| **Telethon** | Telegram API客户端 | 1.34+ |
+| **Telethon** | Telegram MTProto API客户端（主Bot） | 1.34+ |
+| **python-telegram-bot** | Telegram Bot API客户端（QA Bot） | 20.0+ |
 | **OpenAI SDK** | AI API集成 | 1.0+ |
 | **APScheduler** | 定时任务调度 | 3.10+ |
+| **ChromaDB** | 向量数据库（RAG系统） | 0.4+ |
+| **aiosqlite** | 异步SQLite数据库 | 0.20+ |
+| **Pydantic** | 配置管理与数据验证 | 2.0+ |
+| **httpx** | HTTP客户端（Reranker调用） | 0.27+ |
 | **python-dotenv** | 环境变量管理 | 1.0+ |
 | **Docker** | 容器化部署 | 20.10+ |
 
@@ -339,6 +359,16 @@ Sakura-Bot/
 - **DeepSeek**（推荐，性价比高）
 - **OpenAI**官方API
 - 任何提供OpenAI兼容接口的第三方服务
+
+### 如何自定义问答Bot的人格？
+
+有三种方式（优先级从高到低）：
+
+1. **环境变量**：在 `.env` 中设置 `QA_BOT_PERSONA=你是一个专业的...`
+2. **人格文件**：编辑 `data/qa_persona.txt`（首次运行自动创建）
+3. **配置文件**：在 `data/config.json` 中设置 `qa_bot_persona` 字段
+
+修改后重启Bot生效。可通过 `/view_persona` 命令查看当前生效的人格。
 
 ### 如何备份数据？
 
@@ -387,8 +417,10 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 ## 🙏 致谢
 
 - [Telethon](https://github.com/LonamiWebs/Telethon) - 强大的Telegram MTProto API框架
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) - 功能完善的Telegram Bot API库
 - [OpenAI](https://openai.com/) - 领先的AI研究和API服务
 - [DeepSeek](https://www.deepseek.com/) - 高性价比的AI API提供商
+- [SiliconFlow](https://siliconflow.cn/) - Embedding和Reranker API服务
 - 所有为改进本项目做出贡献的[贡献者](https://github.com/Sakura520222/Sakura-Bot/graphs/contributors)
 
 ---
@@ -403,7 +435,7 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 <div align="center">
 
-**🌸 Sakura-频道总结助手** · 让频道管理更智能
+**🌸 Sakura-Bot** · 让频道管理更智能
 
 Made with ❤️ by [Sakura520222](https://github.com/Sakura520222)
 

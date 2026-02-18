@@ -208,6 +208,18 @@ python main.py
 |---------|---------|-------------|---------|
 | `/language` | `/语言` | View or switch interface language | `/language` / `/language en-US` |
 
+### QA Bot Commands
+
+The QA Bot is a standalone Q&A bot (requires a separate `QA_BOT_TOKEN`) and supports the following commands:
+
+| Command | Description |
+|---------|-------------|
+| `/start` | View welcome message and feature introduction |
+| `/help` | Display complete help documentation |
+| `/status` | View current quota usage and session status |
+| `/clear` | Clear current conversation history and start a new session |
+| `/view_persona` | View the current QA bot persona |
+
 ### Configuration Example
 
 Create or edit `data/.env`:
@@ -220,14 +232,6 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 
 # ===== Language Configuration =====
 LANGUAGE=en-US  # Interface language: en-US (English) or zh-CN (Simplified Chinese)
-
-# ===== AI Configuration (OpenAI-compatible APIs) =====
-
-```env
-# ===== Telegram Configuration =====
-TELEGRAM_API_ID=your_api_id_here
-TELEGRAM_API_HASH=your_api_hash_here
-TELEGRAM_BOT_TOKEN=your_bot_token_here
 
 # ===== AI Configuration (OpenAI-compatible APIs) =====
 # Option 1: DeepSeek (Recommended)
@@ -249,11 +253,24 @@ LOG_LEVEL=INFO
 # ===== Poll Feature =====
 ENABLE_POLL=True
 
+# ===== Q&A Bot Configuration (Optional) =====
+QA_BOT_ENABLED=True
+QA_BOT_TOKEN=your_qa_bot_token_here  # Get from @BotFather, must differ from main bot
+QA_BOT_USER_LIMIT=3                  # Per-user daily quota (default: 3)
+QA_BOT_DAILY_LIMIT=200               # Global daily quota (default: 200)
+
+# QA Bot persona (choose one, priority from high to low)
+# Option 1: Inline persona text (highest priority)
+# QA_BOT_PERSONA=You are a professional technical consultant...
+# Option 2: Path to a custom persona file
+# QA_BOT_PERSONA=data/custom_persona.txt
+# Option 3: Leave unset to use data/qa_persona.txt (default)
+
 # ===== RAG Intelligent Q&A System Configuration (Optional) =====
 # Embedding Model Configuration (Required for vector search)
 EMBEDDING_API_KEY=your_siliconflow_api_key
 EMBEDDING_API_BASE=https://api.siliconflow.cn/v1
-EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIMENSION=1024
 
 # Reranker Configuration (Optional, for improving retrieval accuracy)
@@ -265,10 +282,6 @@ RERANKER_FINAL=5
 
 # Vector Database Configuration
 VECTOR_DB_PATH=data/vectors
-
-# Q&A Bot Configuration
-QA_BOT_ENABLED=True
-QA_BOT_TOKEN=your_qa_bot_token_here  # Get from @BotFather
 ```
 
 > **Note**: The RAG system requires additional API keys. We recommend using [SiliconFlow](https://siliconflow.cn/) for Embedding and Reranker services. For detailed configuration, please refer to the [RAG Quick Start Guide](wiki/RAG_QUICKSTART.md).
@@ -292,6 +305,7 @@ Sakura-Bot/
 │   ├── config.json                   # AI configuration
 │   ├── prompt.txt                    # Summary prompt
 │   ├── poll_prompt.txt               # Poll prompt
+│   ├── qa_persona.txt                # QA bot persona configuration
 │   ├── summaries.db                  # SQLite database
 │   └── sessions/                     # Telegram sessions
 │
@@ -299,10 +313,11 @@ Sakura-Bot/
 ├── 📁 .github/                       # GitHub workflows
 │
 ├── 📄 main.py                        # Entry point
+├── 📄 qa_bot.py                      # QA Bot entry point
 ├── 📄 requirements.txt               # Dependencies
 ├── 📄 docker-compose.yml             # Docker Compose config
 ├── 📄 Dockerfile                     # Docker image build
-└── 📄 README.md                      # This file
+└── 📄 README_EN.md                   # This file
 ```
 
 ---
@@ -312,9 +327,14 @@ Sakura-Bot/
 | Technology | Purpose | Version |
 |------------|---------|---------|
 | **Python** | Main language | 3.13+ |
-| **Telethon** | Telegram API client | 1.34+ |
+| **Telethon** | Telegram MTProto API client (Main Bot) | 1.34+ |
+| **python-telegram-bot** | Telegram Bot API client (QA Bot) | 20.0+ |
 | **OpenAI SDK** | AI API integration | 1.0+ |
 | **APScheduler** | Task scheduling | 3.10+ |
+| **ChromaDB** | Vector database (RAG system) | 0.4+ |
+| **aiosqlite** | Async SQLite database | 0.20+ |
+| **Pydantic** | Configuration management & validation | 2.0+ |
+| **httpx** | HTTP client (Reranker calls) | 0.27+ |
 | **python-dotenv** | Environment management | 1.0+ |
 | **Docker** | Containerization | 20.10+ |
 
@@ -324,7 +344,7 @@ Sakura-Bot/
 
 ### Do I need to login on first run?
 
-Yes, first run requires Telegram authentication (phone + verification code). Session files will be generated for subsequent runs.
+Yes, first run requires Telegram authentication (phone number + verification code). Session files will be generated for subsequent runs without re-authentication.
 
 ### How to get Telegram API credentials?
 
@@ -339,6 +359,16 @@ All OpenAI-compatible APIs, including:
 - **DeepSeek** (Recommended, cost-effective)
 - **OpenAI** official API
 - Any third-party OpenAI-compatible service
+
+### How to customize the QA Bot persona?
+
+There are three ways (priority from high to low):
+
+1. **Environment variable**: Set `QA_BOT_PERSONA=You are a professional...` in `.env`
+2. **Persona file**: Edit `data/qa_persona.txt` (auto-created on first run)
+3. **Config file**: Set the `qa_bot_persona` field in `data/config.json`
+
+Restart the bot for changes to take effect. Use `/view_persona` to check the active persona.
 
 ### How to backup data?
 
@@ -377,7 +407,7 @@ This project is licensed under **GNU Affero General Public License Version 3.0 (
 ### Important Notice
 
 - This project is for **personal learning only**, commercial use is prohibited
-- When using code or derivatives, must cite the original repository
+- When using code or derivatives, you must cite the original repository
 - Network service providers must provide source code per AGPL-3.0
 - Project source: https://github.com/Sakura520222/Sakura-Bot
 
@@ -388,8 +418,10 @@ See [LICENSE](LICENSE) for the full license text.
 ## 🙏 Acknowledgments
 
 - [Telethon](https://github.com/LonamiWebs/Telethon) - Powerful Telegram MTProto API framework
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) - Full-featured Telegram Bot API library
 - [OpenAI](https://openai.com/) - Leading AI research and API services
 - [DeepSeek](https://www.deepseek.com/) - Cost-effective AI API provider
+- [SiliconFlow](https://siliconflow.cn/) - Embedding and Reranker API services
 - All [contributors](https://github.com/Sakura520222/Sakura-Bot/graphs/contributors) who helped improve this project
 
 ---

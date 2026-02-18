@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2026 Sakura-频道总结助手
+# Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
 # 并附加非商业使用限制条款。
@@ -41,7 +41,7 @@ MESSAGE_ZH_CN = {
     'language.supported': '支持的语言：\n• zh-CN - 简体中文\n• en-US - 英语',
 
     # ========== 欢迎消息 ==========
-    'welcome.title': '🌸 **欢迎使用 Sakura-频道总结助手**',
+    'welcome.title': '🌸 **欢迎使用 Sakura-Bot**',
     'welcome.description': '🤖 我是Telegram智能频道管理助手，专门帮助频道主自动化管理 Telegram 频道内容。',
     'welcome.features_title': '✨ **主要功能**',
     'welcome.feature_summary': '• 📊 AI智能总结频道消息',
@@ -58,7 +58,7 @@ MESSAGE_ZH_CN = {
     'welcome.tip': '💡 **提示**\n• 发送 /help 查看完整命令列表\n• 更多信息请访问项目[开源仓库](https://github.com/Sakura520222/Sakura-Bot)',
 
     # ========== 帮助消息 ==========
-    'help.title': '📚 **Sakura-频道总结助手 - 完整命令列表**',
+    'help.title': '📚 **Sakura-Bot - 完整命令列表**',
     'help.section_basic': '**🤖 基础命令**',
     'help.section_prompt': '**⚙️ 提示词管理**',
     'help.section_ai': '**🤖 AI 配置**',

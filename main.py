@@ -1,4 +1,4 @@
-# Copyright 2026 Sakura-频道总结助手
+# Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
 # 并附加非商业使用限制条款。
@@ -74,7 +74,7 @@ async def send_startup_message(client):
     from core.i18n import get_text
     try:
         # 构建帮助信息（使用 i18n，支持多语言）
-        help_text = f"""🤖 **Sakura频道总结助手 v{__version__} 已启动**
+        help_text = f"""🤖 **Sakura-Bot v{__version__} 已启动**
 
 **核心功能**
 • 自动总结频道消息
@@ -440,7 +440,7 @@ async def main():
         logger.critical(f"机器人服务初始化或运行失败: {type(e).__name__}: {e}", exc_info=True)
 
 if __name__ == "__main__":
-    logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ======")
+    logger.info(f"===== Sakura-Bot v{__version__} 启动 ======")
     
     # 验证必要配置
     is_valid, missing = validate_required_settings()

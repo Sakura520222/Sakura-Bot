@@ -492,7 +492,7 @@ docker-compose up -d qa_bot
 
 <div align="center">
 
-**🌸 Sakura-频道总结助手**
+**🌸 Sakura-Bot**
 
 让频道管理更智能 · 让信息查询更便捷
 
