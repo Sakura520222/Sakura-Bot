@@ -53,9 +53,11 @@ from core.poll_regeneration_handlers import (
     handle_vote_regen_request_callback
 )
 from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
+from core.mainbot_request_handler import get_mainbot_request_handler
+from core.mainbot_push_handler import get_mainbot_push_handler
 
 # 版本信息
-__version__ = "1.5.7"
+__version__ = "1.5.8"
 
 from core.process_manager import start_qa_bot, stop_qa_bot
 
@@ -195,6 +197,22 @@ async def main():
         )
         logger.info("投票重新生成数据清理任务已配置：每天凌晨3点执行")
 
+        # 添加定期检查请求任务（跨Bot通信）
+        async def check_requests_job():
+            """定期检查并处理来自问答Bot的请求"""
+            try:
+                await request_handler.check_requests()
+            except Exception as e:
+                logger.error(f"检查请求任务失败: {type(e).__name__}: {e}")
+
+        scheduler.add_job(
+            check_requests_job,
+            'interval',
+            seconds=30,  # 每30秒检查一次
+            id="check_requests"
+        )
+        logger.info("跨Bot请求检查任务已配置：每30秒执行一次")
+
         # 确保 sessions 目录存在
         sessions_dir = 'data/sessions'
         os.makedirs(sessions_dir, exist_ok=True)
@@ -287,6 +305,25 @@ async def main():
             CallbackQuery(func=lambda e: e.data.startswith(b'request_regen_'))
         )
         logger.info("投票重新生成请求回调处理器已注册")
+
+        # 初始化跨Bot通信处理器
+        logger.info("初始化跨Bot通信处理器...")
+        request_handler = get_mainbot_request_handler()
+        push_handler = get_mainbot_push_handler()
+
+        # 添加请求处理回调查询处理器
+        async def handle_request_callback(event):
+            """处理总结请求的回调查询"""
+            await request_handler.handle_callback_query(event, client)
+
+        client.add_event_handler(
+            handle_request_callback,
+            CallbackQuery(func=lambda e: e.data and (
+                e.data.startswith(b'confirm_summary_') or 
+                e.data.startswith(b'reject_summary_')
+            ))
+        )
+        logger.info("请求处理回调处理器已注册")
 
         logger.info("命令处理器添加完成")
 

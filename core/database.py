@@ -135,6 +135,61 @@ class DatabaseManager:
                     metadata TEXT
                 )
             """)
+            
+            # 创建用户注册表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_admin BOOLEAN DEFAULT 0,
+                    preferences TEXT
+                )
+            """)
+            
+            # 创建订阅配置表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    channel_name TEXT,
+                    sub_type TEXT DEFAULT 'summary',
+                    enabled BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, channel_id, sub_type)
+                )
+            """)
+            
+            # 创建请求队列表（用于IPC）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS request_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_type TEXT NOT NULL,
+                    requested_by INTEGER NOT NULL,
+                    target_channel TEXT,
+                    params TEXT,
+                    status TEXT DEFAULT 'pending',
+                    result TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    processed_at TIMESTAMP
+                )
+            """)
+            
+            # 创建通知队列表（用于跨Bot通知）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notification_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    notification_type TEXT NOT NULL,
+                    content TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sent_at TIMESTAMP
+                )
+            """)
 
             # 为新表创建索引
             cursor.execute("""
@@ -146,11 +201,39 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_quota_date
                 ON usage_quota(query_date)
             """)
+            
+            # 用户表索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_users_last_active
+                ON users(last_active DESC)
+            """)
+            
+            # 订阅表索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_subscriptions_user
+                ON subscriptions(user_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_subscriptions_channel
+                ON subscriptions(channel_id)
+            """)
+            
+            # 请求队列索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_request_queue_status
+                ON request_queue(status, created_at)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_request_queue_user
+                ON request_queue(requested_by)
+            """)
 
             # 插入或更新版本号
             cursor.execute("""
                 INSERT OR REPLACE INTO db_version (version, upgraded_at)
-                VALUES (2, CURRENT_TIMESTAMP)
+                VALUES (3, CURRENT_TIMESTAMP)
             """)
 
             conn.commit()
@@ -1155,6 +1238,765 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"删除旧对话记录失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
+
+    # ============ 用户管理方法 ============
+
+    def register_user(self, user_id: int, username: str = None,
+                     first_name: str = None, is_admin: bool = False) -> bool:
+        """
+        注册新用户
+
+        Args:
+            user_id: Telegram用户ID
+            username: 用户名
+            first_name: 名字
+            is_admin: 是否为管理员
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO users 
+                (user_id, username, first_name, registered_at, last_active, is_admin)
+                VALUES (?, ?, ?, 
+                        COALESCE((SELECT registered_at FROM users WHERE user_id = ?), ?),
+                        ?, ?)
+            """, (user_id, username, first_name, user_id, now, now, 1 if is_admin else 0))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"用户注册成功: user_id={user_id}, username={username}")
+            return True
+
+        except Exception as e:
+            logger.error(f"用户注册失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取用户信息
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            用户信息字典，不存在返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                user = dict(row)
+                # 解析preferences JSON
+                if user.get('preferences'):
+                    try:
+                        user['preferences'] = json.loads(user['preferences'])
+                    except:
+                        pass
+                return user
+            return None
+
+        except Exception as e:
+            logger.error(f"获取用户信息失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def update_user_activity(self, user_id: int) -> bool:
+        """
+        更新用户最后活跃时间
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute("""
+                UPDATE users SET last_active = ?
+                WHERE user_id = ?
+            """, (now, user_id))
+
+            conn.commit()
+            conn.close()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"更新用户活跃时间失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def set_user_admin(self, user_id: int, is_admin: bool) -> bool:
+        """
+        设置用户管理员权限
+
+        Args:
+            user_id: 用户ID
+            is_admin: 是否为管理员
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE users SET is_admin = ?
+                WHERE user_id = ?
+            """, (1 if is_admin else 0, user_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新用户权限: user_id={user_id}, is_admin={is_admin}")
+            return True
+
+        except Exception as e:
+            logger.error(f"设置用户权限失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_registered_users(self, active_days: int = 30,
+                            limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        获取注册用户列表
+
+        Args:
+            active_days: 活跃天数限制，默认30天
+            limit: 返回记录数量
+
+        Returns:
+            用户列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=active_days)).isoformat()
+
+            cursor.execute("""
+                SELECT * FROM users
+                WHERE last_active >= ?
+                ORDER BY last_active DESC
+                LIMIT ?
+            """, (cutoff, limit))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"获取用户列表失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def is_user_registered(self, user_id: int) -> bool:
+        """
+        检查用户是否已注册
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            是否已注册
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            conn.close()
+
+            return result is not None
+
+        except Exception as e:
+            logger.error(f"检查用户注册状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    # ============ 订阅管理方法 ============
+
+    def add_subscription(self, user_id: int, channel_id: str,
+                        channel_name: str = None,
+                        sub_type: str = 'summary') -> bool:
+        """
+        添加订阅
+
+        Args:
+            user_id: 用户ID
+            channel_id: 频道URL
+            channel_name: 频道名称
+            sub_type: 订阅类型 ('summary' 或 'poll')
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT OR IGNORE INTO subscriptions 
+                (user_id, channel_id, channel_name, sub_type)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, channel_id, channel_name, sub_type))
+
+            conn.commit()
+            affected = cursor.rowcount
+            conn.close()
+
+            if affected > 0:
+                logger.info(f"添加订阅成功: user_id={user_id}, channel={channel_name}, type={sub_type}")
+                return True
+            else:
+                logger.info(f"订阅已存在: user_id={user_id}, channel={channel_name}")
+                return False
+
+        except Exception as e:
+            logger.error(f"添加订阅失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def remove_subscription(self, user_id: int, channel_id: str = None,
+                           sub_type: str = None) -> int:
+        """
+        移除订阅
+
+        Args:
+            user_id: 用户ID
+            channel_id: 可选，频道ID，不指定则移除所有频道
+            sub_type: 可选，订阅类型，不指定则移除所有类型
+
+        Returns:
+            删除的订阅数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            conditions = ["user_id = ?"]
+            params = [user_id]
+
+            if channel_id:
+                conditions.append("channel_id = ?")
+                params.append(channel_id)
+
+            if sub_type:
+                conditions.append("sub_type = ?")
+                params.append(sub_type)
+
+            query = f"DELETE FROM subscriptions WHERE {' AND '.join(conditions)}"
+            cursor.execute(query, params)
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"移除订阅: user_id={user_id}, 删除{deleted_count}条")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"移除订阅失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    def get_user_subscriptions(self, user_id: int,
+                              sub_type: str = None) -> List[Dict[str, Any]]:
+        """
+        获取用户的订阅列表
+
+        Args:
+            user_id: 用户ID
+            sub_type: 可选，订阅类型过滤
+
+        Returns:
+            订阅列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if sub_type:
+                cursor.execute("""
+                    SELECT * FROM subscriptions
+                    WHERE user_id = ? AND sub_type = ? AND enabled = 1
+                    ORDER BY created_at DESC
+                """, (user_id, sub_type))
+            else:
+                cursor.execute("""
+                    SELECT * FROM subscriptions
+                    WHERE user_id = ? AND enabled = 1
+                    ORDER BY created_at DESC
+                """, (user_id,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"获取用户订阅失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def get_channel_subscribers(self, channel_id: str,
+                               sub_type: str = 'summary') -> List[int]:
+        """
+        获取频道的订阅用户ID列表
+
+        Args:
+            channel_id: 频道URL
+            sub_type: 订阅类型
+
+        Returns:
+            用户ID列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT user_id FROM subscriptions
+                WHERE channel_id = ? AND sub_type = ? AND enabled = 1
+            """, (channel_id, sub_type))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [row[0] for row in rows]
+
+        except Exception as e:
+            logger.error(f"获取频道订阅者失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def get_all_channels(self) -> List[Dict[str, Any]]:
+        """
+        获取所有可用频道（从summaries表中提取）
+
+        Returns:
+            频道列表，包含channel_id和channel_name
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT DISTINCT channel_id, channel_name,
+                       MAX(created_at) as last_summary_time
+                FROM summaries
+                GROUP BY channel_id, channel_name
+                ORDER BY last_summary_time DESC
+            """)
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"获取频道列表失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def is_subscribed(self, user_id: int, channel_id: str,
+                     sub_type: str = 'summary') -> bool:
+        """
+        检查用户是否已订阅某频道
+
+        Args:
+            user_id: 用户ID
+            channel_id: 频道URL
+            sub_type: 订阅类型
+
+        Returns:
+            是否已订阅
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT 1 FROM subscriptions
+                WHERE user_id = ? AND channel_id = ? 
+                      AND sub_type = ? AND enabled = 1
+            """, (user_id, channel_id, sub_type))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result is not None
+
+        except Exception as e:
+            logger.error(f"检查订阅状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    # ============ 请求队列方法 ============
+
+    def create_request(self, request_type: str, requested_by: int,
+                      target_channel: str = None,
+                      params: Dict[str, Any] = None) -> Optional[int]:
+        """
+        创建请求
+
+        Args:
+            request_type: 请求类型 ('summary', 'poll', etc.)
+            requested_by: 请求者用户ID
+            target_channel: 目标频道URL
+            params: 其他参数（JSON格式）
+
+        Returns:
+            请求ID，失败返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            params_json = json.dumps(params, ensure_ascii=False) if params else None
+
+            cursor.execute("""
+                INSERT INTO request_queue
+                (request_type, requested_by, target_channel, params)
+                VALUES (?, ?, ?, ?)
+            """, (request_type, requested_by, target_channel, params_json))
+
+            conn.commit()
+            request_id = cursor.lastrowid
+            conn.close()
+
+            logger.info(f"创建请求: id={request_id}, type={request_type}, user={requested_by}")
+            return request_id
+
+        except Exception as e:
+            logger.error(f"创建请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def get_pending_requests(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        获取待处理的请求列表
+
+        Args:
+            limit: 返回记录数量
+
+        Returns:
+            请求列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT * FROM request_queue
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+            """, (limit,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            requests = []
+            for row in rows:
+                req = dict(row)
+                # 解析JSON字段
+                if req.get('params'):
+                    try:
+                        req['params'] = json.loads(req['params'])
+                    except:
+                        pass
+                if req.get('result'):
+                    try:
+                        req['result'] = json.loads(req['result'])
+                    except:
+                        pass
+                requests.append(req)
+
+            return requests
+
+        except Exception as e:
+            logger.error(f"获取待处理请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def update_request_status(self, request_id: int, status: str,
+                             result: Any = None) -> bool:
+        """
+        更新请求状态
+
+        Args:
+            request_id: 请求ID
+            status: 新状态 ('processing', 'completed', 'failed')
+            result: 结果数据（JSON可序列化）
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(timezone.utc).isoformat()
+            result_json = json.dumps(result, ensure_ascii=False) if result else None
+
+            cursor.execute("""
+                UPDATE request_queue
+                SET status = ?, result = ?, processed_at = ?
+                WHERE id = ?
+            """, (status, result_json, now, request_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新请求状态: id={request_id}, status={status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"更新请求状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_request_status(self, request_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取请求状态
+
+        Args:
+            request_id: 请求ID
+
+        Returns:
+            请求信息字典，不存在返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM request_queue WHERE id = ?", (request_id,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                req = dict(row)
+                # 解析JSON字段
+                if req.get('params'):
+                    try:
+                        req['params'] = json.loads(req['params'])
+                    except:
+                        pass
+                if req.get('result'):
+                    try:
+                        req['result'] = json.loads(req['result'])
+                    except:
+                        pass
+                return req
+            return None
+
+        except Exception as e:
+            logger.error(f"获取请求状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def cleanup_old_requests(self, days: int = 7) -> int:
+        """
+        清理旧请求记录
+
+        Args:
+            days: 保留天数，默认7天
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+            cursor.execute("""
+                DELETE FROM request_queue
+                WHERE created_at < ? AND status IN ('completed', 'failed')
+            """, (cutoff_date.isoformat(),))
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"清理旧请求: 删除 {deleted_count} 条记录")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"清理旧请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    # ============ 通知队列方法 ============
+
+    def create_notification(self, user_id: int, notification_type: str,
+                           content: Dict[str, Any]) -> Optional[int]:
+        """
+        创建通知
+
+        Args:
+            user_id: 目标用户ID
+            notification_type: 通知类型 ('summary_push', 'request_result', etc.)
+            content: 通知内容（JSON格式）
+
+        Returns:
+            通知ID，失败返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            content_json = json.dumps(content, ensure_ascii=False) if content else None
+
+            cursor.execute("""
+                INSERT INTO notification_queue
+                (user_id, notification_type, content)
+                VALUES (?, ?, ?)
+            """, (user_id, notification_type, content_json))
+
+            conn.commit()
+            notification_id = cursor.lastrowid
+            conn.close()
+
+            logger.info(f"创建通知: id={notification_id}, type={notification_type}, user={user_id}")
+            return notification_id
+
+        except Exception as e:
+            logger.error(f"创建通知失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def get_pending_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        获取待发送的通知列表
+
+        Args:
+            limit: 返回记录数量
+
+        Returns:
+            通知列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT * FROM notification_queue
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+            """, (limit,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            notifications = []
+            for row in rows:
+                notif = dict(row)
+                # 解析JSON字段
+                if notif.get('content'):
+                    try:
+                        notif['content'] = json.loads(notif['content'])
+                    except:
+                        pass
+                notifications.append(notif)
+
+            return notifications
+
+        except Exception as e:
+            logger.error(f"获取待发送通知失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def update_notification_status(self, notification_id: int,
+                                  status: str) -> bool:
+        """
+        更新通知状态
+
+        Args:
+            notification_id: 通知ID
+            status: 新状态 ('sent', 'failed')
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute("""
+                UPDATE notification_queue
+                SET status = ?, sent_at = ?
+                WHERE id = ?
+            """, (status, now, notification_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新通知状态: id={notification_id}, status={status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"更新通知状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def cleanup_old_notifications(self, days: int = 7) -> int:
+        """
+        清理旧通知记录
+
+        Args:
+            days: 保留天数，默认7天
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+            cursor.execute("""
+                DELETE FROM notification_queue
+                WHERE created_at < ? AND status IN ('sent', 'failed')
+            """, (cutoff_date.isoformat(),))
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"清理旧通知: 删除 {deleted_count} 条记录")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"清理旧通知失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取用户信息（别名方法，兼容请求处理器）
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            用户信息字典，不存在返回None
+        """
+        return self.get_user(user_id)
 
 
 # 创建全局数据库管理器实例

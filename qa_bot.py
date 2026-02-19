@@ -32,6 +32,7 @@ from core.quota_manager import get_quota_manager
 from core.qa_engine_v3 import get_qa_engine_v3
 from core.conversation_manager import get_conversation_manager
 from core.config import REPORT_ADMIN_IDS, get_qa_bot_persona
+from core.qa_user_system import get_qa_user_system
 
 # 配置日志 - 添加[QA]前缀以便区分
 class QAFormatter(logging.Formatter):
@@ -80,9 +81,10 @@ class QABot:
         self.quota_manager = get_quota_manager()
         self.qa_engine = get_qa_engine_v3()
         self.conversation_mgr = get_conversation_manager()
+        self.user_system = get_qa_user_system()
         self.application = None
 
-        logger.info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持）")
+        logger.info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持 + 用户系统）")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/start命令"""
@@ -106,43 +108,52 @@ class QABot:
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/help命令"""
-        help_text = """📚 <b>使用帮助</b>
+        help_text = """📚 **使用帮助**
 
-<b>基础命令：</b>
-• /start - 查看欢迎信息
-• /help - 显示这份帮助文档
-• /status - 查看使用配额和会话状态
-• /clear - 清除对话记忆，重新开始
-• /view_persona - 查看当前助手人格设定
+*基础命令*
+• `/start` - 查看欢迎信息
+• `/help` - 显示这份帮助文档
+• `/status` - 查看使用配额和会话状态
+• `/clear` - 清除对话记忆，重新开始
+• `/view_persona` - 查看当前助手人格设定
 
-<b>自然语言查询：</b>
+*订阅管理*
+• `/listchannels` - 列出可订阅的频道
+• `/subscribe` - 订阅频道总结推送
+• `/unsubscribe` - 取消频道订阅
+• `/mysubscriptions` - 查看我的订阅列表
+• `/request_summary` - 请求生成频道总结
+
+*自然语言查询*
 直接发送问题，例如：
 • "上周发生了什么？"
 • "最近有什么技术讨论？"
 • "今天有什么更新？"
 • "关于特定关键词的内容"
 
-<b>多轮对话：</b>
-• 我会记住你的对话上下文（30分钟内）
+*多轮对话*
+• 我会记住我们的对话上下文（30分钟内）
 • 你可以使用代词追问："那它呢？"、"这个怎么样？"
 • 对话超时后会自动开始新会话
 
-<b>时间关键词：</b>
+*时间关键词*
 • 今天、昨天、前天
 • 本周、上周
 • 本月、上月
 • 最近7天、最近30天
 
-<b>功能特点：</b>
+*功能特点*
 ✅ 智能意图识别
 ✅ 上下文感知（多轮对话）
 ✅ 频道画像注入
 ✅ 多频道综合查询
+✅ 频道订阅推送
+✅ 总结请求功能
 
-⚠️ <b>注意：</b>
+⚠️ *注意*
 请尽量提出与频道总结相关的问题。过度偏离的查询可能会被拦截。"""
 
-        await update.message.reply_text(help_text, parse_mode='HTML')
+        await update.message.reply_text(help_text, parse_mode='Markdown')
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/status命令"""
@@ -231,6 +242,142 @@ class QABot:
 修改后需重启Bot生效。"""
 
         await update.message.reply_text(message, parse_mode='Markdown')
+
+    async def list_channels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/listchannels命令 - 列出可订阅频道"""
+        user_id = update.effective_user.id
+        
+        # 自动注册用户
+        self.user_system.register_user(
+            user_id,
+            update.effective_user.username,
+            update.effective_user.first_name
+        )
+        
+        # 获取频道列表
+        channels = self.user_system.get_available_channels()
+        message = self.user_system.format_channels_list(channels)
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    async def subscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/subscribe命令 - 订阅频道"""
+        user_id = update.effective_user.id
+        
+        # 自动注册用户
+        self.user_system.register_user(
+            user_id,
+            update.effective_user.username,
+            update.effective_user.first_name
+        )
+        
+        # 检查参数
+        if not context.args or len(context.args) < 1:
+            message = """📖 **订阅频道**
+
+使用方法:
+`/subscribe <频道链接>`
+
+示例:
+`/subscribe https://t.me/channel_name`
+
+💡 使用 `/listchannels` 查看可订阅频道"""
+            await update.message.reply_text(message, parse_mode='Markdown')
+            return
+        
+        channel_url = context.args[0]
+        
+        # 获取频道列表，查找频道名称
+        channels = self.user_system.get_available_channels()
+        channel_name = None
+        for ch in channels:
+            if ch.get('channel_id') == channel_url:
+                channel_name = ch.get('channel_name')
+                break
+        
+        if not channel_name:
+            # 从URL中提取频道名作为备用
+            channel_name = channel_url.split('/')[-1]
+        
+        # 添加订阅
+        result = self.user_system.add_subscription(user_id, channel_url, channel_name)
+        await update.message.reply_text(result['message'], parse_mode='Markdown')
+
+    async def unsubscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/unsubscribe命令 - 取消订阅"""
+        user_id = update.effective_user.id
+        
+        # 检查参数
+        if not context.args or len(context.args) < 1:
+            # 如果没有参数，显示订阅列表让用户选择
+            subscriptions = self.user_system.get_user_subscriptions(user_id)
+            if not subscriptions:
+                message = "您还没有订阅任何频道。"
+            else:
+                lines = ["📚 **取消订阅**\n\n请使用频道链接取消订阅：\n"]
+                for sub in subscriptions:
+                    lines.append(f"• {sub.get('channel_name', sub.get('channel_id'))}")
+                    lines.append(f"  `{sub.get('channel_id')}`")
+                    lines.append("")
+                lines.append("使用方法: `/unsubscribe <频道链接>`")
+                message = "\n".join(lines)
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            return
+        
+        channel_url = context.args[0]
+        result = self.user_system.remove_subscription(user_id, channel_url)
+        await update.message.reply_text(result['message'], parse_mode='Markdown')
+
+    async def my_subscriptions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/mysubscriptions命令 - 查看我的订阅"""
+        user_id = update.effective_user.id
+        
+        subscriptions = self.user_system.get_user_subscriptions(user_id)
+        message = self.user_system.format_subscriptions_list(subscriptions)
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    async def request_summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理/request_summary命令 - 请求生成总结"""
+        user_id = update.effective_user.id
+        
+        # 自动注册用户
+        self.user_system.register_user(
+            user_id,
+            update.effective_user.username,
+            update.effective_user.first_name
+        )
+        
+        # 检查参数
+        if not context.args or len(context.args) < 1:
+            message = """📝 **请求生成总结**
+
+使用方法:
+`/request_summary <频道链接>`
+
+此命令会向管理员提交请求，请管理员为指定频道生成总结。
+
+💡 使用 `/listchannels` 查看可用的频道。"""
+            await update.message.reply_text(message, parse_mode='Markdown')
+            return
+        
+        channel_url = context.args[0]
+        
+        # 获取频道名称
+        channels = self.user_system.get_available_channels()
+        channel_name = None
+        for ch in channels:
+            if ch.get('channel_id') == channel_url:
+                channel_name = ch.get('channel_name')
+                break
+        
+        if not channel_name:
+            channel_name = channel_url.split('/')[-1]
+        
+        # 创建请求
+        result = self.user_system.create_summary_request(user_id, channel_url, channel_name)
+        await update.message.reply_text(result['message'], parse_mode='Markdown')
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理用户消息（流式输出 - 单条消息动态编辑）"""
@@ -520,7 +667,37 @@ class QABot:
         self.application.add_handler(CommandHandler("status", self.status_command))
         self.application.add_handler(CommandHandler("clear", self.clear_command))
         self.application.add_handler(CommandHandler("view_persona", self.view_persona_command))
+        
+        # 订阅管理命令
+        self.application.add_handler(CommandHandler("listchannels", self.list_channels_command))
+        self.application.add_handler(CommandHandler("subscribe", self.subscribe_command))
+        self.application.add_handler(CommandHandler("unsubscribe", self.unsubscribe_command))
+        self.application.add_handler(CommandHandler("mysubscriptions", self.my_subscriptions_command))
+        self.application.add_handler(CommandHandler("request_summary", self.request_summary_command))
+        
+        # 消息处理器
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+
+        # 添加定期检查通知任务（跨Bot通信）
+        async def check_notifications_job(context=None):
+            """定期检查并发送待处理的通知"""
+            try:
+                from core.mainbot_push_handler import get_mainbot_push_handler
+                push_handler = get_mainbot_push_handler()
+                
+                count = await push_handler.process_pending_notifications()
+                if count > 0:
+                    logger.info(f"已处理 {count} 条通知")
+            except Exception as e:
+                logger.error(f"检查通知任务失败: {type(e).__name__}: {e}")
+
+        # 每30秒检查一次通知队列
+        self.application.job_queue.run_repeating(
+            check_notifications_job,
+            interval=30,
+            first=10
+        )
+        logger.info("跨Bot通知检查任务已启动：每30秒执行一次")
 
         # 启动Bot
         logger.info("问答Bot已启动，等待消息...")

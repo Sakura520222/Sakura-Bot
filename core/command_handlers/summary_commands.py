@@ -231,6 +231,22 @@ async def handle_manual_summary(event):
                 else:
                     sent_report_ids = await send_report(report_text, None, event.client, skip_admins=skip_admins, message_count=len(messages))
                 
+                # 通知订阅用户（跨Bot推送）
+                try:
+                    from ..mainbot_push_handler import get_mainbot_push_handler
+                    push_handler = get_mainbot_push_handler()
+                    
+                    notified_count = await push_handler.notify_summary_subscribers(
+                        channel_id=channel,
+                        channel_name=channel_actual_name,
+                        summary_text=report_text
+                    )
+                    
+                    if notified_count > 0:
+                        logger.info(f"已成功通知 {notified_count} 个订阅用户")
+                except Exception as e:
+                    logger.error(f"通知订阅用户失败: {type(e).__name__}: {e}", exc_info=True)
+
                 # 保存该频道的本次总结时间和所有相关消息ID
                 if sent_report_ids:
                     summary_ids = sent_report_ids.get("summary_message_ids", [])

@@ -5,6 +5,150 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.8] - 2026-02-19
+
+### 新增
+- **完整的用户订阅推送系统**：实现了用户注册、频道订阅和总结推送的完整功能链路
+  - **用户注册系统**：用户通过问答Bot注册，记录用户ID、用户名、注册时间等信息
+  - **频道订阅管理**：用户可订阅感兴趣的频道，当该频道有新总结时自动收到推送通知
+  - **总结请求功能**：用户可主动请求为指定频道生成总结，由主Bot管理员审核处理
+  - **跨Bot通信机制**：问答Bot和主Bot通过数据库队列实现进程间通信（IPC）
+  - **智能通知推送**：生成新总结后自动通知所有订阅用户，支持预览和完整链接
+
+### 新增文件
+- **core/qa_user_system.py** - QA用户系统管理模块（317行）
+  - `QAUserSystem` 类：完整的用户系统管理器
+  - `register_user()` - 用户注册功能，自动记录用户信息
+  - `get_available_channels()` - 获取可订阅频道列表
+  - `add_subscription()` - 添加频道订阅
+  - `remove_subscription()` - 取消频道订阅
+  - `get_user_subscriptions()` - 获取用户订阅列表
+  - `create_summary_request()` - 创建总结请求
+  - `get_request_status()` - 获取请求状态
+  - `format_channels_list()` - 格式化频道列表显示
+  - `format_subscriptions_list()` - 格式化订阅列表显示
+
+- **core/mainbot_request_handler.py** - 主Bot请求处理器（283行）
+  - `MainBotRequestHandler` 类：处理来自问答Bot的总结请求
+  - `check_requests()` - 定期检查待处理请求
+  - `handle_callback_query()` - 处理管理员确认/拒绝回调
+  - `process_request()` - 执行总结生成任务
+  - `notify_requester()` - 通知请求者处理结果
+
+- **core/mainbot_push_handler.py** - 主Bot推送处理器（231行）
+  - `MainBotPushHandler` 类：处理总结生成后的推送通知
+  - `notify_summary_subscribers()` - 通知订阅用户
+  - `process_pending_notifications()` - 处理待发送通知队列
+  - `_format_request_result()` - 格式化请求结果通知
+  - `_format_summary_push()` - 格式化总结推送通知
+
+### 数据库扩展（core/database.py）
+- **新增4个数据表**：
+  - `users` - 用户注册表：存储用户ID、用户名、注册时间、权限等信息
+  - `subscriptions` - 订阅配置表：存储用户-频道订阅关系
+  - `request_queue` - 请求队列表：用于IPC的总结请求队列
+  - `notification_queue` - 通知队列表：用于跨Bot的通知队列
+
+- **新增用户管理方法**（7个）：
+  - `register_user()` - 注册新用户
+  - `get_user()` - 获取用户信息
+  - `update_user_activity()` - 更新用户活跃时间
+  - `set_user_admin()` - 设置用户管理员权限
+  - `get_registered_users()` - 获取注册用户列表
+  - `is_user_registered()` - 检查用户是否已注册
+
+- **新增订阅管理方法**（6个）：
+  - `add_subscription()` - 添加订阅
+  - `remove_subscription()` - 删除订阅
+  - `get_user_subscriptions()` - 获取用户订阅列表
+  - `get_channel_subscribers()` - 获取频道订阅者
+  - `is_subscribed()` - 检查是否已订阅
+  - `get_all_channels()` - 获取所有频道信息
+
+- **新增请求队列方法**（4个）：
+  - `create_request()` - 创建请求记录
+  - `get_pending_requests()` - 获取待处理请求
+  - `update_request_status()` - 更新请求状态
+  - `get_request_status()` - 获取请求状态
+
+- **新增通知队列方法**（3个）：
+  - `add_notification()` - 添加通知
+  - `get_pending_notifications()` - 获取待发送通知
+  - `update_notification_status()` - 更新通知状态
+
+### QA Bot命令扩展（qa_bot.py）
+- **新增5个命令**：
+  - `/register` - 用户注册
+  - `/listchannels` - 列出可订阅频道
+  - `/subscribe <频道链接>` - 订阅频道总结推送
+  - `/unsubscribe <频道链接>` - 取消频道订阅
+  - `/mysubscriptions` - 查看我的订阅列表
+  - `/request_summary <频道链接>` - 请求生成频道总结
+
+- **命令处理函数**：
+  - `handle_register()` - 处理注册命令
+  - `handle_list_channels()` - 处理列出频道命令
+  - `handle_subscribe()` - 处理订阅命令
+  - `handle_unsubscribe()` - 处理取消订阅命令
+  - `handle_my_subscriptions()` - 处理查看订阅命令
+  - `handle_request_summary()` - 处理总结请求命令
+
+- **帮助文档更新**：
+  - 添加"订阅管理"功能分类
+  - 更新功能特点列表
+  - 优化命令显示格式
+
+### 主Bot集成（main.py）
+- **跨Bot通信初始化**：
+  - 初始化 `MainBotRequestHandler` 和 `MainBotPushHandler`
+  - 添加请求处理回调查询处理器（`confirm_summary_*`、`reject_summary_*`）
+  - 集成用户系统到QA Bot
+
+- **定时任务增强**：
+  - 新增定期检查请求任务：每30秒检查一次待处理总结请求
+  - 自动处理问答Bot提交的总结请求
+  - 请求完成后通过队列通知请求者
+
+### 总结命令扩展（core/command_handlers/summary_commands.py）
+- **生成总结后触发推送**：
+  - 调用 `mainbot_push_handler.notify_summary_subscribers()`
+  - 自动通知所有订阅用户
+  - 记录推送成功数量
+
+### 技术特性
+- **进程间通信（IPC）**：通过SQLite数据库队列实现两个Bot进程间的通信
+- **异步消息处理**：支持批量处理通知队列，避免API限流
+- **错误恢复机制**：用户阻止Bot时自动取消订阅，避免无效推送
+- **权限管理**：支持用户管理员权限设置
+- **并发安全**：使用数据库锁和索引保证并发操作安全
+
+### 数据库版本升级
+- 数据库版本从 v2 升级到 v3
+- 自动执行数据库迁移，创建新表和索引
+- 向后兼容旧数据，不影响现有功能
+
+### 使用场景
+- **频道订阅**：用户订阅感兴趣的频道，及时收到新总结通知
+- **总结请求**：用户主动请求生成总结，无需等待定时任务
+- **管理员审核**：主Bot管理员审核确认后执行总结生成
+- **推送通知**：自动推送新总结给订阅用户，提升用户体验
+
+### 配置要求
+- 需要配置 `QA_BOT_TOKEN` 环境变量（问答Bot令牌）
+- 问答Bot需要正常启动并运行
+- 主Bot和问答Bot共享同一个 `summaries.db` 数据库
+
+### 注意事项
+- 跨Bot通信依赖数据库队列，确保数据库文件可访问
+- 推送通知可能因用户阻止Bot而失败，系统自动处理
+- 请求队列定期清理，避免数据堆积
+- 订阅数据持久化存储，重启后保持
+
+### 文档更新
+- 更新了QA Bot帮助文档，添加订阅管理说明
+- 更新了命令列表和功能特点
+- 添加了使用示例和注意事项
+
 ## [1.5.7] - 2026-02-19
 
 ### 新增

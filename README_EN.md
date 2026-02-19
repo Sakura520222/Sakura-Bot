@@ -121,6 +121,9 @@ python main.py
 | **🔄 Poll Regeneration** | Admin can regenerate polls with a single button click | ✅ |
 | **📜 History Tracking** | Automatic database storage with query, export, and statistics | ✅ |
 | **🌍 Internationalization** | Complete multi-language support system, all modules internationalized | ✅ |
+| **📢 User Subscription System** | Users can subscribe to channels and receive automatic notifications for new summaries | ✅ |
+| **📝 Summary Request Feature** | Users can actively request channel summary generation, reviewed by main bot admin | ✅ |
+| **🤖 Cross-Bot Communication** | QA bot and main bot communicate via database queue for inter-process communication | ✅ |
 
 ---
 
@@ -212,6 +215,8 @@ python main.py
 
 The QA Bot is a standalone Q&A bot (requires a separate `QA_BOT_TOKEN`) and supports the following commands:
 
+#### Basic Commands
+
 | Command | Description |
 |---------|-------------|
 | `/start` | View welcome message and feature introduction |
@@ -219,6 +224,18 @@ The QA Bot is a standalone Q&A bot (requires a separate `QA_BOT_TOKEN`) and supp
 | `/status` | View current quota usage and session status |
 | `/clear` | Clear current conversation history and start a new session |
 | `/view_persona` | View the current QA bot persona |
+
+#### Subscription Management
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `/listchannels` | List available channels for subscription (auto-register) | `/listchannels` |
+| `/subscribe <channel_link>` | Subscribe to channel summary notifications (auto-register) | `/subscribe https://t.me/channel` |
+| `/unsubscribe <channel_link>` | Unsubscribe from channel | `/unsubscribe https://t.me/channel` |
+| `/mysubscriptions` | View my subscription list | `/mysubscriptions` |
+| `/request_summary <channel_link>` | Request channel summary generation (auto-register) | `/request_summary https://t.me/channel` |
+
+**Note**: Users are automatically registered when first using subscription features. No separate registration command is needed.
 
 ### Configuration Example
 
