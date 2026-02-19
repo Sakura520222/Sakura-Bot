@@ -24,6 +24,7 @@ import sys
 import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import BotCommand
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -660,6 +661,32 @@ class QABot:
 
         # 创建应用
         self.application = Application.builder().token(QA_BOT_TOKEN).build()
+
+        # 设置命令菜单注册回调
+        async def register_commands(application):
+            """注册命令菜单"""
+            logger.info("注册问答Bot命令菜单...")
+            commands = [
+                BotCommand("start", "查看欢迎信息"),
+                BotCommand("help", "显示使用帮助"),
+                BotCommand("status", "查看使用配额和会话状态"),
+                BotCommand("clear", "清除对话记忆"),
+                BotCommand("view_persona", "查看当前助手人格设定"),
+                BotCommand("listchannels", "列出可订阅的频道"),
+                BotCommand("subscribe", "订阅频道总结推送"),
+                BotCommand("unsubscribe", "取消频道订阅"),
+                BotCommand("mysubscriptions", "查看我的订阅列表"),
+                BotCommand("request_summary", "请求生成频道总结"),
+            ]
+            
+            try:
+                await application.bot.set_my_commands(commands)
+                logger.info(f"问答Bot命令菜单注册完成，共 {len(commands)} 个命令")
+            except Exception as e:
+                logger.error(f"注册命令菜单失败: {type(e).__name__}: {e}")
+        
+        # 将命令注册添加到post_init回调
+        self.application.post_init = register_commands
 
         # 注册处理器
         self.application.add_handler(CommandHandler("start", self.start))

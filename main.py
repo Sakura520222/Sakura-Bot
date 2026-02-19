@@ -198,10 +198,12 @@ async def main():
         logger.info("投票重新生成数据清理任务已配置：每天凌晨3点执行")
 
         # 添加定期检查请求任务（跨Bot通信）
+        # 注意：需要在 client 启动后才能使用，所以这里使用闭包捕获 client
         async def check_requests_job():
             """定期检查并处理来自问答Bot的请求"""
             try:
-                await request_handler.check_requests()
+                # 传递 Telethon client 给请求处理器
+                await request_handler.check_requests(telethon_client=client)
             except Exception as e:
                 logger.error(f"检查请求任务失败: {type(e).__name__}: {e}")
 
@@ -313,7 +315,7 @@ async def main():
 
         # 添加请求处理回调查询处理器
         async def handle_request_callback(event):
-            """处理总结请求的回调查询"""
+            """处理总结请求的回调查询（Telethon Event）"""
             await request_handler.handle_callback_query(event, client)
 
         client.add_event_handler(

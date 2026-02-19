@@ -124,6 +124,8 @@ python main.py
 | **📢 User Subscription System** | Users can subscribe to channels and receive automatic notifications for new summaries | ✅ |
 | **📝 Summary Request Feature** | Users can actively request channel summary generation, reviewed by main bot admin | ✅ |
 | **🤖 Cross-Bot Communication** | QA bot and main bot communicate via database queue for inter-process communication | ✅ |
+| **🔧 Code Optimization** | Modularized summary generation process with code reuse and unified management | ✅ |
+| **📱 Command Menu** | QA Bot automatically registers command menu for direct access to all available commands | ✅ |
 
 ---
 

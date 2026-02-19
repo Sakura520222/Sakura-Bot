@@ -21,9 +21,11 @@ import asyncio
 from typing import Dict, Any, Optional, List
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telethon import Button
 
 from core.database import get_db_manager
-from core.config import REPORT_ADMIN_IDS
+from core.config import ADMIN_LIST
+from core.command_handlers.summary_commands import generate_channel_summary
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +39,14 @@ class MainBotRequestHandler:
         self.pending_requests_cache = {}  # 缓存pending请求
         logger.info("主Bot请求处理器初始化完成")
 
-    async def check_requests(self, context: ContextTypes.DEFAULT_TYPE = None) -> None:
+    async def check_requests(self, context: ContextTypes.DEFAULT_TYPE = None,
+                            telethon_client=None) -> None:
         """
         定期检查并处理新的总结请求
         
         Args:
-            context: Telegram Bot上下文（可选）
+            context: Telegram Bot上下文（可选，用于 PTB）
+            telethon_client: Telethon 客户端实例（可选，用于 Telethon）
         """
         try:
             # 获取所有pending状态的请求
@@ -54,15 +58,53 @@ class MainBotRequestHandler:
             logger.info(f"发现 {len(pending_requests)} 个待处理请求")
 
             for request in pending_requests:
-                await self._notify_admin_request(request, context)
+                # 优先使用 Telethon 客户端
+                if telethon_client:
+                    await self._notify_admin_with_telethon(request, telethon_client)
+                else:
+                    await self._notify_admin_request(request, context)
 
         except Exception as e:
             logger.error(f"检查请求失败: {type(e).__name__}: {e}", exc_info=True)
 
+    def _build_admin_message(self, request: Dict[str, Any]) -> str:
+        """
+        构建管理员通知消息
+        
+        Args:
+            request: 请求信息字典
+        
+        Returns:
+            str: 格式化的通知消息
+        """
+        request_id = request.get('id')
+        channel_id = request.get('target_channel')
+        requested_by = request.get('requested_by')
+        created_at = request.get('created_at', '')
+
+        # 获取请求者信息
+        user_info = self.db.get_user_info(requested_by)
+        if not user_info:
+            user_name = f"用户_{requested_by}"
+        else:
+            user_name = user_info.get('username') or user_info.get('first_name', f"用户_{requested_by}")
+
+        # 构建通知消息
+        message = f"""📝 **新的总结请求**
+
+**请求ID**: {request_id}
+**频道**: {channel_id}
+**请求者**: {user_name} (ID: {requested_by})
+**时间**: {created_at}
+
+请确认是否为该频道生成总结？"""
+
+        return message
+
     async def _notify_admin_request(self, request: Dict[str, Any],
                                     context: ContextTypes.DEFAULT_TYPE = None) -> None:
         """
-        通知管理员有新的总结请求
+        通知管理员有新的总结请求（使用 PTB context）
         
         Args:
             request: 请求信息字典
@@ -71,28 +113,11 @@ class MainBotRequestHandler:
         try:
             request_id = request.get('id')
             channel_id = request.get('target_channel')
-            requested_by = request.get('requested_by')
-            created_at = request.get('created_at', '')
-
             # 更新状态为processing
             self.db.update_request_status(request_id, 'processing')
 
-            # 获取请求者信息
-            user_info = self.db.get_user_info(requested_by)
-            if not user_info:
-                user_name = f"用户_{requested_by}"
-            else:
-                user_name = user_info.get('username') or user_info.get('first_name', f"用户_{requested_by}")
-
-            # 构建通知消息
-            message = f"""📝 **新的总结请求**
-
-**请求ID**: {request_id}
-**频道**: {channel_id}
-**请求者**: {user_name} (ID: {requested_by})
-**时间**: {created_at}
-
-请确认是否为该频道生成总结？"""
+            # 构建消息
+            message = self._build_admin_message(request)
 
             # 创建确认按钮
             keyboard = [
@@ -104,7 +129,7 @@ class MainBotRequestHandler:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             # 通知所有管理员
-            for admin_id in REPORT_ADMIN_IDS:
+            for admin_id in ADMIN_LIST:
                 if context:
                     try:
                         await context.bot.send_message(
@@ -121,21 +146,65 @@ class MainBotRequestHandler:
             # 恢复请求状态
             self.db.update_request_status(request['id'], 'pending')
 
-    async def handle_callback_query(self, update: Update,
-                                   context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _notify_admin_with_telethon(self, request: Dict[str, Any],
+                                         client) -> None:
         """
-        处理管理员按钮点击
+        使用 Telethon 客户端通知管理员有新的总结请求
         
         Args:
-            update: Telegram更新对象
-            context: Bot上下文
+            request: 请求信息字典
+            client: Telethon 客户端实例
         """
         try:
-            query = update.callback_query
-            await query.answer()
+            request_id = request.get('id')
+            channel_id = request.get('target_channel')
+
+            # 更新状态为processing
+            self.db.update_request_status(request_id, 'processing')
+
+            # 构建消息
+            message = self._build_admin_message(request)
+
+            # 构建 Telethon 风格的按钮
+            buttons = [
+                [
+                    Button.inline("✅ 确认生成", data=f"confirm_summary_{request_id}".encode()),
+                    Button.inline("❌ 拒绝", data=f"reject_summary_{request_id}".encode())
+                ]
+            ]
+
+            # 通知所有管理员
+            for admin_id in ADMIN_LIST:
+                try:
+                    await client.send_message(
+                        admin_id,
+                        message,
+                        parse_mode='markdown',
+                        buttons=buttons
+                    )
+                    logger.info(f"已通过 Telethon 向管理员 {admin_id} 发送总结请求通知")
+                except Exception as e:
+                    logger.error(f"Telethon 通知管理员失败 admin_id={admin_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Telethon 通知管理员失败: {type(e).__name__}: {e}", exc_info=True)
+            # 恢复请求状态
+            self.db.update_request_status(request['id'], 'pending')
+
+    async def handle_callback_query(self, event, client) -> None:
+        """
+        处理管理员按钮点击（Telethon Event）
+        
+        Args:
+            event: Telethon 回调事件对象
+            client: Telethon 客户端实例
+        """
+        try:
+            # 应答回调查询
+            await event.answer()
 
             # 解析callback_data
-            data = query.data
+            data = event.data.decode() if isinstance(event.data, bytes) else event.data
             if not data.startswith(('confirm_summary_', 'reject_summary_')):
                 return
 
@@ -146,68 +215,101 @@ class MainBotRequestHandler:
             # 获取请求信息
             request = self.db.get_request_status(request_id)
             if not request:
-                await query.edit_message_text("❌ 请求不存在或已过期")
+                await event.edit("❌ 请求不存在或已过期")
                 return
 
             if action == 'confirm':
-                await self._process_summary_request(query, request, context)
+                await self._process_summary_request_telethon(event, request, client)
             elif action == 'reject':
-                await self._reject_summary_request(query, request)
+                await self._reject_summary_request_telethon(event, request)
 
         except Exception as e:
             logger.error(f"处理回调查询失败: {type(e).__name__}: {e}", exc_info=True)
 
-    async def _process_summary_request(self, query, request: Dict[str, Any],
-                                      context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _process_summary_request_telethon(self, event, request: Dict[str, Any],
+                                               client) -> None:
         """
-        处理确认的总结请求
+        处理确认的总结请求（Telethon 版本）
         
         Args:
-            query: 回调查询对象
+            event: Telethon 回调事件对象
             request: 请求信息
-            context: Bot上下文
+            client: Telethon 客户端实例
         """
         try:
             request_id = request['id']
             channel_id = request['target_channel']
 
             # 更新消息
-            await query.edit_message_text(f"⏳ 正在为频道生成总结...\n\n频道: {channel_id}\n请求ID: {request_id}")
+            await event.edit(f"⏳ 正在为频道生成总结...\n\n频道: {channel_id}\n请求ID: {request_id}")
 
-            # TODO: 这里应该调用实际的总结生成逻辑
-            # 由于这是一个异步任务，我们需要在后台处理
-            # 现在先模拟成功
-            
-            # 导入总结生成器（需要根据实际情况调整）
-            # from core.summary_generator import generate_summary
-            # result = await generate_summary(channel_id)
-
-            # 暂时标记为完成
-            self.db.update_request_status(
-                request_id,
-                'completed',
-                result={'message': '总结已生成（模拟）'}
+            # 调用真实的总结生成函数
+            # skip_admins=True 因为管理员已经看到请求通知了
+            result = await generate_channel_summary(
+                channel_id=channel_id,
+                client=client,
+                skip_admins=True
             )
 
-            # 通知管理员
-            await query.edit_message_text(
-                f"✅ 总结生成完成！\n\n频道: {channel_id}\n请求ID: {request_id}"
-            )
+            # 检查结果
+            if result['success']:
+                # 更新数据库状态
+                self.db.update_request_status(
+                    request_id,
+                    'completed',
+                    result={
+                        'message': '总结生成成功',
+                        'summary_text': result['summary_text'],
+                        'message_count': result['message_count'],
+                        'channel_name': result['channel_name']
+                    }
+                )
 
-            # 通知请求者（如果有问答Bot）
-            await self._notify_requester(request_id, channel_id, "总结已生成，请查看频道。")
+                # 构建成功消息
+                channel_name = result['channel_name']
+                message_count = result['message_count']
+                summary_preview = result['summary_text'][:200] + "..." if len(result['summary_text']) > 200 else result['summary_text']
+                
+                success_message = f"""✅ 总结生成完成！
+
+📢 频道: {channel_name}
+📊 处理消息数: {message_count}
+📝 请求ID: {request_id}
+
+📋 总结预览:
+{summary_preview}"""
+
+                await event.edit(success_message)
+
+                # 通知请求者
+                await self._notify_requester(
+                    request_id, 
+                    channel_id, 
+                    f"✅ 总结已成功生成！\n\n频道: {channel_name}\n处理消息数: {message_count}"
+                )
+            else:
+                # 生成失败
+                error_msg = result.get('error', '未知错误')
+                self.db.update_request_status(request_id, 'failed', result={'error': error_msg})
+                await event.edit(f"❌ 生成总结失败: {error_msg}")
+
+                # 通知请求者
+                await self._notify_requester(request_id, channel_id, f"❌ 总结生成失败: {error_msg}")
 
         except Exception as e:
             logger.error(f"处理总结请求失败: {type(e).__name__}: {e}", exc_info=True)
-            self.db.update_request_status(request_id, 'failed', error=str(e))
-            await query.edit_message_text(f"❌ 生成总结失败: {str(e)}")
+            self.db.update_request_status(request_id, 'failed', result={'error': str(e)})
+            await event.edit(f"❌ 生成总结失败: {str(e)}")
+            
+            # 通知请求者
+            await self._notify_requester(request_id, request['target_channel'], f"❌ 总结生成失败: {str(e)}")
 
-    async def _reject_summary_request(self, query, request: Dict[str, Any]) -> None:
+    async def _reject_summary_request_telethon(self, event, request: Dict[str, Any]) -> None:
         """
-        拒绝总结请求
+        拒绝总结请求（Telethon 版本）
         
         Args:
-            query: 回调查询对象
+            event: Telethon 回调事件对象
             request: 请求信息
         """
         try:
@@ -216,9 +318,9 @@ class MainBotRequestHandler:
 
             # 更新状态
             self.db.update_request_status(request_id, 'failed',
-                                         error='管理员拒绝了请求')
+                                         result={'error': '管理员拒绝了请求'})
 
-            await query.edit_message_text(
+            await event.edit(
                 f"❌ 已拒绝总结请求\n\n频道: {channel_id}\n请求ID: {request_id}"
             )
 
