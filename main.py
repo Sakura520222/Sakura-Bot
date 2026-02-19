@@ -61,7 +61,7 @@ from core.mainbot_request_handler import get_mainbot_request_handler
 from core.mainbot_push_handler import get_mainbot_push_handler
 
 # 版本信息
-__version__ = "1.5.8"
+__version__ = "1.5.9"
 
 from core.process_manager import start_qa_bot, stop_qa_bot
 
