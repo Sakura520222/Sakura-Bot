@@ -31,9 +31,10 @@ jobs:
         run: |
           ruff check . --output-format=github --select=E,F,W,I --ignore=E501
       
-      - name: 导入排序检查
+      - name: 导入排序检查（仅供参考）
         run: |
-          isort --check-only --diff .
+          isort --check-only --diff . || echo "导入排序检查仅供参考，不影响CI通过"
+        continue-on-error: true
       
       - name: 代码复杂度检查（可选）
         run: |

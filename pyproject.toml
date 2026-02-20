@@ -15,3 +15,10 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.isort]
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = false
+force_grid_wrap = 0
+use_parentheses = true
