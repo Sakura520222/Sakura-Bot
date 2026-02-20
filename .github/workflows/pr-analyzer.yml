@@ -129,10 +129,11 @@ jobs:
           # 根据模式生成不同的条目格式
           if [ "$MODE" = "append" ]; then
             # 追加模式：只生成分类和条目
-            cat > changelog_entry.txt << 'EOF'
-### ${CHANGE_TYPE}
-- ${TITLE} (PR #${PR_NUM})
-EOF
+            {
+              echo "### \${CHANGE_TYPE}"
+              echo "- \${TITLE} (PR #\${PR_NUM})"
+              echo ""
+            } > changelog_entry.txt
             # 处理提交信息（如果有）
             if [ -n "$COMMITS" ]; then
               echo "" >> changelog_entry.txt
@@ -143,14 +144,11 @@ EOF
             echo "" >> changelog_entry.txt
           else
             # 新日期模式：生成完整的版本块
-            cat > changelog_entry.txt << 'EOF'
-## [${VERSION}] - ${DATE}
-
-### ${CHANGE_TYPE}
-- ${TITLE} (PR #${PR_NUM})
-
-### 相关提交
-EOF
+            {
+              echo "### \${CHANGE_TYPE}"
+              echo "- \${TITLE} (PR #\${PR_NUM})"
+              echo ""
+            } > changelog_entry.txt
             # 处理提交信息
             if [ -n "$COMMITS" ]; then
               echo "$COMMITS" | while IFS= read -r commit; do
@@ -159,10 +157,11 @@ EOF
             else
               echo "（无提交信息）" >> changelog_entry.txt
             fi
-            cat >> changelog_entry.txt << 'EOF'
-
----
-EOF
+            {
+              echo ""
+              echo "---"
+              echo ""
+            } >> changelog_entry.txt
           fi
           
           # 替换变量（使用临时文件避免替换问题）
