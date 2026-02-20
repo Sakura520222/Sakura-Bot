@@ -3,6 +3,7 @@
 """
 
 import logging
+
 from ..i18n import get_text
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,6 @@ def format_schedule_info(channel, schedule, index=None):
         str: 格式化的配置信息字符串
     """
     # 使用 i18n 获取星期映射
-    weekday_keys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
     weekday_map = {
         'mon': get_text('date.weekday.monday'),
         'tue': get_text('date.weekday.tuesday'),

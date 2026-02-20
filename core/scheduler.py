@@ -10,23 +10,27 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
-import logging
-from datetime import datetime, timezone, timedelta
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime, timedelta, timezone
 
-from .config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
+from .ai_client import analyze_with_ai
+from .config import CHANNELS, LLM_MODEL, SEND_REPORT_TO_SOURCE, logger
+from .i18n import get_text
 from .prompt_manager import load_prompt
 from .summary_time_manager import load_last_summary_time, save_last_summary_time
-from .ai_client import analyze_with_ai
-from .telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
-from .i18n import get_text
+from .telegram_client import (
+    extract_date_range_from_summary,
+    fetch_last_week_messages,
+    get_active_client,
+    send_report,
+)
+
 
 async def main_job(channel=None):
     """定时任务主函数
-    
+
     Args:
         channel: 可选，指定要处理的频道。如果为None，则处理所有频道
-    
+
     Returns:
         dict: 包含任务执行结果的字典，格式为:
             {
@@ -40,21 +44,21 @@ async def main_job(channel=None):
             }
     """
     start_time = datetime.now(timezone.utc)
-    
+
     if channel:
         logger.info(f"定时任务启动（单频道模式）: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，频道: {channel}")
         channels_to_process = [channel]
     else:
         logger.info(f"定时任务启动（全频道模式）: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         channels_to_process = CHANNELS
-    
+
     try:
         results = []
         # 按频道分别处理
         for channel in channels_to_process:
             channel_start_time = datetime.now(timezone.utc)
             logger.info(f"开始处理频道: {channel}")
-            
+
             # 读取该频道的上次总结时间和报告消息ID
             channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
             if channel_summary_data:
@@ -89,23 +93,23 @@ async def main_job(channel=None):
             else:
                 channel_last_summary_time = None
                 report_message_ids_to_exclude = []
-            
+
             # 抓取该频道从上次总结时间开始的消息，排除已发送的报告消息
             messages_by_channel = await fetch_last_week_messages(
-                [channel], 
+                [channel],
                 start_time=channel_last_summary_time,
                 report_message_ids={channel: report_message_ids_to_exclude}
             )
-            
+
             # 获取该频道的消息
             messages = messages_by_channel.get(channel, [])
-            
+
             # 检查频道是否存在（如果频道不存在，messages_by_channel可能不包含该频道）
             if channel not in messages_by_channel:
                 # 频道不存在或无法访问
                 channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
-                
+
                 result = {
                     "success": False,
                     "channel": channel,
@@ -149,7 +153,7 @@ async def main_job(channel=None):
                 # 格式化日期为 月.日 格式
                 start_date_str = f"{start_date.month}.{start_date.day}"
                 end_date_str = f"{end_date.month}.{end_date.day}"
-                
+
                 logger.debug(f"总结时间范围: {start_date.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至 {end_date.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
                 # 根据频率生成报告标题
@@ -203,11 +207,11 @@ async def main_job(channel=None):
 
                         if summary_id:
                             logger.info(f"定时任务总结已保存到数据库，记录ID: {summary_id}")
-                            
+
                             # ✅ 新增：生成并保存向量
                             from .vector_store import get_vector_store
                             vector_store = get_vector_store()
-                            
+
                             if vector_store.is_available():
                                 success = vector_store.add_summary(
                                     summary_id=summary_id,
@@ -220,7 +224,7 @@ async def main_job(channel=None):
                                         "message_count": len(messages)
                                     }
                                 )
-                                
+
                                 if success:
                                     logger.info(f"定时任务总结向量已成功保存，summary_id: {summary_id}")
                                 else:
@@ -238,13 +242,13 @@ async def main_job(channel=None):
                     try:
                         from .mainbot_push_handler import get_mainbot_push_handler
                         push_handler = get_mainbot_push_handler()
-                        
+
                         notified_count = await push_handler.notify_summary_subscribers(
                             channel_id=channel,
                             channel_name=channel_name,
                             summary_text=report_text
                         )
-                        
+
                         if notified_count > 0:
                             logger.info(f"已成功通知 {notified_count} 个订阅用户")
                     except Exception as e:
@@ -257,10 +261,10 @@ async def main_job(channel=None):
                         poll_message_ids=poll_ids,
                         button_message_ids=button_ids
                     )
-                
+
                 channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
-                
+
                 # 构建结果信息
                 result = {
                     "success": True,
@@ -272,13 +276,13 @@ async def main_job(channel=None):
                     "details": f"成功处理频道 {channel}，共 {len(messages)} 条消息，生成 {len(summary)} 字符的总结，处理时间 {channel_processing_time:.2f}秒"
                 }
                 results.append(result)
-                
+
                 logger.info(f"频道 {channel} 处理完成: {result['details']}")
             else:
                 logger.info(f"频道 {channel} 没有新消息需要总结")
                 channel_end_time = datetime.now(timezone.utc)
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
-                
+
                 result = {
                     "success": True,
                     "channel": channel,
@@ -289,15 +293,15 @@ async def main_job(channel=None):
                     "details": f"频道 {channel} 没有新消息需要总结，处理时间 {channel_processing_time:.2f}秒"
                 }
                 results.append(result)
-        
+
         end_time = datetime.now(timezone.utc)
         processing_time = (end_time - start_time).total_seconds()
-        
+
         if channel:
             logger.info(f"定时任务完成（单频道模式）: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，频道: {channel}，处理时间: {processing_time:.2f}秒")
         else:
             logger.info(f"定时任务完成（全频道模式）: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，总处理时间: {processing_time:.2f}秒")
-        
+
         # 返回结果
         if len(results) == 1:
             return results[0]
@@ -311,17 +315,17 @@ async def main_job(channel=None):
                 "error": None,
                 "details": f"成功处理 {len(results)} 个频道，共 {sum(r['message_count'] for r in results)} 条消息，总处理时间 {processing_time:.2f}秒"
             }
-            
+
     except Exception as e:
         end_time = datetime.now(timezone.utc)
         processing_time = (end_time - start_time).total_seconds()
-        
+
         error_msg = f"{type(e).__name__}: {e}"
         if channel:
             logger.error(f"定时任务执行失败（单频道模式）: {error_msg}，频道: {channel}，开始时间: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，结束时间: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，处理时间: {processing_time:.2f}秒", exc_info=True)
         else:
             logger.error(f"定时任务执行失败（全频道模式）: {error_msg}，开始时间: {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，结束时间: {end_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}，处理时间: {processing_time:.2f}秒", exc_info=True)
-        
+
         # 返回错误结果
         return {
             "success": False,

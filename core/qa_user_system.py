@@ -17,7 +17,8 @@
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
 from .database import get_db_manager
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class QAUserSystem:
             if self.db.is_subscribed(user_id, channel_id):
                 return {
                     "success": False,
-                    "message": f"您已经订阅了此频道的总结推送。"
+                    "message": "您已经订阅了此频道的总结推送。"
                 }
 
             # 添加订阅
@@ -253,7 +254,7 @@ class QAUserSystem:
             return "暂无可订阅的频道。"
 
         lines = ["📋 **可订阅频道列表**\n"]
-        
+
         for i, channel in enumerate(channels, 1):
             channel_name = channel.get('channel_name', '未知频道')
             channel_id = channel.get('channel_id', '')
@@ -285,7 +286,7 @@ class QAUserSystem:
             return "您还没有订阅任何频道。\n\n💡 使用 `/listchannels` 查看可订阅频道"
 
         lines = ["📚 **我的订阅**\n"]
-        
+
         for i, sub in enumerate(subscriptions, 1):
             channel_name = sub.get('channel_name', sub.get('channel_id', '未知频道'))
             channel_id = sub.get('channel_id', '')

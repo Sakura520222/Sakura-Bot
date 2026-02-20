@@ -18,7 +18,7 @@
 
 class BotError(Exception):
     """机器人基础异常类
-    
+
     所有项目特定的异常都应继承自此类。
     """
     pass
@@ -26,7 +26,7 @@ class BotError(Exception):
 
 class ConfigurationError(BotError):
     """配置错误
-    
+
     当配置文件缺失、格式错误或包含无效值时抛出。
     """
     pass
@@ -34,7 +34,7 @@ class ConfigurationError(BotError):
 
 class AIServiceError(BotError):
     """AI 服务错误
-    
+
     当 AI API 调用失败时抛出。
     """
     pass
@@ -42,7 +42,7 @@ class AIServiceError(BotError):
 
 class TelegramAPIError(BotError):
     """Telegram API 错误
-    
+
     当 Telegram API 调用失败时抛出。
     """
     pass
@@ -50,7 +50,7 @@ class TelegramAPIError(BotError):
 
 class ChannelNotFoundError(BotError):
     """频道未找到错误
-    
+
     当指定的频道不存在或无法访问时抛出。
     """
     pass
@@ -58,7 +58,7 @@ class ChannelNotFoundError(BotError):
 
 class InvalidScheduleError(BotError):
     """无效的时间配置错误
-    
+
     当时间调度配置无效时抛出。
     """
     pass
@@ -66,7 +66,7 @@ class InvalidScheduleError(BotError):
 
 class PollGenerationError(BotError):
     """投票生成错误
-    
+
     当投票生成失败时抛出。
     """
     pass
@@ -74,7 +74,7 @@ class PollGenerationError(BotError):
 
 class DatabaseError(BotError):
     """数据库错误
-    
+
     当数据库操作失败时抛出。
     """
     pass
@@ -82,7 +82,7 @@ class DatabaseError(BotError):
 
 class ValidationError(BotError):
     """验证错误
-    
+
     当输入数据验证失败时抛出。
     """
     pass

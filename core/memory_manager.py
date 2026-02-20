@@ -15,11 +15,12 @@
 记忆管理器 - 提取和管理总结元数据
 """
 
-import logging
 import json
-from typing import Dict, Any, List, Optional
-from .database import get_db_manager
+import logging
+from typing import Any, Dict, List, Optional
+
 from .ai_client import client_llm
+from .database import get_db_manager
 from .settings import get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ class MemoryManager:
 
             style = profile.get("style", "neutral")
             topics = profile.get("topics", [])
-            tone = profile.get("tone", "neutral")
+            profile.get("tone", "neutral")
             total_summaries = profile.get("total_summaries", 0)
 
             style_map = {
@@ -205,7 +206,7 @@ class MemoryManager:
             匹配的总结列表
         """
         try:
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timedelta, timezone
 
             # 计算时间范围
             end_date = datetime.now(timezone.utc)

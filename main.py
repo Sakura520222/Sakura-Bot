@@ -11,59 +11,89 @@
 # 许可证全文：参见 LICENSE 文件
 
 import asyncio
-import logging
 import os
-import sys
-import threading
-import subprocess
 import signal
+import sys
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telethon import TelegramClient
-from telethon.events import NewMessage, CallbackQuery
+from telethon.events import CallbackQuery, NewMessage
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from telethon.tl.types import BotCommand, BotCommandScopeDefault
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from core.config import (
-    CHANNELS, RESTART_FLAG_FILE, logger, 
-    get_channel_schedule, build_cron_trigger, ADMIN_LIST
-)
-from core.settings import (
-    get_api_id, get_api_hash, get_bot_token, 
-    get_llm_api_key, validate_required_settings
-)
-from core.scheduler import main_job
 from core.command_handlers import (
-    handle_manual_summary, handle_show_prompt, handle_set_prompt,
-    handle_prompt_input, handle_show_poll_prompt, handle_set_poll_prompt,
-    handle_poll_prompt_input, handle_show_ai_config, handle_set_ai_config,
-    handle_ai_config_input, handle_show_log_level, handle_set_log_level,
-    handle_restart, handle_show_channels, handle_add_channel,
-    handle_delete_channel, handle_clear_summary_time, handle_set_send_to_source,
-    handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
-    handle_changelog, handle_shutdown, handle_pause, handle_resume,
-    handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
-    handle_start, handle_help, handle_clear_cache, handle_language
+    handle_add_channel,
+    handle_ai_config_input,
+    handle_changelog,
+    handle_clear_cache,
+    handle_clear_summary_time,
+    handle_delete_channel,
+    handle_delete_channel_poll,
+    handle_delete_channel_schedule,
+    handle_help,
+    handle_language,
+    handle_manual_summary,
+    handle_pause,
+    handle_poll_prompt_input,
+    handle_prompt_input,
+    handle_restart,
+    handle_resume,
+    handle_set_ai_config,
+    handle_set_channel_poll,
+    handle_set_channel_schedule,
+    handle_set_log_level,
+    handle_set_poll_prompt,
+    handle_set_prompt,
+    handle_set_send_to_source,
+    handle_show_ai_config,
+    handle_show_channel_poll,
+    handle_show_channel_schedule,
+    handle_show_channels,
+    handle_show_log_level,
+    handle_show_poll_prompt,
+    handle_show_prompt,
+    handle_shutdown,
+    handle_start,
 )
 from core.command_handlers.qa_control_commands import (
-    handle_qa_status, handle_qa_start, handle_qa_stop, 
-    handle_qa_restart, handle_qa_stats
+    handle_qa_restart,
+    handle_qa_start,
+    handle_qa_stats,
+    handle_qa_status,
+    handle_qa_stop,
 )
-from core.history_handlers import handle_history, handle_export, handle_stats
+from core.config import (
+    ADMIN_LIST,
+    CHANNELS,
+    RESTART_FLAG_FILE,
+    build_cron_trigger,
+    get_channel_schedule,
+    logger,
+)
+from core.error_handler import initialize_error_handling
+from core.history_handlers import handle_export, handle_history, handle_stats
+from core.mainbot_push_handler import get_mainbot_push_handler
+from core.mainbot_request_handler import get_mainbot_request_handler
 from core.poll_regeneration_handlers import (
     handle_poll_regeneration_callback,
-    handle_vote_regen_request_callback
+    handle_vote_regen_request_callback,
 )
-from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
-from core.mainbot_request_handler import get_mainbot_request_handler
-from core.mainbot_push_handler import get_mainbot_push_handler
+from core.scheduler import main_job
+from core.settings import (
+    get_api_hash,
+    get_api_id,
+    get_bot_token,
+    validate_required_settings,
+)
 
 # 版本信息
 __version__ = "1.5.9"
 
 from core.process_manager import start_qa_bot, stop_qa_bot
+
 
 def cleanup_handler(signum, frame):
     """清理处理器"""
@@ -143,13 +173,13 @@ async def send_startup_message(client):
 
 async def main():
     logger.info(f"开始初始化机器人服务 v{__version__}...")
-    
+
     try:
         # 初始化错误处理系统
         logger.info("初始化错误处理系统...")
-        health_checker = initialize_error_handling()
+        initialize_error_handling()
         logger.info("错误处理系统初始化完成")
-        
+
         # 初始化调度器
         scheduler = AsyncIOScheduler()
 
@@ -223,14 +253,14 @@ async def main():
         async def qa_bot_health_check_job():
             """定期检查问答Bot健康状态，必要时自动重启"""
             try:
-                from core.process_manager import check_qa_bot_health, restart_qa_bot
                 from core.i18n import get_text
-                
+                from core.process_manager import check_qa_bot_health, restart_qa_bot
+
                 is_healthy, should_restart, message = check_qa_bot_health()
-                
+
                 if should_restart:
                     logger.warning(f"问答Bot需要自动重启: {message}")
-                    
+
                     # 通知管理员
                     for admin_id in ADMIN_LIST:
                         if admin_id != 'me':
@@ -243,13 +273,13 @@ async def main():
                                 )
                             except Exception as e:
                                 logger.error(f"通知管理员失败: {e}")
-                    
+
                     # 执行自动重启
                     result = restart_qa_bot()
-                    
+
                     if result['success']:
                         logger.info(f"问答Bot自动重启成功: {result['message']}")
-                        
+
                         # 通知管理员恢复成功
                         for admin_id in ADMIN_LIST:
                             if admin_id != 'me':
@@ -264,7 +294,7 @@ async def main():
                                     logger.error(f"通知管理员失败: {e}")
                     else:
                         logger.error(f"问答Bot自动重启失败: {result['message']}")
-                        
+
                         # 通知管理员恢复失败
                         for admin_id in ADMIN_LIST:
                             if admin_id != 'me':
@@ -277,7 +307,7 @@ async def main():
                                     )
                                 except Exception as e:
                                     logger.error(f"通知管理员失败: {e}")
-                
+
             except Exception as e:
                 logger.error(f"问答Bot健康检查任务失败: {type(e).__name__}: {e}")
 
@@ -296,18 +326,18 @@ async def main():
 
         # 启动机器人客户端，处理命令
         logger.info("开始初始化Telegram机器人客户端...")
-        
+
         # 从 settings 获取配置
         api_id = get_api_id()
         api_hash = get_api_hash()
         bot_token = get_bot_token()
-        
+
         client = TelegramClient('data/sessions/bot_session', int(api_id), api_hash)
-        
+
         # 设置活动的客户端实例，供其他模块使用
         from core.telegram_client import set_active_client
         set_active_client(client)
-        
+
         # 添加命令处理，支持中英文命令
         logger.debug("开始添加命令处理器...")
 
@@ -392,7 +422,7 @@ async def main():
         # 初始化跨Bot通信处理器
         logger.info("初始化跨Bot通信处理器...")
         request_handler = get_mainbot_request_handler()
-        push_handler = get_mainbot_push_handler()
+        get_mainbot_push_handler()
 
         # 添加请求处理回调查询处理器
         async def handle_request_callback(event):
@@ -402,7 +432,7 @@ async def main():
         client.add_event_handler(
             handle_request_callback,
             CallbackQuery(func=lambda e: e.data and (
-                e.data.startswith(b'confirm_summary_') or 
+                e.data.startswith(b'confirm_summary_') or
                 e.data.startswith(b'reject_summary_')
             ))
         )
@@ -414,10 +444,10 @@ async def main():
         logger.info("正在启动Telegram机器人客户端...")
         await client.start(bot_token=bot_token)
         logger.info("Telegram机器人客户端启动成功")
-        
+
         # 注册机器人命令
         logger.info("开始注册机器人命令...")
-        
+
         commands = [
             # 1. 基础命令
             BotCommand(command="start", description="查看欢迎消息和帮助"),
@@ -469,38 +499,38 @@ async def main():
             BotCommand(command="qa_restart", description="重启问答Bot"),
             BotCommand(command="qa_stats", description="查看问答Bot详细统计")
         ]
-        
+
         await client(SetBotCommandsRequest(
             scope=BotCommandScopeDefault(),
             lang_code="zh",
             commands=commands
         ))
         logger.info("机器人命令注册完成")
-        
+
         logger.info("定时监控已启动...")
         logger.info("机器人已启动，正在监听命令...")
         logger.info("机器人命令已注册完成...")
-        
+
         # 启动调度器
         scheduler.start()
         logger.info("调度器已启动")
-        
+
         # 存储调度器实例到config模块，供其他模块访问
         from core.config import set_scheduler_instance
         set_scheduler_instance(scheduler)
         logger.info("调度器实例已存储到config模块")
-        
+
         # 向管理员发送启动消息
         logger.info("开始向管理员发送启动消息...")
         await send_startup_message(client)
         logger.info("启动消息发送完成")
-        
+
         # 检查是否是重启后的首次运行
         if os.path.exists(RESTART_FLAG_FILE):
             try:
                 with open(RESTART_FLAG_FILE, 'r') as f:
                     content = f.read().strip()
-                
+
                 # 尝试解析为用户ID
                 try:
                     restart_user_id = int(content)
@@ -516,16 +546,16 @@ async def main():
                 logger.info("重启标记文件已删除")
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
-        
+
         # 检查关机标记文件
         SHUTDOWN_FLAG_FILE = ".shutdown_flag"
         if os.path.exists(SHUTDOWN_FLAG_FILE):
             try:
                 with open(SHUTDOWN_FLAG_FILE, 'r') as f:
                     shutdown_user = f.read().strip()
-                
+
                 logger.info(f"检测到关机标记，操作者: {shutdown_user}")
-                
+
                 # 向所有管理员发送关机通知
                 for admin_id in ADMIN_LIST:
                     try:
@@ -541,15 +571,15 @@ async def main():
                 # 删除关机标记文件
                 os.remove(SHUTDOWN_FLAG_FILE)
                 logger.info("关机标记文件已删除")
-                
+
                 # 等待消息发送完成
                 import time
                 time.sleep(2)
-                
+
                 # 执行关机
                 logger.info("执行关机操作...")
                 sys.exit(0)
-                
+
             except Exception as e:
                 logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
                 # 即使出错也尝试删除关机标记文件，避免遗留
@@ -567,19 +597,19 @@ async def main():
 
 if __name__ == "__main__":
     logger.info(f"===== Sakura-Bot v{__version__} 启动 ======")
-    
+
     # 验证必要配置
     is_valid, missing = validate_required_settings()
-    
+
     if not is_valid:
         logger.error(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
         print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
     else:
         logger.info("所有必要的 API 凭证已配置完成")
-        
+
         # 启动问答Bot
         start_qa_bot()
-        
+
         # 启动主函数
         try:
             logger.info("开始启动主函数...")

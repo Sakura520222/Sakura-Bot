@@ -18,8 +18,7 @@
 
 import logging
 import re
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +181,7 @@ class IntentParser:
     def _extract_time_range(self, query: str) -> Optional[int]:
         """
         提取时间范围（天数）
-        
+
         支持的模式：
         - 今天/昨天/前天 等关键词
         - 最近N天/N日/N周/N个月 等数量表达
@@ -222,7 +221,7 @@ class IntentParser:
     def _extract_keywords(self, query: str) -> List[str]:
         """
         从查询中提取关键词
-        
+
         策略：
         1. 移除时间词、停用词等无意义词汇
         2. 提取长度 >= 2 的中文词段和英文词
@@ -300,7 +299,7 @@ class IntentParser:
             "status": "状态查询"
         }
 
-        result = f"🔍 查询解析:\n"
+        result = "🔍 查询解析:\n"
         result += f"意图: {intent_map.get(parsed['intent'], parsed['intent'])}\n"
 
         if parsed.get("time_range") is not None:

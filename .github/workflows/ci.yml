@@ -87,12 +87,17 @@ jobs:
           context: .
           push: false
           tags: sakura-bot:test
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
       - name: 测试容器启动
         run: |
-          docker run --rm sakura-bot:test python --version
+          docker run --rm \
+            -e TELEGRAM_API_ID=12345 \
+            -e TELEGRAM_API_HASH=mock_hash \
+            -e TELEGRAM_BOT_TOKEN=123:mock_token \
+            sakura-bot:test python --version
 
   tests:
     name: 单元测试

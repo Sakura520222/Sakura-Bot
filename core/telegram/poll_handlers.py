@@ -3,13 +3,19 @@ Telegram投票处理模块
 包含发送投票到频道和讨论组的功能
 """
 
-import logging
 import asyncio
-from telethon import events, Button
+import logging
+
+from telethon import Button, events
 from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
 
-from ..config import ENABLE_POLL, get_channel_poll_config, POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
 from ..ai_client import generate_poll_from_summary
+from ..config import (
+    ENABLE_POLL,
+    ENABLE_VOTE_REGEN_REQUEST,
+    POLL_REGEN_THRESHOLD,
+    get_channel_poll_config,
+)
 from ..error_handler import record_error
 from ..i18n import get_text
 
@@ -198,7 +204,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
             }
 
         # 使用事件监听方式等待转发消息
-        logger.info(f"等待频道消息转发到讨论组...")
+        logger.info("等待频道消息转发到讨论组...")
 
         # 创建事件Future来等待转发消息
         from asyncio import Future
@@ -306,13 +312,13 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                 return None
 
         except asyncio.TimeoutError:
-            logger.warning(f"等待转发消息超时（10秒），可能转发延迟或未成功")
+            logger.warning("等待转发消息超时（10秒），可能转发延迟或未成功")
             # 移除事件处理器
             client.remove_event_handler(on_discussion_message)
 
             # 尝试发送独立消息
             try:
-                logger.info(f"尝试发送独立投票消息")
+                logger.info("尝试发送独立投票消息")
                 options_text = "\n".join([f"• {opt}" for opt in poll_data['options']])
                 await client.send_message(
                     discussion_group_id,

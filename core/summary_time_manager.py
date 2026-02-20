@@ -10,13 +10,13 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
-import os
 import json
 import logging
+import os
+import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
-import tempfile
-import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def load_last_summary_time(channel=None, include_report_ids=False):
                             # 兼容旧格式：如果读取的时间没有时区信息，强制视为UTC
                             if time_obj.tzinfo is None:
                                 time_obj = time_obj.replace(tzinfo=timezone.utc)
-                                logger.debug(f"检测到旧格式时间戳，已自动转换为UTC")
+                                logger.debug("检测到旧格式时间戳，已自动转换为UTC")
                             logger.info(f"成功读取频道 {channel} 的上次总结时间: {time_obj.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
                             return time_obj
                     else:
@@ -177,8 +177,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         # 使用临时文件+原子重命名的方式写入（避免文件被锁定的问题）
         max_retries = 5
         base_delay = 0.3  # 秒
-        
-        last_error = None
+
         for attempt in range(max_retries):
             try:
                 # 创建临时文件
@@ -193,7 +192,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
                     # 写入数据到临时文件
                     json.dump(existing_data, temp_file, ensure_ascii=False, indent=2)
                     temp_path = temp_file.name
-                
+
                 # 刷新并关闭临时文件后，再进行原子替换
                 # 使用 shutil.move 实现跨文件系统的兼容性
                 try:
@@ -209,24 +208,23 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
                     except OSError:
                         pass
                     raise
-                
+
                 logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} (UTC: {time_to_save.strftime('%Y-%m-%d %H:%M:%S')})")
                 logger.debug(f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}")
                 return  # 成功则退出函数
-                
+
             except PermissionError as e:
-                last_error = e
                 if attempt < max_retries - 1:
                     # 指数退避：0.3, 0.6, 1.2, 2.4 秒
                     delay = base_delay * (2 ** attempt)
                     logger.warning(f"文件被占用，第 {attempt + 1} 次重试... (等待 {delay:.1f}秒，错误: {e})")
                     time.sleep(delay)
                 else:
-                    logger.error(f"保存上次总结时间失败: 文件被其他程序占用或权限不足。请关闭可能打开该文件的程序后重试。")
+                    logger.error("保存上次总结时间失败: 文件被其他程序占用或权限不足。请关闭可能打开该文件的程序后重试。")
                     logger.error(f"受影响的频道: {channel}, 时间: {time_to_save}")
                     # 尝试回退到原始文件名（可能需要从备份恢复）
                     raise PermissionError(f"无法保存文件 {LAST_SUMMARY_FILE}，已被其他程序锁定。请关闭 VSCode 或其他可能打开该文件的程序。") from e
-                    
+
             except Exception as e:
                 logger.error(f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
                 raise

@@ -18,8 +18,9 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
+
 from .database import get_db_manager
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ class ConversationManager:
             # 降级：返回一个随机会话ID
             return str(uuid.uuid4()), True
 
-    def save_message(self, user_id: int, session_id: str, 
+    def save_message(self, user_id: int, session_id: str,
                     role: str, content: str,
                     metadata: Optional[Dict] = None) -> bool:
         """
@@ -122,7 +123,7 @@ class ConversationManager:
             logger.error(f"保存消息失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_conversation_history(self, user_id: int, 
+    def get_conversation_history(self, user_id: int,
                                  session_id: str) -> list:
         """
         获取对话历史（用于RAG上下文）
@@ -146,7 +147,7 @@ class ConversationManager:
             logger.error(f"获取对话历史失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def clear_user_history(self, user_id: int, 
+    def clear_user_history(self, user_id: int,
                           session_id: Optional[str] = None) -> int:
         """
         清除用户对话历史
@@ -258,18 +259,18 @@ class ConversationManager:
         """
         try:
             deleted = self.db.delete_old_conversations(days)
-            
+
             # 清理缓存中不活跃的会话
             now = datetime.now(timezone.utc)
             expired_users = []
-            
+
             for user_id, cached in self._session_cache.items():
                 if (now - cached['last_active']) > timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
                     expired_users.append(user_id)
-            
+
             for user_id in expired_users:
                 del self._session_cache[user_id]
-            
+
             logger.info(f"清理旧会话: 删除{deleted}条记录, 清理{len(expired_users)}个缓存")
             return deleted
 

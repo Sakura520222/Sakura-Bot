@@ -5,14 +5,23 @@ Telegram消息发送模块
 
 import logging
 from datetime import datetime, timedelta, timezone
+
 from telethon import TelegramClient
 
-from ..config import API_ID, API_HASH, BOT_TOKEN, CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE, LLM_MODEL
-from ..error_handler import retry_with_backoff, record_error
-from ..telegram_client_utils import split_message_smart, validate_message_entities
-from .client_management import get_active_client, extract_date_range_from_summary
-from .poll_handlers import send_poll
+from ..config import (
+    ADMIN_LIST,
+    API_HASH,
+    API_ID,
+    BOT_TOKEN,
+    CHANNELS,
+    LLM_MODEL,
+    SEND_REPORT_TO_SOURCE,
+)
+from ..error_handler import record_error, retry_with_backoff
 from ..i18n import get_text
+from ..telegram_client_utils import split_message_smart, validate_message_entities
+from .client_management import extract_date_range_from_summary, get_active_client
+from .poll_handlers import send_poll
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +35,7 @@ logger = logging.getLogger(__name__)
 )
 async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, report_message_ids=None):
     """抓取指定时间范围的频道消息
-    
+
     Args:
         channels_to_fetch: 可选，要抓取的频道列表。如果为None，则抓取所有配置的频道。
         start_time: 可选，开始抓取的时间。如果为None，则默认抓取过去一周的消息。
@@ -34,7 +43,7 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
     """
     # 确保 API_ID 是整数
     logger.info("开始抓取指定时间范围的频道消息")
-    
+
     async with TelegramClient('data/sessions/user_session', int(API_ID), API_HASH) as client:
         # 如果没有提供开始时间，则默认抓取过去一周的消息
         if start_time is None:
@@ -42,10 +51,10 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
             logger.info(f"未提供开始时间，默认抓取过去一周的消息（从 {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今）")
         else:
             logger.info(f"抓取时间范围：{start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今")
-        
+
         messages_by_channel = {}  # 按频道分组的消息字典
         report_message_ids = report_message_ids or {}
-        
+
         # 确定要抓取的频道
         if channels_to_fetch and isinstance(channels_to_fetch, list):
             # 只抓取指定的频道
@@ -58,37 +67,37 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
                 return messages_by_channel
             channels = CHANNELS
             logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
-        
+
         total_message_count = 0
-        
+
         # 遍历所有要抓取的频道
         for channel in channels:
             channel_messages = []
             channel_message_count = 0
             skipped_report_count = 0
             logger.info(f"开始抓取频道: {channel}")
-            
+
             # 获取当前频道要排除的报告消息ID列表
             exclude_ids = report_message_ids.get(channel, [])
             logger.info(f"频道 {channel} 要排除的报告消息ID列表: {exclude_ids}")
-            
+
             try:
                 async for message in client.iter_messages(channel, offset_date=start_time, reverse=True):
                     total_message_count += 1
                     channel_message_count += 1
-                    
+
                     # 跳过报告消息
                     if message.id in exclude_ids:
                         skipped_report_count += 1
                         logger.debug(f"跳过报告消息，ID: {message.id}")
                         continue
-                    
+
                     if message.text:
                         # 动态获取频道名用于生成链接
                         channel_part = channel.split('/')[-1]
                         msg_link = f"https://t.me/{channel_part}/{message.id}"
                         channel_messages.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
-                        
+
                         # 每抓取10条消息记录一次日志
                         if len(channel_messages) % 10 == 0:
                             logger.debug(f"频道 {channel} 已抓取 {len(channel_messages)} 条有效消息")
@@ -97,18 +106,18 @@ async def fetch_last_week_messages(channels_to_fetch=None, start_time=None, repo
                 logger.error(f"抓取频道 {channel} 消息时出错: {e}")
                 # 继续处理其他频道
                 continue
-            
+
             # 将当前频道的消息添加到字典中
             messages_by_channel[channel] = channel_messages
             logger.info(f"频道 {channel} 抓取完成，共处理 {channel_message_count} 条消息，其中 {len(channel_messages)} 条包含文本内容，跳过了 {skipped_report_count} 条报告消息")
-        
+
         logger.info(f"所有指定频道消息抓取完成，共处理 {total_message_count} 条消息")
         return messages_by_channel
 
 
 async def send_long_message(client, chat_id, text, max_length=4000, channel_title=None, show_pagination=True):
     """分段发送长消息
-    
+
     Args:
         client: Telegram客户端实例
         chat_id: 接收者聊天ID
@@ -118,15 +127,15 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
         show_pagination: 是否在每条消息显示分页标题（如"1/3"），默认为True。设为False时只在第一条显示标题
     """
     logger.info(f"开始发送长消息，接收者: {chat_id}，消息总长度: {len(text)}字符，最大分段长度: {max_length}字符")
-    
+
     if len(text) <= max_length:
-        logger.info(f"消息长度未超过限制，直接发送")
+        logger.info("消息长度未超过限制，直接发送")
         # 如果消息不超过限制但提供了标题，可以添加标题
         if channel_title and show_pagination:
             text = f"📋 **{channel_title}**\n\n{text}"
         await client.send_message(chat_id, text, link_preview=False)
         return
-    
+
     # 如果没有指定标题，则不使用标题
     if channel_title is None:
         # 不添加标题，直接使用最大长度
@@ -143,18 +152,18 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
             # 第一条：📋 **{channel_title}**\n\n
             # 其他：无标题
             max_title_length = len(f"📋 **{channel_title}**\n\n")
-        
+
         # 实际可用于内容的最大长度
         content_max_length = max_length - max_title_length
         logger.info(f"使用标题 '{channel_title}'，标题长度: {max_title_length}字符，内容最大长度: {content_max_length}字符")
-    
+
     logger.info(f"消息需要分段发送，开始分段处理，内容最大长度: {content_max_length}字符")
-    
+
     # 使用智能分割算法
     try:
         parts = split_message_smart(text, content_max_length, preserve_md=True)
         logger.info(f"智能分割完成，共分成 {len(parts)} 段")
-        
+
         # 验证每个分段的实体完整性
         for i, part in enumerate(parts):
             is_valid, error_msg = validate_message_entities(part)
@@ -173,11 +182,11 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
             if part:
                 parts.append(part)
         logger.info(f"简单分割完成，共分成 {len(parts)} 段")
-    
+
     # 验证分段结果
     total_content_length = sum(len(part) for part in parts)
     logger.debug(f"分段后总内容长度: {total_content_length}字符，原始长度: {len(text)}字符")
-    
+
     # 发送所有部分
     for i, part in enumerate(parts):
         # 根据 show_pagination 参数和 channel_title 决定标题格式
@@ -187,10 +196,10 @@ async def send_long_message(client, chat_id, text, max_length=4000, channel_titl
         else:
             # 不显示任何标题，直接发送内容
             full_message = part
-        
+
         full_message_length = len(full_message)
         logger.info(f"正在发送第 {i+1}/{len(parts)} 段，长度: {full_message_length}字符")
-        
+
         # 验证消息长度不超过限制
         if full_message_length > max_length:
             logger.error(f"第 {i+1} 段消息长度 {full_message_length} 超过限制 {max_length}，将进行紧急分割")
@@ -239,7 +248,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
     report_message_ids = []
     poll_message_id = None
     button_message_id = None
-    
+
     try:
         # 确定使用哪个客户端实例
         # 1. 如果提供了客户端实例，直接使用它
@@ -261,10 +270,10 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                 logger.info("没有活动的客户端实例，创建新客户端实例发送报告")
                 use_client = TelegramClient('bot_session', int(API_ID), API_HASH)
                 use_existing_client = False
-        
+
         if use_existing_client:
             # 使用现有的客户端实例（已经启动并连接）
-            
+
             # 获取频道实际名称（如果提供了源频道）
             channel_actual_name = None
             if source_channel:
@@ -276,12 +285,12 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                     logger.warning(f"获取频道实体失败，使用默认名称: {e}")
                     # 使用频道链接的最后部分作为回退
                     channel_actual_name = source_channel.split('/')[-1]
-            
+
             # 总结文本已经包含了正确的标题（由scheduler.py或summary_commands.py生成）
             # 不需要再添加或修改标题
             summary_text_for_admins = summary_text
             summary_text_for_source = summary_text
-            
+
             # 向所有管理员发送消息（除非跳过）
             # 收集管理员消息ID，用于数据库记录
             admin_message_ids = []
@@ -302,32 +311,32 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         logger.info(f"成功向管理员 {admin_id} 发送报告")
                     except Exception as e:
                         logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
-                
+
                 # 如果成功发送给管理员，使用这些消息ID作为 report_message_ids
                 if admin_message_ids and not report_message_ids:
                     report_message_ids = admin_message_ids
                     logger.info(f"使用管理员消息ID作为报告消息ID: {report_message_ids}")
             else:
                 logger.info("跳过向管理员发送报告")
-            
+
             # 如果提供了源频道且配置允许，向源频道发送报告
             if source_channel and SEND_REPORT_TO_SOURCE:
                 try:
                     logger.info(f"正在向源频道 {source_channel} 发送报告")
-                    
+
                     # 检查频道是否为仅讨论组模式（无写入权限）
                     try:
                         # 尝试获取频道实体和权限
                         channel_entity = await use_client.get_entity(source_channel)
                         logger.info(f"成功获取频道实体: {channel_entity.title if hasattr(channel_entity, 'title') else source_channel}")
-                        
+
                         # 检查是否可以发送消息（发送测试）
                         # 注意：某些频道只允许讨论组，不允许直接发送消息
                         # 如果发送失败，跳过频道发送但继续执行管理员通知
-                    
+
                     except Exception as e:
                         logger.warning(f"获取频道实体失败: {e}，将尝试直接发送")
-                    
+
                     # 直接调用use_client.send_message并收集消息ID
                     if len(summary_text_for_source) <= 4000:
                         # 短消息直接发送
@@ -337,18 +346,18 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         # 长消息分段发送，收集每个分段的消息ID
                         # 使用频道实际名称作为分段消息标题
                         channel_title = channel_actual_name if channel_actual_name else get_text('messaging.channel_title_fallback')
-                        
+
                         # 使用send_long_message函数进行智能分割和发送
                         # 但需要收集消息ID，所以需要自定义实现
                         max_length = 4000
                         max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
                         content_max_length = max_length - max_title_length
-                        
+
                         # 使用智能分割算法
                         try:
                             parts = split_message_smart(summary_text_for_source, content_max_length, preserve_md=True)
                             logger.info(f"智能分割完成，共分成 {len(parts)} 段")
-                            
+
                             # 验证每个分段的实体完整性
                             for i, part in enumerate(parts):
                                 is_valid, error_msg = validate_message_entities(part)
@@ -367,7 +376,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 if part:
                                     parts.append(part)
                             logger.info(f"简单分割完成，共分成 {len(parts)} 段")
-                        
+
                         # 发送所有部分并收集消息ID
                         for i, part in enumerate(parts):
                             # 不显示任何标题，直接发送内容
@@ -386,9 +395,9 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                     logger.info(f"已成功发送第 {i+1} 段（移除格式后），消息ID: {msg.id}")
                                 except Exception as e2:
                                     logger.error(f"即使移除格式后发送第 {i+1} 段仍然失败: {e2}")
-                    
+
                     logger.info(f"成功向源频道 {source_channel} 发送报告，消息ID: {report_message_ids}")
-                    
+
                     # 向管理员发送频道发送成功的通知
                     if not skip_admins:
                         for admin_id in ADMIN_LIST:
@@ -400,7 +409,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 )
                             except Exception as e:
                                 logger.debug(f"发送频道成功通知到管理员失败: {e}")
-                    
+
                     # 自动置顶第一条消息
                     if report_message_ids:
                         try:
@@ -409,7 +418,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             logger.info(f"已成功置顶消息ID: {first_message_id}")
                         except Exception as e:
                             logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
-                    
+
                     # 如果启用了投票功能，根据频道配置发送投票
                     if report_message_ids:
                         logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
@@ -425,16 +434,16 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             logger.warning("投票发送失败，但总结消息已成功发送")
                 except Exception as e:
                     logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
-                    
+
                     # 特殊处理：频道无写入权限错误
                     if "ChatWriteForbiddenError" in type(e).__name__ or "You can't write in this chat" in str(e):
                         logger.warning(f"⚠️ 频道 {source_channel} ({channel_actual_name}) 不允许机器人发送消息")
-                        logger.warning(f"可能的原因：")
-                        logger.warning(f"  1. 频道设置为仅讨论组模式")
-                        logger.warning(f"  2. 机器人没有在该频道发送消息的权限")
-                        logger.warning(f"  3. 频道未启用机器人功能")
-                        logger.warning(f"建议：检查频道设置，或仅使用管理员通知功能")
-                        
+                        logger.warning("可能的原因：")
+                        logger.warning("  1. 频道设置为仅讨论组模式")
+                        logger.warning("  2. 机器人没有在该频道发送消息的权限")
+                        logger.warning("  3. 频道未启用机器人功能")
+                        logger.warning("建议：检查频道设置，或仅使用管理员通知功能")
+
                         # 向管理员发送详细的失败通知
                         if not skip_admins:
                             for admin_id in ADMIN_LIST:
@@ -463,7 +472,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
             async with use_client:
                 await use_client.start(bot_token=BOT_TOKEN)
                 logger.info("Telegram机器人客户端已启动")
-                
+
                 # 获取频道实际名称（如果提供了源频道）
                 channel_actual_name = None
                 if source_channel:
@@ -475,12 +484,12 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                         logger.warning(f"获取频道实体失败，使用默认名称: {e}")
                         # 使用频道链接的最后部分作为回退
                         channel_actual_name = source_channel.split('/')[-1]
-                
+
                 # 总结文本已经包含了正确的标题（由scheduler.py或summary_commands.py生成）
                 # 不需要再添加或修改标题
                 summary_text_for_admins = summary_text
                 summary_text_for_source = summary_text
-                
+
                 # 向所有管理员发送消息（除非跳过）
                 if not skip_admins:
                     for admin_id in ADMIN_LIST:
@@ -492,12 +501,12 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             logger.error(f"向管理员 {admin_id} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
                 else:
                     logger.info("跳过向管理员发送报告")
-                
+
                 # 如果提供了源频道且配置允许，向源频道发送报告
                 if source_channel and SEND_REPORT_TO_SOURCE:
                     try:
                         logger.info(f"正在向源频道 {source_channel} 发送报告")
-                        
+
                         # 直接调用use_client.send_message并收集消息ID
                         if len(summary_text_for_source) <= 4000:
                             # 短消息直接发送
@@ -507,17 +516,17 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                             # 长消息分段发送，收集每个分段的消息ID
                             # 使用频道实际名称作为分段消息标题
                             channel_title = channel_actual_name if channel_actual_name else get_text('messaging.channel_title_fallback')
-                            
+
                             # 使用智能分割算法
                             max_length = 4000
                             max_title_length = len(f"📋 **{channel_title} (99/99)**\n\n")
                             content_max_length = max_length - max_title_length
-                            
+
                             # 使用智能分割算法
                             try:
                                 parts = split_message_smart(summary_text_for_source, content_max_length, preserve_md=True)
                                 logger.info(f"智能分割完成，共分成 {len(parts)} 段")
-                                
+
                                 # 验证每个分段的实体完整性
                                 for i, part in enumerate(parts):
                                     is_valid, error_msg = validate_message_entities(part)
@@ -536,7 +545,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                     if part:
                                         parts.append(part)
                                 logger.info(f"简单分割完成，共分成 {len(parts)} 段")
-                            
+
                             # 发送所有部分并收集消息ID
                             for i, part in enumerate(parts):
                                 # 不显示任何标题，直接发送内容
@@ -555,9 +564,9 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                         logger.info(f"已成功发送第 {i+1} 段（移除格式后），消息ID: {msg.id}")
                                     except Exception as e2:
                                         logger.error(f"即使移除格式后发送第 {i+1} 段仍然失败: {e2}")
-                        
+
                         logger.info(f"成功向源频道 {source_channel} 发送报告，消息ID: {report_message_ids}")
-                        
+
                         # 自动置顶第一条消息
                         if report_message_ids:
                             try:
@@ -566,7 +575,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 logger.info(f"已成功置顶消息ID: {first_message_id}")
                             except Exception as e:
                                 logger.warning(f"置顶消息失败，可能需要管理员权限: {e}")
-                        
+
                         # 如果启用了投票功能，根据频道配置发送投票
                         if report_message_ids:
                             logger.info(f"开始处理投票发送，总结消息ID: {report_message_ids[0]}")
@@ -580,7 +589,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                 logger.warning("投票发送失败，但总结消息已成功发送")
                     except Exception as e:
                         logger.error(f"向源频道 {source_channel} 发送报告失败: {type(e).__name__}: {e}", exc_info=True)
-        
+
         # ✅ 新增：保存到数据库
         # 如果有消息ID（说明发送成功），就保存到数据库
         # 即使 source_channel=None（只发给管理员的情况），也要保存
@@ -588,7 +597,7 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
             # 确定 channel_id 和 channel_name
             save_channel_id = source_channel
             save_channel_name = channel_actual_name
-            
+
             # 如果 source_channel 为空，尝试从配置中获取
             if not save_channel_id and CHANNELS and len(CHANNELS) > 0:
                 save_channel_id = CHANNELS[0]
@@ -622,12 +631,12 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
 
                 if summary_id:
                     logger.info(f"总结已保存到数据库，记录ID: {summary_id}")
-                    
+
                     # ✅ v3.0.0新增：生成并保存向量
                     try:
                         from ..vector_store import get_vector_store
                         vector_store = get_vector_store()
-                        
+
                         if vector_store.is_available():
                             # 保存向量
                             success = vector_store.add_summary(
@@ -641,14 +650,14 @@ async def send_report(summary_text, source_channel=None, client=None, skip_admin
                                     "message_count": message_count
                                 }
                             )
-                            
+
                             if success:
                                 logger.info(f"向量已成功保存，summary_id: {summary_id}")
                             else:
                                 logger.warning(f"向量保存失败，但数据库记录已保存，summary_id: {summary_id}")
                         else:
                             logger.debug("向量存储不可用，跳过向量化")
-                    
+
                     except Exception as vec_error:
                         logger.error(f"保存向量时出错: {type(vec_error).__name__}: {vec_error}", exc_info=True)
                         # 向量保存失败不影响数据库保存，只记录日志

@@ -10,9 +10,10 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
-import os
-import logging
 import asyncio
+import logging
+import os
+
 from dotenv import load_dotenv
 
 # 配置日志
@@ -189,10 +190,10 @@ def save_config(config):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         logger.info(f"成功保存配置到文件，配置项数量: {len(config)}")
-        
+
         # 更新模块变量以保持一致性
         update_module_variables(config)
-        
+
     except Exception as e:
         logger.error(f"保存配置到文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
 
@@ -259,6 +260,7 @@ logger.info(f"最终语言配置: {final_language} (来源: {'配置文件' if L
 
 # 初始化国际化模块的语言设置
 from . import i18n
+
 i18n.set_language(final_language)
 logger.info(f"国际化模块语言已设置为: {i18n.get_language()}")
 
@@ -270,40 +272,40 @@ if config:
         logger.debug("从配置文件覆盖 LLM_API_KEY")
     else:
         logger.debug("使用环境变量中的 LLM_API_KEY")
-    
+
     if 'base_url' in config and config['base_url']:
         LLM_BASE_URL = config['base_url']
         logger.debug("从配置文件覆盖 LLM_BASE_URL")
     else:
         logger.debug("使用环境变量中的 LLM_BASE_URL")
-    
+
     if 'model' in config and config['model']:
         LLM_MODEL = config['model']
         logger.debug("从配置文件覆盖 LLM_MODEL")
     else:
         logger.debug("使用环境变量中的 LLM_MODEL")
-    
+
     # 从配置文件读取频道列表
     config_channels = config.get('channels')
     if config_channels and isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已从配置文件加载频道列表: {CHANNELS}")
-    
+
     # 从配置文件读取是否将报告发送回源频道的配置
     SEND_REPORT_TO_SOURCE = config.get('send_report_to_source', SEND_REPORT_TO_SOURCE)
     logger.info(f"已从配置文件加载发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
-    
+
     # 从配置文件读取是否启用投票功能的配置
     ENABLE_POLL = config.get('enable_poll', ENABLE_POLL)
     logger.info(f"已从配置文件加载投票功能配置: {ENABLE_POLL}")
-    
+
     # 从配置文件读取投票重新生成请求配置
     POLL_REGEN_THRESHOLD = config.get('poll_regen_threshold', POLL_REGEN_THRESHOLD)
     logger.info(f"已从配置文件加载投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
-    
+
     ENABLE_VOTE_REGEN_REQUEST = config.get('enable_vote_regen_request', ENABLE_VOTE_REGEN_REQUEST)
     logger.info(f"已从配置文件加载投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
-    
+
     # 从配置文件读取日志级别
     LOG_LEVEL_FROM_CONFIG = config.get('log_level')
     logger.info("已使用配置文件覆盖AI配置默认值")
@@ -433,25 +435,25 @@ def set_channel_schedule(channel, day=None, hour=None, minute=None):
 # 删除频道的时间配置
 def delete_channel_schedule(channel):
     """删除指定频道的自动总结时间配置
-    
+
     Args:
         channel: 频道URL
-        
+
     Returns:
         bool: 是否成功删除配置
     """
     try:
         # 加载当前配置
         current_config = load_config()
-        
+
         # 检查是否存在配置
         if 'summary_schedules' in current_config and channel in current_config['summary_schedules']:
             # 删除频道配置
             del current_config['summary_schedules'][channel]
-            
+
             # 保存配置（save_config会自动更新模块变量）
             save_config(current_config)
-            
+
             logger.info(f"已删除频道 {channel} 的时间配置")
             return True
         else:
@@ -464,26 +466,26 @@ def delete_channel_schedule(channel):
 # 验证时间配置
 def validate_schedule(day, hour, minute):
     """验证时间配置是否有效
-    
+
     Args:
         day: 星期几
         hour: 小时
         minute: 分钟
-        
+
     Returns:
         tuple: (是否有效, 错误信息)
     """
     valid_days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-    
+
     if day not in valid_days:
         return False, f"无效的星期几: {day}，有效值: {', '.join(valid_days)}"
-    
+
     if not isinstance(hour, int) or hour < 0 or hour > 23:
         return False, f"无效的小时: {hour}，有效范围: 0-23"
-    
+
     if not isinstance(minute, int) or minute < 0 or minute > 59:
         return False, f"无效的分钟: {minute}，有效范围: 0-59"
-    
+
     return True, "配置有效"
 
 # ==================== 多频率模式支持函数 ====================
@@ -810,7 +812,7 @@ def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
         send_to_channel: 是否发送到频道(True=频道, False=讨论组)
         discussion_forward_msg_id: 讨论组中的转发消息ID(仅讨论组模式需要)
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     data = load_poll_regenerations()
     if channel not in data:
         data[channel] = {}
@@ -886,7 +888,7 @@ def cleanup_old_regenerations(days=30):
     Returns:
         int: 清理的记录数量
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     data = load_poll_regenerations()
     cutoff_time = datetime.now() - timedelta(days=days)
     count = 0
@@ -921,26 +923,26 @@ async def increment_vote_count(channel, summary_msg_id, user_id):
 
     async with _poll_regenerations_lock:
         data = load_poll_regenerations()
-        
+
         # 检查记录是否存在
         if channel not in data or str(summary_msg_id) not in data[channel]:
             logger.warning(f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}")
             return False, 0, False
-        
+
         record = data[channel][str(summary_msg_id)]
-        
+
         # 检查用户是否已投票
         if user_id in record.get('voters', []):
             logger.info(f"用户 {user_id} 已经投票过了")
             return False, record.get('vote_count', 0), True
-        
+
         # 增加投票计数
         record['vote_count'] = record.get('vote_count', 0) + 1
         record.setdefault('voters', []).append(user_id)
-        
+
         # 保存数据
         save_poll_regenerations(data)
-        
+
         logger.info(f"投票计数已更新: channel={channel}, summary_id={summary_msg_id}, count={record['vote_count']}, user_id={user_id}")
         return True, record['vote_count'], False
 
@@ -956,21 +958,21 @@ def reset_vote_count(channel, summary_msg_id):
         bool: 是否成功重置
     """
     global _poll_regenerations_lock
-    
+
     data = load_poll_regenerations()
-    
+
     # 检查记录是否存在
     if channel not in data or str(summary_msg_id) not in data[channel]:
         logger.warning(f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}")
         return False
-    
+
     # 重置计数和投票者列表
     data[channel][str(summary_msg_id)]['vote_count'] = 0
     data[channel][str(summary_msg_id)]['voters'] = []
-    
+
     # 保存数据
     save_poll_regenerations(data)
-    
+
     logger.info(f"投票计数已重置: channel={channel}, summary_id={summary_msg_id}")
     return True
 
@@ -986,10 +988,10 @@ def get_vote_count(channel, summary_msg_id):
         int: 投票计数，如果记录不存在返回0
     """
     data = load_poll_regenerations()
-    
+
     if channel not in data or str(summary_msg_id) not in data[channel]:
         return 0
-    
+
     return data[channel][str(summary_msg_id)].get('vote_count', 0)
 
 
@@ -1090,13 +1092,13 @@ async def get_discussion_group_id_cached(client, channel_url):
 
 def get_qa_bot_persona():
     """获取问答Bot的人格描述
-    
+
     优先级（从高到低）：
     1. config.json 中的 qa_bot_persona 字段
     2. .env 中的 QA_BOT_PERSONA 环境变量
     3. data/qa_persona.txt 文件
     4. 内置默认人格 (DEFAULT_QA_PERSONA)
-    
+
     Returns:
         str: 问答Bot的人格描述文本
     """
@@ -1106,7 +1108,7 @@ def get_qa_bot_persona():
     if persona_from_config:
         logger.debug("使用配置文件中的问答Bot人格")
         return persona_from_config
-    
+
     # 2. 再尝试从环境变量读取
     persona_from_env = os.getenv('QA_BOT_PERSONA')
     if persona_from_env:
@@ -1123,7 +1125,7 @@ def get_qa_bot_persona():
         else:
             logger.debug("使用环境变量中的问答Bot人格")
             return persona_from_env
-    
+
     # 3. 尝试从默认文件读取
     try:
         with open(QA_PERSONA_FILE, 'r', encoding='utf-8') as f:

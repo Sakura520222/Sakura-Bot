@@ -18,10 +18,10 @@
 import logging
 
 from ..config import ADMIN_LIST, logger
-from ..prompt_manager import load_prompt, save_prompt
-from ..poll_prompt_manager import load_poll_prompt, save_poll_prompt
-from ..states import get_user_context
 from ..i18n import get_text
+from ..poll_prompt_manager import load_poll_prompt, save_poll_prompt
+from ..prompt_manager import load_prompt, save_prompt
+from ..states import get_user_context
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +31,13 @@ async def handle_show_prompt(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     logger.info(f"执行命令 {command} 成功")
     current_prompt = load_prompt()
     prompt_message = f"{get_text('prompt.current_title')}{get_text('prompt.current_content', content=current_prompt)}"
@@ -49,13 +49,13 @@ async def handle_set_prompt(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     # 检查发送者是否为管理员
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     # 使用状态管理器
     user_context = get_user_context()
     user_context.start_setting_prompt(sender_id)
@@ -69,32 +69,32 @@ async def handle_prompt_input(event):
     """处理用户输入的新提示词"""
     sender_id = event.sender_id
     input_text = event.text
-    
+
     # 使用状态管理器检查
     user_context = get_user_context()
     if not user_context.is_waiting_for_prompt(sender_id):
         return
-    
+
     logger.info(f"收到用户 {sender_id} 的提示词输入")
-    
+
     # 检查是否是命令消息，如果是则不处理
     if input_text.startswith('/'):
         logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
         await event.reply(get_text('prompt.error_command'))
         return
-    
+
     # 获取新提示词
     new_prompt = input_text.strip()
     logger.debug(f"用户 {sender_id} 设置的新提示词: {new_prompt[:100]}..." if len(new_prompt) > 100 else f"用户 {sender_id} 设置的新提示词: {new_prompt}")
-    
+
     # 更新提示词
     save_prompt(new_prompt)
     logger.info(f"已更新提示词，长度: {len(new_prompt)}字符")
-    
+
     # 从状态管理器中移除用户
     user_context.end_setting_prompt(sender_id)
     logger.info(f"从提示词设置集合中移除用户 {sender_id}")
-    
+
     prompt_message = f"{get_text('prompt.set_success')}\n\n{get_text('prompt.current_content', content=new_prompt)}"
     await event.reply(prompt_message)
 

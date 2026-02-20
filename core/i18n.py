@@ -19,7 +19,7 @@
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ MESSAGE_ZH_CN = {
     'poll.delete_failed': '删除频道投票配置失败，请检查日志',
     'poll.delete_channel_param': '请提供频道参数：/deletechannelpoll 频道\n\n例如：/deletechannelpoll examplechannel',
     'poll.delete_error': '删除频道投票配置时出错：{error}',
-    
+
     # ========== 投票重新生成 ==========
     'poll_regen.feature_disabled': '❌ 该功能已禁用',
     'poll_regen.invalid_format': '❌ 无效的请求格式',
@@ -658,7 +658,7 @@ MESSAGE_EN_US = {
     'poll.delete_failed': 'Failed to delete channel poll configuration, please check logs',
     'poll.delete_channel_param': 'Please provide channel parameter: /deletechannelpoll channel\n\nExample: /deletechannelpoll examplechannel',
     'poll.delete_error': 'Error deleting channel poll configuration: {error}',
-    
+
     # ========== Poll Regeneration ==========
     'poll_regen.feature_disabled': '❌ This feature is disabled',
     'poll_regen.invalid_format': '❌ Invalid request format',

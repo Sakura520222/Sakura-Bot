@@ -17,23 +17,29 @@ Sakura 问答Bot - 独立的智能问答助手
 基于历史总结回答自然语言查询
 """
 
-import asyncio
 import logging
 import os
 import sys
 import time
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram import BotCommand
+
+from telegram import BotCommand, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.quota_manager import get_quota_manager
-from core.qa_engine_v3 import get_qa_engine_v3
+from core.config import get_qa_bot_persona
 from core.conversation_manager import get_conversation_manager
-from core.config import REPORT_ADMIN_IDS, get_qa_bot_persona
+from core.qa_engine_v3 import get_qa_engine_v3
 from core.qa_user_system import get_qa_user_system
+from core.quota_manager import get_quota_manager
+
 
 # 配置日志 - 添加[QA]前缀以便区分
 class QAFormatter(logging.Formatter):
@@ -89,7 +95,6 @@ class QABot:
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/start命令"""
-        user_id = update.effective_user.id
 
         welcome_message = """🤖 **你好！我是智能资讯助手。**
 
@@ -179,7 +184,7 @@ class QABot:
 
         # 获取会话信息
         session_info = self.conversation_mgr.get_session_info(user_id)
-        
+
         session_text = ""
         if session_info:
             is_active = session_info.get('is_active', False)
@@ -220,14 +225,14 @@ class QABot:
     async def view_persona_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/view_persona命令 - 查看当前人格设定"""
         persona = get_qa_bot_persona()
-        
+
         # 限制显示长度，避免消息过长
         max_length = 3500
         if len(persona) > max_length:
             persona_preview = persona[:max_length] + "\n\n... (内容过长，已截断)"
         else:
             persona_preview = persona
-        
+
         message = f"""📋 **当前助手人格设定**
 
 ```
@@ -247,31 +252,31 @@ class QABot:
     async def list_channels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/listchannels命令 - 列出可订阅频道"""
         user_id = update.effective_user.id
-        
+
         # 自动注册用户
         self.user_system.register_user(
             user_id,
             update.effective_user.username,
             update.effective_user.first_name
         )
-        
+
         # 获取频道列表
         channels = self.user_system.get_available_channels()
         message = self.user_system.format_channels_list(channels)
-        
+
         await update.message.reply_text(message, parse_mode='Markdown')
 
     async def subscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/subscribe命令 - 订阅频道"""
         user_id = update.effective_user.id
-        
+
         # 自动注册用户
         self.user_system.register_user(
             user_id,
             update.effective_user.username,
             update.effective_user.first_name
         )
-        
+
         # 检查参数
         if not context.args or len(context.args) < 1:
             message = """📖 **订阅频道**
@@ -285,9 +290,9 @@ class QABot:
 💡 使用 `/listchannels` 查看可订阅频道"""
             await update.message.reply_text(message, parse_mode='Markdown')
             return
-        
+
         channel_url = context.args[0]
-        
+
         # 获取频道列表，查找频道名称
         channels = self.user_system.get_available_channels()
         channel_name = None
@@ -295,11 +300,11 @@ class QABot:
             if ch.get('channel_id') == channel_url:
                 channel_name = ch.get('channel_name')
                 break
-        
+
         if not channel_name:
             # 从URL中提取频道名作为备用
             channel_name = channel_url.split('/')[-1]
-        
+
         # 添加订阅
         result = self.user_system.add_subscription(user_id, channel_url, channel_name)
         await update.message.reply_text(result['message'], parse_mode='Markdown')
@@ -307,7 +312,7 @@ class QABot:
     async def unsubscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/unsubscribe命令 - 取消订阅"""
         user_id = update.effective_user.id
-        
+
         # 检查参数
         if not context.args or len(context.args) < 1:
             # 如果没有参数，显示订阅列表让用户选择
@@ -322,10 +327,10 @@ class QABot:
                     lines.append("")
                 lines.append("使用方法: `/unsubscribe <频道链接>`")
                 message = "\n".join(lines)
-            
+
             await update.message.reply_text(message, parse_mode='Markdown')
             return
-        
+
         channel_url = context.args[0]
         result = self.user_system.remove_subscription(user_id, channel_url)
         await update.message.reply_text(result['message'], parse_mode='Markdown')
@@ -333,23 +338,23 @@ class QABot:
     async def my_subscriptions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/mysubscriptions命令 - 查看我的订阅"""
         user_id = update.effective_user.id
-        
+
         subscriptions = self.user_system.get_user_subscriptions(user_id)
         message = self.user_system.format_subscriptions_list(subscriptions)
-        
+
         await update.message.reply_text(message, parse_mode='Markdown')
 
     async def request_summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/request_summary命令 - 请求生成总结"""
         user_id = update.effective_user.id
-        
+
         # 自动注册用户
         self.user_system.register_user(
             user_id,
             update.effective_user.username,
             update.effective_user.first_name
         )
-        
+
         # 检查参数
         if not context.args or len(context.args) < 1:
             message = """📝 **请求生成总结**
@@ -362,9 +367,9 @@ class QABot:
 💡 使用 `/listchannels` 查看可用的频道。"""
             await update.message.reply_text(message, parse_mode='Markdown')
             return
-        
+
         channel_url = context.args[0]
-        
+
         # 获取频道名称
         channels = self.user_system.get_available_channels()
         channel_name = None
@@ -372,10 +377,10 @@ class QABot:
             if ch.get('channel_id') == channel_url:
                 channel_name = ch.get('channel_name')
                 break
-        
+
         if not channel_name:
             channel_name = channel_url.split('/')[-1]
-        
+
         # 创建请求
         result = self.user_system.create_summary_request(user_id, channel_url, channel_name)
         await update.message.reply_text(result['message'], parse_mode='Markdown')
@@ -605,7 +610,7 @@ class QABot:
 
     async def _send_with_fallback(self, message, text: str):
         """发送消息，强制使用Markdown格式
-        
+
         如果AI生成的Markdown有语法错误，进行简单修复
         """
         # 直接尝试发送Markdown
@@ -621,10 +626,10 @@ class QABot:
                 logger.error(f"Markdown修复后仍然失败: {e2}, 使用纯文本")
                 # 最后的保底方案
                 await message.reply_text(text)
-    
+
     def _fix_markdown(self, text: str) -> str:
         """修复常见的Markdown格式错误
-        
+
         策略：通过统计各标记符号出现次数，如为奇数则在末尾补全一个，
         避免暴力正则替换导致的文本错误。
         """
@@ -678,13 +683,13 @@ class QABot:
                 BotCommand("mysubscriptions", "查看我的订阅列表"),
                 BotCommand("request_summary", "请求生成频道总结"),
             ]
-            
+
             try:
                 await application.bot.set_my_commands(commands)
                 logger.info(f"问答Bot命令菜单注册完成，共 {len(commands)} 个命令")
             except Exception as e:
                 logger.error(f"注册命令菜单失败: {type(e).__name__}: {e}")
-        
+
         # 将命令注册添加到post_init回调
         self.application.post_init = register_commands
 
@@ -694,14 +699,14 @@ class QABot:
         self.application.add_handler(CommandHandler("status", self.status_command))
         self.application.add_handler(CommandHandler("clear", self.clear_command))
         self.application.add_handler(CommandHandler("view_persona", self.view_persona_command))
-        
+
         # 订阅管理命令
         self.application.add_handler(CommandHandler("listchannels", self.list_channels_command))
         self.application.add_handler(CommandHandler("subscribe", self.subscribe_command))
         self.application.add_handler(CommandHandler("unsubscribe", self.unsubscribe_command))
         self.application.add_handler(CommandHandler("mysubscriptions", self.my_subscriptions_command))
         self.application.add_handler(CommandHandler("request_summary", self.request_summary_command))
-        
+
         # 消息处理器
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
@@ -711,7 +716,7 @@ class QABot:
             try:
                 from core.mainbot_push_handler import get_mainbot_push_handler
                 push_handler = get_mainbot_push_handler()
-                
+
                 count = await push_handler.process_pending_notifications()
                 if count > 0:
                     logger.info(f"已处理 {count} 条通知")

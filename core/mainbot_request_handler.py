@@ -17,15 +17,15 @@
 """
 
 import logging
-import asyncio
-from typing import Dict, Any, Optional, List
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Any, Dict
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telethon import Button
 
-from core.database import get_db_manager
-from core.config import ADMIN_LIST
 from core.command_handlers.summary_commands import generate_channel_summary
+from core.config import ADMIN_LIST
+from core.database import get_db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class MainBotRequestHandler:
                             telethon_client=None) -> None:
         """
         定期检查并处理新的总结请求
-        
+
         Args:
             context: Telegram Bot上下文（可选，用于 PTB）
             telethon_client: Telethon 客户端实例（可选，用于 Telethon）
@@ -70,10 +70,10 @@ class MainBotRequestHandler:
     def _build_admin_message(self, request: Dict[str, Any]) -> str:
         """
         构建管理员通知消息
-        
+
         Args:
             request: 请求信息字典
-        
+
         Returns:
             str: 格式化的通知消息
         """
@@ -105,14 +105,14 @@ class MainBotRequestHandler:
                                     context: ContextTypes.DEFAULT_TYPE = None) -> None:
         """
         通知管理员有新的总结请求（使用 PTB context）
-        
+
         Args:
             request: 请求信息字典
             context: Telegram Bot上下文
         """
         try:
             request_id = request.get('id')
-            channel_id = request.get('target_channel')
+            request.get('target_channel')
             # 更新状态为processing
             self.db.update_request_status(request_id, 'processing')
 
@@ -150,14 +150,14 @@ class MainBotRequestHandler:
                                          client) -> None:
         """
         使用 Telethon 客户端通知管理员有新的总结请求
-        
+
         Args:
             request: 请求信息字典
             client: Telethon 客户端实例
         """
         try:
             request_id = request.get('id')
-            channel_id = request.get('target_channel')
+            request.get('target_channel')
 
             # 更新状态为processing
             self.db.update_request_status(request_id, 'processing')
@@ -194,7 +194,7 @@ class MainBotRequestHandler:
     async def handle_callback_query(self, event, client) -> None:
         """
         处理管理员按钮点击（Telethon Event）
-        
+
         Args:
             event: Telethon 回调事件对象
             client: Telethon 客户端实例
@@ -230,7 +230,7 @@ class MainBotRequestHandler:
                                                client) -> None:
         """
         处理确认的总结请求（Telethon 版本）
-        
+
         Args:
             event: Telethon 回调事件对象
             request: 请求信息
@@ -269,7 +269,7 @@ class MainBotRequestHandler:
                 channel_name = result['channel_name']
                 message_count = result['message_count']
                 summary_preview = result['summary_text'][:200] + "..." if len(result['summary_text']) > 200 else result['summary_text']
-                
+
                 success_message = f"""✅ 总结生成完成！
 
 📢 频道: {channel_name}
@@ -283,8 +283,8 @@ class MainBotRequestHandler:
 
                 # 通知请求者
                 await self._notify_requester(
-                    request_id, 
-                    channel_id, 
+                    request_id,
+                    channel_id,
                     f"✅ 总结已成功生成！\n\n频道: {channel_name}\n处理消息数: {message_count}"
                 )
             else:
@@ -300,14 +300,14 @@ class MainBotRequestHandler:
             logger.error(f"处理总结请求失败: {type(e).__name__}: {e}", exc_info=True)
             self.db.update_request_status(request_id, 'failed', result={'error': str(e)})
             await event.edit(f"❌ 生成总结失败: {str(e)}")
-            
+
             # 通知请求者
             await self._notify_requester(request_id, request['target_channel'], f"❌ 总结生成失败: {str(e)}")
 
     async def _reject_summary_request_telethon(self, event, request: Dict[str, Any]) -> None:
         """
         拒绝总结请求（Telethon 版本）
-        
+
         Args:
             event: Telethon 回调事件对象
             request: 请求信息
@@ -334,7 +334,7 @@ class MainBotRequestHandler:
                                message: str) -> None:
         """
         通过问答Bot通知请求者
-        
+
         Args:
             request_id: 请求ID
             channel_id: 频道ID

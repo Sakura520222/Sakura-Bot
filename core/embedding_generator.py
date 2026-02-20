@@ -19,6 +19,7 @@ Embedding生成器 - 将文本转换为向量
 import logging
 import os
 from typing import List, Optional
+
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)

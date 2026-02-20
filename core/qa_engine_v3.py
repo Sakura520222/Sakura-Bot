@@ -18,17 +18,18 @@
 
 import logging
 import re
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+from .ai_client import client_llm
+from .config import get_qa_bot_persona
+from .conversation_manager import get_conversation_manager
 from .database import get_db_manager
 from .intent_parser import get_intent_parser
 from .memory_manager import get_memory_manager
-from .vector_store import get_vector_store
 from .reranker import get_reranker
-from .ai_client import client_llm
 from .settings import get_llm_model
-from .conversation_manager import get_conversation_manager
-from .config import get_qa_bot_persona
+from .vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -676,7 +677,7 @@ class QAEngineV3:
             # 时间过滤
             date_after: Optional[str] = None
             if time_range is not None:
-                from datetime import datetime, timezone, timedelta
+                from datetime import datetime, timedelta, timezone
                 cutoff = datetime.now(timezone.utc) - timedelta(days=time_range)
                 date_after = cutoff.isoformat()
 
@@ -783,7 +784,7 @@ class QAEngineV3:
     def _prepare_rag_context(self, summaries: List[Dict[str, Any]]) -> str:
         """
         准备RAG上下文信息
-        
+
         动态分配每条总结的最大字符数：
         - 1条结果: 最多 2000 字符
         - 2条结果: 最多 1500 字符

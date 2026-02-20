@@ -17,8 +17,7 @@
 
 import logging
 import os
-from typing import List, Dict, Any, Optional
-from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class VectorStore:
         try:
             # 获取配置
             vector_db_path = os.getenv("VECTOR_DB_PATH", "data/vectors")
-            embedding_dimension = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
+            int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
             # 创建持久化客户端
             self.client = chromadb.PersistentClient(path=vector_db_path)

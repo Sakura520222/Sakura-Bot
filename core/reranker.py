@@ -18,8 +18,9 @@
 
 import logging
 import os
+from typing import Any, Dict, List, Optional
+
 import httpx
-from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 

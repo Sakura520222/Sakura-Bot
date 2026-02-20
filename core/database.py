@@ -10,12 +10,13 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
-import sqlite3
 import json
 import logging
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
 from .i18n import get_text
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ class DatabaseManager:
                     UNIQUE(user_id, query_date)
                 )
             """)
-            
+
             # 创建频道画像表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS channel_profiles (
@@ -122,7 +123,7 @@ class DatabaseManager:
                     last_updated TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # 创建对话历史表（多轮对话支持）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_history (
@@ -135,7 +136,7 @@ class DatabaseManager:
                     metadata TEXT
                 )
             """)
-            
+
             # 创建用户注册表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -148,7 +149,7 @@ class DatabaseManager:
                     preferences TEXT
                 )
             """)
-            
+
             # 创建订阅配置表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -162,7 +163,7 @@ class DatabaseManager:
                     UNIQUE(user_id, channel_id, sub_type)
                 )
             """)
-            
+
             # 创建请求队列表（用于IPC）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS request_queue (
@@ -177,7 +178,7 @@ class DatabaseManager:
                     processed_at TIMESTAMP
                 )
             """)
-            
+
             # 创建通知队列表（用于跨Bot通知）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notification_queue (
@@ -196,35 +197,35 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_quota_user_date
                 ON usage_quota(user_id, query_date)
             """)
-            
+
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_quota_date
                 ON usage_quota(query_date)
             """)
-            
+
             # 用户表索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_users_last_active
                 ON users(last_active DESC)
             """)
-            
+
             # 订阅表索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_subscriptions_user
                 ON subscriptions(user_id)
             """)
-            
+
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_subscriptions_channel
                 ON subscriptions(channel_id)
             """)
-            
+
             # 请求队列索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_request_queue_status
                 ON request_queue(status, created_at)
             """)
-            
+
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_request_queue_user
                 ON request_queue(requested_by)
@@ -942,7 +943,7 @@ class DatabaseManager:
             # 转换为JSON存储
             topics_json = json.dumps(topics, ensure_ascii=False) if topics else None
             keywords_json = json.dumps(keywords_freq, ensure_ascii=False) if keywords_freq else None
-            entities_json = json.dumps(entities, ensure_ascii=False) if entities else None
+            json.dumps(entities, ensure_ascii=False) if entities else None
 
             # 推断频道风格（简单规则）
             if topics:
@@ -1020,8 +1021,8 @@ class DatabaseManager:
 
     # ============ 对话历史管理方法 ============
 
-    def save_conversation(self, user_id: int, session_id: str, 
-                         role: str, content: str, 
+    def save_conversation(self, user_id: int, session_id: str,
+                         role: str, content: str,
                          metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
         保存对话记录
@@ -1043,7 +1044,7 @@ class DatabaseManager:
             metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
 
             cursor.execute("""
-                INSERT INTO conversation_history 
+                INSERT INTO conversation_history
                 (user_id, session_id, role, content, metadata)
                 VALUES (?, ?, ?, ?, ?)
             """, (user_id, session_id, role, content, metadata_json))
@@ -1058,7 +1059,7 @@ class DatabaseManager:
             logger.error(f"保存对话记录失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_conversation_history(self, user_id: int, session_id: str, 
+    def get_conversation_history(self, user_id: int, session_id: str,
                                 limit: int = 20) -> List[Dict[str, Any]]:
         """
         获取用户的对话历史
@@ -1140,7 +1141,7 @@ class DatabaseManager:
             logger.error(f"获取最后会话时间失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def clear_user_conversations(self, user_id: int, 
+    def clear_user_conversations(self, user_id: int,
                                 session_id: Optional[str] = None) -> int:
         """
         清除用户的对话历史
@@ -1262,9 +1263,9 @@ class DatabaseManager:
             now = datetime.now(timezone.utc).isoformat()
 
             cursor.execute("""
-                INSERT OR REPLACE INTO users 
+                INSERT OR REPLACE INTO users
                 (user_id, username, first_name, registered_at, last_active, is_admin)
-                VALUES (?, ?, ?, 
+                VALUES (?, ?, ?,
                         COALESCE((SELECT registered_at FROM users WHERE user_id = ?), ?),
                         ?, ?)
             """, (user_id, username, first_name, user_id, now, now, 1 if is_admin else 0))
@@ -1454,7 +1455,7 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT OR IGNORE INTO subscriptions 
+                INSERT OR IGNORE INTO subscriptions
                 (user_id, channel_id, channel_name, sub_type)
                 VALUES (?, ?, ?, ?)
             """, (user_id, channel_id, channel_name, sub_type))
@@ -1633,7 +1634,7 @@ class DatabaseManager:
 
             cursor.execute("""
                 SELECT 1 FROM subscriptions
-                WHERE user_id = ? AND channel_id = ? 
+                WHERE user_id = ? AND channel_id = ?
                       AND sub_type = ? AND enabled = 1
             """, (user_id, channel_id, sub_type))
 

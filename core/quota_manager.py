@@ -17,9 +17,10 @@
 
 import logging
 import os
-from typing import Dict, Any, Optional
-from .database import get_db_manager
+from typing import Any, Dict
+
 from .config import ADMIN_LIST
+from .database import get_db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ class QuotaManager:
     def check_quota(self, user_id: int) -> Dict[str, Any]:
         """
         检查用户配额
-        
+
         Args:
             user_id: 用户ID
-            
+
         Returns:
             {
                 "allowed": bool,  # 是否允许查询
@@ -76,7 +77,7 @@ class QuotaManager:
         try:
             # 检查是否为管理员
             is_admin = self.is_admin(user_id)
-            
+
             # 检查每日总限额
             total_used_today = self.db.get_total_daily_usage()
             if total_used_today >= self.total_daily_limit and not is_admin:
@@ -113,9 +114,9 @@ class QuotaManager:
             # 配额允许
             remaining = result.get("remaining", 0)
             used = result.get("used", 0)
-            
+
             logger.info(f"用户 {user_id} 配额检查通过: {used}/{self.daily_limit} (剩余{remaining})")
-            
+
             if is_admin:
                 message = "🌟 **管理员权限**\n\n你拥有无限制访问的特权。"
             else:
@@ -145,10 +146,10 @@ class QuotaManager:
     def get_usage_status(self, user_id: int) -> Dict[str, Any]:
         """
         获取用户使用状态（不消耗配额）
-        
+
         Args:
             user_id: 用户ID
-            
+
         Returns:
             使用状态信息
         """
@@ -192,14 +193,14 @@ class QuotaManager:
     def get_system_status(self) -> Dict[str, Any]:
         """
         获取系统配额状态
-        
+
         Returns:
             系统状态信息
         """
         try:
             total_used = self.db.get_total_daily_usage()
             total_remaining = max(0, self.total_daily_limit - total_used)
-            
+
             return {
                 "daily_limit": self.total_daily_limit,
                 "used_today": total_used,

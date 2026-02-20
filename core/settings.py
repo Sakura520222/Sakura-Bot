@@ -15,30 +15,20 @@
 此模块使用 Pydantic Settings 来管理环境变量配置，提供类型验证和默认值。
 """
 
-import os
 import logging
-from typing import Literal
 from pathlib import Path
+
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 from .constants import (
+    BOT_STATE_RUNNING,
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
     DEFAULT_LOG_LEVEL,
-    DEFAULT_SUMMARY_DAY,
-    DEFAULT_SUMMARY_HOUR,
-    DEFAULT_SUMMARY_MINUTE,
     POLL_REGEN_THRESHOLD_DEFAULT,
-    CLEANUP_DAYS_DEFAULT,
-    VALID_FREQUENCIES,
-    VALID_DAYS,
     VALID_BOT_STATES,
-    DEFAULT_PROMPT,
-    DEFAULT_POLL_PROMPT,
-    DATA_DIR,
-    BOT_STATE_RUNNING
 )
 
 # 加载 .env 文件
@@ -50,18 +40,18 @@ logger = logging.getLogger(__name__)
 
 class TelegramSettings(BaseSettings):
     """Telegram 相关配置"""
-    
+
     api_id: int | None = Field(default=None, alias="TELEGRAM_API_ID")
     api_hash: str | None = Field(default=None, alias="TELEGRAM_API_HASH")
     bot_token: str | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
-    
+
     @field_validator("api_id")
     @classmethod
     def validate_api_id(cls, v: int | None) -> int | None:
         if v is not None and v <= 0:
             raise ValueError("API_ID 必须为正整数")
         return v
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -70,17 +60,17 @@ class TelegramSettings(BaseSettings):
 
 class AISettings(BaseSettings):
     """AI 服务相关配置"""
-    
+
     api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     base_url: str = Field(default=DEFAULT_LLM_BASE_URL, alias="LLM_BASE_URL")
     model: str = Field(default=DEFAULT_LLM_MODEL, alias="LLM_MODEL")
-    
+
     @property
     def effective_api_key(self) -> str | None:
         """获取有效的 API Key（优先使用 LLM_API_KEY）"""
         return self.api_key or self.deepseek_api_key
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -89,16 +79,16 @@ class AISettings(BaseSettings):
 
 class ChannelSettings(BaseSettings):
     """频道相关配置"""
-    
+
     target_channel: str | None = Field(default=None, alias="TARGET_CHANNEL")
-    
+
     @property
     def channels(self) -> list[str]:
         """获取频道列表"""
         if self.target_channel:
             return [ch.strip() for ch in self.target_channel.split(',') if ch.strip()]
         return []
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -107,9 +97,9 @@ class ChannelSettings(BaseSettings):
 
 class AdminSettings(BaseSettings):
     """管理员相关配置"""
-    
+
     report_admin_ids: str = Field(default="", alias="REPORT_ADMIN_IDS")
-    
+
     @property
     def admin_list(self) -> list[int | str]:
         """获取管理员 ID 列表"""
@@ -119,7 +109,7 @@ class AdminSettings(BaseSettings):
             except ValueError:
                 logger.warning("管理员 ID 格式错误，使用默认值 'me'")
         return ['me']
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -128,9 +118,9 @@ class AdminSettings(BaseSettings):
 
 class LogSettings(BaseSettings):
     """日志相关配置"""
-    
+
     log_level: str = Field(default=DEFAULT_LOG_LEVEL, alias="LOG_LEVEL")
-    
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
@@ -140,7 +130,7 @@ class LogSettings(BaseSettings):
             logger.warning(f"无效的日志级别: {v}，使用默认值 {DEFAULT_LOG_LEVEL}")
             return DEFAULT_LOG_LEVEL
         return v_upper
-    
+
     @property
     def logging_level(self) -> int:
         """获取 logging 模块的日志级别"""
@@ -152,7 +142,7 @@ class LogSettings(BaseSettings):
             "CRITICAL": 50
         }
         return level_map.get(self.log_level, 10)
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -161,21 +151,21 @@ class LogSettings(BaseSettings):
 
 class PollSettings(BaseSettings):
     """投票相关配置"""
-    
+
     enable_poll: bool = Field(default=True, alias="ENABLE_POLL")
     poll_regen_threshold: int = Field(
         default=POLL_REGEN_THRESHOLD_DEFAULT,
         alias="POLL_REGEN_THRESHOLD"
     )
     enable_vote_regen_request: bool = Field(default=True, alias="ENABLE_VOTE_REGEN_REQUEST")
-    
+
     @field_validator("poll_regen_threshold")
     @classmethod
     def validate_threshold(cls, v: int) -> int:
         if v < 1:
             raise ValueError("投票重新生成阈值必须 >= 1")
         return v
-    
+
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
@@ -184,7 +174,7 @@ class PollSettings(BaseSettings):
 
 class Settings:
     """主配置类，聚合所有子配置"""
-    
+
     def __init__(self):
         """初始化所有子配置"""
         self.telegram = TelegramSettings()
@@ -193,7 +183,7 @@ class Settings:
         self.admin = AdminSettings()
         self.log = LogSettings()
         self.poll = PollSettings()
-        
+
         # 其他配置
         self.send_report_to_source = True
         self.bot_state = BOT_STATE_RUNNING
@@ -310,13 +300,13 @@ def set_send_report_to_source(value: bool) -> None:
 # 验证必要配置
 def validate_required_settings() -> tuple[bool, list[str]]:
     """验证必要的配置项是否存在
-    
+
     Returns:
         tuple: (是否所有配置都存在, 缺失的配置项列表)
     """
     settings = get_settings()
     missing = []
-    
+
     if not settings.telegram.api_id:
         missing.append("TELEGRAM_API_ID")
     if not settings.telegram.api_hash:
@@ -325,5 +315,5 @@ def validate_required_settings() -> tuple[bool, list[str]]:
         missing.append("TELEGRAM_BOT_TOKEN")
     if not settings.ai.effective_api_key:
         missing.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
-    
+
     return len(missing) == 0, missing

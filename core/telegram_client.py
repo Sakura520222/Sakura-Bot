@@ -4,19 +4,16 @@ Telegram客户端模块 - 重新导出所有子模块功能
 """
 
 # 从子模块重新导出所有功能
-from .telegram import (
-    # 消息发送功能
-    send_long_message,
-    send_report,
+from .telegram import (  # 消息发送功能; 投票处理功能; 客户端管理功能
+    extract_date_range_from_summary,
     fetch_last_week_messages,
-    # 投票处理功能
+    get_active_client,
+    send_long_message,
     send_poll,
     send_poll_to_channel,
     send_poll_to_discussion_group,
-    # 客户端管理功能
+    send_report,
     set_active_client,
-    get_active_client,
-    extract_date_range_from_summary,
 )
 
 __all__ = [

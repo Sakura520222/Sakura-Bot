@@ -15,13 +15,13 @@
 提供优雅的错误处理、重试机制和健康检查功能
 """
 
-import logging
 import asyncio
+import inspect
+import logging
 import time
 from datetime import datetime, timedelta
-from typing import Callable, Any, Optional, Dict, List, Tuple
 from functools import wraps
-import inspect
+from typing import Any, Callable, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +54,13 @@ class RetryExhaustedError(Exception):
 def record_error(error: Exception, context: str = ""):
     """记录错误统计信息"""
     global _error_stats
-    
+
     _error_stats["total_errors"] += 1
     _error_stats["last_error_time"] = datetime.now()
-    
+
     error_type = type(error).__name__
     _error_stats["error_types"][error_type] = _error_stats["error_types"].get(error_type, 0) + 1
-    
+
     # 记录最近错误（最多保留10个）
     error_record = {
         "time": datetime.now().isoformat(),
@@ -71,7 +71,7 @@ def record_error(error: Exception, context: str = ""):
     _error_stats["recent_errors"].append(error_record)
     if len(_error_stats["recent_errors"]) > 10:
         _error_stats["recent_errors"].pop(0)
-    
+
     logger.error(f"错误记录: {context} - {error_type}: {error}")
 
 
@@ -101,7 +101,7 @@ def retry_with_backoff(
 ):
     """
     重试装饰器，支持指数退避
-    
+
     Args:
         max_retries: 最大重试次数
         base_delay: 基础延迟秒数
@@ -113,7 +113,7 @@ def retry_with_backoff(
     def decorator(func: Callable):
         # 使用函数签名检查是否为异步函数
         is_async = inspect.iscoroutinefunction(func)
-        
+
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             config = DEFAULT_RETRY_CONFIG.copy()
@@ -129,24 +129,24 @@ def retry_with_backoff(
                 config["retry_on_exceptions"] = retry_on_exceptions
             if skip_retry_on_exceptions is not None:
                 config["skip_retry_on_exceptions"] = skip_retry_on_exceptions
-            
+
             last_exception = None
             for attempt in range(config["max_retries"] + 1):
                 try:
                     if attempt > 0:
                         logger.info(f"重试 {func.__name__}，第 {attempt} 次尝试")
-                    
+
                     return await func(*args, **kwargs)
-                    
+
                 except config["skip_retry_on_exceptions"] as e:
                     # 不重试的异常直接抛出
                     record_error(e, f"skip_retry: {func.__name__}")
                     raise
-                    
+
                 except config["retry_on_exceptions"] as e:
                     last_exception = e
                     record_error(e, f"retry_attempt_{attempt}: {func.__name__}")
-                    
+
                     if attempt == config["max_retries"]:
                         # 重试次数耗尽
                         logger.error(f"{func.__name__} 重试次数耗尽 ({config['max_retries']} 次)")
@@ -154,7 +154,7 @@ def retry_with_backoff(
                             f"{func.__name__} 重试次数耗尽",
                             last_exception
                         )
-                    
+
                     # 计算延迟时间
                     if config["exponential_backoff"]:
                         delay = min(
@@ -163,20 +163,20 @@ def retry_with_backoff(
                         )
                     else:
                         delay = config["base_delay"]
-                    
+
                     logger.warning(
                         f"{func.__name__} 第 {attempt + 1} 次失败，"
                         f"{delay:.1f}秒后重试: {type(e).__name__}: {e}"
                     )
-                    
+
                     await asyncio.sleep(delay)
-            
+
             # 理论上不会执行到这里
             raise RetryExhaustedError(
                 f"{func.__name__} 重试次数耗尽",
                 last_exception
             )
-        
+
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             config = DEFAULT_RETRY_CONFIG.copy()
@@ -192,24 +192,24 @@ def retry_with_backoff(
                 config["retry_on_exceptions"] = retry_on_exceptions
             if skip_retry_on_exceptions is not None:
                 config["skip_retry_on_exceptions"] = skip_retry_on_exceptions
-            
+
             last_exception = None
             for attempt in range(config["max_retries"] + 1):
                 try:
                     if attempt > 0:
                         logger.info(f"重试 {func.__name__}，第 {attempt} 次尝试")
-                    
+
                     return func(*args, **kwargs)
-                    
+
                 except config["skip_retry_on_exceptions"] as e:
                     # 不重试的异常直接抛出
                     record_error(e, f"skip_retry: {func.__name__}")
                     raise
-                    
+
                 except config["retry_on_exceptions"] as e:
                     last_exception = e
                     record_error(e, f"retry_attempt_{attempt}: {func.__name__}")
-                    
+
                     if attempt == config["max_retries"]:
                         # 重试次数耗尽
                         logger.error(f"{func.__name__} 重试次数耗尽 ({config['max_retries']} 次)")
@@ -217,7 +217,7 @@ def retry_with_backoff(
                             f"{func.__name__} 重试次数耗尽",
                             last_exception
                         )
-                    
+
                     # 计算延迟时间
                     if config["exponential_backoff"]:
                         delay = min(
@@ -226,32 +226,32 @@ def retry_with_backoff(
                         )
                     else:
                         delay = config["base_delay"]
-                    
+
                     logger.warning(
                         f"{func.__name__} 第 {attempt + 1} 次失败，"
                         f"{delay:.1f}秒后重试: {type(e).__name__}: {e}"
                     )
-                    
+
                     time.sleep(delay)
-            
+
             # 理论上不会执行到这里
             raise RetryExhaustedError(
                 f"{func.__name__} 重试次数耗尽",
                 last_exception
             )
-        
+
         return async_wrapper if is_async else sync_wrapper
-    
+
     return decorator
 
 
 class HealthChecker:
     """健康检查器"""
-    
+
     def __init__(self):
         self.checks = {}
         self.last_check_time = {}
-    
+
     def register_check(self, name: str, check_func: Callable, interval_seconds: int = 60):
         """注册健康检查函数"""
         self.checks[name] = {
@@ -261,19 +261,19 @@ class HealthChecker:
             "last_success": None
         }
         self.last_check_time[name] = datetime.now() - timedelta(seconds=interval_seconds + 1)
-    
+
     async def run_check(self, name: str) -> Tuple[bool, Any]:
         """运行指定的健康检查"""
         if name not in self.checks:
             return False, f"未找到健康检查: {name}"
-        
+
         check = self.checks[name]
         now = datetime.now()
-        
+
         # 检查是否需要运行
         if (now - self.last_check_time[name]).total_seconds() < check["interval"]:
             return check["last_result"], check["last_success"]
-        
+
         try:
             result = await check["func"]() if inspect.iscoroutinefunction(check["func"]) else check["func"]()
             self.last_check_time[name] = now
@@ -286,7 +286,7 @@ class HealthChecker:
             check["last_success"] = str(e)
             record_error(e, f"health_check: {name}")
             return False, str(e)
-    
+
     async def run_all_checks(self) -> Dict[str, Tuple[bool, Any]]:
         """运行所有健康检查"""
         results = {}
@@ -294,7 +294,7 @@ class HealthChecker:
             success, detail = await self.run_check(name)
             results[name] = (success, detail)
         return results
-    
+
     def get_status(self) -> Dict[str, Any]:
         """获取健康检查状态"""
         status = {}
@@ -320,16 +320,16 @@ def get_health_checker() -> HealthChecker:
 async def graceful_shutdown(signame: str, loop: asyncio.AbstractEventLoop):
     """优雅关闭处理"""
     logger.info(f"收到信号 {signame}，开始优雅关闭...")
-    
+
     # 记录关闭事件
     logger.info("保存当前状态...")
-    
+
     # 等待进行中的任务完成（最多10秒）
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
         logger.info(f"等待 {len(tasks)} 个任务完成...")
         await asyncio.wait(tasks, timeout=10.0)
-    
+
     logger.info("优雅关闭完成")
     loop.stop()
 
@@ -339,13 +339,13 @@ def setup_graceful_shutdown():
     try:
         import signal
         loop = asyncio.get_event_loop()
-        
+
         for signame in ('SIGINT', 'SIGTERM'):
             loop.add_signal_handler(
                 getattr(signal, signame),
                 lambda s=signame: asyncio.create_task(graceful_shutdown(s, loop))
             )
-        
+
         logger.info("优雅关闭信号处理已设置")
     except (ImportError, NotImplementedError):
         logger.warning("当前系统不支持信号处理，优雅关闭功能受限")
@@ -354,9 +354,10 @@ def setup_graceful_shutdown():
 # 预定义的健康检查函数
 async def check_telegram_connection():
     """检查Telegram连接"""
-    from core.config import API_ID, API_HASH, BOT_TOKEN
     from telethon import TelegramClient
-    
+
+    from core.config import API_HASH, API_ID, BOT_TOKEN
+
     try:
         async with TelegramClient('health_check', int(API_ID), API_HASH) as client:
             await client.start(bot_token=BOT_TOKEN)
@@ -368,13 +369,14 @@ async def check_telegram_connection():
 
 async def check_ai_api():
     """检查AI API连接"""
-    from core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
     from openai import OpenAI
-    
+
+    from core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+
     try:
         client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
         # 发送一个简单的测试请求
-        response = client.chat.completions.create(
+        client.chat.completions.create(
             model=LLM_MODEL,
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5
@@ -394,15 +396,15 @@ async def check_database_connection():
 def initialize_error_handling():
     """初始化错误处理系统"""
     logger.info("初始化错误处理系统...")
-    
+
     # 设置优雅关闭
     setup_graceful_shutdown()
-    
+
     # 注册默认健康检查
     health_checker = get_health_checker()
     health_checker.register_check("telegram", check_telegram_connection, interval_seconds=300)
     health_checker.register_check("ai_api", check_ai_api, interval_seconds=300)
     health_checker.register_check("database", check_database_connection, interval_seconds=300)
-    
+
     logger.info("错误处理系统初始化完成")
     return health_checker

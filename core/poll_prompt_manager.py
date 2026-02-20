@@ -11,7 +11,8 @@
 # 许可证全文：参见 LICENSE 文件
 
 import logging
-from core.config import POLL_PROMPT_FILE, DEFAULT_POLL_PROMPT
+
+from core.config import DEFAULT_POLL_PROMPT, POLL_PROMPT_FILE
 
 logger = logging.getLogger(__name__)
 

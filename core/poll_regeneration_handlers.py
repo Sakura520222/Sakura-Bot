@@ -16,11 +16,18 @@
 """
 
 import logging
+
 from telethon import Button
+
 from .config import (
-    ADMIN_LIST, get_poll_regeneration, update_poll_regeneration, load_poll_regenerations,
-    POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST,
-    increment_vote_count, reset_vote_count, get_vote_count
+    ADMIN_LIST,
+    ENABLE_VOTE_REGEN_REQUEST,
+    POLL_REGEN_THRESHOLD,
+    get_poll_regeneration,
+    increment_vote_count,
+    load_poll_regenerations,
+    reset_vote_count,
+    update_poll_regeneration,
 )
 from .i18n import get_text
 
@@ -114,7 +121,7 @@ async def handle_vote_regen_request_callback(event):
     # 检查是否达到阈值
     if count >= POLL_REGEN_THRESHOLD:
         logger.info(f"🎉 投票数达到阈值: {count}/{POLL_REGEN_THRESHOLD}, 开始自动重新生成投票")
-        
+
         # 自动触发投票重新生成
         regen_data = get_poll_regeneration(target_channel, summary_msg_id)
         if regen_data:
@@ -250,7 +257,7 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
                         logger.info(f"从讨论组删除旧投票: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}")
                 else:
                     # 回退到频道删除
-                    logger.warning(f"无法获取讨论组ID，回退到从频道删除")
+                    logger.warning("无法获取讨论组ID，回退到从频道删除")
                     if old_button_id:
                         await client.delete_messages(channel, [old_poll_id, old_button_id])
                         logger.info(f"回退：从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
@@ -306,7 +313,8 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
     """
     try:
         from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
-        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+
+        from .config import ENABLE_VOTE_REGEN_REQUEST, POLL_REGEN_THRESHOLD
 
         # 1. 构造投票对象
         question_text = str(poll_data.get('question', get_text('poll_regen.default_question'))).strip()[:250]
@@ -405,7 +413,8 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
     """
     try:
         from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
-        from .config import POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+
+        from .config import ENABLE_VOTE_REGEN_REQUEST, POLL_REGEN_THRESHOLD
 
         logger.info("开始处理投票发送到讨论组(重新生成模式)")
 

@@ -11,7 +11,8 @@
 # 许可证全文：参见 LICENSE 文件
 
 import logging
-from core.config import PROMPT_FILE, DEFAULT_PROMPT
+
+from core.config import DEFAULT_PROMPT, PROMPT_FILE
 
 logger = logging.getLogger(__name__)
 

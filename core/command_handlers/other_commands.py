@@ -16,22 +16,38 @@
 """
 
 import logging
-import sys
-import subprocess
 import os
-from datetime import datetime, timezone, timedelta
+import subprocess
+import sys
 
 from ..config import (
-    ADMIN_LIST, CHANNELS, SEND_REPORT_TO_SOURCE,
-    RESTART_FLAG_FILE, load_config, save_config, logger,
-    get_channel_schedule, set_channel_schedule, set_channel_schedule_v2,
-    delete_channel_schedule, validate_schedule,
-    get_channel_poll_config, set_channel_poll_config, delete_channel_poll_config,
-    get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED,
-    BOT_STATE_SHUTTING_DOWN, LOG_LEVEL_MAP, get_scheduler_instance,
-    clear_discussion_group_cache, LINKED_CHAT_CACHE, ENABLE_POLL
+    ADMIN_LIST,
+    BOT_STATE_PAUSED,
+    BOT_STATE_RUNNING,
+    BOT_STATE_SHUTTING_DOWN,
+    CHANNELS,
+    ENABLE_POLL,
+    LINKED_CHAT_CACHE,
+    LOG_LEVEL_MAP,
+    RESTART_FLAG_FILE,
+    SEND_REPORT_TO_SOURCE,
+    clear_discussion_group_cache,
+    delete_channel_poll_config,
+    delete_channel_schedule,
+    get_bot_state,
+    get_channel_poll_config,
+    get_channel_schedule,
+    get_scheduler_instance,
+    load_config,
+    logger,
+    save_config,
+    set_bot_state,
+    set_channel_poll_config,
+    set_channel_schedule,
+    set_channel_schedule_v2,
+    validate_schedule,
 )
-from ..i18n import get_text, set_language, get_language, get_supported_languages
+from ..i18n import get_language, get_supported_languages, get_text, set_language
 from ..utils.message_utils import format_schedule_info
 
 logger = logging.getLogger(__name__)
@@ -44,17 +60,17 @@ async def handle_show_log_level(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     import logging
     root_logger = logging.getLogger()
     current_level = root_logger.getEffectiveLevel()
     level_name = logging.getLevelName(current_level)
-    
+
     logger.info(f"执行命令 {command} 成功")
     await event.reply(get_text('loglevel.current', level=level_name))
 
@@ -64,33 +80,33 @@ async def handle_set_log_level(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     try:
         _, level_str = command.split(maxsplit=1)
         level_str = level_str.strip().upper()
-        
+
         if level_str not in LOG_LEVEL_MAP:
             await event.reply(get_text('loglevel.invalid', level=level_str))
             return
-        
+
         import logging
         root_logger = logging.getLogger()
         old_level = root_logger.getEffectiveLevel()
         new_level = LOG_LEVEL_MAP[level_str]
         root_logger.setLevel(new_level)
-        
+
         config = load_config()
         config['log_level'] = level_str
         save_config(config)
-        
+
         logger.info(f"日志级别已从 {logging.getLevelName(old_level)} 更改为 {logging.getLevelName(new_level)}")
         await event.reply(get_text('loglevel.set_success', level=level_str, old_level=logging.getLevelName(old_level)))
-        
+
     except ValueError:
         # 无参数时，显示当前日志级别和用法提示
         import logging as _logging
@@ -107,23 +123,23 @@ async def handle_restart(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     logger.info(f"开始执行 {command} 命令")
     await event.reply(get_text('bot.restarting'))
     logger.info("机器人重启命令已执行，正在重启...")
-    
+
     with open(RESTART_FLAG_FILE, 'w') as f:
         f.write(str(sender_id))
-    
+
     # 重启前先停止问答Bot，新进程启动后会重新创建
     from core.process_manager import stop_qa_bot
     stop_qa_bot()
-    
+
     python = sys.executable
     subprocess.Popen([python] + sys.argv)
     sys.exit(0)
@@ -134,35 +150,35 @@ async def handle_shutdown(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     logger.info(f"开始执行 {command} 命令")
     await event.reply(get_text('bot.shutting_down'))
-    
+
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
-    
+
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.shutdown(wait=False)
         logger.info("调度器已停止")
-    
+
     logger.info("机器人关机命令已执行，正在关闭...")
-    
+
     try:
         for admin_id in ADMIN_LIST:
             if admin_id != 'me':
                 await event.client.send_message(admin_id, get_text('bot.shutting_down'), link_preview=False)
     except Exception as e:
         logger.error(f"发送关机通知失败: {e}")
-    
+
     # 停止问答Bot
     from core.process_manager import stop_qa_bot
     stop_qa_bot()
-    
+
     import time
     time.sleep(1)
     sys.exit(0)
@@ -173,29 +189,29 @@ async def handle_pause(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     current_state = get_bot_state()
-    
+
     if current_state == BOT_STATE_PAUSED:
         await event.reply(get_text('bot.already_paused'))
         return
-    
+
     if current_state != BOT_STATE_RUNNING:
         await event.reply(get_text('bot.invalid_state_pause', state=current_state))
         return
-    
+
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.pause()
         logger.info("调度器已暂停")
-    
+
     set_bot_state(BOT_STATE_PAUSED)
-    
+
     logger.info(f"执行命令 {command} 成功")
     await event.reply(get_text('bot.paused'))
 
@@ -239,12 +255,12 @@ async def handle_show_channel_schedule(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     try:
         parts = command.split()
         if len(parts) > 1:
@@ -253,7 +269,7 @@ async def handle_show_channel_schedule(event):
                 channel = channel_part
             else:
                 channel = f"https://t.me/{channel_part}"
-            
+
             if channel not in CHANNELS:
                 await event.reply(get_text('error.channel_not_found', channel=channel))
                 return
@@ -261,7 +277,7 @@ async def handle_show_channel_schedule(event):
             if not CHANNELS:
                 await event.reply(get_text('error.no_channels'))
                 return
-            
+
             schedule_msg = get_text('schedule.all_title') + "\n\n"
             for i, ch in enumerate(CHANNELS, 1):
                 schedule = get_channel_schedule(ch)
@@ -269,7 +285,7 @@ async def handle_show_channel_schedule(event):
 
             await event.reply(schedule_msg)
             return
-        
+
         schedule = get_channel_schedule(channel)
 
         channel_name = channel.split('/')[-1]
@@ -281,7 +297,7 @@ async def handle_show_channel_schedule(event):
 
         logger.info(f"执行命令 {command} 成功")
         await event.reply(schedule_info)
-        
+
     except Exception as e:
         logger.error(f"查看频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(get_text('error.unknown'))
@@ -361,9 +377,9 @@ async def handle_set_channel_schedule(event):
 
                 if success:
                     day_map = {
-                        'mon': get_text('day.mon'), 'tue': get_text('day.tue'), 
+                        'mon': get_text('day.mon'), 'tue': get_text('day.tue'),
                         'wed': get_text('day.wed'), 'thu': get_text('day.thu'),
-                        'fri': get_text('day.fri'), 'sat': get_text('day.sat'), 
+                        'fri': get_text('day.fri'), 'sat': get_text('day.sat'),
                         'sun': get_text('day.sun')
                     }
                     days_cn = '、'.join([day_map.get(d, d) for d in days])
@@ -393,9 +409,9 @@ async def handle_set_channel_schedule(event):
 
             if success:
                 day_map = {
-                    'mon': get_text('day.mon'), 'tue': get_text('day.tue'), 
+                    'mon': get_text('day.mon'), 'tue': get_text('day.tue'),
                     'wed': get_text('day.wed'), 'thu': get_text('day.thu'),
-                    'fri': get_text('day.fri'), 'sat': get_text('day.sat'), 
+                    'fri': get_text('day.fri'), 'sat': get_text('day.sat'),
                     'sun': get_text('day.sun')
                 }
                 day_cn = day_map.get(day, day)
@@ -419,36 +435,36 @@ async def handle_delete_channel_schedule(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     try:
         parts = command.split()
         if len(parts) < 2:
             await event.reply(get_text('schedule.delete_channel_param'))
             return
-        
+
         channel_part = parts[1]
         if channel_part.startswith('http'):
             channel = channel_part
         else:
             channel = f"https://t.me/{channel_part}"
-        
+
         if channel not in CHANNELS:
             await event.reply(get_text('error.channel_not_found', channel=channel))
             return
-        
+
         success = delete_channel_schedule(channel)
-        
+
         if success:
             logger.info(f"已删除频道 {channel} 的时间配置")
             await event.reply(get_text('schedule.delete_success', channel=channel.split('/')[-1]))
         else:
             await event.reply(get_text('schedule.set_failed'))
-            
+
     except Exception as e:
         logger.error(f"删除频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(get_text('schedule.delete_error', error=e))
@@ -631,10 +647,10 @@ async def handle_delete_channel_poll(event):
         if success:
             channel_name = channel.split('/')[-1]
             global_enabled = get_text('poll.status_enabled') if ENABLE_POLL else get_text('poll.status_disabled')
-            
+
             logger.info(f"已删除频道 {channel} 的投票配置")
-            await event.reply(get_text('poll.delete_success', 
-                channel=channel_name, 
+            await event.reply(get_text('poll.delete_success',
+                channel=channel_name,
                 status=global_enabled,
                 location=get_text('poll.location_discussion')))
         else:
@@ -652,30 +668,30 @@ async def handle_set_send_to_source(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     try:
         _, value = command.split(maxsplit=1)
         value = value.strip().lower()
-        
+
         if value not in ['true', 'false', '1', '0', 'yes', 'no']:
             await event.reply(get_text('report.invalid_value', value=value))
             return
-        
+
         new_value = value in ['true', '1', 'yes']
-        
+
         config = load_config()
         config['send_report_to_source'] = new_value
         save_config(config)
-        
+
         logger.info(f"已将send_report_to_source设置为: {new_value}")
         status = get_text('status.enabled') if new_value else get_text('status.disabled')
         await event.reply(get_text('report.set_success', value=new_value, status=status))
-        
+
     except ValueError:
         current_value = load_config().get('send_report_to_source', SEND_REPORT_TO_SOURCE)
         status = get_text('status.enabled') if current_value else get_text('status.disabled')
@@ -835,29 +851,29 @@ async def handle_changelog(event):
     sender_id = event.sender_id
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
-    
+
     if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text('error.permission_denied'))
         return
-    
+
     try:
         changelog_file = "CHANGELOG.md"
-        
+
         if not os.path.exists(changelog_file):
             logger.error(f"更新日志文件 {changelog_file} 不存在")
             await event.reply(get_text('changelog.not_found', filename=changelog_file))
             return
-        
+
         await event.client.send_file(
             sender_id,
             changelog_file,
             caption=get_text('changelog.caption'),
             file_name="CHANGELOG.md"
         )
-        
+
         logger.info(f"已向用户 {sender_id} 发送变更日志文件")
-        
+
     except Exception as e:
         logger.error(f"发送变更日志文件时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(get_text('changelog.send_error', error=e))
@@ -873,7 +889,7 @@ async def handle_language(event):
 
     try:
         parts = command.split()
-        
+
         # 如果没有提供参数，显示当前语言和支持的语言列表
         if len(parts) < 2:
             current_lang = get_language()
@@ -886,14 +902,14 @@ async def handle_language(event):
             language_info = get_text('language.supported') + "\n\n"
             language_info += get_text('language.current', language=f"{lang_names.get(current_lang, current_lang)} ({current_lang})") + "\n\n"
             language_info += get_text('language.usage')
-            
+
             await event.reply(language_info)
             logger.info(f"执行命令 {command} 成功")
             return
 
         # 获取语言代码
         new_language = parts[1].strip()
-        
+
         # 验证语言代码
         if new_language not in get_supported_languages():
             await event.reply(get_text('language.invalid', language=new_language))
@@ -902,24 +918,24 @@ async def handle_language(event):
 
         # 设置语言
         success = set_language(new_language)
-        
+
         if success:
             # 保存到配置文件
             config = load_config()
             config['language'] = new_language
             save_config(config)
-            
+
             logger.info(f"用户 {sender_id} 将语言更改为: {new_language}")
-            
+
             # 语言名称映射
             lang_names = {
                 'zh-CN': '简体中文',
                 'en-US': 'English'
             }
-            
+
             lang_name = lang_names.get(new_language, new_language)
             success_msg = get_text('language.changed', language=f"{lang_name} ({new_language})")
-            
+
             await event.reply(success_msg)
         else:
             await event.reply(get_text('language.invalid', language=new_language))

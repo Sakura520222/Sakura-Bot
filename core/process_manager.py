@@ -17,8 +17,8 @@
 
 import logging
 import os
-import sys
 import subprocess
+import sys
 import time
 
 from .i18n import get_text
@@ -32,7 +32,7 @@ _qa_bot_start_time = None
 
 def start_qa_bot():
     """在后台启动问答Bot
-    
+
     Returns:
         dict: 启动结果 {'success': bool, 'message': str, 'pid': int or None}
     """
@@ -45,7 +45,7 @@ def start_qa_bot():
                 'message': get_text('qabot.already_running', pid=_qa_bot_process.pid),
                 'pid': _qa_bot_process.pid
             }
-        
+
         # 检查是否启用问答Bot
         qa_bot_enabled = os.getenv("QA_BOT_ENABLED", "True").lower() == "true"
         qa_bot_token = os.getenv("QA_BOT_TOKEN", "")
@@ -73,7 +73,7 @@ def start_qa_bot():
             cwd=os.path.dirname(os.path.abspath(sys.argv[0]))
         )
         _qa_bot_start_time = time.time()
-        
+
         logger.info(f"问答Bot已启动 (PID: {_qa_bot_process.pid})")
         return {
             'success': True,
@@ -92,7 +92,7 @@ def start_qa_bot():
 
 def stop_qa_bot():
     """停止问答Bot
-    
+
     Returns:
         dict: 停止结果 {'success': bool, 'message': str}
     """
@@ -139,12 +139,12 @@ def get_qa_bot_process():
 
 def restart_qa_bot():
     """重启问答Bot
-    
+
     Returns:
         dict: 重启结果 {'success': bool, 'message': str, 'pid': int or None}
     """
     logger.info("正在重启问答Bot...")
-    
+
     # 先停止
     stop_result = stop_qa_bot()
     if not stop_result['success']:
@@ -153,10 +153,10 @@ def restart_qa_bot():
             'message': f"Stop failed: {stop_result['message']}",
             'pid': None
         }
-    
+
     # 等待一小段时间确保进程完全停止
     time.sleep(1)
-    
+
     # 再启动
     start_result = start_qa_bot()
     if start_result['success']:
@@ -175,7 +175,7 @@ def restart_qa_bot():
 
 def get_qa_bot_status():
     """获取问答Bot运行状态
-    
+
     Returns:
         dict: 状态信息 {
             'running': bool,
@@ -187,16 +187,16 @@ def get_qa_bot_status():
         }
     """
     global _qa_bot_process, _qa_bot_start_time
-    
+
     # 检查配置
     qa_bot_enabled = os.getenv("QA_BOT_ENABLED", "True").lower() == "true"
     qa_bot_token = os.getenv("QA_BOT_TOKEN", "")
-    
+
     # 检查进程是否存活
     is_running = False
     pid = None
     uptime = None
-    
+
     if _qa_bot_process:
         # 检查进程是否仍在运行
         poll_result = _qa_bot_process.poll()
@@ -210,7 +210,7 @@ def get_qa_bot_status():
             logger.warning(f"问答Bot进程已退出 (退出码: {poll_result})")
             _qa_bot_process = None
             _qa_bot_start_time = None
-    
+
     return {
         'running': is_running,
         'pid': pid,
@@ -223,45 +223,45 @@ def get_qa_bot_status():
 
 def check_qa_bot_health():
     """检查问答Bot健康状态（用于自动重启）
-    
+
     Returns:
         tuple: (is_healthy: bool, should_restart: bool, message: str)
     """
     status = get_qa_bot_status()
-    
+
     # 如果未启用，不需要检查
     if not status['enabled']:
         return True, False, get_text('qabot.not_enabled')
-    
+
     # 如果没有配置token，无法启动
     if not status['token_configured']:
         return False, False, get_text('qabot.token_not_configured')
-    
+
     # 如果进程正在运行，健康
     if status['running']:
         uptime_str = f"{status['uptime_seconds']:.0f}" if status['uptime_seconds'] else "0"
         return True, False, get_text('qabot.running_normal', pid=status['pid'], uptime=uptime_str)
-    
+
     # 进程未运行但应该运行，需要重启
     return False, True, get_text('qabot.process_not_running')
 
 
 def format_uptime(seconds):
     """格式化运行时间
-    
+
     Args:
         seconds: 秒数
-        
+
     Returns:
         str: 格式化的时间字符串
     """
     if seconds is None:
         return "未知"
-    
+
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    
+
     if hours > 0:
         return f"{hours}小时{minutes}分钟{secs}秒"
     elif minutes > 0:
