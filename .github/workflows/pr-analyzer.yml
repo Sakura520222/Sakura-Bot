@@ -5,13 +5,14 @@ on:
     types: [closed]
     branches: [main]
 
-jobs:
-  analyze-and-update:
-    name: 分析 PR 并更新 CHANGELOG
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
-    permissions:
-      contents: write
+  jobs:
+    analyze-and-update:
+      name: 分析 PR 并更新 CHANGELOG
+      runs-on: ubuntu-latest
+      if: github.event.pull_request.merged == true
+      permissions:
+        contents: write
+        pull-requests: write
     
     steps:
       - name: 检出代码
