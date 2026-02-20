@@ -8,6 +8,10 @@
 ## [1.5.9] - 2026-02-19
 
 ### 改进
+- **chore(github-actions): 优化 PR 分析工作流中的 CHANGELOG 更新逻辑** (PR #17)
+
+
+### 改进
 - **GitHub Actions 工作流优化**：优化认证令牌配置 (PR #16)
   - 改进工作流中的令牌处理逻辑
   - 确保 PR 合并后能正确更新 CHANGELOG
