@@ -80,42 +80,94 @@ jobs:
           echo "相关提交:"
           echo "$COMMITS"
       
-      - name: 生成 Changelog 条目
-        id: generate_changelog
+      - name: 读取当前版本和最新条目
+        id: read_current_version
         run: |
-          CHANGE_TYPE="${{ steps.analyze_type.outputs.change_type }}"
-          TITLE="${{ github.event.pull_request.title }}"
-          COMMITS="${{ steps.extract_commits.outputs.commits }}"
-          PR_NUM="${{ github.event.pull_request.number }}"
-          DATE=$(date +'%Y-%m-%d')
-          
-          # 读取当前版本号
+          # 读取版本号
           if [ -f main.py ]; then
             VERSION=$(grep -o "__version__ = \"[^\"]*\"" main.py | cut -d'"' -f2)
           else
             VERSION="未知版本"
           fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "当前版本: $VERSION"
           
-          # 将changelog条目写入临时文件（避免shell变量扩展问题）
-          cat > changelog_entry.txt << 'ENTRY_EOF'
+          # 读取 CHANGELOG 最新条目的日期
+          LAST_DATE=$(head -n 5 CHANGELOG.md | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+          if [ -z "$LAST_DATE" ]; then
+            LAST_DATE=""
+          fi
+          echo "last_date=$LAST_DATE" >> $GITHUB_OUTPUT
+          echo "最新条目日期: $LAST_DATE"
+          
+          # 获取今天日期
+          TODAY=$(date +'%Y-%m-%d')
+          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "今天日期: $TODAY"
+          
+          # 判断是否需要创建新的日期条目
+          if [ "$LAST_DATE" = "$TODAY" ]; then
+            echo "mode=append" >> $GITHUB_OUTPUT
+            echo "模式: 追加到当天条目"
+          else
+            echo "mode=new" >> $GITHUB_OUTPUT
+            echo "模式: 创建新日期条目"
+          fi
+      
+      - name: 生成 Changelog 条目
+        id: generate_changelog
+        run: |
+          VERSION="${{ steps.read_current_version.outputs.version }}"
+          TODAY="${{ steps.read_current_version.outputs.today }}"
+          LAST_DATE="${{ steps.read_current_version.outputs.last_date }}"
+          MODE="${{ steps.read_current_version.outputs.mode }}"
+          CHANGE_TYPE="${{ steps.analyze_type.outputs.change_type }}"
+          TITLE="${{ github.event.pull_request.title }}"
+          COMMITS="${{ steps.extract_commits.outputs.commits }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+          
+          # 根据模式生成不同的条目格式
+          if [ "$MODE" = "append" ]; then
+            # 追加模式：只生成分类和条目
+            cat > changelog_entry.txt << 'EOF'
+### ${CHANGE_TYPE}
+- ${TITLE} (PR #${PR_NUM})
+EOF
+            # 处理提交信息（如果有）
+            if [ -n "$COMMITS" ]; then
+              echo "" >> changelog_entry.txt
+              echo "$COMMITS" | while IFS= read -r commit; do
+                echo "  - $commit" >> changelog_entry.txt
+              done
+            fi
+            echo "" >> changelog_entry.txt
+          else
+            # 新日期模式：生成完整的版本块
+            cat > changelog_entry.txt << 'EOF'
 ## [${VERSION}] - ${DATE}
 
 ### ${CHANGE_TYPE}
 - ${TITLE} (PR #${PR_NUM})
 
 ### 相关提交
-${COMMITS}
+EOF
+            # 处理提交信息
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" | while IFS= read -r commit; do
+                echo "- $commit" >> changelog_entry.txt
+              done
+            else
+              echo "（无提交信息）" >> changelog_entry.txt
+            fi
+            cat >> changelog_entry.txt << 'EOF'
 
 ---
-ENTRY_EOF
+EOF
+          fi
           
-          # 替换临时文件中的变量
-          sed -i "s/\${VERSION}/${VERSION}/g" changelog_entry.txt
-          sed -i "s/\${DATE}/${DATE}/g" changelog_entry.txt
-          sed -i "s/\${CHANGE_TYPE}/${CHANGE_TYPE}/g" changelog_entry.txt
-          sed -i "s/\${TITLE}/${TITLE}/g" changelog_entry.txt
-          sed -i "s/\${PR_NUM}/${PR_NUM}/g" changelog_entry.txt
-          sed -i "s/\${COMMITS}/${COMMITS}/g" changelog_entry.txt
+          # 替换变量（使用临时文件避免替换问题）
+          sed "s/\${VERSION}/${VERSION}/g; s/\${DATE}/${TODAY}/g; s/\${CHANGE_TYPE}/${CHANGE_TYPE}/g; s/\${TITLE}/${TITLE}/g; s/\${PR_NUM}/${PR_NUM}/g" changelog_entry.txt > changelog_entry.tmp
+          mv changelog_entry.tmp changelog_entry.txt
           
           echo "entry_file=changelog_entry.txt" >> $GITHUB_OUTPUT
           
@@ -129,32 +181,45 @@ ENTRY_EOF
       
       - name: 更新 CHANGELOG.md
         run: |
-          # 备份原文件
-          cp CHANGELOG.md CHANGELOG.md.bak
+          ENTRY_FILE="${{ steps.generate_changelog.outputs.entry_file }}"
+          LAST_DATE="${{ steps.read_current_version.outputs.last_date }}"
+          TODAY="${{ steps.read_current_version.outputs.today }}"
           
-          # 使用awk在第一个版本号前插入新内容
-          awk '
-            BEGIN { inserted = 0 }
-            /^## \[/ && inserted == 0 {
-              while ((getline line < "${{ steps.generate_changelog.outputs.entry_file }}") > 0) {
-                print line
+          if [ "$LAST_DATE" = "$TODAY" ]; then
+            # 追加模式：在当天第一个 ### 分类之前插入
+            awk '
+              BEGIN { 
+                inserted = 0
+                # 读取新条目到数组
+                while ((getline line < "'"$ENTRY_FILE"'") > 0) {
+                  new_entries[++n] = line
+                }
+                close("'$ENTRY_FILE'")
               }
-              print ""
-              inserted = 1
-            }
-            { print }
-          ' CHANGELOG.md.bak > CHANGELOG.md.new
+              /^### / && inserted == 0 {
+                # 先插入新条目
+                for (i = 1; i <= n; i++) {
+                  print new_entries[i]
+                }
+                print ""
+                inserted = 1
+              }
+              { print }
+            ' CHANGELOG.md > CHANGELOG.md.new
+            mv CHANGELOG.md.new CHANGELOG.md
+          else
+            # 新日期模式：在文件最开头插入新版本块
+            cat "'"$ENTRY_FILE"'" > CHANGELOG.md.new
+            cat CHANGELOG.md >> CHANGELOG.md.new
+            mv CHANGELOG.md.new CHANGELOG.md
+          fi
           
-          # 替换原文件
-          mv CHANGELOG.md.new CHANGELOG.md
-          
-          # 清理
-          rm CHANGELOG.md.bak
+          # 清理临时文件
           rm -f changelog_entry.txt
           
           echo "✅ CHANGELOG.md已更新"
           echo "---"
-          head -n 20 CHANGELOG.md
+          head -n 30 CHANGELOG.md
       
       - name: 提交更改
         run: |
