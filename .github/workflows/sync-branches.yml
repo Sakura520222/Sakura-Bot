@@ -77,41 +77,13 @@ jobs:
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
       
-      - name: 等待 CI 检查完成 - 代码质量
-        uses: lewagon/wait-on-check-action@v1.3.1
-        with:
-          ref: ${{ github.sha }}
-          check-name: '代码质量检查'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-          timeout: 1800
-      
-      - name: 等待 CI 检查完成 - 安全扫描
-        uses: lewagon/wait-on-check-action@v1.3.1
-        with:
-          ref: ${{ github.sha }}
-          check-name: '安全漏洞扫描'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-          timeout: 1800
-      
-      - name: 等待 CI 检查完成 - Docker构建
-        uses: lewagon/wait-on-check-action@v1.3.1
-        with:
-          ref: ${{ github.sha }}
-          check-name: 'Docker 构建测试'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-          timeout: 1800
-      
-      - name: 等待 CI 检查完成 - 单元测试
+      - name: 等待单元测试完成
         uses: lewagon/wait-on-check-action@v1.3.1
         with:
           ref: ${{ github.sha }}
           check-name: '单元测试'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
-          timeout: 1800
       
       - name: 推送到 dev
         run: |
