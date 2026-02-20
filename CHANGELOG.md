@@ -1,10 +1,3 @@
-### 改进
-- chore(ci): 优化 GitHub Actions 工作流中的认证令牌配置 (PR #16)
-
-- chore(ci): 优化 GitHub Actions 工作流中的认证令牌配置
-
----
-
 # 更新日志
 
 所有对项目的显著更改都将记录在此文件中。
