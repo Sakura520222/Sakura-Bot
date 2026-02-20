@@ -16,6 +16,8 @@ import os
 
 from dotenv import load_dotenv
 
+from . import i18n
+
 # 配置日志
 # 默认日志级别
 DEFAULT_LOG_LEVEL = logging.DEBUG
@@ -280,8 +282,6 @@ logger.info(
 )
 
 # 初始化国际化模块的语言设置
-from . import i18n
-
 i18n.set_language(final_language)
 logger.info(f"国际化模块语言已设置为: {i18n.get_language()}")
 

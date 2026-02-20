@@ -711,7 +711,7 @@ async def send_report(
                 try:
                     channel_entity = await use_client.get_entity(save_channel_id)
                     save_channel_name = channel_entity.title
-                except:
+                except Exception:
                     save_channel_name = save_channel_id.split("/")[-1]
             try:
                 from ..database import get_db_manager

@@ -230,7 +230,7 @@ class MemoryManager:
                         summary_topics = json.loads(summary_topics)
                     else:
                         summary_topics = []
-                except:
+                except Exception:
                     summary_topics = []
 
                 try:
@@ -238,7 +238,7 @@ class MemoryManager:
                         summary_keywords = json.loads(summary_keywords)
                     else:
                         summary_keywords = []
-                except:
+                except Exception:
                     summary_keywords = []
 
                 # 检查关键词匹配

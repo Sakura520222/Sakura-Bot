@@ -109,7 +109,7 @@ async def handle_history(event):
             try:
                 dt = datetime.fromisoformat(created_at)
                 time_str = dt.strftime("%Y-%m-%d %H:%M")
-            except:
+            except Exception:
                 time_str = created_at
 
             # 提取摘要(前150字符)
@@ -201,7 +201,7 @@ async def handle_export(event):
             # 删除临时文件
             try:
                 os.remove(filename)
-            except:
+            except Exception:
                 pass
         else:
             await event.reply(get_text("history.export_no_data"))
@@ -292,7 +292,7 @@ async def handle_stats(event):
                     else:
                         time_str = get_text("history.days_ago", days=int(hours / 24))
                     result += f"• {get_text('history.last_summary')}: {time_str}\n\n"
-                except:
+                except Exception:
                     result += f"• {get_text('history.last_summary')}: {last_time}\n\n"
 
             # 数据库信息

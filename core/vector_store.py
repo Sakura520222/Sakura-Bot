@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 try:
     import chromadb
-    from chromadb.config import Settings
 
     CHROMADB_AVAILABLE = True
 except ImportError:
