@@ -410,7 +410,7 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 ## 🤝 Contributing
 
-We welcome contributions! Please check our [Contributing Guidelines](wiki/CODE_OF_CONDUCT.md) and [Code of Conduct](wiki/CODE_OF_CONDUCT.md).
+We welcome contributions! Please check our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](wiki/CODE_OF_CONDUCT.md).
 
 ### How to Contribute
 

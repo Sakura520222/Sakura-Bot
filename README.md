@@ -410,7 +410,7 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 ## 🤝 贡献
 
-我们欢迎各种形式的贡献！请查看我们的[贡献指南](wiki/CODE_OF_CONDUCT.md)和[行为准则](wiki/CODE_OF_CONDUCT.md)。
+我们欢迎各种形式的贡献！请查看我们的[贡献指南](CONTRIBUTING.md)和[行为准则](wiki/CODE_OF_CONDUCT.md)。
 
 ### 如何贡献
 
