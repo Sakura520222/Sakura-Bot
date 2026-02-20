@@ -432,8 +432,8 @@ If you've found a bug or have a feature suggestion:
    ```
 3. **Create a feature branch**
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/your-feature-name
    ```
 4. **Make your changes**
@@ -463,10 +463,12 @@ If you've found a bug or have a feature suggestion:
    ```
 
 8. **Create a Pull Request**
-   - Create a PR to `dev` branch on GitHub
+   - Create a PR to `main` branch on GitHub
    - Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
    - Add appropriate PR labels (e.g., `enhancement`, `bug`)
    - Wait for CI checks and code review
+
+> **Important**: All PRs should be submitted to the `main` branch. Changes to main are automatically synced to the dev branch.
 
 #### 📚 Documentation Contributions
 

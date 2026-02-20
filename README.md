@@ -432,8 +432,8 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
    ```
 3. **创建功能分支**
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/your-feature-name
    ```
 4. **进行更改**
@@ -463,10 +463,12 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
    ```
 
 8. **创建 Pull Request**
-   - 在 GitHub 上创建 PR 到 `dev` 分支
+   - 在 GitHub 上创建 PR 到 `main` 分支
    - 使用 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)
    - 添加合适的 PR 标签（如 `enhancement`、`bug` 等）
    - 等待 CI 检查通过和代码审查
+
+> **重要说明**：所有 PR 应该提交到 `main` 分支。main 分支的更改会自动同步到 dev 分支。
 
 #### 📚 文档贡献
 

@@ -102,29 +102,31 @@
 
 ### 分支策略
 
-- **main**: 主分支，稳定版本（生产环境）
-- **dev**: 开发分支，最新功能（开发环境）
-- **feature/***: 新功能分支（从 dev 创建）
-- **fix/***: 问题修复分支（从 dev 创建）
+- **main**: 主分支，稳定版本（生产环境）- **PR 的目标分支**
+- **dev**: 开发分支，从 main 自动同步
+- **feature/***: 新功能分支（从 main 创建）
+- **fix/***: 问题修复分支（从 main 创建）
 - **hotfix/***: 紧急修复分支（从 main 创建）
-- **docs/***: 文档更新分支
-- **test/***: 测试相关分支
-- **refactor/***: 代码重构分支
-- **chore/***: 构建/工具更新分支
+- **docs/***: 文档更新分支（从 main 创建）
+- **test/***: 测试相关分支（从 main 创建）
+- **refactor/***: 代码重构分支（从 main 创建）
+- **chore/***: 构建/工具更新分支（从 main 创建）
+
+> **重要说明**：所有 PR 应该提交到 `main` 分支。main 分支的更改会自动同步到 dev 分支。
 
 ### 工作流程
 
 #### 标准开发流程
 
-1. 从 `dev` 分支创建功能分支
+1. 从 `main` 分支创建功能分支
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/your-feature-name
    ```
 
 2. 在功能分支上开发
-   - 遵循[代码规范](##代码规范)
+   - 遵循[代码规范](#代码规范)
    - 编写有意义的提交信息
    - 添加必要的测试
 
@@ -148,18 +150,24 @@
    ```
 
 5. 创建 Pull Request
-   - 在 GitHub 上创建 PR 到 `dev` 分支
+   - 在 GitHub 上创建 PR 到 `main` 分支
    - 使用 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)
    - 添加合适的 PR 标签（见[PR 标签规范](#pr-标签规范)）
    - 等待 CI 检查通过
-   - 通过代码审查后合并
+   - 通过代码审查后合并到 main
 
-6. 定期从 `dev` 合并到 `main`
-   - 由维护者在版本发布时执行
+6. 自动同步到 dev
+   - PR 合并到 main 后，会自动触发 sync-branches 工作流
+   - main 分支的更改会自动同步到 dev 分支
+
+> **工作流说明**：
+> - 所有 PR 应该提交到 `main` 分支
+> - main 分支的更改会自动同步到 dev 分支
+> - dev 分支是只读的，由自动化工作流维护
 
 #### 紧急修复流程
 
-对于生产环境的紧急问题：
+对于生产环境的紧急问题，流程与标准开发流程相同：
 
 1. 从 `main` 创建 `hotfix` 分支
    ```bash
@@ -170,7 +178,12 @@
 
 2. 快速修复并测试
 
-3. 创建 PR 同时合并到 `main` 和 `dev`
+3. 创建 PR 到 `main` 分支
+   - 使用更紧急的 PR 标签（如 `bug`、`critical`）
+   - 通过快速审查后合并
+
+4. 自动同步到 dev
+   - 合并后自动触发同步工作流
 
 ---
 
@@ -269,7 +282,7 @@ docker run --rm sakura-bot:test python --version
 
 ---
 
-## 🏷️ PR 标签规范
+## PR 标签规范
 
 创建 Pull Request 时，请添加适当的标签以帮助分类和审查。
 
