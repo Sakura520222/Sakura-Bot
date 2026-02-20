@@ -17,13 +17,13 @@ from .telegram import (  # 消息发送功能; 投票处理功能; 客户端管�
 )
 
 __all__ = [
-    'send_long_message',
-    'send_report',
-    'fetch_last_week_messages',
-    'send_poll',
-    'send_poll_to_channel',
-    'send_poll_to_discussion_group',
-    'set_active_client',
-    'get_active_client',
-    'extract_date_range_from_summary',
+    "send_long_message",
+    "send_report",
+    "fetch_last_week_messages",
+    "send_poll",
+    "send_poll_to_channel",
+    "send_poll_to_discussion_group",
+    "set_active_client",
+    "get_active_client",
+    "extract_date_range_from_summary",
 ]

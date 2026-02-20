@@ -29,21 +29,21 @@ api_key = get_llm_api_key()
 base_url = get_llm_base_url()
 model = get_llm_model()
 
-logger.debug(f"AI客户端配置: Base URL={base_url}, Model={model}, API Key={'***' if api_key else '未设置'}")
-
-client_llm = OpenAI(
-    api_key=api_key,
-    base_url=base_url
+logger.debug(
+    f"AI客户端配置: Base URL={base_url}, Model={model}, API Key={'***' if api_key else '未设置'}"
 )
 
+client_llm = OpenAI(api_key=api_key, base_url=base_url)
+
 logger.info("AI客户端初始化完成")
+
 
 @retry_with_backoff(
     max_retries=3,
     base_delay=1.0,
     max_delay=30.0,
     exponential_backoff=True,
-    retry_on_exceptions=(ConnectionError, TimeoutError, Exception)
+    retry_on_exceptions=(ConnectionError, TimeoutError, Exception),
 )
 def analyze_with_ai(messages, current_prompt):
     """调用 AI 进行汇总
@@ -62,24 +62,32 @@ def analyze_with_ai(messages, current_prompt):
     prompt = f"{current_prompt}{context_text}"
 
     model = get_llm_model()
-    logger.debug(f"AI请求配置: 模型={model}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符")
+    logger.debug(
+        f"AI请求配置: 模型={model}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符"
+    )
     logger.debug(f"AI请求总长度: {len(prompt)}字符")
 
     try:
         from datetime import datetime
+
         start_time = datetime.now()
         response = client_llm.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。"},
+                {
+                    "role": "system",
+                    "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。",
+                },
                 {"role": "user", "content": prompt},
-            ]
+            ],
         )
         end_time = datetime.now()
 
         processing_time = (end_time - start_time).total_seconds()
         logger.info(f"AI分析完成，处理时间: {processing_time:.2f}秒")
-        logger.debug(f"AI响应状态: 成功，选择索引={response.choices[0].index}, 完成原因={response.choices[0].finish_reason}")
+        logger.debug(
+            f"AI响应状态: 成功，选择索引={response.choices[0].index}, 完成原因={response.choices[0].finish_reason}"
+        )
         logger.debug(f"AI响应长度: {len(response.choices[0].message.content)}字符")
 
         return response.choices[0].message.content
@@ -94,7 +102,7 @@ def analyze_with_ai(messages, current_prompt):
     base_delay=1.0,
     max_delay=30.0,
     exponential_backoff=True,
-    retry_on_exceptions=(ConnectionError, TimeoutError, Exception)
+    retry_on_exceptions=(ConnectionError, TimeoutError, Exception),
 )
 def generate_poll_from_summary(summary_text):
     """根据总结内容生成投票
@@ -111,13 +119,13 @@ def generate_poll_from_summary(summary_text):
     if not summary_text or len(summary_text.strip()) < 10:
         logger.warning("总结文本太短，无法生成有意义的投票")
         return {
-            "question": get_text('poll.default_question'),
+            "question": get_text("poll.default_question"),
             "options": [
-                get_text('poll.default_options.0'),
-                get_text('poll.default_options.1'),
-                get_text('poll.default_options.2'),
-                get_text('poll.default_options.3')
-            ]
+                get_text("poll.default_options.0"),
+                get_text("poll.default_options.1"),
+                get_text("poll.default_options.2"),
+                get_text("poll.default_options.3"),
+            ],
         }
 
     # 使用可配置的投票提示词
@@ -136,9 +144,12 @@ def generate_poll_from_summary(summary_text):
         response = client_llm.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个幽默风趣的互动策划专家，擅长从枯燥的文字中挖掘槽点或亮点，创作让人忍不住想投票的双语投票。"},
+                {
+                    "role": "system",
+                    "content": "你是一个幽默风趣的互动策划专家，擅长从枯燥的文字中挖掘槽点或亮点，创作让人忍不住想投票的双语投票。",
+                },
                 {"role": "user", "content": prompt},
-            ]
+            ],
         )
         end_time = datetime.now()
 
@@ -151,41 +162,45 @@ def generate_poll_from_summary(summary_text):
         # 尝试从响应中提取JSON
         try:
             # 查找JSON部分
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
             if json_match:
                 json_str = json_match.group()
                 poll_data = json.loads(json_str)
 
                 # 验证数据结构
-                if 'question' in poll_data and 'options' in poll_data:
-                    if isinstance(poll_data['options'], list) and len(poll_data['options']) >= 2:
+                if "question" in poll_data and "options" in poll_data:
+                    if isinstance(poll_data["options"], list) and len(poll_data["options"]) >= 2:
                         # 验证投票问题长度（Telegram限制255字符）
-                        question = poll_data['question'].strip()
+                        question = poll_data["question"].strip()
                         if len(question) > 255:
                             logger.warning(f"投票问题超长: {len(question)}字符，将截断")
                             # 截断到255字符，确保不截断中文字符
                             truncated = question[:255]
                             while truncated and (ord(truncated[-1]) & 0xC0) == 0x80:
                                 truncated = truncated[:-1]
-                            poll_data['question'] = truncated + '...'
+                            poll_data["question"] = truncated + "..."
                             logger.info(f"投票问题已截断为: {poll_data['question']}")
 
                         # 验证选项长度（Telegram限制100字符）
                         valid_options = []
-                        for i, option in enumerate(poll_data['options']):
+                        for i, option in enumerate(poll_data["options"]):
                             option_text = str(option).strip()
                             if len(option_text) > 100:
-                                logger.warning(f"投票选项{i+1}超长: {len(option_text)}字符，将截断")
+                                logger.warning(
+                                    f"投票选项{i + 1}超长: {len(option_text)}字符，将截断"
+                                )
                                 # 截断到100字符
                                 truncated = option_text[:100]
                                 while truncated and (ord(truncated[-1]) & 0xC0) == 0x80:
                                     truncated = truncated[:-1]
-                                valid_options.append(truncated + '...')
+                                valid_options.append(truncated + "...")
                             else:
                                 valid_options.append(option_text)
 
-                        poll_data['options'] = valid_options
-                        logger.info(f"成功生成投票: {poll_data['question']}，选项数: {len(poll_data['options'])}")
+                        poll_data["options"] = valid_options
+                        logger.info(
+                            f"成功生成投票: {poll_data['question']}，选项数: {len(poll_data['options'])}"
+                        )
                         return poll_data
                     else:
                         logger.warning(f"投票选项格式不正确: {poll_data['options']}")
@@ -197,13 +212,13 @@ def generate_poll_from_summary(summary_text):
         # 如果JSON解析失败，返回默认投票
         logger.warning("使用默认投票作为备选")
         return {
-            "question": get_text('poll.default_question'),
+            "question": get_text("poll.default_question"),
             "options": [
-                get_text('poll.default_options.0'),
-                get_text('poll.default_options.1'),
-                get_text('poll.default_options.2'),
-                get_text('poll.default_options.3')
-            ]
+                get_text("poll.default_options.0"),
+                get_text("poll.default_options.1"),
+                get_text("poll.default_options.2"),
+                get_text("poll.default_options.3"),
+            ],
         }
 
     except Exception as e:
@@ -211,11 +226,11 @@ def generate_poll_from_summary(summary_text):
         logger.error(f"AI投票生成失败: {type(e).__name__}: {e}", exc_info=True)
         # 返回默认投票
         return {
-            "question": get_text('poll.default_question'),
+            "question": get_text("poll.default_question"),
             "options": [
-                get_text('poll.default_options.0'),
-                get_text('poll.default_options.1'),
-                get_text('poll.default_options.2'),
-                get_text('poll.default_options.3')
-            ]
+                get_text("poll.default_options.0"),
+                get_text("poll.default_options.1"),
+                get_text("poll.default_options.2"),
+                get_text("poll.default_options.3"),
+            ],
         }

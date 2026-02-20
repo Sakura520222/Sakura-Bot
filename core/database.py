@@ -14,8 +14,8 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from .i18n import get_text
 
@@ -246,13 +246,20 @@ class DatabaseManager:
             logger.error(f"初始化数据库失败: {type(e).__name__}: {e}", exc_info=True)
             raise
 
-    def save_summary(self, channel_id: str, channel_name: str, summary_text: str,
-                     message_count: int, start_time: Optional[datetime] = None,
-                     end_time: Optional[datetime] = None,
-                     summary_message_ids: Optional[List[int]] = None,
-                     poll_message_id: Optional[int] = None,
-                     button_message_id: Optional[int] = None,
-                     ai_model: str = "unknown", summary_type: str = "weekly"):
+    def save_summary(
+        self,
+        channel_id: str,
+        channel_name: str,
+        summary_text: str,
+        message_count: int,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        summary_message_ids: list[int] | None = None,
+        poll_message_id: int | None = None,
+        button_message_id: int | None = None,
+        ai_model: str = "unknown",
+        summary_type: str = "weekly",
+    ):
         """
         保存总结记录到数据库
 
@@ -280,17 +287,28 @@ class DatabaseManager:
             start_time_str = start_time.isoformat() if start_time else None
             end_time_str = end_time.isoformat() if end_time else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO summaries (
                     channel_id, channel_name, summary_text, message_count,
                     start_time, end_time, ai_model, summary_type,
                     summary_message_ids, poll_message_id, button_message_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                channel_id, channel_name, summary_text, message_count,
-                start_time_str, end_time_str, ai_model, summary_type,
-                summary_ids_json, poll_message_id, button_message_id
-            ))
+            """,
+                (
+                    channel_id,
+                    channel_name,
+                    summary_text,
+                    message_count,
+                    start_time_str,
+                    end_time_str,
+                    ai_model,
+                    summary_type,
+                    summary_ids_json,
+                    poll_message_id,
+                    button_message_id,
+                ),
+            )
 
             conn.commit()
             summary_id = cursor.lastrowid
@@ -303,9 +321,13 @@ class DatabaseManager:
             logger.error(f"保存总结记录失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def get_summaries(self, channel_id: Optional[str] = None, limit: int = 10,
-                      start_date: Optional[datetime] = None,
-                      end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    def get_summaries(
+        self,
+        channel_id: str | None = None,
+        limit: int = 10,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """
         查询历史总结
 
@@ -359,13 +381,13 @@ class DatabaseManager:
                 summary = dict(row)
 
                 # 解析JSON字段
-                if summary['summary_message_ids']:
+                if summary["summary_message_ids"]:
                     try:
-                        summary['summary_message_ids'] = json.loads(summary['summary_message_ids'])
+                        summary["summary_message_ids"] = json.loads(summary["summary_message_ids"])
                     except:
-                        summary['summary_message_ids'] = []
+                        summary["summary_message_ids"] = []
                 else:
-                    summary['summary_message_ids'] = []
+                    summary["summary_message_ids"] = []
 
                 summaries.append(summary)
 
@@ -376,7 +398,7 @@ class DatabaseManager:
             logger.error(f"查询总结记录失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def get_summary_by_id(self, summary_id: int) -> Optional[Dict[str, Any]]:
+    def get_summary_by_id(self, summary_id: int) -> dict[str, Any] | None:
         """
         根据ID获取单条总结
 
@@ -398,19 +420,21 @@ class DatabaseManager:
             if row:
                 summary = dict(row)
                 # 解析JSON字段
-                if summary['summary_message_ids']:
+                if summary["summary_message_ids"]:
                     try:
-                        summary['summary_message_ids'] = json.loads(summary['summary_message_ids'])
+                        summary["summary_message_ids"] = json.loads(summary["summary_message_ids"])
                     except:
-                        summary['summary_message_ids'] = []
+                        summary["summary_message_ids"] = []
                 else:
-                    summary['summary_message_ids'] = []
+                    summary["summary_message_ids"] = []
 
                 return summary
             return None
 
         except Exception as e:
-            logger.error(f"查询总结记录失败 (ID={summary_id}): {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"查询总结记录失败 (ID={summary_id}): {type(e).__name__}: {e}", exc_info=True
+            )
             return None
 
     def delete_old_summaries(self, days: int = 90) -> int:
@@ -427,12 +451,15 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM summaries
                 WHERE created_at < ?
-            """, (cutoff_date.isoformat(),))
+            """,
+                (cutoff_date.isoformat(),),
+            )
 
             deleted_count = cursor.rowcount
             conn.commit()
@@ -445,7 +472,7 @@ class DatabaseManager:
             logger.error(f"删除旧总结记录失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
-    def get_statistics(self, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_statistics(self, channel_id: str | None = None) -> dict[str, Any]:
         """
         获取统计信息
 
@@ -463,64 +490,88 @@ class DatabaseManager:
             params = [channel_id] if channel_id else []
 
             # 总总结次数
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT COUNT(*) FROM summaries
                 {channel_condition}
-            """, params)
+            """,
+                params,
+            )
             total_count = cursor.fetchone()[0]
 
             # 按类型统计
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT summary_type, COUNT(*) as count
                 FROM summaries
                 {channel_condition}
                 GROUP BY summary_type
-            """, params)
+            """,
+                params,
+            )
             type_stats = dict(cursor.fetchall())
 
             # 总消息数
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT SUM(message_count) FROM summaries
                 {channel_condition}
-            """, params)
+            """,
+                params,
+            )
             total_messages = cursor.fetchone()[0] or 0
 
             # 平均消息数
             avg_messages = total_messages / total_count if total_count > 0 else 0
 
             # 最近总结时间
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT MAX(created_at) FROM summaries
                 {channel_condition}
-            """, params)
+            """,
+                params,
+            )
             last_summary_time = cursor.fetchone()[0]
 
             # 本周统计
-            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            week_ago = (datetime.now(UTC) - timedelta(days=7)).isoformat()
             if channel_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) FROM summaries
                     WHERE channel_id = ? AND created_at >= ?
-                """, [channel_id, week_ago])
+                """,
+                    [channel_id, week_ago],
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) FROM summaries
                     WHERE created_at >= ?
-                """, [week_ago])
+                """,
+                    [week_ago],
+                )
             week_count = cursor.fetchone()[0]
 
             # 本月统计
-            month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            month_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
             if channel_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) FROM summaries
                     WHERE channel_id = ? AND created_at >= ?
-                """, [channel_id, month_ago])
+                """,
+                    [channel_id, month_ago],
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) FROM summaries
                     WHERE created_at >= ?
-                """, [month_ago])
+                """,
+                    [month_ago],
+                )
             month_count = cursor.fetchone()[0]
 
             conn.close()
@@ -532,7 +583,7 @@ class DatabaseManager:
                 "avg_messages": round(avg_messages, 1),
                 "last_summary_time": last_summary_time,
                 "week_count": week_count,
-                "month_count": month_count
+                "month_count": month_count,
             }
 
             logger.info(f"统计数据获取成功: {stats}")
@@ -542,7 +593,7 @@ class DatabaseManager:
             logger.error(f"获取统计信息失败: {type(e).__name__}: {e}", exc_info=True)
             return {}
 
-    def get_channel_ranking(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_channel_ranking(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         获取频道排行(按总结次数)
 
@@ -557,7 +608,8 @@ class DatabaseManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     channel_id,
                     channel_name,
@@ -567,7 +619,9 @@ class DatabaseManager:
                 GROUP BY channel_id, channel_name
                 ORDER BY summary_count DESC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -580,8 +634,9 @@ class DatabaseManager:
             logger.error(f"获取频道排行失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def export_summaries(self, output_format: str = "json",
-                         channel_id: Optional[str] = None) -> Optional[str]:
+    def export_summaries(
+        self, output_format: str = "json", channel_id: str | None = None
+    ) -> str | None:
         """
         导出历史记录
 
@@ -601,7 +656,7 @@ class DatabaseManager:
                 return None
 
             # 生成文件名
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             channel_suffix = f"_{channel_id.split('/')[-1]}" if channel_id else ""
             filename = f"summaries_export{channel_suffix}_{timestamp}.{output_format}"
 
@@ -622,12 +677,12 @@ class DatabaseManager:
             logger.error(f"导出历史记录失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def _export_json(self, summaries: List[Dict], filename: str):
+    def _export_json(self, summaries: list[dict], filename: str):
         """导出为JSON格式"""
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump(summaries, f, ensure_ascii=False, indent=2)
 
-    def _export_csv(self, summaries: List[Dict], filename: str):
+    def _export_csv(self, summaries: list[dict], filename: str):
         """导出为CSV格式"""
         import csv
 
@@ -637,34 +692,34 @@ class DatabaseManager:
         # 获取所有字段名
         fieldnames = list(summaries[0].keys())
 
-        with open(filename, 'w', encoding='utf-8', newline='') as f:
+        with open(filename, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
             for summary in summaries:
                 # 将列表字段转换为字符串
                 row = summary.copy()
-                if isinstance(row.get('summary_message_ids'), list):
-                    row['summary_message_ids'] = json.dumps(row['summary_message_ids'])
+                if isinstance(row.get("summary_message_ids"), list):
+                    row["summary_message_ids"] = json.dumps(row["summary_message_ids"])
                 writer.writerow(row)
 
-    def _export_md(self, summaries: List[Dict], filename: str):
+    def _export_md(self, summaries: list[dict], filename: str):
         """导出为md格式"""
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filename, "w", encoding="utf-8") as f:
             f.write("# 频道总结历史记录\n\n")
-            f.write(f"导出时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
+            f.write(f"导出时间: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
             f.write(f"总记录数: {len(summaries)}\n\n")
             f.write("---\n\n")
 
             for summary in summaries:
-                channel_name = summary.get('channel_name', summary.get('channel_id', '未知频道'))
-                created_at = summary.get('created_at', '未知时间')
-                summary_type = summary.get('summary_type', 'unknown')
-                message_count = summary.get('message_count', 0)
-                summary_text = summary.get('summary_text', '')
+                channel_name = summary.get("channel_name", summary.get("channel_id", "未知频道"))
+                created_at = summary.get("created_at", "未知时间")
+                summary_type = summary.get("summary_type", "unknown")
+                message_count = summary.get("message_count", 0)
+                summary_text = summary.get("summary_text", "")
 
                 # 类型国际化映射
-                type_cn = get_text(f'summary_type.{summary_type}')
+                type_cn = get_text(f"summary_type.{summary_type}")
 
                 f.write(f"## {channel_name} - {created_at} ({type_cn})\n\n")
                 f.write(f"**消息数量**: {message_count}\n\n")
@@ -673,7 +728,7 @@ class DatabaseManager:
 
     # ============ 配额管理方法 ============
 
-    def get_quota_usage(self, user_id: int, date: Optional[str] = None) -> Dict[str, Any]:
+    def get_quota_usage(self, user_id: int, date: str | None = None) -> dict[str, Any]:
         """
         获取用户配额使用情况
 
@@ -686,16 +741,19 @@ class DatabaseManager:
         """
         try:
             if date is None:
-                date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                date = datetime.now(UTC).strftime("%Y-%m-%d")
 
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT usage_count, last_reset
                 FROM usage_quota
                 WHERE user_id = ? AND query_date = ?
-            """, (user_id, date))
+            """,
+                (user_id, date),
+            )
 
             row = cursor.fetchone()
             conn.close()
@@ -705,22 +763,18 @@ class DatabaseManager:
                     "user_id": user_id,
                     "date": date,
                     "usage_count": row[0],
-                    "last_reset": row[1]
+                    "last_reset": row[1],
                 }
             else:
-                return {
-                    "user_id": user_id,
-                    "date": date,
-                    "usage_count": 0,
-                    "last_reset": None
-                }
+                return {"user_id": user_id, "date": date, "usage_count": 0, "last_reset": None}
 
         except Exception as e:
             logger.error(f"获取配额使用失败: {type(e).__name__}: {e}", exc_info=True)
             return {"user_id": user_id, "date": date, "usage_count": 0, "last_reset": None}
 
-    def check_and_increment_quota(self, user_id: int, daily_limit: int,
-                                 is_admin: bool = False) -> Dict[str, Any]:
+    def check_and_increment_quota(
+        self, user_id: int, daily_limit: int, is_admin: bool = False
+    ) -> dict[str, Any]:
         """
         检查并增加配额使用
 
@@ -737,15 +791,18 @@ class DatabaseManager:
                 # 管理员无限制
                 return {"allowed": True, "remaining": -1, "used": 0, "is_admin": True}
 
-            date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
             # 获取当前使用次数
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT usage_count FROM usage_quota
                 WHERE user_id = ? AND query_date = ?
-            """, (user_id, date))
+            """,
+                (user_id, date),
+            )
 
             row = cursor.fetchone()
             current_usage = row[0] if row else 0
@@ -757,22 +814,28 @@ class DatabaseManager:
                     "allowed": False,
                     "remaining": 0,
                     "used": current_usage,
-                    "daily_limit": daily_limit
+                    "daily_limit": daily_limit,
                 }
 
             # 增加使用次数
             new_usage = current_usage + 1
             if row:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE usage_quota
                     SET usage_count = ?
                     WHERE user_id = ? AND query_date = ?
-                """, (new_usage, user_id, date))
+                """,
+                    (new_usage, user_id, date),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO usage_quota (user_id, query_date, usage_count)
                     VALUES (?, ?, ?)
-                """, (user_id, date, new_usage))
+                """,
+                    (user_id, date, new_usage),
+                )
 
             conn.commit()
             conn.close()
@@ -782,14 +845,14 @@ class DatabaseManager:
                 "allowed": True,
                 "remaining": daily_limit - new_usage,
                 "used": new_usage,
-                "daily_limit": daily_limit
+                "daily_limit": daily_limit,
             }
 
         except Exception as e:
             logger.error(f"配额检查失败: {type(e).__name__}: {e}", exc_info=True)
             return {"allowed": False, "error": str(e)}
 
-    def get_total_daily_usage(self, date: Optional[str] = None) -> int:
+    def get_total_daily_usage(self, date: str | None = None) -> int:
         """
         获取指定日期的总使用次数
 
@@ -801,15 +864,18 @@ class DatabaseManager:
         """
         try:
             if date is None:
-                date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                date = datetime.now(UTC).strftime("%Y-%m-%d")
 
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT SUM(usage_count) FROM usage_quota
                 WHERE query_date = ?
-            """, (date,))
+            """,
+                (date,),
+            )
 
             result = cursor.fetchone()
             conn.close()
@@ -828,17 +894,20 @@ class DatabaseManager:
             user_id: 用户ID
         """
         try:
-            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            today = datetime.now(UTC).strftime("%Y-%m-%d")
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
             # 检查最后记录日期
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT query_date FROM usage_quota
                 WHERE user_id = ?
                 ORDER BY query_date DESC
                 LIMIT 1
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
 
             row = cursor.fetchone()
             if row and row[0] != today:
@@ -852,7 +921,7 @@ class DatabaseManager:
 
     # ============ 频道画像方法 ============
 
-    def get_channel_profile(self, channel_id: str) -> Optional[Dict[str, Any]]:
+    def get_channel_profile(self, channel_id: str) -> dict[str, Any] | None:
         """
         获取频道画像
 
@@ -875,10 +944,10 @@ class DatabaseManager:
                 profile = dict(row)
                 # 解析JSON字段
                 try:
-                    if profile.get('topics'):
-                        profile['topics'] = json.loads(profile['topics'])
-                    if profile.get('keywords_freq'):
-                        profile['keywords_freq'] = json.loads(profile['keywords_freq'])
+                    if profile.get("topics"):
+                        profile["topics"] = json.loads(profile["topics"])
+                    if profile.get("keywords_freq"):
+                        profile["keywords_freq"] = json.loads(profile["keywords_freq"])
                 except:
                     pass
                 return profile
@@ -888,11 +957,15 @@ class DatabaseManager:
             logger.error(f"获取频道画像失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def update_channel_profile(self, channel_id: str, channel_name: str,
-                              keywords: List[str] = None,
-                              topics: List[str] = None,
-                              sentiment: str = None,
-                              entities: List[str] = None) -> None:
+    def update_channel_profile(
+        self,
+        channel_id: str,
+        channel_name: str,
+        keywords: list[str] = None,
+        topics: list[str] = None,
+        sentiment: str = None,
+        entities: list[str] = None,
+    ) -> None:
         """
         更新频道画像
 
@@ -913,11 +986,14 @@ class DatabaseManager:
             existing = cursor.fetchone()
 
             # 统计该频道的总结数和平均消息长度
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count, AVG(message_count) as avg_len
                 FROM summaries
                 WHERE channel_id = ?
-            """, (channel_id,))
+            """,
+                (channel_id,),
+            )
             stats = cursor.fetchone()
 
             total_summaries = stats[0] if stats else 0
@@ -947,34 +1023,57 @@ class DatabaseManager:
 
             # 推断频道风格（简单规则）
             if topics:
-                tech_keywords = ['AI', '编程', '技术', '开发', 'Python', 'GPT', 'API']
-                if any(kw in ' '.join(topics) for kw in tech_keywords):
-                    style = 'tech'
+                tech_keywords = ["AI", "编程", "技术", "开发", "Python", "GPT", "API"]
+                if any(kw in " ".join(topics) for kw in tech_keywords):
+                    style = "tech"
                 else:
-                    style = 'casual'
+                    style = "casual"
             else:
-                style = 'neutral'
+                style = "neutral"
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
             if existing:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE channel_profiles
                     SET channel_name = ?, style = ?, topics = ?,
                         keywords_freq = ?, tone = ?, avg_message_length = ?,
                         total_summaries = ?, last_updated = ?
                     WHERE channel_id = ?
-                """, (channel_name, style, topics_json, keywords_json,
-                       sentiment or 'neutral', avg_message_length,
-                       total_summaries, now, channel_id))
+                """,
+                    (
+                        channel_name,
+                        style,
+                        topics_json,
+                        keywords_json,
+                        sentiment or "neutral",
+                        avg_message_length,
+                        total_summaries,
+                        now,
+                        channel_id,
+                    ),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO channel_profiles (
                         channel_id, channel_name, style, topics, keywords_freq,
                         tone, avg_message_length, total_summaries, last_updated
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (channel_id, channel_name, style, topics_json, keywords_json,
-                       sentiment or 'neutral', avg_message_length, total_summaries, now))
+                """,
+                    (
+                        channel_id,
+                        channel_name,
+                        style,
+                        topics_json,
+                        keywords_json,
+                        sentiment or "neutral",
+                        avg_message_length,
+                        total_summaries,
+                        now,
+                    ),
+                )
 
             conn.commit()
             conn.close()
@@ -984,9 +1083,14 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"更新频道画像失败: {type(e).__name__}: {e}", exc_info=True)
 
-    def update_summary_metadata(self, summary_id: int, keywords: List[str] = None,
-                               topics: List[str] = None, sentiment: str = None,
-                               entities: List[str] = None) -> None:
+    def update_summary_metadata(
+        self,
+        summary_id: int,
+        keywords: list[str] = None,
+        topics: list[str] = None,
+        sentiment: str = None,
+        entities: list[str] = None,
+    ) -> None:
         """
         更新总结的元数据
 
@@ -1005,11 +1109,14 @@ class DatabaseManager:
             topics_json = json.dumps(topics, ensure_ascii=False) if topics else None
             entities_json = json.dumps(entities, ensure_ascii=False) if entities else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE summaries
                 SET keywords = ?, topics = ?, sentiment = ?, entities = ?
                 WHERE id = ?
-            """, (keywords_json, topics_json, sentiment, entities_json, summary_id))
+            """,
+                (keywords_json, topics_json, sentiment, entities_json, summary_id),
+            )
 
             conn.commit()
             conn.close()
@@ -1021,9 +1128,14 @@ class DatabaseManager:
 
     # ============ 对话历史管理方法 ============
 
-    def save_conversation(self, user_id: int, session_id: str,
-                         role: str, content: str,
-                         metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def save_conversation(
+        self,
+        user_id: int,
+        session_id: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         """
         保存对话记录
 
@@ -1043,11 +1155,14 @@ class DatabaseManager:
 
             metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO conversation_history
                 (user_id, session_id, role, content, metadata)
                 VALUES (?, ?, ?, ?, ?)
-            """, (user_id, session_id, role, content, metadata_json))
+            """,
+                (user_id, session_id, role, content, metadata_json),
+            )
 
             conn.commit()
             conn.close()
@@ -1059,8 +1174,9 @@ class DatabaseManager:
             logger.error(f"保存对话记录失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_conversation_history(self, user_id: int, session_id: str,
-                                limit: int = 20) -> List[Dict[str, Any]]:
+    def get_conversation_history(
+        self, user_id: int, session_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
         """
         获取用户的对话历史
 
@@ -1077,13 +1193,16 @@ class DatabaseManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT role, content, timestamp, metadata
                 FROM conversation_history
                 WHERE user_id = ? AND session_id = ?
                 ORDER BY timestamp ASC
                 LIMIT ?
-            """, (user_id, session_id, limit))
+            """,
+                (user_id, session_id, limit),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1091,26 +1210,28 @@ class DatabaseManager:
             history = []
             for row in rows:
                 item = {
-                    'role': row['role'],
-                    'content': row['content'],
-                    'timestamp': row['timestamp']
+                    "role": row["role"],
+                    "content": row["content"],
+                    "timestamp": row["timestamp"],
                 }
                 # 解析元数据
-                if row['metadata']:
+                if row["metadata"]:
                     try:
-                        item['metadata'] = json.loads(row['metadata'])
+                        item["metadata"] = json.loads(row["metadata"])
                     except:
                         pass
                 history.append(item)
 
-            logger.debug(f"获取对话历史: user_id={user_id}, session={session_id}, 条数={len(history)}")
+            logger.debug(
+                f"获取对话历史: user_id={user_id}, session={session_id}, 条数={len(history)}"
+            )
             return history
 
         except Exception as e:
             logger.error(f"获取对话历史失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def get_last_session_time(self, user_id: int) -> Optional[str]:
+    def get_last_session_time(self, user_id: int) -> str | None:
         """
         获取用户最后一次对话时间
 
@@ -1124,13 +1245,16 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT timestamp
                 FROM conversation_history
                 WHERE user_id = ?
                 ORDER BY timestamp DESC
                 LIMIT 1
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
 
             result = cursor.fetchone()
             conn.close()
@@ -1141,8 +1265,7 @@ class DatabaseManager:
             logger.error(f"获取最后会话时间失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def clear_user_conversations(self, user_id: int,
-                                session_id: Optional[str] = None) -> int:
+    def clear_user_conversations(self, user_id: int, session_id: str | None = None) -> int:
         """
         清除用户的对话历史
 
@@ -1158,21 +1281,29 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             if session_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     DELETE FROM conversation_history
                     WHERE user_id = ? AND session_id = ?
-                """, (user_id, session_id))
+                """,
+                    (user_id, session_id),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     DELETE FROM conversation_history
                     WHERE user_id = ?
-                """, (user_id,))
+                """,
+                    (user_id,),
+                )
 
             deleted_count = cursor.rowcount
             conn.commit()
             conn.close()
 
-            logger.info(f"清除对话历史: user_id={user_id}, session={session_id}, 删除{deleted_count}条")
+            logger.info(
+                f"清除对话历史: user_id={user_id}, session={session_id}, 删除{deleted_count}条"
+            )
             return deleted_count
 
         except Exception as e:
@@ -1193,11 +1324,14 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT session_id)
                 FROM conversation_history
                 WHERE user_id = ?
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
 
             result = cursor.fetchone()
             conn.close()
@@ -1222,12 +1356,15 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM conversation_history
                 WHERE timestamp < ?
-            """, (cutoff_date.isoformat(),))
+            """,
+                (cutoff_date.isoformat(),),
+            )
 
             deleted_count = cursor.rowcount
             conn.commit()
@@ -1242,8 +1379,9 @@ class DatabaseManager:
 
     # ============ 用户管理方法 ============
 
-    def register_user(self, user_id: int, username: str = None,
-                     first_name: str = None, is_admin: bool = False) -> bool:
+    def register_user(
+        self, user_id: int, username: str = None, first_name: str = None, is_admin: bool = False
+    ) -> bool:
         """
         注册新用户
 
@@ -1260,15 +1398,18 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR REPLACE INTO users
                 (user_id, username, first_name, registered_at, last_active, is_admin)
                 VALUES (?, ?, ?,
                         COALESCE((SELECT registered_at FROM users WHERE user_id = ?), ?),
                         ?, ?)
-            """, (user_id, username, first_name, user_id, now, now, 1 if is_admin else 0))
+            """,
+                (user_id, username, first_name, user_id, now, now, 1 if is_admin else 0),
+            )
 
             conn.commit()
             conn.close()
@@ -1280,7 +1421,7 @@ class DatabaseManager:
             logger.error(f"用户注册失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+    def get_user(self, user_id: int) -> dict[str, Any] | None:
         """
         获取用户信息
 
@@ -1302,9 +1443,9 @@ class DatabaseManager:
             if row:
                 user = dict(row)
                 # 解析preferences JSON
-                if user.get('preferences'):
+                if user.get("preferences"):
                     try:
-                        user['preferences'] = json.loads(user['preferences'])
+                        user["preferences"] = json.loads(user["preferences"])
                     except:
                         pass
                 return user
@@ -1328,12 +1469,15 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE users SET last_active = ?
                 WHERE user_id = ?
-            """, (now, user_id))
+            """,
+                (now, user_id),
+            )
 
             conn.commit()
             conn.close()
@@ -1359,10 +1503,13 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE users SET is_admin = ?
                 WHERE user_id = ?
-            """, (1 if is_admin else 0, user_id))
+            """,
+                (1 if is_admin else 0, user_id),
+            )
 
             conn.commit()
             conn.close()
@@ -1374,8 +1521,7 @@ class DatabaseManager:
             logger.error(f"设置用户权限失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_registered_users(self, active_days: int = 30,
-                            limit: int = 100) -> List[Dict[str, Any]]:
+    def get_registered_users(self, active_days: int = 30, limit: int = 100) -> list[dict[str, Any]]:
         """
         获取注册用户列表
 
@@ -1391,14 +1537,17 @@ class DatabaseManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=active_days)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=active_days)).isoformat()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM users
                 WHERE last_active >= ?
                 ORDER BY last_active DESC
                 LIMIT ?
-            """, (cutoff, limit))
+            """,
+                (cutoff, limit),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1435,9 +1584,9 @@ class DatabaseManager:
 
     # ============ 订阅管理方法 ============
 
-    def add_subscription(self, user_id: int, channel_id: str,
-                        channel_name: str = None,
-                        sub_type: str = 'summary') -> bool:
+    def add_subscription(
+        self, user_id: int, channel_id: str, channel_name: str = None, sub_type: str = "summary"
+    ) -> bool:
         """
         添加订阅
 
@@ -1454,18 +1603,23 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO subscriptions
                 (user_id, channel_id, channel_name, sub_type)
                 VALUES (?, ?, ?, ?)
-            """, (user_id, channel_id, channel_name, sub_type))
+            """,
+                (user_id, channel_id, channel_name, sub_type),
+            )
 
             conn.commit()
             affected = cursor.rowcount
             conn.close()
 
             if affected > 0:
-                logger.info(f"添加订阅成功: user_id={user_id}, channel={channel_name}, type={sub_type}")
+                logger.info(
+                    f"添加订阅成功: user_id={user_id}, channel={channel_name}, type={sub_type}"
+                )
                 return True
             else:
                 logger.info(f"订阅已存在: user_id={user_id}, channel={channel_name}")
@@ -1475,8 +1629,9 @@ class DatabaseManager:
             logger.error(f"添加订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def remove_subscription(self, user_id: int, channel_id: str = None,
-                           sub_type: str = None) -> int:
+    def remove_subscription(
+        self, user_id: int, channel_id: str = None, sub_type: str = None
+    ) -> int:
         """
         移除订阅
 
@@ -1517,8 +1672,7 @@ class DatabaseManager:
             logger.error(f"移除订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
-    def get_user_subscriptions(self, user_id: int,
-                              sub_type: str = None) -> List[Dict[str, Any]]:
+    def get_user_subscriptions(self, user_id: int, sub_type: str = None) -> list[dict[str, Any]]:
         """
         获取用户的订阅列表
 
@@ -1535,17 +1689,23 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             if sub_type:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM subscriptions
                     WHERE user_id = ? AND sub_type = ? AND enabled = 1
                     ORDER BY created_at DESC
-                """, (user_id, sub_type))
+                """,
+                    (user_id, sub_type),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM subscriptions
                     WHERE user_id = ? AND enabled = 1
                     ORDER BY created_at DESC
-                """, (user_id,))
+                """,
+                    (user_id,),
+                )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1556,8 +1716,7 @@ class DatabaseManager:
             logger.error(f"获取用户订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def get_channel_subscribers(self, channel_id: str,
-                               sub_type: str = 'summary') -> List[int]:
+    def get_channel_subscribers(self, channel_id: str, sub_type: str = "summary") -> list[int]:
         """
         获取频道的订阅用户ID列表
 
@@ -1572,10 +1731,13 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT user_id FROM subscriptions
                 WHERE channel_id = ? AND sub_type = ? AND enabled = 1
-            """, (channel_id, sub_type))
+            """,
+                (channel_id, sub_type),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1586,7 +1748,7 @@ class DatabaseManager:
             logger.error(f"获取频道订阅者失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def get_all_channels(self) -> List[Dict[str, Any]]:
+    def get_all_channels(self) -> list[dict[str, Any]]:
         """
         获取所有可用频道（从summaries表中提取）
 
@@ -1615,8 +1777,7 @@ class DatabaseManager:
             logger.error(f"获取频道列表失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def is_subscribed(self, user_id: int, channel_id: str,
-                     sub_type: str = 'summary') -> bool:
+    def is_subscribed(self, user_id: int, channel_id: str, sub_type: str = "summary") -> bool:
         """
         检查用户是否已订阅某频道
 
@@ -1632,11 +1793,14 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT 1 FROM subscriptions
                 WHERE user_id = ? AND channel_id = ?
                       AND sub_type = ? AND enabled = 1
-            """, (user_id, channel_id, sub_type))
+            """,
+                (user_id, channel_id, sub_type),
+            )
 
             result = cursor.fetchone()
             conn.close()
@@ -1649,9 +1813,13 @@ class DatabaseManager:
 
     # ============ 请求队列方法 ============
 
-    def create_request(self, request_type: str, requested_by: int,
-                      target_channel: str = None,
-                      params: Dict[str, Any] = None) -> Optional[int]:
+    def create_request(
+        self,
+        request_type: str,
+        requested_by: int,
+        target_channel: str = None,
+        params: dict[str, Any] = None,
+    ) -> int | None:
         """
         创建请求
 
@@ -1670,11 +1838,14 @@ class DatabaseManager:
 
             params_json = json.dumps(params, ensure_ascii=False) if params else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO request_queue
                 (request_type, requested_by, target_channel, params)
                 VALUES (?, ?, ?, ?)
-            """, (request_type, requested_by, target_channel, params_json))
+            """,
+                (request_type, requested_by, target_channel, params_json),
+            )
 
             conn.commit()
             request_id = cursor.lastrowid
@@ -1687,7 +1858,7 @@ class DatabaseManager:
             logger.error(f"创建请求失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def get_pending_requests(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_pending_requests(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         获取待处理的请求列表
 
@@ -1702,12 +1873,15 @@ class DatabaseManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM request_queue
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1716,14 +1890,14 @@ class DatabaseManager:
             for row in rows:
                 req = dict(row)
                 # 解析JSON字段
-                if req.get('params'):
+                if req.get("params"):
                     try:
-                        req['params'] = json.loads(req['params'])
+                        req["params"] = json.loads(req["params"])
                     except:
                         pass
-                if req.get('result'):
+                if req.get("result"):
                     try:
-                        req['result'] = json.loads(req['result'])
+                        req["result"] = json.loads(req["result"])
                     except:
                         pass
                 requests.append(req)
@@ -1734,8 +1908,7 @@ class DatabaseManager:
             logger.error(f"获取待处理请求失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def update_request_status(self, request_id: int, status: str,
-                             result: Any = None) -> bool:
+    def update_request_status(self, request_id: int, status: str, result: Any = None) -> bool:
         """
         更新请求状态
 
@@ -1751,14 +1924,17 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             result_json = json.dumps(result, ensure_ascii=False) if result else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE request_queue
                 SET status = ?, result = ?, processed_at = ?
                 WHERE id = ?
-            """, (status, result_json, now, request_id))
+            """,
+                (status, result_json, now, request_id),
+            )
 
             conn.commit()
             conn.close()
@@ -1770,7 +1946,7 @@ class DatabaseManager:
             logger.error(f"更新请求状态失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_request_status(self, request_id: int) -> Optional[Dict[str, Any]]:
+    def get_request_status(self, request_id: int) -> dict[str, Any] | None:
         """
         获取请求状态
 
@@ -1792,14 +1968,14 @@ class DatabaseManager:
             if row:
                 req = dict(row)
                 # 解析JSON字段
-                if req.get('params'):
+                if req.get("params"):
                     try:
-                        req['params'] = json.loads(req['params'])
+                        req["params"] = json.loads(req["params"])
                     except:
                         pass
-                if req.get('result'):
+                if req.get("result"):
                     try:
-                        req['result'] = json.loads(req['result'])
+                        req["result"] = json.loads(req["result"])
                     except:
                         pass
                 return req
@@ -1823,12 +1999,15 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM request_queue
                 WHERE created_at < ? AND status IN ('completed', 'failed')
-            """, (cutoff_date.isoformat(),))
+            """,
+                (cutoff_date.isoformat(),),
+            )
 
             deleted_count = cursor.rowcount
             conn.commit()
@@ -1843,8 +2022,9 @@ class DatabaseManager:
 
     # ============ 通知队列方法 ============
 
-    def create_notification(self, user_id: int, notification_type: str,
-                           content: Dict[str, Any]) -> Optional[int]:
+    def create_notification(
+        self, user_id: int, notification_type: str, content: dict[str, Any]
+    ) -> int | None:
         """
         创建通知
 
@@ -1862,11 +2042,14 @@ class DatabaseManager:
 
             content_json = json.dumps(content, ensure_ascii=False) if content else None
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO notification_queue
                 (user_id, notification_type, content)
                 VALUES (?, ?, ?)
-            """, (user_id, notification_type, content_json))
+            """,
+                (user_id, notification_type, content_json),
+            )
 
             conn.commit()
             notification_id = cursor.lastrowid
@@ -1879,7 +2062,7 @@ class DatabaseManager:
             logger.error(f"创建通知失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def get_pending_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_pending_notifications(self, limit: int = 50) -> list[dict[str, Any]]:
         """
         获取待发送的通知列表
 
@@ -1894,12 +2077,15 @@ class DatabaseManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM notification_queue
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -1908,9 +2094,9 @@ class DatabaseManager:
             for row in rows:
                 notif = dict(row)
                 # 解析JSON字段
-                if notif.get('content'):
+                if notif.get("content"):
                     try:
-                        notif['content'] = json.loads(notif['content'])
+                        notif["content"] = json.loads(notif["content"])
                     except:
                         pass
                 notifications.append(notif)
@@ -1921,8 +2107,7 @@ class DatabaseManager:
             logger.error(f"获取待发送通知失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def update_notification_status(self, notification_id: int,
-                                  status: str) -> bool:
+    def update_notification_status(self, notification_id: int, status: str) -> bool:
         """
         更新通知状态
 
@@ -1937,13 +2122,16 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE notification_queue
                 SET status = ?, sent_at = ?
                 WHERE id = ?
-            """, (status, now, notification_id))
+            """,
+                (status, now, notification_id),
+            )
 
             conn.commit()
             conn.close()
@@ -1969,12 +2157,15 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM notification_queue
                 WHERE created_at < ? AND status IN ('sent', 'failed')
-            """, (cutoff_date.isoformat(),))
+            """,
+                (cutoff_date.isoformat(),),
+            )
 
             deleted_count = cursor.rowcount
             conn.commit()
@@ -1987,7 +2178,7 @@ class DatabaseManager:
             logger.error(f"清理旧通知失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
-    def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+    def get_user_info(self, user_id: int) -> dict[str, Any] | None:
         """
         获取用户信息（别名方法，兼容请求处理器）
 
@@ -1999,7 +2190,7 @@ class DatabaseManager:
         """
         return self.get_user(user_id)
 
-    def get_qa_bot_statistics(self) -> Dict[str, Any]:
+    def get_qa_bot_statistics(self) -> dict[str, Any]:
         """
         获取问答Bot的详细统计信息
 
@@ -2014,70 +2205,88 @@ class DatabaseManager:
 
             # 用户统计
             cursor.execute("SELECT COUNT(*) FROM users")
-            stats['total_users'] = cursor.fetchone()[0]
+            stats["total_users"] = cursor.fetchone()[0]
 
             # 活跃用户数（7天内有查询）
-            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            cursor.execute("""
+            week_ago = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT user_id) FROM usage_quota
                 WHERE query_date >= ?
-            """, (week_ago[:10],))
-            stats['active_users'] = cursor.fetchone()[0] or 0
+            """,
+                (week_ago[:10],),
+            )
+            stats["active_users"] = cursor.fetchone()[0] or 0
 
             # 今日新增用户
-            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-            cursor.execute("""
+            today = datetime.now(UTC).strftime("%Y-%m-%d")
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM users
                 WHERE DATE(registered_at) = ?
-            """, (today,))
-            stats['new_users_today'] = cursor.fetchone()[0] or 0
+            """,
+                (today,),
+            )
+            stats["new_users_today"] = cursor.fetchone()[0] or 0
 
             # 查询统计
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT SUM(usage_count) FROM usage_quota
                 WHERE query_date = ?
-            """, (today,))
-            stats['queries_today'] = cursor.fetchone()[0] or 0
+            """,
+                (today,),
+            )
+            stats["queries_today"] = cursor.fetchone()[0] or 0
 
             # 本周查询次数
-            week_start = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
-            cursor.execute("""
+            week_start = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
+            cursor.execute(
+                """
                 SELECT SUM(usage_count) FROM usage_quota
                 WHERE query_date >= ?
-            """, (week_start,))
-            stats['queries_week'] = cursor.fetchone()[0] or 0
+            """,
+                (week_start,),
+            )
+            stats["queries_week"] = cursor.fetchone()[0] or 0
 
             # 总查询次数
             cursor.execute("SELECT SUM(usage_count) FROM usage_quota")
-            stats['total_queries'] = cursor.fetchone()[0] or 0
+            stats["total_queries"] = cursor.fetchone()[0] or 0
 
             # 订阅统计
             cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE enabled = 1")
-            stats['total_subscriptions'] = cursor.fetchone()[0] or 0
+            stats["total_subscriptions"] = cursor.fetchone()[0] or 0
 
             # 活跃订阅数（用户7天内活跃）
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT s.user_id) FROM subscriptions s
                 INNER JOIN usage_quota q ON s.user_id = q.user_id
                 WHERE s.enabled = 1 AND q.query_date >= ?
-            """, (week_ago[:10],))
-            stats['active_subscriptions'] = cursor.fetchone()[0] or 0
+            """,
+                (week_ago[:10],),
+            )
+            stats["active_subscriptions"] = cursor.fetchone()[0] or 0
 
             # 请求统计
             cursor.execute("SELECT COUNT(*) FROM request_queue WHERE status = 'pending'")
-            stats['pending_requests'] = cursor.fetchone()[0] or 0
+            stats["pending_requests"] = cursor.fetchone()[0] or 0
 
             # 今日完成的请求数
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM request_queue
                 WHERE status IN ('completed', 'failed')
                 AND DATE(processed_at) = ?
-            """, (today,))
-            stats['completed_requests_today'] = cursor.fetchone()[0] or 0
+            """,
+                (today,),
+            )
+            stats["completed_requests_today"] = cursor.fetchone()[0] or 0
 
             # 总请求数
             cursor.execute("SELECT COUNT(*) FROM request_queue")
-            stats['total_requests'] = cursor.fetchone()[0] or 0
+            stats["total_requests"] = cursor.fetchone()[0] or 0
 
             # 活跃用户排行（前10）
             cursor.execute("""
@@ -2091,13 +2300,15 @@ class DatabaseManager:
             """)
             top_users = []
             for row in cursor.fetchall():
-                top_users.append({
-                    'user_id': row[0],
-                    'username': row[1],
-                    'first_name': row[2],
-                    'query_count': row[3]
-                })
-            stats['top_users'] = top_users
+                top_users.append(
+                    {
+                        "user_id": row[0],
+                        "username": row[1],
+                        "first_name": row[2],
+                        "query_count": row[3],
+                    }
+                )
+            stats["top_users"] = top_users
 
             # 频道订阅分布
             cursor.execute("""
@@ -2110,7 +2321,7 @@ class DatabaseManager:
             channel_subs = {}
             for row in cursor.fetchall():
                 channel_subs[row[0]] = row[1]
-            stats['channel_subscriptions'] = channel_subs
+            stats["channel_subscriptions"] = channel_subs
 
             conn.close()
 
@@ -2124,6 +2335,7 @@ class DatabaseManager:
 
 # 创建全局数据库管理器实例
 db_manager = None
+
 
 def get_db_manager():
     """获取全局数据库管理器实例"""

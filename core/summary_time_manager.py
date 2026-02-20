@@ -16,9 +16,10 @@ import os
 import shutil
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
+
 
 # 读取上次总结时间函数
 def load_last_summary_time(channel=None, include_report_ids=False):
@@ -34,7 +35,7 @@ def load_last_summary_time(channel=None, include_report_ids=False):
 
     logger.info(f"开始读取上次总结时间文件: {LAST_SUMMARY_FILE}")
     try:
-        with open(LAST_SUMMARY_FILE, "r", encoding="utf-8") as f:
+        with open(LAST_SUMMARY_FILE, encoding="utf-8") as f:
             content = f.read().strip()
             if content:
                 last_data = json.loads(content)
@@ -50,26 +51,36 @@ def load_last_summary_time(channel=None, include_report_ids=False):
                                 # 旧格式
                                 return {
                                     "time": datetime.fromisoformat(channel_data["time"]),
-                                    "summary_message_ids": channel_data.get("report_message_ids", []),
+                                    "summary_message_ids": channel_data.get(
+                                        "report_message_ids", []
+                                    ),
                                     "poll_message_ids": channel_data.get("poll_message_ids", []),
-                                    "button_message_ids": channel_data.get("button_message_ids", [])
+                                    "button_message_ids": channel_data.get(
+                                        "button_message_ids", []
+                                    ),
                                 }
                             else:
                                 # 新格式
                                 return {
                                     "time": datetime.fromisoformat(channel_data["time"]),
-                                    "summary_message_ids": channel_data.get("summary_message_ids", []),
+                                    "summary_message_ids": channel_data.get(
+                                        "summary_message_ids", []
+                                    ),
                                     "poll_message_ids": channel_data.get("poll_message_ids", []),
-                                    "button_message_ids": channel_data.get("button_message_ids", [])
+                                    "button_message_ids": channel_data.get(
+                                        "button_message_ids", []
+                                    ),
                                 }
                         else:
                             # 只返回时间对象
                             time_obj = datetime.fromisoformat(channel_data["time"])
                             # 兼容旧格式：如果读取的时间没有时区信息，强制视为UTC
                             if time_obj.tzinfo is None:
-                                time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                time_obj = time_obj.replace(tzinfo=UTC)
                                 logger.debug("检测到旧格式时间戳，已自动转换为UTC")
-                            logger.info(f"成功读取频道 {channel} 的上次总结时间: {time_obj.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                            logger.info(
+                                f"成功读取频道 {channel} 的上次总结时间: {time_obj.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                            )
                             return time_obj
                     else:
                         logger.warning(f"频道 {channel} 的上次总结时间不存在")
@@ -83,27 +94,27 @@ def load_last_summary_time(channel=None, include_report_ids=False):
                             if "report_message_ids" in data:
                                 time_obj = datetime.fromisoformat(data["time"])
                                 if time_obj.tzinfo is None:
-                                    time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                    time_obj = time_obj.replace(tzinfo=UTC)
                                 converted_data[ch] = {
                                     "time": time_obj,
                                     "summary_message_ids": data.get("report_message_ids", []),
                                     "poll_message_ids": data.get("poll_message_ids", []),
-                                    "button_message_ids": data.get("button_message_ids", [])
+                                    "button_message_ids": data.get("button_message_ids", []),
                                 }
                             else:
                                 time_obj = datetime.fromisoformat(data["time"])
                                 if time_obj.tzinfo is None:
-                                    time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                    time_obj = time_obj.replace(tzinfo=UTC)
                                 converted_data[ch] = {
                                     "time": time_obj,
                                     "summary_message_ids": data.get("summary_message_ids", []),
                                     "poll_message_ids": data.get("poll_message_ids", []),
-                                    "button_message_ids": data.get("button_message_ids", [])
+                                    "button_message_ids": data.get("button_message_ids", []),
                                 }
                         else:
                             time_obj = datetime.fromisoformat(data["time"])
                             if time_obj.tzinfo is None:
-                                time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                time_obj = time_obj.replace(tzinfo=UTC)
                             converted_data[ch] = time_obj
                     return converted_data
             else:
@@ -113,11 +124,22 @@ def load_last_summary_time(channel=None, include_report_ids=False):
         logger.warning(f"上次总结时间文件 {LAST_SUMMARY_FILE} 不存在")
         return None if channel else {}
     except Exception as e:
-        logger.error(f"读取上次总结时间文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(
+            f"读取上次总结时间文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}",
+            exc_info=True,
+        )
         return None if channel else {}
 
+
 # 保存上次总结时间函数
-def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll_message_ids=None, button_message_ids=None, report_message_ids=None):
+def save_last_summary_time(
+    channel,
+    time_to_save,
+    summary_message_ids=None,
+    poll_message_ids=None,
+    button_message_ids=None,
+    report_message_ids=None,
+):
     """将指定频道的上次总结时间和报告消息ID保存到文件中
 
     Args:
@@ -135,7 +157,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         # 先读取现有数据
         existing_data = {}
         if os.path.exists(LAST_SUMMARY_FILE):
-            with open(LAST_SUMMARY_FILE, "r", encoding="utf-8") as f:
+            with open(LAST_SUMMARY_FILE, encoding="utf-8") as f:
                 content = f.read().strip()
                 if content:
                     existing_data = json.loads(content)
@@ -150,10 +172,14 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         if summary_message_ids is not None and not isinstance(summary_message_ids, list):
             # 如果summary_message_ids是字典,提取summary_message_ids键
             if isinstance(summary_message_ids, dict):
-                logger.warning(f"检测到summary_message_ids是字典格式,自动提取: {summary_message_ids}")
+                logger.warning(
+                    f"检测到summary_message_ids是字典格式,自动提取: {summary_message_ids}"
+                )
                 summary_message_ids = summary_message_ids.get("summary_message_ids", [])
             else:
-                logger.error(f"summary_message_ids类型错误: {type(summary_message_ids)}, 使用空列表")
+                logger.error(
+                    f"summary_message_ids类型错误: {type(summary_message_ids)}, 使用空列表"
+                )
                 summary_message_ids = []
 
         if poll_message_ids is not None and not isinstance(poll_message_ids, list):
@@ -170,7 +196,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
             "time": time_to_save.isoformat(),
             "summary_message_ids": summary_message_ids or [],
             "poll_message_ids": poll_message_ids or [],
-            "button_message_ids": button_message_ids or []
+            "button_message_ids": button_message_ids or [],
         }
         existing_data[channel] = channel_data
 
@@ -183,11 +209,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
                 # 创建临时文件
                 temp_dir = os.path.dirname(LAST_SUMMARY_FILE)
                 with tempfile.NamedTemporaryFile(
-                    mode='w',
-                    encoding='utf-8',
-                    dir=temp_dir,
-                    suffix='.tmp',
-                    delete=False
+                    mode="w", encoding="utf-8", dir=temp_dir, suffix=".tmp", delete=False
                 ) as temp_file:
                     # 写入数据到临时文件
                     json.dump(existing_data, temp_file, ensure_ascii=False, indent=2)
@@ -209,24 +231,37 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
                         pass
                     raise
 
-                logger.info(f"成功保存频道 {channel} 的上次总结时间: {time_to_save.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} (UTC: {time_to_save.strftime('%Y-%m-%d %H:%M:%S')})")
-                logger.debug(f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}")
+                logger.info(
+                    f"成功保存频道 {channel} 的上次总结时间: {time_to_save.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} (UTC: {time_to_save.strftime('%Y-%m-%d %H:%M:%S')})"
+                )
+                logger.debug(
+                    f"总结消息ID: {summary_message_ids}, 投票消息ID: {poll_message_ids}, 按钮消息ID: {button_message_ids}"
+                )
                 return  # 成功则退出函数
 
             except PermissionError as e:
                 if attempt < max_retries - 1:
                     # 指数退避：0.3, 0.6, 1.2, 2.4 秒
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(f"文件被占用，第 {attempt + 1} 次重试... (等待 {delay:.1f}秒，错误: {e})")
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        f"文件被占用，第 {attempt + 1} 次重试... (等待 {delay:.1f}秒，错误: {e})"
+                    )
                     time.sleep(delay)
                 else:
-                    logger.error("保存上次总结时间失败: 文件被其他程序占用或权限不足。请关闭可能打开该文件的程序后重试。")
+                    logger.error(
+                        "保存上次总结时间失败: 文件被其他程序占用或权限不足。请关闭可能打开该文件的程序后重试。"
+                    )
                     logger.error(f"受影响的频道: {channel}, 时间: {time_to_save}")
                     # 尝试回退到原始文件名（可能需要从备份恢复）
-                    raise PermissionError(f"无法保存文件 {LAST_SUMMARY_FILE}，已被其他程序锁定。请关闭 VSCode 或其他可能打开该文件的程序。") from e
+                    raise PermissionError(
+                        f"无法保存文件 {LAST_SUMMARY_FILE}，已被其他程序锁定。请关闭 VSCode 或其他可能打开该文件的程序。"
+                    ) from e
 
             except Exception as e:
-                logger.error(f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(
+                    f"保存上次总结时间到文件 {LAST_SUMMARY_FILE} 时出错: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
                 raise
     except Exception as e:
         logger.error(f"保存上次总结时间失败: {type(e).__name__}: {e}", exc_info=True)

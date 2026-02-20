@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 # 投票发送位置类型
-PollSendLocation = Literal['channel', 'discussion']
+PollSendLocation = Literal["channel", "discussion"]
 
 
 # 投票配置类型定义
 ChannelPollConfig = dict[
     str,  # 'enabled', 'send_to_channel'
-    bool | None
+    bool | None,
 ]
 
 
@@ -62,10 +62,10 @@ class ChannelPollConfigManager:
             return
 
         try:
-            with open(self._config_file, 'r', encoding='utf-8') as f:
+            with open(self._config_file, encoding="utf-8") as f:
                 config = json.load(f)
 
-            settings = config.get('channel_poll_settings', {})
+            settings = config.get("channel_poll_settings", {})
             if isinstance(settings, dict):
                 self._poll_settings = settings
                 logger.info(f"已加载 {len(self._poll_settings)} 个频道的投票配置")
@@ -83,17 +83,17 @@ class ChannelPollConfigManager:
             # 读取完整配置
             full_config = {}
             if self._config_file.exists():
-                with open(self._config_file, 'r', encoding='utf-8') as f:
+                with open(self._config_file, encoding="utf-8") as f:
                     full_config = json.load(f)
 
             # 更新投票配置部分
-            full_config['channel_poll_settings'] = self._poll_settings
+            full_config["channel_poll_settings"] = self._poll_settings
 
             # 确保目录存在
             self._config_file.parent.mkdir(parents=True, exist_ok=True)
 
             # 保存配置
-            with open(self._config_file, 'w', encoding='utf-8') as f:
+            with open(self._config_file, "w", encoding="utf-8") as f:
                 json.dump(full_config, f, ensure_ascii=False, indent=2)
 
             logger.info(f"已保存 {len(self._poll_settings)} 个频道的投票配置")
@@ -114,21 +114,18 @@ class ChannelPollConfigManager:
         if channel in self._poll_settings:
             config = self._poll_settings[channel]
             return {
-                'enabled': config.get('enabled', None),
-                'send_to_channel': config.get('send_to_channel', False)
+                "enabled": config.get("enabled", None),
+                "send_to_channel": config.get("send_to_channel", False),
             }
 
         # 没有独立配置，返回默认配置
         return {
-            'enabled': None,  # 使用全局配置
-            'send_to_channel': False  # 默认讨论组模式
+            "enabled": None,  # 使用全局配置
+            "send_to_channel": False,  # 默认讨论组模式
         }
 
     def set_config(
-        self,
-        channel: str,
-        enabled: bool | None = None,
-        send_to_channel: bool | None = None
+        self, channel: str, enabled: bool | None = None, send_to_channel: bool | None = None
     ) -> None:
         """设置指定频道的投票配置
 
@@ -150,12 +147,12 @@ class ChannelPollConfigManager:
 
         # 更新配置（只更新提供的参数）
         if enabled is not None:
-            channel_config['enabled'] = enabled
+            channel_config["enabled"] = enabled
             logger.info(f"设置频道 {channel} 的投票启用状态: {enabled}")
 
         if send_to_channel is not None:
-            channel_config['send_to_channel'] = send_to_channel
-            location = '频道' if send_to_channel else '讨论组'
+            channel_config["send_to_channel"] = send_to_channel
+            location = "频道" if send_to_channel else "讨论组"
             logger.info(f"设置频道 {channel} 的投票发送位置: {location}")
 
         # 保存配置
@@ -190,11 +187,7 @@ class ChannelPollConfigManager:
         """
         return self._poll_settings.copy()
 
-    def format_config_text(
-        self,
-        channel: str,
-        global_enabled: bool = True
-    ) -> str:
+    def format_config_text(self, channel: str, global_enabled: bool = True) -> str:
         """格式化频道投票配置为可读文本
 
         Args:
@@ -207,18 +200,20 @@ class ChannelPollConfigManager:
         config = self.get_config(channel)
 
         # 确定实际启用状态
-        enabled = config['enabled']
+        enabled = config["enabled"]
         if enabled is None:
             enabled = global_enabled
-            enabled_text = get_text('poll.status_global').format(
-                status=get_text('poll.status_enabled' if enabled else 'poll.status_disabled')
+            enabled_text = get_text("poll.status_global").format(
+                status=get_text("poll.status_enabled" if enabled else "poll.status_disabled")
             )
         else:
-            enabled_text = get_text('poll.status_enabled' if enabled else 'poll.status_disabled')
+            enabled_text = get_text("poll.status_enabled" if enabled else "poll.status_disabled")
 
         # 确定发送位置
-        send_to_channel = config['send_to_channel']
-        location_text = get_text('poll.location_channel' if send_to_channel else 'poll.location_discussion')
+        send_to_channel = config["send_to_channel"]
+        location_text = get_text(
+            "poll.location_channel" if send_to_channel else "poll.location_discussion"
+        )
 
         return f"{enabled_text} | {location_text}"
 
@@ -247,9 +242,7 @@ def get_channel_poll_config(channel: str) -> ChannelPollConfig:
 
 
 def set_channel_poll_config(
-    channel: str,
-    enabled: bool | None = None,
-    send_to_channel: bool | None = None
+    channel: str, enabled: bool | None = None, send_to_channel: bool | None = None
 ) -> None:
     """设置指定频道的投票配置"""
     get_poll_config_manager().set_config(channel, enabled, send_to_channel)

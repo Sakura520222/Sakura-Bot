@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -17,13 +16,14 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 try:
     import chromadb
     from chromadb.config import Settings
+
     CHROMADB_AVAILABLE = True
 except ImportError:
     CHROMADB_AVAILABLE = False
@@ -52,7 +52,7 @@ class VectorStore:
             # 获取或创建collection
             self.collection = self.client.get_or_create_collection(
                 name="summaries",
-                metadata={"hnsw:space": "cosine"}  # 使用余弦相似度
+                metadata={"hnsw:space": "cosine"},  # 使用余弦相似度
             )
 
             logger.info(f"向量存储初始化成功: {vector_db_path}")
@@ -66,8 +66,7 @@ class VectorStore:
         """检查向量存储是否可用"""
         return self.collection is not None
 
-    def add_summary(self, summary_id: int, text: str,
-                   metadata: Dict[str, Any]) -> bool:
+    def add_summary(self, summary_id: int, text: str, metadata: dict[str, Any]) -> bool:
         """
         添加总结向量到存储
 
@@ -85,6 +84,7 @@ class VectorStore:
 
         try:
             from core.embedding_generator import get_embedding_generator
+
             emb_gen = get_embedding_generator()
 
             if not emb_gen.is_available():
@@ -102,7 +102,7 @@ class VectorStore:
                 ids=[str(summary_id)],
                 embeddings=[embedding],
                 documents=[text],
-                metadatas=[metadata]
+                metadatas=[metadata],
             )
 
             logger.info(f"成功添加向量: summary_id={summary_id}")
@@ -112,10 +112,14 @@ class VectorStore:
             logger.error(f"添加向量失败: {type(e).__name__}: {e}")
             return False
 
-    def search_similar(self, query: str, top_k: int = 20,
-                      filter_metadata: Optional[Dict] = None,
-                      date_after: Optional[str] = None,
-                      date_before: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_similar(
+        self,
+        query: str,
+        top_k: int = 20,
+        filter_metadata: dict | None = None,
+        date_after: str | None = None,
+        date_before: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         语义搜索相似的总结
 
@@ -136,6 +140,7 @@ class VectorStore:
 
         try:
             from core.embedding_generator import get_embedding_generator
+
             emb_gen = get_embedding_generator()
 
             if not emb_gen.is_available():
@@ -162,7 +167,7 @@ class VectorStore:
             query_params = {
                 "query_embeddings": [query_embedding],
                 "n_results": top_k,
-                "include": ["metadatas", "documents", "distances"]
+                "include": ["metadatas", "documents", "distances"],
             }
 
             if len(where_conditions) == 1:
@@ -186,20 +191,22 @@ class VectorStore:
 
             # 格式化结果
             summaries = []
-            if results and results['ids'] and len(results['ids']) > 0:
-                for i in range(len(results['ids'][0])):
-                    summary_id = int(results['ids'][0][i])
-                    text = results['documents'][0][i]
-                    metadata = results['metadatas'][0][i] if results['metadatas'] else {}
-                    distance = results['distances'][0][i] if results['distances'] else 0
+            if results and results["ids"] and len(results["ids"]) > 0:
+                for i in range(len(results["ids"][0])):
+                    summary_id = int(results["ids"][0][i])
+                    text = results["documents"][0][i]
+                    metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+                    distance = results["distances"][0][i] if results["distances"] else 0
 
-                    summaries.append({
-                        'summary_id': summary_id,
-                        'summary_text': text,
-                        'metadata': metadata,
-                        'distance': distance,
-                        'similarity': 1 - distance  # 余弦距离转相似度
-                    })
+                    summaries.append(
+                        {
+                            "summary_id": summary_id,
+                            "summary_text": text,
+                            "metadata": metadata,
+                            "distance": distance,
+                            "similarity": 1 - distance,  # 余弦距离转相似度
+                        }
+                    )
 
             logger.info(f"语义搜索完成: 找到 {len(summaries)} 条结果")
             return summaries
@@ -230,7 +237,7 @@ class VectorStore:
             logger.error(f"删除向量失败: {type(e).__name__}: {e}")
             return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取向量存储统计信息
 
@@ -242,10 +249,7 @@ class VectorStore:
 
         try:
             count = self.collection.count()
-            return {
-                "available": True,
-                "total_vectors": count
-            }
+            return {"available": True, "total_vectors": count}
 
         except Exception as e:
             logger.error(f"获取统计信息失败: {type(e).__name__}: {e}")
@@ -254,6 +258,7 @@ class VectorStore:
 
 # 创建全局向量存储实例
 vector_store = None
+
 
 def get_vector_store():
     """获取全局向量存储实例"""

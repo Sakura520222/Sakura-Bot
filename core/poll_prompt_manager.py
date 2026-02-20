@@ -16,6 +16,7 @@ from core.config import DEFAULT_POLL_PROMPT, POLL_PROMPT_FILE
 
 logger = logging.getLogger(__name__)
 
+
 def load_poll_prompt():
     """从文件中读取投票提示词，如果文件不存在则使用默认提示词
 
@@ -24,7 +25,7 @@ def load_poll_prompt():
     """
     logger.info(f"开始读取投票提示词文件: {POLL_PROMPT_FILE}")
     try:
-        with open(POLL_PROMPT_FILE, "r", encoding="utf-8") as f:
+        with open(POLL_PROMPT_FILE, encoding="utf-8") as f:
             content = f.read().strip()
             logger.info(f"成功读取投票提示词文件，长度: {len(content)}字符")
             return content
@@ -34,9 +35,12 @@ def load_poll_prompt():
         save_poll_prompt(DEFAULT_POLL_PROMPT)
         return DEFAULT_POLL_PROMPT
     except Exception as e:
-        logger.error(f"读取投票提示词文件 {POLL_PROMPT_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(
+            f"读取投票提示词文件 {POLL_PROMPT_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True
+        )
         # 如果读取失败，使用默认提示词
         return DEFAULT_POLL_PROMPT
+
 
 def save_poll_prompt(prompt):
     """将投票提示词保存到文件中
@@ -50,4 +54,7 @@ def save_poll_prompt(prompt):
             f.write(prompt)
         logger.info(f"成功保存投票提示词到文件，长度: {len(prompt)}字符")
     except Exception as e:
-        logger.error(f"保存投票提示词到文件 {POLL_PROMPT_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(
+            f"保存投票提示词到文件 {POLL_PROMPT_FILE} 时出错: {type(e).__name__}: {e}",
+            exc_info=True,
+        )

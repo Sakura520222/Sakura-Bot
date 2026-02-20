@@ -101,13 +101,16 @@ def cleanup_handler(signum, frame):
     stop_qa_bot()
     sys.exit(0)
 
+
 # 注册清理处理器
 signal.signal(signal.SIGTERM, cleanup_handler)
 signal.signal(signal.SIGINT, cleanup_handler)
 
+
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
     from core.i18n import get_text
+
     try:
         # 构建帮助信息（使用 i18n，支持多语言）
         help_text = f"""🤖 **Sakura-Bot v{__version__} 已启动**
@@ -120,36 +123,36 @@ async def send_startup_message(client):
 • 定时任务调度
 
 **可用命令**
-{get_text('cmd.summary')}
-{get_text('cmd.showprompt')}
-{get_text('cmd.setprompt')}
-{get_text('cmd.showpollprompt')}
-{get_text('cmd.setpollprompt')}
-{get_text('cmd.showaicfg')}
-{get_text('cmd.setaicfg')}
-{get_text('cmd.showloglevel')}
-{get_text('cmd.setloglevel')}
-{get_text('cmd.restart')}
-{get_text('cmd.shutdown')}
-{get_text('cmd.pause')}
-{get_text('cmd.resume')}
-{get_text('cmd.showchannels')}
-{get_text('cmd.addchannel')}
-{get_text('cmd.deletechannel')}
-{get_text('cmd.clearsummarytime')}
-{get_text('cmd.setsendtosource')}
-{get_text('cmd.showchannelschedule')}
-{get_text('cmd.setchannelschedule')}
-{get_text('cmd.deletechannelschedule')}
-{get_text('cmd.channelpoll')}
-{get_text('cmd.setchannelpoll')}
-{get_text('cmd.deletechannelpoll')}
-{get_text('cmd.clearcache')}
-{get_text('cmd.history')}
-{get_text('cmd.export')}
-{get_text('cmd.stats')}
-{get_text('cmd.language')}
-{get_text('cmd.changelog')}
+{get_text("cmd.summary")}
+{get_text("cmd.showprompt")}
+{get_text("cmd.setprompt")}
+{get_text("cmd.showpollprompt")}
+{get_text("cmd.setpollprompt")}
+{get_text("cmd.showaicfg")}
+{get_text("cmd.setaicfg")}
+{get_text("cmd.showloglevel")}
+{get_text("cmd.setloglevel")}
+{get_text("cmd.restart")}
+{get_text("cmd.shutdown")}
+{get_text("cmd.pause")}
+{get_text("cmd.resume")}
+{get_text("cmd.showchannels")}
+{get_text("cmd.addchannel")}
+{get_text("cmd.deletechannel")}
+{get_text("cmd.clearsummarytime")}
+{get_text("cmd.setsendtosource")}
+{get_text("cmd.showchannelschedule")}
+{get_text("cmd.setchannelschedule")}
+{get_text("cmd.deletechannelschedule")}
+{get_text("cmd.channelpoll")}
+{get_text("cmd.setchannelpoll")}
+{get_text("cmd.deletechannelpoll")}
+{get_text("cmd.clearcache")}
+{get_text("cmd.history")}
+{get_text("cmd.export")}
+{get_text("cmd.stats")}
+{get_text("cmd.language")}
+{get_text("cmd.changelog")}
 
 **版本信息**
 当前版本: v{__version__}
@@ -159,17 +162,13 @@ async def send_startup_message(client):
         # 向所有管理员发送消息
         for admin_id in ADMIN_LIST:
             try:
-                await client.send_message(
-                    admin_id,
-                    help_text,
-                    parse_mode='md',
-                    link_preview=False
-                )
+                await client.send_message(admin_id, help_text, parse_mode="md", link_preview=False)
                 logger.info(f"已向管理员 {admin_id} 发送启动消息")
             except Exception as e:
                 logger.error(f"向管理员 {admin_id} 发送启动消息失败: {type(e).__name__}: {e}")
     except Exception as e:
         logger.error(f"发送启动消息时出错: {type(e).__name__}: {e}", exc_info=True)
+
 
 async def main():
     logger.info(f"开始初始化机器人服务 v{__version__}...")
@@ -195,39 +194,47 @@ async def main():
             # 创建定时任务
             scheduler.add_job(
                 main_job,
-                'cron',
+                "cron",
                 **trigger_params,  # 解包触发器参数
                 args=[channel],  # 传入频道参数
                 id=f"summary_job_{channel}",  # 唯一ID，便于管理
-                replace_existing=True
+                replace_existing=True,
             )
 
             # 格式化输出信息
-            frequency = schedule.get('frequency', 'weekly')
-            if frequency == 'daily':
-                frequency_text = '每天'
-            elif frequency == 'weekly':
+            frequency = schedule.get("frequency", "weekly")
+            if frequency == "daily":
+                frequency_text = "每天"
+            elif frequency == "weekly":
                 day_map = {
-                    'mon': '周一', 'tue': '周二', 'wed': '周三', 'thu': '周四',
-                    'fri': '周五', 'sat': '周六', 'sun': '周日'
+                    "mon": "周一",
+                    "tue": "周二",
+                    "wed": "周三",
+                    "thu": "周四",
+                    "fri": "周五",
+                    "sat": "周六",
+                    "sun": "周日",
                 }
-                days_cn = '、'.join([day_map.get(d, d) for d in schedule.get('days', [])])
-                frequency_text = f'每周{days_cn}'
+                days_cn = "、".join([day_map.get(d, d) for d in schedule.get("days", [])])
+                frequency_text = f"每周{days_cn}"
             else:
-                frequency_text = '未知'
+                frequency_text = "未知"
 
-            logger.info(f"频道 {channel} 的定时任务已配置：{frequency_text} {schedule['hour']:02d}:{schedule['minute']:02d}")
+            logger.info(
+                f"频道 {channel} 的定时任务已配置：{frequency_text} {schedule['hour']:02d}:{schedule['minute']:02d}"
+            )
 
         logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
 
         # 添加定期清理任务
         from core.scheduler import cleanup_old_poll_regenerations
+
         scheduler.add_job(
             cleanup_old_poll_regenerations,
-            'cron',
+            "cron",
             hour=3,
             minute=0,
-            id="cleanup_poll_regenerations"
+            id="cleanup_poll_regenerations",
         )
         logger.info("投票重新生成数据清理任务已配置：每天凌晨3点执行")
 
@@ -243,9 +250,9 @@ async def main():
 
         scheduler.add_job(
             check_requests_job,
-            'interval',
+            "interval",
             seconds=30,  # 每30秒检查一次
-            id="check_requests"
+            id="check_requests",
         )
         logger.info("跨Bot请求检查任务已配置：每30秒执行一次")
 
@@ -263,13 +270,13 @@ async def main():
 
                     # 通知管理员
                     for admin_id in ADMIN_LIST:
-                        if admin_id != 'me':
+                        if admin_id != "me":
                             try:
                                 await client.send_message(
                                     admin_id,
                                     f"{get_text('qabot.auto_restart')}\n\n{message}\n\n{get_text('qabot.attempting_recovery')}",
-                                    parse_mode='markdown',
-                                    link_preview=False
+                                    parse_mode="markdown",
+                                    link_preview=False,
                                 )
                             except Exception as e:
                                 logger.error(f"通知管理员失败: {e}")
@@ -277,18 +284,18 @@ async def main():
                     # 执行自动重启
                     result = restart_qa_bot()
 
-                    if result['success']:
+                    if result["success"]:
                         logger.info(f"问答Bot自动重启成功: {result['message']}")
 
                         # 通知管理员恢复成功
                         for admin_id in ADMIN_LIST:
-                            if admin_id != 'me':
+                            if admin_id != "me":
                                 try:
                                     await client.send_message(
                                         admin_id,
                                         f"{get_text('qabot.recovered', pid=result['pid'])}",
-                                        parse_mode='markdown',
-                                        link_preview=False
+                                        parse_mode="markdown",
+                                        link_preview=False,
                                     )
                                 except Exception as e:
                                     logger.error(f"通知管理员失败: {e}")
@@ -297,13 +304,13 @@ async def main():
 
                         # 通知管理员恢复失败
                         for admin_id in ADMIN_LIST:
-                            if admin_id != 'me':
+                            if admin_id != "me":
                                 try:
                                     await client.send_message(
                                         admin_id,
                                         f"{get_text('qabot.recovery_failed', message=result['message'])}",
-                                        parse_mode='markdown',
-                                        link_preview=False
+                                        parse_mode="markdown",
+                                        link_preview=False,
                                     )
                                 except Exception as e:
                                     logger.error(f"通知管理员失败: {e}")
@@ -313,14 +320,14 @@ async def main():
 
         scheduler.add_job(
             qa_bot_health_check_job,
-            'interval',
+            "interval",
             seconds=60,  # 每分钟检查一次
-            id="qa_bot_health_check"
+            id="qa_bot_health_check",
         )
         logger.info("问答Bot健康检查任务已配置：每60秒执行一次")
 
         # 确保 sessions 目录存在
-        sessions_dir = 'data/sessions'
+        sessions_dir = "data/sessions"
         os.makedirs(sessions_dir, exist_ok=True)
         logger.debug(f"会话目录已准备: {sessions_dir}")
 
@@ -332,90 +339,145 @@ async def main():
         api_hash = get_api_hash()
         bot_token = get_bot_token()
 
-        client = TelegramClient('data/sessions/bot_session', int(api_id), api_hash)
+        client = TelegramClient("data/sessions/bot_session", int(api_id), api_hash)
 
         # 设置活动的客户端实例，供其他模块使用
         from core.telegram_client import set_active_client
+
         set_active_client(client)
 
         # 添加命令处理，支持中英文命令
         logger.debug("开始添加命令处理器...")
 
         # 1. 基础命令
-        client.add_event_handler(handle_start, NewMessage(pattern='/start|/开始'))
-        client.add_event_handler(handle_help, NewMessage(pattern='/help|/帮助'))
+        client.add_event_handler(handle_start, NewMessage(pattern="/start|/开始"))
+        client.add_event_handler(handle_help, NewMessage(pattern="/help|/帮助"))
 
         # 2. 核心功能命令
-        client.add_event_handler(handle_manual_summary, NewMessage(pattern='/立即总结|/summary'))
+        client.add_event_handler(handle_manual_summary, NewMessage(pattern="/立即总结|/summary"))
 
         # 3. AI 配置命令
-        client.add_event_handler(handle_show_prompt, NewMessage(pattern='/showprompt|/show_prompt|/查看提示词'))
-        client.add_event_handler(handle_set_prompt, NewMessage(pattern='/setprompt|/set_prompt|/设置提示词'))
-        client.add_event_handler(handle_show_poll_prompt, NewMessage(pattern='/showpollprompt|/show_poll_prompt|/查看投票提示词'))
-        client.add_event_handler(handle_set_poll_prompt, NewMessage(pattern='/setpollprompt|/set_poll_prompt|/设置投票提示词'))
-        client.add_event_handler(handle_show_ai_config, NewMessage(pattern='/showaicfg|/show_aicfg|/查看AI配置'))
-        client.add_event_handler(handle_set_ai_config, NewMessage(pattern='/setaicfg|/set_aicfg|/设置AI配置'))
+        client.add_event_handler(
+            handle_show_prompt, NewMessage(pattern="/showprompt|/show_prompt|/查看提示词")
+        )
+        client.add_event_handler(
+            handle_set_prompt, NewMessage(pattern="/setprompt|/set_prompt|/设置提示词")
+        )
+        client.add_event_handler(
+            handle_show_poll_prompt,
+            NewMessage(pattern="/showpollprompt|/show_poll_prompt|/查看投票提示词"),
+        )
+        client.add_event_handler(
+            handle_set_poll_prompt,
+            NewMessage(pattern="/setpollprompt|/set_poll_prompt|/设置投票提示词"),
+        )
+        client.add_event_handler(
+            handle_show_ai_config, NewMessage(pattern="/showaicfg|/show_aicfg|/查看AI配置")
+        )
+        client.add_event_handler(
+            handle_set_ai_config, NewMessage(pattern="/setaicfg|/set_aicfg|/设置AI配置")
+        )
 
         # 4. 频道管理命令
-        client.add_event_handler(handle_show_channels, NewMessage(pattern='/showchannels|/show_channels|/查看频道列表'))
-        client.add_event_handler(handle_add_channel, NewMessage(pattern='/addchannel|/add_channel|/添加频道'))
-        client.add_event_handler(handle_delete_channel, NewMessage(pattern='/deletechannel|/delete_channel|/删除频道'))
+        client.add_event_handler(
+            handle_show_channels, NewMessage(pattern="/showchannels|/show_channels|/查看频道列表")
+        )
+        client.add_event_handler(
+            handle_add_channel, NewMessage(pattern="/addchannel|/add_channel|/添加频道")
+        )
+        client.add_event_handler(
+            handle_delete_channel, NewMessage(pattern="/deletechannel|/delete_channel|/删除频道")
+        )
 
         # 5. 自动化配置命令
-        client.add_event_handler(handle_show_channel_schedule, NewMessage(pattern='/showchannelschedule|/show_channel_schedule|/查看频道时间配置'))
-        client.add_event_handler(handle_set_channel_schedule, NewMessage(pattern='/setchannelschedule|/set_channel_schedule|/设置频道时间配置'))
-        client.add_event_handler(handle_delete_channel_schedule, NewMessage(pattern='/deletechannelschedule|/delete_channel_schedule|/删除频道时间配置'))
-        client.add_event_handler(handle_clear_summary_time, NewMessage(pattern='/clearsummarytime|/clear_summary_time|/清除总结时间'))
-        client.add_event_handler(handle_set_send_to_source, NewMessage(pattern='/setsendtosource|/set_send_to_source|/设置报告发送回源频道'))
+        client.add_event_handler(
+            handle_show_channel_schedule,
+            NewMessage(pattern="/showchannelschedule|/show_channel_schedule|/查看频道时间配置"),
+        )
+        client.add_event_handler(
+            handle_set_channel_schedule,
+            NewMessage(pattern="/setchannelschedule|/set_channel_schedule|/设置频道时间配置"),
+        )
+        client.add_event_handler(
+            handle_delete_channel_schedule,
+            NewMessage(pattern="/deletechannelschedule|/delete_channel_schedule|/删除频道时间配置"),
+        )
+        client.add_event_handler(
+            handle_clear_summary_time,
+            NewMessage(pattern="/clearsummarytime|/clear_summary_time|/清除总结时间"),
+        )
+        client.add_event_handler(
+            handle_set_send_to_source,
+            NewMessage(pattern="/setsendtosource|/set_send_to_source|/设置报告发送回源频道"),
+        )
 
         # 6. 投票配置命令
-        client.add_event_handler(handle_show_channel_poll, NewMessage(pattern='/channelpoll|/channel_poll|/查看频道投票配置'))
-        client.add_event_handler(handle_set_channel_poll, NewMessage(pattern='/setchannelpoll|/set_channel_poll|/设置频道投票配置'))
-        client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
+        client.add_event_handler(
+            handle_show_channel_poll,
+            NewMessage(pattern="/channelpoll|/channel_poll|/查看频道投票配置"),
+        )
+        client.add_event_handler(
+            handle_set_channel_poll,
+            NewMessage(pattern="/setchannelpoll|/set_channel_poll|/设置频道投票配置"),
+        )
+        client.add_event_handler(
+            handle_delete_channel_poll,
+            NewMessage(pattern="/deletechannelpoll|/delete_channel_poll|/删除频道投票配置"),
+        )
 
         # 7. 系统控制命令
-        client.add_event_handler(handle_pause, NewMessage(pattern='/pause|/暂停'))
-        client.add_event_handler(handle_resume, NewMessage(pattern='/resume|/恢复'))
-        client.add_event_handler(handle_restart, NewMessage(pattern='/restart|/重启'))
-        client.add_event_handler(handle_shutdown, NewMessage(pattern='/shutdown|/关机'))
+        client.add_event_handler(handle_pause, NewMessage(pattern="/pause|/暂停"))
+        client.add_event_handler(handle_resume, NewMessage(pattern="/resume|/恢复"))
+        client.add_event_handler(handle_restart, NewMessage(pattern="/restart|/重启"))
+        client.add_event_handler(handle_shutdown, NewMessage(pattern="/shutdown|/关机"))
 
         # 8. 日志与调试命令
-        client.add_event_handler(handle_show_log_level, NewMessage(pattern='/showloglevel|/show_log_level|/查看日志级别'))
-        client.add_event_handler(handle_set_log_level, NewMessage(pattern='/setloglevel|/set_log_level|/设置日志级别'))
-        client.add_event_handler(handle_clear_cache, NewMessage(pattern='/clearcache|/clear_cache|/清除缓存'))
-        client.add_event_handler(handle_changelog, NewMessage(pattern='/changelog|/更新日志'))
+        client.add_event_handler(
+            handle_show_log_level, NewMessage(pattern="/showloglevel|/show_log_level|/查看日志级别")
+        )
+        client.add_event_handler(
+            handle_set_log_level, NewMessage(pattern="/setloglevel|/set_log_level|/设置日志级别")
+        )
+        client.add_event_handler(
+            handle_clear_cache, NewMessage(pattern="/clearcache|/clear_cache|/清除缓存")
+        )
+        client.add_event_handler(handle_changelog, NewMessage(pattern="/changelog|/更新日志"))
 
         # 9. 历史记录命令
-        client.add_event_handler(handle_history, NewMessage(pattern='/history|/历史'))
-        client.add_event_handler(handle_export, NewMessage(pattern='/export|/导出'))
-        client.add_event_handler(handle_stats, NewMessage(pattern='/stats|/统计'))
+        client.add_event_handler(handle_history, NewMessage(pattern="/history|/历史"))
+        client.add_event_handler(handle_export, NewMessage(pattern="/export|/导出"))
+        client.add_event_handler(handle_stats, NewMessage(pattern="/stats|/统计"))
 
         # 10. 语言设置命令
-        client.add_event_handler(handle_language, NewMessage(pattern='/language|/语言'))
+        client.add_event_handler(handle_language, NewMessage(pattern="/language|/语言"))
 
         # 11. 问答Bot控制命令
-        client.add_event_handler(handle_qa_status, NewMessage(pattern='/qa_status|/qa_状态'))
-        client.add_event_handler(handle_qa_start, NewMessage(pattern='/qa_start|/qa_启动'))
-        client.add_event_handler(handle_qa_stop, NewMessage(pattern='/qa_stop|/qa_停止'))
-        client.add_event_handler(handle_qa_restart, NewMessage(pattern='/qa_restart|/qa_重启'))
-        client.add_event_handler(handle_qa_stats, NewMessage(pattern='/qa_stats|/qa_统计'))
+        client.add_event_handler(handle_qa_status, NewMessage(pattern="/qa_status|/qa_状态"))
+        client.add_event_handler(handle_qa_start, NewMessage(pattern="/qa_start|/qa_启动"))
+        client.add_event_handler(handle_qa_stop, NewMessage(pattern="/qa_stop|/qa_停止"))
+        client.add_event_handler(handle_qa_restart, NewMessage(pattern="/qa_restart|/qa_重启"))
+        client.add_event_handler(handle_qa_stats, NewMessage(pattern="/qa_stats|/qa_统计"))
         # 只处理非命令消息作为提示词或AI配置输入
-        client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
-        client.add_event_handler(handle_poll_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
+        client.add_event_handler(
+            handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith("/"))
+        )
+        client.add_event_handler(
+            handle_poll_prompt_input, NewMessage(func=lambda e: not e.text.startswith("/"))
+        )
         client.add_event_handler(handle_ai_config_input, NewMessage(func=lambda e: True))
 
         # 添加投票重新生成回调查询处理器
         logger.debug("添加投票重新生成回调处理器...")
         client.add_event_handler(
             handle_poll_regeneration_callback,
-            CallbackQuery(func=lambda e: e.data.startswith(b'regen_poll_'))
+            CallbackQuery(func=lambda e: e.data.startswith(b"regen_poll_")),
         )
         logger.info("投票重新生成回调处理器已注册")
 
         # 添加投票重新生成请求回调查询处理器
         client.add_event_handler(
             handle_vote_regen_request_callback,
-            CallbackQuery(func=lambda e: e.data.startswith(b'request_regen_'))
+            CallbackQuery(func=lambda e: e.data.startswith(b"request_regen_")),
         )
         logger.info("投票重新生成请求回调处理器已注册")
 
@@ -431,10 +493,15 @@ async def main():
 
         client.add_event_handler(
             handle_request_callback,
-            CallbackQuery(func=lambda e: e.data and (
-                e.data.startswith(b'confirm_summary_') or
-                e.data.startswith(b'reject_summary_')
-            ))
+            CallbackQuery(
+                func=lambda e: (
+                    e.data
+                    and (
+                        e.data.startswith(b"confirm_summary_")
+                        or e.data.startswith(b"reject_summary_")
+                    )
+                )
+            ),
         )
         logger.info("请求处理回调处理器已注册")
 
@@ -485,7 +552,6 @@ async def main():
             BotCommand(command="setloglevel", description="设置日志级别"),
             BotCommand(command="clearcache", description="清除讨论组ID缓存"),
             BotCommand(command="changelog", description="查看更新日志"),
-
             # 历史记录命令
             BotCommand(command="history", description="查看历史总结"),
             BotCommand(command="export", description="导出历史记录"),
@@ -497,14 +563,12 @@ async def main():
             BotCommand(command="qa_start", description="启动问答Bot"),
             BotCommand(command="qa_stop", description="停止问答Bot"),
             BotCommand(command="qa_restart", description="重启问答Bot"),
-            BotCommand(command="qa_stats", description="查看问答Bot详细统计")
+            BotCommand(command="qa_stats", description="查看问答Bot详细统计"),
         ]
 
-        await client(SetBotCommandsRequest(
-            scope=BotCommandScopeDefault(),
-            lang_code="zh",
-            commands=commands
-        ))
+        await client(
+            SetBotCommandsRequest(scope=BotCommandScopeDefault(), lang_code="zh", commands=commands)
+        )
         logger.info("机器人命令注册完成")
 
         logger.info("定时监控已启动...")
@@ -517,6 +581,7 @@ async def main():
 
         # 存储调度器实例到config模块，供其他模块访问
         from core.config import set_scheduler_instance
+
         set_scheduler_instance(scheduler)
         logger.info("调度器实例已存储到config模块")
 
@@ -528,7 +593,7 @@ async def main():
         # 检查是否是重启后的首次运行
         if os.path.exists(RESTART_FLAG_FILE):
             try:
-                with open(RESTART_FLAG_FILE, 'r') as f:
+                with open(RESTART_FLAG_FILE) as f:
                     content = f.read().strip()
 
                 # 尝试解析为用户ID
@@ -536,7 +601,9 @@ async def main():
                     restart_user_id = int(content)
                     # 发送重启成功消息给特定用户
                     logger.info(f"检测到重启标记，向用户 {restart_user_id} 发送重启成功消息")
-                    await client.send_message(restart_user_id, "机器人已成功重启！", link_preview=False)
+                    await client.send_message(
+                        restart_user_id, "机器人已成功重启！", link_preview=False
+                    )
                 except ValueError:
                     # 如果不是整数，忽略
                     logger.info(f"检测到重启标记，但内容不是有效的用户ID: {content}")
@@ -551,7 +618,7 @@ async def main():
         SHUTDOWN_FLAG_FILE = ".shutdown_flag"
         if os.path.exists(SHUTDOWN_FLAG_FILE):
             try:
-                with open(SHUTDOWN_FLAG_FILE, 'r') as f:
+                with open(SHUTDOWN_FLAG_FILE) as f:
                     shutdown_user = f.read().strip()
 
                 logger.info(f"检测到关机标记，操作者: {shutdown_user}")
@@ -560,9 +627,7 @@ async def main():
                 for admin_id in ADMIN_LIST:
                     try:
                         await client.send_message(
-                            admin_id,
-                            "🤖 机器人已执行关机命令，正在停止运行...",
-                            link_preview=False
+                            admin_id, "🤖 机器人已执行关机命令，正在停止运行...", link_preview=False
                         )
                         logger.info(f"已向管理员 {admin_id} 发送关机通知")
                     except Exception as e:
@@ -574,6 +639,7 @@ async def main():
 
                 # 等待消息发送完成
                 import time
+
                 time.sleep(2)
 
                 # 执行关机
@@ -595,6 +661,7 @@ async def main():
     except Exception as e:
         logger.critical(f"机器人服务初始化或运行失败: {type(e).__name__}: {e}", exc_info=True)
 
+
 if __name__ == "__main__":
     logger.info(f"===== Sakura-Bot v{__version__} 启动 ======")
 
@@ -602,7 +669,9 @@ if __name__ == "__main__":
     is_valid, missing = validate_required_settings()
 
     if not is_valid:
-        logger.error(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
+        logger.error(
+            f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}"
+        )
         print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing)}")
     else:
         logger.info("所有必要的 API 凭证已配置完成")

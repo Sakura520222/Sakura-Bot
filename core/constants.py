@@ -39,15 +39,15 @@ CLEANUP_DAYS_DEFAULT = 30
 
 # ==================== 时间配置常量 ====================
 # 默认自动总结时间
-DEFAULT_SUMMARY_DAY = 'mon'  # 星期几：mon, tue, wed, thu, fri, sat, sun
+DEFAULT_SUMMARY_DAY = "mon"  # 星期几：mon, tue, wed, thu, fri, sat, sun
 DEFAULT_SUMMARY_HOUR = 9  # 小时：0-23
 DEFAULT_SUMMARY_MINUTE = 0  # 分钟：0-59
 
 # 有效的星期几
-VALID_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+VALID_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 # 有效的频率类型
-VALID_FREQUENCIES = ['daily', 'weekly']
+VALID_FREQUENCIES = ["daily", "weekly"]
 
 # ==================== 机器人状态常量 ====================
 BOT_STATE_RUNNING = "running"
@@ -58,11 +58,11 @@ VALID_BOT_STATES = [BOT_STATE_RUNNING, BOT_STATE_PAUSED, BOT_STATE_SHUTTING_DOWN
 # ==================== 日志配置常量 ====================
 DEFAULT_LOG_LEVEL = "DEBUG"
 LOG_LEVEL_MAP = {
-    'DEBUG': 'DEBUG',
-    'INFO': 'INFO',
-    'WARNING': 'WARNING',
-    'ERROR': 'ERROR',
-    'CRITICAL': 'CRITICAL'
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "WARNING": "WARNING",
+    "ERROR": "ERROR",
+    "CRITICAL": "CRITICAL",
 }
 
 # ==================== 默认提示词 ====================
@@ -93,8 +93,8 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 # get_text('poll.default_options.0') - get_text('poll.default_options.3')
 
 # ==================== AI 配置默认值 ====================
-DEFAULT_LLM_BASE_URL = 'https://api.deepseek.com'
-DEFAULT_LLM_MODEL = 'deepseek-chat'
+DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+DEFAULT_LLM_MODEL = "deepseek-chat"
 
 # ==================== 重试配置 ====================
 RETRY_MAX_ATTEMPTS = 3

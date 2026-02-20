@@ -3,21 +3,19 @@
 集中管理所有用户交互状态，避免循环导入
 """
 
-from typing import Dict, Optional, Set
-
 
 class UserContext:
     """用户上下文管理器，用于跟踪用户的交互状态"""
 
     def __init__(self):
         # 正在设置提示词的用户
-        self._setting_prompt_users: Set[int] = set()
+        self._setting_prompt_users: set[int] = set()
         # 正在设置投票提示词的用户
-        self._setting_poll_prompt_users: Set[int] = set()
+        self._setting_poll_prompt_users: set[int] = set()
         # 正在设置AI配置的用户
-        self._setting_ai_config_users: Set[int] = set()
+        self._setting_ai_config_users: set[int] = set()
         # 配置中的AI参数
-        self._current_ai_config: Dict[str, Optional[str]] = {}
+        self._current_ai_config: dict[str, str | None] = {}
 
     def is_waiting_for_prompt(self, user_id: int) -> bool:
         """检查用户是否在等待提示词输入"""
@@ -51,11 +49,7 @@ class UserContext:
         """开始设置AI配置"""
         self._setting_ai_config_users.add(user_id)
         # 初始化当前配置
-        self._current_ai_config[user_id] = {
-            'api_key': None,
-            'base_url': None,
-            'model': None
-        }
+        self._current_ai_config[user_id] = {"api_key": None, "base_url": None, "model": None}
 
     def end_setting_ai_config(self, user_id: int):
         """结束设置AI配置"""
@@ -64,22 +58,16 @@ class UserContext:
         if user_id in self._current_ai_config:
             del self._current_ai_config[user_id]
 
-    def get_ai_config(self, user_id: int) -> Dict[str, Optional[str]]:
+    def get_ai_config(self, user_id: int) -> dict[str, str | None]:
         """获取用户的AI配置"""
-        return self._current_ai_config.get(user_id, {
-            'api_key': None,
-            'base_url': None,
-            'model': None
-        })
+        return self._current_ai_config.get(
+            user_id, {"api_key": None, "base_url": None, "model": None}
+        )
 
     def update_ai_config(self, user_id: int, key: str, value: str):
         """更新用户的AI配置"""
         if user_id not in self._current_ai_config:
-            self._current_ai_config[user_id] = {
-                'api_key': None,
-                'base_url': None,
-                'model': None
-            }
+            self._current_ai_config[user_id] = {"api_key": None, "base_url": None, "model": None}
         self._current_ai_config[user_id][key] = value
 
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -18,7 +17,6 @@ Embedding生成器 - 将文本转换为向量
 
 import logging
 import os
-from typing import List, Optional
 
 from openai import OpenAI
 
@@ -40,10 +38,7 @@ class EmbeddingGenerator:
             self.client = None
         else:
             try:
-                self.client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base
-                )
+                self.client = OpenAI(api_key=self.api_key, base_url=self.api_base)
                 logger.info(f"Embedding生成器初始化成功: {self.model}")
             except Exception as e:
                 logger.error(f"Embedding生成器初始化失败: {type(e).__name__}: {e}")
@@ -53,7 +48,7 @@ class EmbeddingGenerator:
         """检查Embedding服务是否可用"""
         return self.client is not None
 
-    def generate(self, text: str) -> Optional[List[float]]:
+    def generate(self, text: str) -> list[float] | None:
         """
         生成单个文本的embedding
 
@@ -68,10 +63,7 @@ class EmbeddingGenerator:
             return None
 
         try:
-            response = self.client.embeddings.create(
-                model=self.model,
-                input=text
-            )
+            response = self.client.embeddings.create(model=self.model, input=text)
 
             embedding = response.data[0].embedding
             logger.debug(f"成功生成embedding，维度: {len(embedding)}")
@@ -81,7 +73,7 @@ class EmbeddingGenerator:
             logger.error(f"生成embedding失败: {type(e).__name__}: {e}")
             return None
 
-    def batch_generate(self, texts: List[str]) -> List[Optional[List[float]]]:
+    def batch_generate(self, texts: list[str]) -> list[list[float] | None]:
         """
         批量生成embedding
 
@@ -96,10 +88,7 @@ class EmbeddingGenerator:
             return [None] * len(texts)
 
         try:
-            response = self.client.embeddings.create(
-                model=self.model,
-                input=texts
-            )
+            response = self.client.embeddings.create(model=self.model, input=texts)
 
             embeddings = [item.embedding for item in response.data]
             logger.info(f"成功批量生成{len(embeddings)}个embedding")
@@ -112,6 +101,7 @@ class EmbeddingGenerator:
 
 # 创建全局Embedding生成器实例
 embedding_generator = None
+
 
 def get_embedding_generator():
     """获取全局Embedding生成器实例"""

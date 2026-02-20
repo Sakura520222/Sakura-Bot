@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -18,8 +17,8 @@
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from .ai_client import client_llm
 from .config import get_qa_bot_persona
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # 判断查询是否含有代词/指代词，需要进行查询改写
 PRONOUN_PATTERNS = re.compile(
-    r'它|他|她|这个|那个|这些|那些|此|彼|前者|后者|上面|上述|刚才|之前|继续|还有|那么|那|这'
+    r"它|他|她|这个|那个|这些|那些|此|彼|前者|后者|上面|上述|刚才|之前|继续|还有|那么|那|这"
 )
 
 # 系统提示词模板（使用占位符，人格描述会动态注入）
@@ -106,10 +105,7 @@ class QAEngineV3:
 
             # 2. 保存用户消息
             self.conversation_mgr.save_message(
-                user_id=user_id,
-                session_id=session_id,
-                role='user',
-                content=query
+                user_id=user_id, session_id=session_id, role="user", content=query
             )
 
             # 3. 解析查询意图
@@ -124,14 +120,13 @@ class QAEngineV3:
             elif intent == "stats":
                 answer = await self._handle_stats_query(parsed)
             else:
-                answer = await self._handle_content_query_v3(parsed, user_id, session_id, is_new_session)
+                answer = await self._handle_content_query_v3(
+                    parsed, user_id, session_id, is_new_session
+                )
 
             # 5. 保存助手回复
             self.conversation_mgr.save_message(
-                user_id=user_id,
-                session_id=session_id,
-                role='assistant',
-                content=answer
+                user_id=user_id, session_id=session_id, role="assistant", content=answer
             )
 
             return answer
@@ -143,6 +138,7 @@ class QAEngineV3:
     async def _handle_status_query(self) -> str:
         """处理状态查询"""
         from .quota_manager import get_quota_manager
+
         quota_mgr = get_quota_manager()
         status = quota_mgr.get_system_status()
 
@@ -155,30 +151,28 @@ class QAEngineV3:
 
         return f"""📊 系统状态
 
-• 每日总限额: {status['daily_limit']} 次
-• 今日剩余: {status['remaining']} 次{vector_info}
+• 每日总限额: {status["daily_limit"]} 次
+• 今日剩余: {status["remaining"]} 次{vector_info}
 
 💡 每日00:00自动重置"""
 
-    async def _handle_stats_query(self, parsed: Dict[str, Any]) -> str:
+    async def _handle_stats_query(self, parsed: dict[str, Any]) -> str:
         """处理统计查询"""
         stats = self.db.get_statistics()
 
         return f"""📈 数据统计
 
-• 总总结数: {stats['total_count']} 条
-• 总消息数: {stats['total_messages']:,} 条
-• 平均消息数: {stats['avg_messages']} 条/总结
-• 本周总结: {stats['week_count']} 条
-• 本月总结: {stats['month_count']} 条
+• 总总结数: {stats["total_count"]} 条
+• 总消息数: {stats["total_messages"]:,} 条
+• 平均消息数: {stats["avg_messages"]} 条/总结
+• 本周总结: {stats["week_count"]} 条
+• 本月总结: {stats["month_count"]} 条
 
-📊 类型分布:""" + "\n".join(
-            f"  • {t}: {c} 条" for t, c in stats.get('type_stats', {}).items()
-        )
+📊 类型分布:""" + "\n".join(f"  • {t}: {c} 条" for t, c in stats.get("type_stats", {}).items())
 
-    async def _handle_content_query_v3(self, parsed: Dict[str, Any],
-                                       user_id: int, session_id: str,
-                                       is_new_session: bool = False) -> str:
+    async def _handle_content_query_v3(
+        self, parsed: dict[str, Any], user_id: int, session_id: str, is_new_session: bool = False
+    ) -> str:
         """
         处理内容查询（v3.1.0）
 
@@ -196,16 +190,20 @@ class QAEngineV3:
             time_range = parsed.get("time_range")  # 可能为 None
 
             # 获取对话历史
-            conversation_history = self.conversation_mgr.get_conversation_history(user_id, session_id)
+            conversation_history = self.conversation_mgr.get_conversation_history(
+                user_id, session_id
+            )
             logger.debug(f"用户 {user_id} 的对话历史: {len(conversation_history)} 条")
 
             # ── 步骤0: 查询改写（多轮对话 + 含代词时） ──────────────────────────
             search_query = query  # 用于检索的查询（可能被改写）
             query_rewritten = False
 
-            if (not is_new_session
-                    and len(conversation_history) >= 3  # 至少有1轮历史
-                    and PRONOUN_PATTERNS.search(query)):
+            if (
+                not is_new_session
+                and len(conversation_history) >= 3  # 至少有1轮历史
+                and PRONOUN_PATTERNS.search(query)
+            ):
                 try:
                     search_query = await self._rewrite_query(query, conversation_history)
                     if search_query != query:
@@ -216,9 +214,9 @@ class QAEngineV3:
                     search_query = query
 
             # ── 步骤1: 计算时间过滤范围 ─────────────────────────────────────────
-            date_after: Optional[str] = None
+            date_after: str | None = None
             if time_range is not None:
-                cutoff = datetime.now(timezone.utc) - timedelta(days=time_range)
+                cutoff = datetime.now(UTC) - timedelta(days=time_range)
                 date_after = cutoff.isoformat()
                 logger.info(f"时间过滤: date_after={date_after[:10]}")
 
@@ -227,9 +225,7 @@ class QAEngineV3:
             if self.vector_store.is_available():
                 try:
                     semantic_results = self.vector_store.search_similar(
-                        query=search_query,
-                        top_k=20,
-                        date_after=date_after
+                        query=search_query, top_k=20, date_after=date_after
                     )
                     logger.info(f"语义检索: 找到 {len(semantic_results)} 条结果")
                 except Exception as e:
@@ -242,9 +238,7 @@ class QAEngineV3:
                 try:
                     search_days = time_range if time_range is not None else 90
                     keyword_results = self.memory_manager.search_summaries(
-                        keywords=keywords,
-                        time_range_days=search_days,
-                        limit=10
+                        keywords=keywords, time_range_days=search_days, limit=10
                     )
                     logger.info(f"关键词检索: 找到 {len(keyword_results)} 条结果")
                 except Exception as e:
@@ -259,20 +253,22 @@ class QAEngineV3:
             elif keyword_results:
                 final_candidates = [
                     {
-                        'summary_id': r['id'],
-                        'summary_text': r['summary_text'],
-                        'metadata': {
-                            'channel_id': r.get('channel_id'),
-                            'channel_name': r.get('channel_name'),
-                            'created_at': r.get('created_at')
-                        }
+                        "summary_id": r["id"],
+                        "summary_text": r["summary_text"],
+                        "metadata": {
+                            "channel_id": r.get("channel_id"),
+                            "channel_name": r.get("channel_name"),
+                            "created_at": r.get("created_at"),
+                        },
                     }
                     for r in keyword_results
                 ]
             else:
                 if time_range is not None and time_range <= 7:
-                    return (f"🔍 在最近 {time_range} 天内未找到相关总结。\n\n"
-                            f"💡 提示：可以尝试扩大时间范围，例如'最近30天关于...'。")
+                    return (
+                        f"🔍 在最近 {time_range} 天内未找到相关总结。\n\n"
+                        f"💡 提示：可以尝试扩大时间范围，例如'最近30天关于...'。"
+                    )
                 return "🔍 未找到相关总结。\n\n💡 提示：尝试调整关键词或时间范围。"
 
             # ── 步骤5: 重排序（Top-20 → Top-5） ─────────────────────────────────
@@ -288,12 +284,12 @@ class QAEngineV3:
 
             # ── 步骤6: AI生成回答（RAG + 对话历史） ──────────────────────────────
             answer = await self._generate_answer_with_rag(
-                query=query,                        # 原始查询（用于AI理解用户意图）
-                search_query=search_query,          # 改写后查询（用于说明检索依据）
+                query=query,  # 原始查询（用于AI理解用户意图）
+                search_query=search_query,  # 改写后查询（用于说明检索依据）
                 summaries=final_candidates,
                 keywords=keywords,
                 conversation_history=conversation_history,
-                query_rewritten=query_rewritten
+                query_rewritten=query_rewritten,
             )
 
             # 新会话时加上引导语
@@ -306,8 +302,7 @@ class QAEngineV3:
             logger.error(f"处理内容查询失败: {type(e).__name__}: {e}", exc_info=True)
             return "❌ 查询失败，请稍后重试。"
 
-    async def _rewrite_query(self, query: str,
-                             conversation_history: List[Dict]) -> str:
+    async def _rewrite_query(self, query: str, conversation_history: list[dict]) -> str:
         """
         利用LLM将含代词的查询改写为独立完整的检索查询
 
@@ -319,7 +314,9 @@ class QAEngineV3:
             改写后的查询字符串
         """
         # 只取最近4条历史（避免token浪费）
-        recent_history = conversation_history[-4:] if len(conversation_history) > 4 else conversation_history
+        recent_history = (
+            conversation_history[-4:] if len(conversation_history) > 4 else conversation_history
+        )
         # 排除最后一条（就是当前的用户查询）
         context_history = recent_history[:-1] if len(recent_history) > 1 else []
 
@@ -333,10 +330,13 @@ class QAEngineV3:
             model=get_llm_model(),
             messages=[
                 {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
-                {"role": "user", "content": f"对话历史：\n{history_text}\n\n用户最新问题：{query}\n\n改写后的独立查询："}
+                {
+                    "role": "user",
+                    "content": f"对话历史：\n{history_text}\n\n用户最新问题：{query}\n\n改写后的独立查询：",
+                },
             ],
             temperature=0.1,
-            max_tokens=200
+            max_tokens=200,
         )
 
         rewritten = response.choices[0].message.content.strip()
@@ -345,8 +345,9 @@ class QAEngineV3:
             return query
         return rewritten
 
-    def _rrf_fusion(self, semantic_results: List[Dict],
-                   keyword_results: List[Dict], k: int = 60) -> List[Dict]:
+    def _rrf_fusion(
+        self, semantic_results: list[dict], keyword_results: list[dict], k: int = 60
+    ) -> list[dict]:
         """
         Reciprocal Rank Fusion (RRF) 融合算法
 
@@ -362,50 +363,46 @@ class QAEngineV3:
 
         # 处理语义检索结果
         for rank, result in enumerate(semantic_results, 1):
-            summary_id = result['summary_id']
+            summary_id = result["summary_id"]
             score = 1.0 / (k + rank)
-            result_map[summary_id] = {
-                'summary': result,
-                'score': score,
-                'source': 'semantic'
-            }
+            result_map[summary_id] = {"summary": result, "score": score, "source": "semantic"}
 
         # 处理关键词检索结果
         for rank, result in enumerate(keyword_results, 1):
-            summary_id = result['id']
+            summary_id = result["id"]
             score = 1.0 / (k + rank)
 
             if summary_id in result_map:
-                result_map[summary_id]['score'] += score
-                result_map[summary_id]['source'] = 'hybrid'
+                result_map[summary_id]["score"] += score
+                result_map[summary_id]["source"] = "hybrid"
             else:
                 result_map[summary_id] = {
-                    'summary': {
-                        'summary_id': result['id'],
-                        'summary_text': result['summary_text'],
-                        'metadata': {
-                            'channel_id': result.get('channel_id'),
-                            'channel_name': result.get('channel_name'),
-                            'created_at': result.get('created_at')
-                        }
+                    "summary": {
+                        "summary_id": result["id"],
+                        "summary_text": result["summary_text"],
+                        "metadata": {
+                            "channel_id": result.get("channel_id"),
+                            "channel_name": result.get("channel_name"),
+                            "created_at": result.get("created_at"),
+                        },
                     },
-                    'score': score,
-                    'source': 'keyword'
+                    "score": score,
+                    "source": "keyword",
                 }
 
-        sorted_results = sorted(
-            result_map.values(),
-            key=lambda x: x['score'],
-            reverse=True
-        )
+        sorted_results = sorted(result_map.values(), key=lambda x: x["score"], reverse=True)
 
-        return [item['summary'] for item in sorted_results]
+        return [item["summary"] for item in sorted_results]
 
-    def _build_rag_prompts(self, query: str, summaries: List[Dict[str, Any]],
-                           keywords: List[str] = None,
-                           conversation_history: List[Dict] = None,
-                           search_query: str = None,
-                           query_rewritten: bool = False) -> tuple:
+    def _build_rag_prompts(
+        self,
+        query: str,
+        summaries: list[dict[str, Any]],
+        keywords: list[str] = None,
+        conversation_history: list[dict] = None,
+        search_query: str = None,
+        query_rewritten: bool = False,
+    ) -> tuple:
         """
         构建 RAG 所需的 system_prompt 和 user_prompt（供流式与非流式共用）
 
@@ -414,10 +411,12 @@ class QAEngineV3:
         """
         context = self._prepare_rag_context(summaries)
 
-        channel_ids = list(set(
-            s.get('metadata', {}).get('channel_id') or s.get('channel_id', '')
-            for s in summaries
-        ))
+        channel_ids = list(
+            set(
+                s.get("metadata", {}).get("channel_id") or s.get("channel_id", "")
+                for s in summaries
+            )
+        )
         channel_context = ""
         if len(channel_ids) == 1 and channel_ids[0]:
             channel_context = self.memory_manager.get_channel_context(channel_ids[0])
@@ -439,7 +438,7 @@ class QAEngineV3:
         system_prompt = BASE_SYSTEM_TEMPLATE.format(
             persona_description=persona_description,
             channel_context=channel_context,
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
         )
 
         rewrite_note = ""
@@ -455,12 +454,15 @@ class QAEngineV3:
 
         return system_prompt, user_prompt
 
-    async def _generate_answer_with_rag(self, query: str,
-                                        summaries: List[Dict[str, Any]],
-                                        keywords: List[str] = None,
-                                        conversation_history: List[Dict] = None,
-                                        search_query: str = None,
-                                        query_rewritten: bool = False) -> str:
+    async def _generate_answer_with_rag(
+        self,
+        query: str,
+        summaries: list[dict[str, Any]],
+        keywords: list[str] = None,
+        conversation_history: list[dict] = None,
+        search_query: str = None,
+        query_rewritten: bool = False,
+    ) -> str:
         """
         使用RAG生成回答（支持多轮对话）
 
@@ -482,7 +484,7 @@ class QAEngineV3:
                 keywords=keywords,
                 conversation_history=conversation_history,
                 search_query=search_query,
-                query_rewritten=query_rewritten
+                query_rewritten=query_rewritten,
             )
 
             logger.info(
@@ -495,9 +497,9 @@ class QAEngineV3:
                 model=get_llm_model(),
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7
+                temperature=0.7,
             )
 
             answer = response.choices[0].message.content.strip()
@@ -515,7 +517,7 @@ class QAEngineV3:
 
             logger.error(f"AI生成回答失败: {error_type}: {error_msg}", exc_info=True)
 
-            if 'Moderation Block' in error_msg or 'content_filter' in error_msg:
+            if "Moderation Block" in error_msg or "content_filter" in error_msg:
                 return """⚠️ **查询内容受限**
 
 抱歉，你的查询触发了内容过滤机制，无法提供相关信息。
@@ -529,12 +531,15 @@ class QAEngineV3:
 
             return self._fallback_answer_v3(summaries)
 
-    async def generate_answer_stream(self, query: str,
-                                     summaries: List[Dict[str, Any]],
-                                     keywords: List[str] = None,
-                                     conversation_history: List[Dict] = None,
-                                     search_query: str = None,
-                                     query_rewritten: bool = False):
+    async def generate_answer_stream(
+        self,
+        query: str,
+        summaries: list[dict[str, Any]],
+        keywords: list[str] = None,
+        conversation_history: list[dict] = None,
+        search_query: str = None,
+        query_rewritten: bool = False,
+    ):
         """
         使用RAG流式生成回答（异步生成器）
 
@@ -557,7 +562,7 @@ class QAEngineV3:
             keywords=keywords,
             conversation_history=conversation_history,
             search_query=search_query,
-            query_rewritten=query_rewritten
+            query_rewritten=query_rewritten,
         )
 
         logger.info(
@@ -573,10 +578,10 @@ class QAEngineV3:
                 model=get_llm_model(),
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                stream=True
+                stream=True,
             )
 
         # 在线程池中调用同步 SDK，避免阻塞事件循环
@@ -616,10 +621,7 @@ class QAEngineV3:
 
             # 2. 保存用户消息
             self.conversation_mgr.save_message(
-                user_id=user_id,
-                session_id=session_id,
-                role='user',
-                content=query
+                user_id=user_id, session_id=session_id, role="user", content=query
             )
 
             # 3. 解析查询意图
@@ -631,8 +633,7 @@ class QAEngineV3:
                 answer = await self._handle_status_query()
                 yield answer
                 self.conversation_mgr.save_message(
-                    user_id=user_id, session_id=session_id,
-                    role='assistant', content=answer
+                    user_id=user_id, session_id=session_id, role="assistant", content=answer
                 )
                 yield "__DONE__"
                 return
@@ -641,8 +642,7 @@ class QAEngineV3:
                 answer = await self._handle_stats_query(parsed)
                 yield answer
                 self.conversation_mgr.save_message(
-                    user_id=user_id, session_id=session_id,
-                    role='assistant', content=answer
+                    user_id=user_id, session_id=session_id, role="assistant", content=answer
                 )
                 yield "__DONE__"
                 return
@@ -662,9 +662,11 @@ class QAEngineV3:
             # 查询改写
             search_query = original_query
             query_rewritten = False
-            if (not is_new_session
-                    and len(conversation_history) >= 3
-                    and PRONOUN_PATTERNS.search(original_query)):
+            if (
+                not is_new_session
+                and len(conversation_history) >= 3
+                and PRONOUN_PATTERNS.search(original_query)
+            ):
                 try:
                     search_query = await self._rewrite_query(original_query, conversation_history)
                     if search_query != original_query:
@@ -675,10 +677,11 @@ class QAEngineV3:
                     search_query = original_query
 
             # 时间过滤
-            date_after: Optional[str] = None
+            date_after: str | None = None
             if time_range is not None:
-                from datetime import datetime, timedelta, timezone
-                cutoff = datetime.now(timezone.utc) - timedelta(days=time_range)
+                from datetime import datetime, timedelta
+
+                cutoff = datetime.now(UTC) - timedelta(days=time_range)
                 date_after = cutoff.isoformat()
 
             # 语义检索
@@ -710,13 +713,13 @@ class QAEngineV3:
             elif keyword_results:
                 final_candidates = [
                     {
-                        'summary_id': r['id'],
-                        'summary_text': r['summary_text'],
-                        'metadata': {
-                            'channel_id': r.get('channel_id'),
-                            'channel_name': r.get('channel_name'),
-                            'created_at': r.get('created_at')
-                        }
+                        "summary_id": r["id"],
+                        "summary_text": r["summary_text"],
+                        "metadata": {
+                            "channel_id": r.get("channel_id"),
+                            "channel_name": r.get("channel_name"),
+                            "created_at": r.get("created_at"),
+                        },
                     }
                     for r in keyword_results
                 ]
@@ -730,8 +733,7 @@ class QAEngineV3:
                     no_result = "🔍 未找到相关总结。\n\n💡 提示：尝试调整关键词或时间范围。"
                 yield no_result
                 self.conversation_mgr.save_message(
-                    user_id=user_id, session_id=session_id,
-                    role='assistant', content=no_result
+                    user_id=user_id, session_id=session_id, role="assistant", content=no_result
                 )
                 yield "__DONE__"
                 return
@@ -739,9 +741,7 @@ class QAEngineV3:
             # 重排序
             if self.reranker.is_available() and len(final_candidates) > 5:
                 try:
-                    final_candidates = self.reranker.rerank(
-                        search_query, final_candidates, top_k=5
-                    )
+                    final_candidates = self.reranker.rerank(search_query, final_candidates, top_k=5)
                 except Exception as e:
                     logger.error(f"[stream] 重排序失败: {e}")
                     final_candidates = final_candidates[:5]
@@ -757,7 +757,7 @@ class QAEngineV3:
                     keywords=keywords,
                     conversation_history=conversation_history,
                     search_query=search_query,
-                    query_rewritten=query_rewritten
+                    query_rewritten=query_rewritten,
                 ):
                     full_answer += chunk
                     yield chunk
@@ -771,8 +771,7 @@ class QAEngineV3:
             if is_new_session:
                 full_answer = "🍃 *开始新的对话。*\n\n" + full_answer
             self.conversation_mgr.save_message(
-                user_id=user_id, session_id=session_id,
-                role='assistant', content=full_answer
+                user_id=user_id, session_id=session_id, role="assistant", content=full_answer
             )
 
             yield "__DONE__"
@@ -781,7 +780,7 @@ class QAEngineV3:
             logger.error(f"[stream] 处理查询失败: {type(e).__name__}: {e}", exc_info=True)
             yield "__ERROR__:❌ 处理查询时出错，请稍后重试。"
 
-    def _prepare_rag_context(self, summaries: List[Dict[str, Any]]) -> str:
+    def _prepare_rag_context(self, summaries: list[dict[str, Any]]) -> str:
         """
         准备RAG上下文信息
 
@@ -803,56 +802,52 @@ class QAEngineV3:
 
         context_parts = []
         for i, summary in enumerate(summaries[:5], 1):
-            metadata = summary.get('metadata', {})
-            channel_name = metadata.get('channel_name') or summary.get('channel_name', '未知频道')
-            created_at = metadata.get('created_at') or summary.get('created_at', '')
-            summary_text = summary.get('summary_text', '')
+            metadata = summary.get("metadata", {})
+            channel_name = metadata.get("channel_name") or summary.get("channel_name", "未知频道")
+            created_at = metadata.get("created_at") or summary.get("created_at", "")
+            summary_text = summary.get("summary_text", "")
 
             # 动态截断
-            text_preview = summary_text[:max_chars] + "..." if len(summary_text) > max_chars else summary_text
+            text_preview = (
+                summary_text[:max_chars] + "..." if len(summary_text) > max_chars else summary_text
+            )
 
             # 分数信息
             score_info = ""
-            if 'similarity' in summary:
+            if "similarity" in summary:
                 score_info = f" [相似度: {summary['similarity']:.2f}]"
-            if 'rerank_score' in summary:
+            if "rerank_score" in summary:
                 score_info += f" [重排分: {summary['rerank_score']:.2f}]"
 
-            context_parts.append(
-                f"[{i}] {channel_name} ({created_at}){score_info}\n{text_preview}"
-            )
+            context_parts.append(f"[{i}] {channel_name} ({created_at}){score_info}\n{text_preview}")
 
         return "\n\n".join(context_parts)
 
-    def _format_source_info_v3(self, summaries: List[Dict[str, Any]]) -> str:
+    def _format_source_info_v3(self, summaries: list[dict[str, Any]]) -> str:
         """格式化来源信息（v3版本）"""
         channels = {}
         for s in summaries:
-            metadata = s.get('metadata', {})
-            channel_id = metadata.get('channel_id') or s.get('channel_id', '')
-            channel_name = metadata.get('channel_name') or s.get('channel_name', '未知频道')
+            metadata = s.get("metadata", {})
+            channel_id = metadata.get("channel_id") or s.get("channel_id", "")
+            channel_name = metadata.get("channel_name") or s.get("channel_name", "未知频道")
 
             if channel_id not in channels:
-                channels[channel_id] = {
-                    'name': channel_name,
-                    'count': 0
-                }
-            channels[channel_id]['count'] += 1
+                channels[channel_id] = {"name": channel_name, "count": 0}
+            channels[channel_id]["count"] += 1
 
-        sources = [f"• {info['name']}: {info['count']}条"
-                  for info in channels.values()]
+        sources = [f"• {info['name']}: {info['count']}条" for info in channels.values()]
 
         return f"📚 数据来源: {len(sources)}个频道\n" + "\n".join(sources)
 
-    def _fallback_answer_v3(self, summaries: List[Dict[str, Any]]) -> str:
+    def _fallback_answer_v3(self, summaries: list[dict[str, Any]]) -> str:
         """降级方案：直接返回总结摘要（v3版本）"""
         result = "📋 相关总结摘要：\n\n"
 
         for i, summary in enumerate(summaries[:3], 1):
-            metadata = summary.get('metadata', {})
-            channel_name = metadata.get('channel_name') or summary.get('channel_name', '未知频道')
-            created_at = (metadata.get('created_at') or summary.get('created_at', ''))[:10]
-            text = summary.get('summary_text', '')[:300]
+            metadata = summary.get("metadata", {})
+            channel_name = metadata.get("channel_name") or summary.get("channel_name", "未知频道")
+            created_at = (metadata.get("created_at") or summary.get("created_at", ""))[:10]
+            text = summary.get("summary_text", "")[:300]
 
             result += f"{i}. **{channel_name}** ({created_at})\n{text}...\n\n"
 
@@ -861,6 +856,7 @@ class QAEngineV3:
 
 # 创建全局问答引擎v3实例
 qa_engine_v3 = None
+
 
 def get_qa_engine_v3():
     """获取全局问答引擎v3实例"""

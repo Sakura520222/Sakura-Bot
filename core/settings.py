@@ -86,7 +86,7 @@ class ChannelSettings(BaseSettings):
     def channels(self) -> list[str]:
         """获取频道列表"""
         if self.target_channel:
-            return [ch.strip() for ch in self.target_channel.split(',') if ch.strip()]
+            return [ch.strip() for ch in self.target_channel.split(",") if ch.strip()]
         return []
 
     class Config:
@@ -105,10 +105,10 @@ class AdminSettings(BaseSettings):
         """获取管理员 ID 列表"""
         if self.report_admin_ids:
             try:
-                return [int(admin_id.strip()) for admin_id in self.report_admin_ids.split(',')]
+                return [int(admin_id.strip()) for admin_id in self.report_admin_ids.split(",")]
             except ValueError:
                 logger.warning("管理员 ID 格式错误，使用默认值 'me'")
-        return ['me']
+        return ["me"]
 
     class Config:
         env_file = str(env_path)
@@ -134,13 +134,7 @@ class LogSettings(BaseSettings):
     @property
     def logging_level(self) -> int:
         """获取 logging 模块的日志级别"""
-        level_map = {
-            "DEBUG": 10,
-            "INFO": 20,
-            "WARNING": 30,
-            "ERROR": 40,
-            "CRITICAL": 50
-        }
+        level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
         return level_map.get(self.log_level, 10)
 
     class Config:
@@ -154,8 +148,7 @@ class PollSettings(BaseSettings):
 
     enable_poll: bool = Field(default=True, alias="ENABLE_POLL")
     poll_regen_threshold: int = Field(
-        default=POLL_REGEN_THRESHOLD_DEFAULT,
-        alias="POLL_REGEN_THRESHOLD"
+        default=POLL_REGEN_THRESHOLD_DEFAULT, alias="POLL_REGEN_THRESHOLD"
     )
     enable_vote_regen_request: bool = Field(default=True, alias="ENABLE_VOTE_REGEN_REQUEST")
 

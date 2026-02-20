@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -44,16 +43,17 @@ from core.quota_manager import get_quota_manager
 # 配置日志 - 添加[QA]前缀以便区分
 class QAFormatter(logging.Formatter):
     """自定义日志格式器，添加[QA]前缀"""
+
     def format(self, record):
         # 在消息前添加 [QA] 前缀
         if record.msg and isinstance(record.msg, str):
             record.msg = f"[QA] {record.msg}"
         return super().format(record)
 
+
 # 配置基础日志
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 # 获取logger
@@ -61,9 +61,7 @@ logger = logging.getLogger(__name__)
 
 # 为所有处理器应用自定义格式
 for handler in logging.root.handlers:
-    handler.setFormatter(QAFormatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    ))
+    handler.setFormatter(QAFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
 
 # 获取配置
@@ -110,7 +108,7 @@ class QABot:
 💡 **小提示：**
 我会记住我们的对话上下文（30分钟内），所以你可以用代词追问，比如"那它呢？"、"这个怎么样？"。"""
 
-        await update.message.reply_text(welcome_message, parse_mode='Markdown')
+        await update.message.reply_text(welcome_message, parse_mode="Markdown")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/help命令"""
@@ -159,7 +157,7 @@ class QABot:
 ⚠️ *注意*
 请尽量提出与频道总结相关的问题。过度偏离的查询可能会被拦截。"""
 
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.message.reply_text(help_text, parse_mode="Markdown")
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/status命令"""
@@ -167,19 +165,18 @@ class QABot:
         status_info = self.quota_manager.get_usage_status(user_id)
 
         # 构建配额状态文本
-        if status_info.get('is_admin'):
+        if status_info.get("is_admin"):
             quota_text = """🌟 <b>管理员状态</b>
 
 你拥有无限制访问的特权。
 
-📊 今日总使用：{}次""".format(status_info.get('total_used_today', 0))
+📊 今日总使用：{}次""".format(status_info.get("total_used_today", 0))
         else:
             quota_text = """📊 <b>配额状态</b>
 
 • 今日已使用: {used} 次
 • 剩余次数: {remaining} 次""".format(
-                used=status_info.get('used_today', 0),
-                remaining=status_info.get('remaining', 50)
+                used=status_info.get("used_today", 0), remaining=status_info.get("remaining", 50)
             )
 
         # 获取会话信息
@@ -187,15 +184,15 @@ class QABot:
 
         session_text = ""
         if session_info:
-            is_active = session_info.get('is_active', False)
+            is_active = session_info.get("is_active", False)
             status_emoji = "🟢 活跃中" if is_active else "⚪ 已超时"
             # 使用代码块显示会话ID，避免Markdown解析问题
-            session_id_preview = session_info['session_id'][:8]
+            session_id_preview = session_info["session_id"][:8]
             session_text = f"""
 
 🧠 <b>当前会话状态</b>
 • 会话ID: <code>{session_id_preview}...</code>
-• 消息数: {session_info['message_count']} 条
+• 消息数: {session_info["message_count"]} 条
 • 状态: {status_emoji}"""
 
         message = f"""📊 <b>系统状态</b>
@@ -205,7 +202,7 @@ class QABot:
 📅 重置时间：每日 00:00 (UTC)"""
 
         # 使用HTML模式以避免Markdown解析错误
-        await update.message.reply_text(message, parse_mode='HTML')
+        await update.message.reply_text(message, parse_mode="HTML")
 
     async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/clear命令 - 清除对话历史"""
@@ -220,9 +217,11 @@ class QABot:
 
 现在，我们的对话是全新的开始。有什么可以帮你的吗？"""
 
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode="Markdown")
 
-    async def view_persona_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def view_persona_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理/view_persona命令 - 查看当前人格设定"""
         persona = get_qa_bot_persona()
 
@@ -247,24 +246,24 @@ class QABot:
 
 修改后需重启Bot生效。"""
 
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode="Markdown")
 
-    async def list_channels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def list_channels_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理/listchannels命令 - 列出可订阅频道"""
         user_id = update.effective_user.id
 
         # 自动注册用户
         self.user_system.register_user(
-            user_id,
-            update.effective_user.username,
-            update.effective_user.first_name
+            user_id, update.effective_user.username, update.effective_user.first_name
         )
 
         # 获取频道列表
         channels = self.user_system.get_available_channels()
         message = self.user_system.format_channels_list(channels)
 
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode="Markdown")
 
     async def subscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/subscribe命令 - 订阅频道"""
@@ -272,9 +271,7 @@ class QABot:
 
         # 自动注册用户
         self.user_system.register_user(
-            user_id,
-            update.effective_user.username,
-            update.effective_user.first_name
+            user_id, update.effective_user.username, update.effective_user.first_name
         )
 
         # 检查参数
@@ -288,7 +285,7 @@ class QABot:
 `/subscribe https://t.me/channel_name`
 
 💡 使用 `/listchannels` 查看可订阅频道"""
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message, parse_mode="Markdown")
             return
 
         channel_url = context.args[0]
@@ -297,17 +294,17 @@ class QABot:
         channels = self.user_system.get_available_channels()
         channel_name = None
         for ch in channels:
-            if ch.get('channel_id') == channel_url:
-                channel_name = ch.get('channel_name')
+            if ch.get("channel_id") == channel_url:
+                channel_name = ch.get("channel_name")
                 break
 
         if not channel_name:
             # 从URL中提取频道名作为备用
-            channel_name = channel_url.split('/')[-1]
+            channel_name = channel_url.split("/")[-1]
 
         # 添加订阅
         result = self.user_system.add_subscription(user_id, channel_url, channel_name)
-        await update.message.reply_text(result['message'], parse_mode='Markdown')
+        await update.message.reply_text(result["message"], parse_mode="Markdown")
 
     async def unsubscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/unsubscribe命令 - 取消订阅"""
@@ -328,31 +325,33 @@ class QABot:
                 lines.append("使用方法: `/unsubscribe <频道链接>`")
                 message = "\n".join(lines)
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message, parse_mode="Markdown")
             return
 
         channel_url = context.args[0]
         result = self.user_system.remove_subscription(user_id, channel_url)
-        await update.message.reply_text(result['message'], parse_mode='Markdown')
+        await update.message.reply_text(result["message"], parse_mode="Markdown")
 
-    async def my_subscriptions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def my_subscriptions_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理/mysubscriptions命令 - 查看我的订阅"""
         user_id = update.effective_user.id
 
         subscriptions = self.user_system.get_user_subscriptions(user_id)
         message = self.user_system.format_subscriptions_list(subscriptions)
 
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode="Markdown")
 
-    async def request_summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def request_summary_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理/request_summary命令 - 请求生成总结"""
         user_id = update.effective_user.id
 
         # 自动注册用户
         self.user_system.register_user(
-            user_id,
-            update.effective_user.username,
-            update.effective_user.first_name
+            user_id, update.effective_user.username, update.effective_user.first_name
         )
 
         # 检查参数
@@ -365,7 +364,7 @@ class QABot:
 此命令会向管理员提交请求，请管理员为指定频道生成总结。
 
 💡 使用 `/listchannels` 查看可用的频道。"""
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message, parse_mode="Markdown")
             return
 
         channel_url = context.args[0]
@@ -374,16 +373,16 @@ class QABot:
         channels = self.user_system.get_available_channels()
         channel_name = None
         for ch in channels:
-            if ch.get('channel_id') == channel_url:
-                channel_name = ch.get('channel_name')
+            if ch.get("channel_id") == channel_url:
+                channel_name = ch.get("channel_name")
                 break
 
         if not channel_name:
-            channel_name = channel_url.split('/')[-1]
+            channel_name = channel_url.split("/")[-1]
 
         # 创建请求
         result = self.user_system.create_summary_request(user_id, channel_url, channel_name)
-        await update.message.reply_text(result['message'], parse_mode='Markdown')
+        await update.message.reply_text(result["message"], parse_mode="Markdown")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理用户消息（流式输出 - 单条消息动态编辑）"""
@@ -411,10 +410,7 @@ class QABot:
 
             # 3. 流式处理并实时编辑消息
             await self._stream_and_edit(
-                placeholder=placeholder,
-                query=query,
-                user_id=user_id,
-                quota_check=quota_check
+                placeholder=placeholder, query=query, user_id=user_id, quota_check=quota_check
             )
 
         except Exception as e:
@@ -424,8 +420,9 @@ class QABot:
             except Exception:
                 pass
 
-    async def _stream_and_edit(self, placeholder, query: str,
-                               user_id: int, quota_check: dict) -> None:
+    async def _stream_and_edit(
+        self, placeholder, query: str, user_id: int, quota_check: dict
+    ) -> None:
         """
         流式接收 QA 引擎输出，并实时编辑 Telegram 消息。
 
@@ -444,12 +441,12 @@ class QABot:
         MAX_MSG_LEN = 4096
         # ─────────────────────────────────────────────────────────────────────
 
-        accumulated = ""       # 当前消息已累积的完整文本
-        last_edit_len = 0      # 上次编辑时的文本长度
+        accumulated = ""  # 当前消息已累积的完整文本
+        last_edit_len = 0  # 上次编辑时的文本长度
         last_edit_time = time.monotonic()
         is_new_session = False
-        current_msg = placeholder   # 当前正在编辑的消息对象
-        extra_msgs = []             # 超长时追加的额外消息
+        current_msg = placeholder  # 当前正在编辑的消息对象
+        extra_msgs = []  # 超长时追加的额外消息
 
         async def _safe_edit(msg, text: str, use_markdown: bool = False):
             """安全地编辑消息，失败时静默处理。"""
@@ -457,7 +454,7 @@ class QABot:
                 return
             try:
                 if use_markdown:
-                    await msg.edit_text(text, parse_mode='Markdown')
+                    await msg.edit_text(text, parse_mode="Markdown")
                 else:
                     await msg.edit_text(text)
             except Exception as e:
@@ -469,7 +466,7 @@ class QABot:
                     # Markdown 失败，尝试修复
                     try:
                         fixed = self._fix_markdown(text)
-                        await msg.edit_text(fixed, parse_mode='Markdown')
+                        await msg.edit_text(fixed, parse_mode="Markdown")
                     except Exception:
                         try:
                             await msg.edit_text(text)
@@ -497,13 +494,13 @@ class QABot:
                     # 追加其余部分
                     for part in parts[1:]:
                         try:
-                            new_msg = await current_msg.reply_text(part, parse_mode='Markdown')
+                            new_msg = await current_msg.reply_text(part, parse_mode="Markdown")
                             extra_msgs.append(new_msg)
                             current_msg = new_msg
                         except Exception:
                             try:
                                 new_msg = await current_msg.reply_text(
-                                    self._fix_markdown(part), parse_mode='Markdown'
+                                    self._fix_markdown(part), parse_mode="Markdown"
                                 )
                                 extra_msgs.append(new_msg)
                                 current_msg = new_msg
@@ -511,7 +508,7 @@ class QABot:
                                 pass
                 else:
                     # 流式阶段：截断显示，末尾加省略号
-                    truncated = text[:MAX_MSG_LEN - 30] + "\n\n_（内容生成中…）_"
+                    truncated = text[: MAX_MSG_LEN - 30] + "\n\n_（内容生成中…）_"
                     await _safe_edit(current_msg, truncated)
             else:
                 await _safe_edit(current_msg, text, use_markdown=final)
@@ -530,7 +527,7 @@ class QABot:
                     continue
 
                 if chunk.startswith("__ERROR__:"):
-                    error_msg = chunk[len("__ERROR__:"):]
+                    error_msg = chunk[len("__ERROR__:") :]
                     await _safe_edit(current_msg, error_msg)
                     return
 
@@ -593,15 +590,15 @@ class QABot:
 
         parts = []
         current_part = ""
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
 
         for para in paragraphs:
             if len(current_part) + len(para) + 2 <= max_length:
-                current_part += para + '\n\n'
+                current_part += para + "\n\n"
             else:
                 if current_part:
                     parts.append(current_part.strip())
-                current_part = para + '\n\n'
+                current_part = para + "\n\n"
 
         if current_part:
             parts.append(current_part.strip())
@@ -615,13 +612,13 @@ class QABot:
         """
         # 直接尝试发送Markdown
         try:
-            await message.reply_text(text, parse_mode='Markdown')
+            await message.reply_text(text, parse_mode="Markdown")
         except Exception as e:
             logger.warning(f"Markdown发送失败: {e}, 尝试修复格式")
             # 尝试修复常见的Markdown格式错误
             fixed_text = self._fix_markdown(text)
             try:
-                await message.reply_text(fixed_text, parse_mode='Markdown')
+                await message.reply_text(fixed_text, parse_mode="Markdown")
             except Exception as e2:
                 logger.error(f"Markdown修复后仍然失败: {e2}, 使用纯文本")
                 # 最后的保底方案
@@ -635,30 +632,30 @@ class QABot:
         """
         import re
 
-        lines = text.split('\n')
+        lines = text.split("\n")
         fixed_lines = []
         for line in lines:
             # 统计行内未在代码块中的 ** 对数（粗体）
             # 用简单方法：计算 ** 的出现次数，若为奇数则补全
-            bold_count = len(re.findall(r'\*\*', line))
+            bold_count = len(re.findall(r"\*\*", line))
             if bold_count % 2 == 1:
-                line = line + '**'
+                line = line + "**"
 
             # 统计行内单个 * 的数量（斜体，排除 **）
             # 替换掉 ** 后再统计剩余 *
-            stripped = re.sub(r'\*\*', '', line)
-            italic_count = stripped.count('*')
+            stripped = re.sub(r"\*\*", "", line)
+            italic_count = stripped.count("*")
             if italic_count % 2 == 1:
-                line = line + '*'
+                line = line + "*"
 
             # 统计反引号（代码）
-            backtick_count = line.count('`')
+            backtick_count = line.count("`")
             if backtick_count % 2 == 1:
-                line = line + '`'
+                line = line + "`"
 
             fixed_lines.append(line)
 
-        return '\n'.join(fixed_lines)
+        return "\n".join(fixed_lines)
 
     def run(self):
         """运行Bot"""
@@ -704,17 +701,24 @@ class QABot:
         self.application.add_handler(CommandHandler("listchannels", self.list_channels_command))
         self.application.add_handler(CommandHandler("subscribe", self.subscribe_command))
         self.application.add_handler(CommandHandler("unsubscribe", self.unsubscribe_command))
-        self.application.add_handler(CommandHandler("mysubscriptions", self.my_subscriptions_command))
-        self.application.add_handler(CommandHandler("request_summary", self.request_summary_command))
+        self.application.add_handler(
+            CommandHandler("mysubscriptions", self.my_subscriptions_command)
+        )
+        self.application.add_handler(
+            CommandHandler("request_summary", self.request_summary_command)
+        )
 
         # 消息处理器
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        self.application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
+        )
 
         # 添加定期检查通知任务（跨Bot通信）
         async def check_notifications_job(context=None):
             """定期检查并发送待处理的通知"""
             try:
                 from core.mainbot_push_handler import get_mainbot_push_handler
+
                 push_handler = get_mainbot_push_handler()
 
                 count = await push_handler.process_pending_notifications()
@@ -724,11 +728,7 @@ class QABot:
                 logger.error(f"检查通知任务失败: {type(e).__name__}: {e}")
 
         # 每30秒检查一次通知队列
-        self.application.job_queue.run_repeating(
-            check_notifications_job,
-            interval=30,
-            first=10
-        )
+        self.application.job_queue.run_repeating(check_notifications_job, interval=30, first=10)
         logger.info("跨Bot通知检查任务已启动：每30秒执行一次")
 
         # 启动Bot

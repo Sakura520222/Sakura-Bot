@@ -43,7 +43,7 @@ class DiscussionCache:
         """从磁盘加载缓存数据"""
         if CACHE_FILE.exists():
             try:
-                with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                with open(CACHE_FILE, encoding="utf-8") as f:
                     self._memory_cache = json.load(f)
                 logger.info(f"已从磁盘加载讨论组缓存: {len(self._memory_cache)} 条记录")
             except json.JSONDecodeError as e:
@@ -62,7 +62,7 @@ class DiscussionCache:
             # 确保目录存在
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._memory_cache, f, ensure_ascii=False, indent=2)
             logger.debug("缓存数据已保存到磁盘")
         except Exception as e:

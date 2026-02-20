@@ -35,10 +35,10 @@ logger = logging.getLogger(__name__)
 
 
 # 时间配置类型定义
-ScheduleFrequency = Literal['daily', 'weekly']
+ScheduleFrequency = Literal["daily", "weekly"]
 ScheduleConfig = dict[
     str,  # 'frequency', 'days', 'hour', 'minute'
-    str | int | list[str]
+    str | int | list[str],
 ]
 
 
@@ -66,10 +66,10 @@ class ChannelScheduleManager:
             return
 
         try:
-            with open(self._config_file, 'r', encoding='utf-8') as f:
+            with open(self._config_file, encoding="utf-8") as f:
                 config = json.load(f)
 
-            schedules = config.get('summary_schedules', {})
+            schedules = config.get("summary_schedules", {})
             if isinstance(schedules, dict):
                 # 标准化所有配置
                 self._schedules = {
@@ -91,17 +91,17 @@ class ChannelScheduleManager:
             # 读取完整配置
             full_config = {}
             if self._config_file.exists():
-                with open(self._config_file, 'r', encoding='utf-8') as f:
+                with open(self._config_file, encoding="utf-8") as f:
                     full_config = json.load(f)
 
             # 更新时间配置部分
-            full_config['summary_schedules'] = self._schedules
+            full_config["summary_schedules"] = self._schedules
 
             # 确保目录存在
             self._config_file.parent.mkdir(parents=True, exist_ok=True)
 
             # 保存配置
-            with open(self._config_file, 'w', encoding='utf-8') as f:
+            with open(self._config_file, "w", encoding="utf-8") as f:
                 json.dump(full_config, f, ensure_ascii=False, indent=2)
 
             logger.info(f"已保存 {len(self._schedules)} 个频道的时间配置")
@@ -118,31 +118,31 @@ class ChannelScheduleManager:
             标准化后的配置字典
         """
         # 如果包含 frequency 字段，已经是新格式
-        if 'frequency' in schedule:
-            frequency = schedule['frequency']
-            if frequency == 'weekly' and 'days' not in schedule:
+        if "frequency" in schedule:
+            frequency = schedule["frequency"]
+            if frequency == "weekly" and "days" not in schedule:
                 # 如果没有 days 字段但有 day 字段，转换它
-                if 'day' in schedule:
-                    schedule['days'] = [schedule['day']]
+                if "day" in schedule:
+                    schedule["days"] = [schedule["day"]]
                 else:
-                    schedule['days'] = [DEFAULT_SUMMARY_DAY]
+                    schedule["days"] = [DEFAULT_SUMMARY_DAY]
             return schedule
 
         # 向后兼容：旧格式 (day 字段)
-        if 'day' in schedule:
+        if "day" in schedule:
             return {
-                'frequency': 'weekly',
-                'days': [schedule['day']],
-                'hour': schedule.get('hour', DEFAULT_SUMMARY_HOUR),
-                'minute': schedule.get('minute', DEFAULT_SUMMARY_MINUTE)
+                "frequency": "weekly",
+                "days": [schedule["day"]],
+                "hour": schedule.get("hour", DEFAULT_SUMMARY_HOUR),
+                "minute": schedule.get("minute", DEFAULT_SUMMARY_MINUTE),
             }
 
         # 默认配置
         return {
-            'frequency': 'weekly',
-            'days': [DEFAULT_SUMMARY_DAY],
-            'hour': schedule.get('hour', DEFAULT_SUMMARY_HOUR),
-            'minute': schedule.get('minute', DEFAULT_SUMMARY_MINUTE)
+            "frequency": "weekly",
+            "days": [DEFAULT_SUMMARY_DAY],
+            "hour": schedule.get("hour", DEFAULT_SUMMARY_HOUR),
+            "minute": schedule.get("minute", DEFAULT_SUMMARY_MINUTE),
         }
 
     def _validate_schedule(self, config: ScheduleConfig) -> None:
@@ -154,15 +154,15 @@ class ChannelScheduleManager:
         Raises:
             InvalidScheduleError: 配置无效时
         """
-        frequency = config.get('frequency')
+        frequency = config.get("frequency")
         if frequency not in VALID_FREQUENCIES:
             raise InvalidScheduleError(
                 f"无效的频率: {frequency}，有效值: {', '.join(VALID_FREQUENCIES)}"
             )
 
         # 验证 days（仅 weekly 模式需要）
-        if frequency == 'weekly':
-            days = config.get('days', [])
+        if frequency == "weekly":
+            days = config.get("days", [])
             if not isinstance(days, list) or not days:
                 raise InvalidScheduleError("weekly 模式必须提供 days 字段（非空数组）")
 
@@ -173,8 +173,8 @@ class ChannelScheduleManager:
                     )
 
         # 验证时间
-        hour = config.get('hour')
-        minute = config.get('minute')
+        hour = config.get("hour")
+        minute = config.get("minute")
 
         if not isinstance(hour, int) or hour < 0 or hour > 23:
             raise InvalidScheduleError(f"无效的小时: {hour}，有效范围: 0-23")
@@ -196,10 +196,10 @@ class ChannelScheduleManager:
 
         # 返回默认配置
         return {
-            'frequency': 'weekly',
-            'days': [DEFAULT_SUMMARY_DAY],
-            'hour': DEFAULT_SUMMARY_HOUR,
-            'minute': DEFAULT_SUMMARY_MINUTE
+            "frequency": "weekly",
+            "days": [DEFAULT_SUMMARY_DAY],
+            "hour": DEFAULT_SUMMARY_HOUR,
+            "minute": DEFAULT_SUMMARY_MINUTE,
         }
 
     def set_schedule(
@@ -208,7 +208,7 @@ class ChannelScheduleManager:
         frequency: ScheduleFrequency,
         days: list[str] | None = None,
         hour: int | None = None,
-        minute: int | None = None
+        minute: int | None = None,
     ) -> None:
         """设置指定频道的自动总结时间配置
 
@@ -225,16 +225,16 @@ class ChannelScheduleManager:
         """
         # 构建配置字典
         config: ScheduleConfig = {
-            'frequency': frequency,
-            'hour': hour if hour is not None else DEFAULT_SUMMARY_HOUR,
-            'minute': minute if minute is not None else DEFAULT_SUMMARY_MINUTE
+            "frequency": frequency,
+            "hour": hour if hour is not None else DEFAULT_SUMMARY_HOUR,
+            "minute": minute if minute is not None else DEFAULT_SUMMARY_MINUTE,
         }
 
         # weekly 模式需要 days 字段
-        if frequency == 'weekly':
+        if frequency == "weekly":
             if days is None:
                 days = [DEFAULT_SUMMARY_DAY]
-            config['days'] = days
+            config["days"] = days
 
         # 验证配置
         self._validate_schedule(config)
@@ -281,26 +281,18 @@ class ChannelScheduleManager:
             包含 cron 触发器参数的字典
         """
         schedule = self.get_schedule(channel)
-        frequency = schedule.get('frequency', 'weekly')
+        frequency = schedule.get("frequency", "weekly")
 
-        if frequency == 'daily':
-            return {
-                'day_of_week': '*',
-                'hour': schedule['hour'],
-                'minute': schedule['minute']
-            }
-        elif frequency == 'weekly':
-            days_str = ','.join(schedule['days'])  # type: ignore
-            return {
-                'day_of_week': days_str,
-                'hour': schedule['hour'],
-                'minute': schedule['minute']
-            }
+        if frequency == "daily":
+            return {"day_of_week": "*", "hour": schedule["hour"], "minute": schedule["minute"]}
+        elif frequency == "weekly":
+            days_str = ",".join(schedule["days"])  # type: ignore
+            return {"day_of_week": days_str, "hour": schedule["hour"], "minute": schedule["minute"]}
         else:
             return {
-                'day_of_week': 'mon',
-                'hour': schedule.get('hour', DEFAULT_SUMMARY_HOUR),
-                'minute': schedule.get('minute', DEFAULT_SUMMARY_MINUTE)
+                "day_of_week": "mon",
+                "hour": schedule.get("hour", DEFAULT_SUMMARY_HOUR),
+                "minute": schedule.get("minute", DEFAULT_SUMMARY_MINUTE),
             }
 
     def format_schedule_text(self, channel: str) -> str:
@@ -313,14 +305,14 @@ class ChannelScheduleManager:
             格式化后的文本
         """
         schedule = self.get_schedule(channel)
-        frequency = schedule.get('frequency', 'weekly')
-        hour = schedule['hour']
-        minute = schedule['minute']
+        frequency = schedule.get("frequency", "weekly")
+        hour = schedule["hour"]
+        minute = schedule["minute"]
 
-        if frequency == 'daily':
+        if frequency == "daily":
             return f"每天 {hour:02d}:{minute:02d}"
-        elif frequency == 'weekly':
-            days_cn = '、'.join([DAY_NAMES_CN.get(d, d) for d in schedule.get('days', [])])  # type: ignore
+        elif frequency == "weekly":
+            days_cn = "、".join([DAY_NAMES_CN.get(d, d) for d in schedule.get("days", [])])  # type: ignore
             return f"每周{days_cn} {hour:02d}:{minute:02d}"
         else:
             return "未知配置"
@@ -354,7 +346,7 @@ def set_channel_schedule(
     frequency: ScheduleFrequency,
     days: list[str] | None = None,
     hour: int | None = None,
-    minute: int | None = None
+    minute: int | None = None,
 ) -> None:
     """设置指定频道的自动总结时间配置"""
     get_schedule_manager().set_schedule(channel, frequency, days, hour, minute)

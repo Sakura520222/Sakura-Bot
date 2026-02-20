@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -17,7 +16,7 @@
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
 from .config import ADMIN_LIST
 from .database import get_db_manager
@@ -33,7 +32,9 @@ class QuotaManager:
         self.db = get_db_manager()
         self.daily_limit = self._get_daily_limit()
         self.total_daily_limit = self._get_total_daily_limit()
-        logger.info(f"配额管理器初始化完成: 用户限额={self.daily_limit}, 总限额={self.total_daily_limit}")
+        logger.info(
+            f"配额管理器初始化完成: 用户限额={self.daily_limit}, 总限额={self.total_daily_limit}"
+        )
 
     def _get_daily_limit(self) -> int:
         """获取每用户每日限额"""
@@ -55,9 +56,9 @@ class QuotaManager:
 
     def is_admin(self, user_id: int) -> bool:
         """检查用户是否为管理员"""
-        return user_id in ADMIN_LIST or ADMIN_LIST == ['me']
+        return user_id in ADMIN_LIST or ADMIN_LIST == ["me"]
 
-    def check_quota(self, user_id: int) -> Dict[str, Any]:
+    def check_quota(self, user_id: int) -> dict[str, Any]:
         """
         检查用户配额
 
@@ -88,14 +89,12 @@ class QuotaManager:
                     "used": 0,
                     "daily_limit": self.daily_limit,
                     "is_admin": False,
-                    "message": f"⏰ **今日配额已用完**\n\n系统今日已处理 {total_used_today} 次查询。\n请在明日配额重置后继续使用。\n\n🌙 **重置时间：每日00:00**"
+                    "message": f"⏰ **今日配额已用完**\n\n系统今日已处理 {total_used_today} 次查询。\n请在明日配额重置后继续使用。\n\n🌙 **重置时间：每日00:00**",
                 }
 
             # 检查并增加用户配额
             result = self.db.check_and_increment_quota(
-                user_id=user_id,
-                daily_limit=self.daily_limit,
-                is_admin=is_admin
+                user_id=user_id, daily_limit=self.daily_limit, is_admin=is_admin
             )
 
             if not result.get("allowed", False):
@@ -108,7 +107,7 @@ class QuotaManager:
                     "used": used,
                     "daily_limit": daily_limit,
                     "is_admin": False,
-                    "message": f"⏰ **今日配额已用完**\n\n你今天已经使用了 {used} 次查询。\n休息一下，明天配额重置后再来吧。\n\n🌙 **重置时间：每日00:00**"
+                    "message": f"⏰ **今日配额已用完**\n\n你今天已经使用了 {used} 次查询。\n休息一下，明天配额重置后再来吧。\n\n🌙 **重置时间：每日00:00**",
                 }
 
             # 配额允许
@@ -129,7 +128,7 @@ class QuotaManager:
                 "used": used,
                 "daily_limit": self.daily_limit,
                 "is_admin": is_admin,
-                "message": message
+                "message": message,
             }
 
         except Exception as e:
@@ -140,10 +139,10 @@ class QuotaManager:
                 "used": 0,
                 "daily_limit": self.daily_limit,
                 "is_admin": False,
-                "message": "⚠️ **系统错误**\n\n配额检查失败，请稍后再试。"
+                "message": "⚠️ **系统错误**\n\n配额检查失败，请稍后再试。",
             }
 
-    def get_usage_status(self, user_id: int) -> Dict[str, Any]:
+    def get_usage_status(self, user_id: int) -> dict[str, Any]:
         """
         获取用户使用状态（不消耗配额）
 
@@ -166,7 +165,7 @@ class QuotaManager:
                     "remaining": -1,  # -1表示无限制
                     "total_used_today": total_used,
                     "total_limit": self.total_daily_limit,
-                    "message": "🌟 **管理员状态**\n\n你拥有无限制访问的特权。\n\n📊 今日总使用：{}次".format(total_used)
+                    "message": f"🌟 **管理员状态**\n\n你拥有无限制访问的特权。\n\n📊 今日总使用：{total_used}次",
                 }
 
             used = quota.get("usage_count", 0)
@@ -180,17 +179,14 @@ class QuotaManager:
                 "remaining": remaining,
                 "total_used_today": total_used,
                 "total_limit": self.total_daily_limit,
-                "message": f"📊 **使用状态**\n\n📚 今日已使用：{used}次\n💡 今日剩余：{remaining}次\n📊 系统总剩余：{total_remaining}次"
+                "message": f"📊 **使用状态**\n\n📚 今日已使用：{used}次\n💡 今日剩余：{remaining}次\n📊 系统总剩余：{total_remaining}次",
             }
 
         except Exception as e:
             logger.error(f"获取使用状态失败: {type(e).__name__}: {e}", exc_info=True)
-            return {
-                "user_id": user_id,
-                "error": str(e)
-            }
+            return {"user_id": user_id, "error": str(e)}
 
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         """
         获取系统配额状态
 
@@ -206,7 +202,7 @@ class QuotaManager:
                 "used_today": total_used,
                 "remaining": total_remaining,
                 "user_limit": self.daily_limit,
-                "utilization": f"{total_used / self.total_daily_limit * 100:.1f}%"
+                "utilization": f"{total_used / self.total_daily_limit * 100:.1f}%",
             }
 
         except Exception as e:
@@ -216,6 +212,7 @@ class QuotaManager:
 
 # 创建全局配额管理器实例
 quota_manager = None
+
 
 def get_quota_manager():
     """获取全局配额管理器实例"""

@@ -1,0 +1,17 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "ASYNC"]
+extend-select = ["B"]
+
+[tool.ruff.lint.per-file-ignores]
+# 针对特定文件可以放宽限制
+"core/database.py" = ["E722"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

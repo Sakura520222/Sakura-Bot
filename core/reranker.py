@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -18,7 +17,7 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -45,8 +44,9 @@ class Reranker:
         """检查Reranker服务是否可用"""
         return self.api_key is not None
 
-    def rerank(self, query: str, candidates: List[Dict[str, Any]],
-               top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    def rerank(
+        self, query: str, candidates: list[dict[str, Any]], top_k: int | None = None
+    ) -> list[dict[str, Any]]:
         """
         对检索结果重排序
 
@@ -60,7 +60,7 @@ class Reranker:
         """
         if not self.api_key:
             logger.warning("Reranker服务不可用，返回原始结果")
-            return candidates[:top_k or self.final_k]
+            return candidates[: top_k or self.final_k]
 
         if not candidates:
             return []
@@ -70,7 +70,7 @@ class Reranker:
 
         try:
             # 准备文档列表
-            documents = [doc.get('summary_text', '') for doc in candidates]
+            documents = [doc.get("summary_text", "") for doc in candidates]
 
             # 调用Reranker API（使用httpx）
             with httpx.Client(timeout=30.0) as client:
@@ -78,26 +78,26 @@ class Reranker:
                     self.api_base,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
                     },
                     json={
                         "model": self.model,
                         "query": query,
                         "documents": documents,
-                        "top_n": min(len(documents), top_k)
-                    }
+                        "top_n": min(len(documents), top_k),
+                    },
                 )
 
                 result = response.json()
 
                 # 提取排序结果
-                if 'results' in result:
+                if "results" in result:
                     reranked_results = []
-                    for item in result['results']:
-                        index = item['index']
-                        score = item.get('relevance_score', 0)
+                    for item in result["results"]:
+                        index = item["index"]
+                        score = item.get("relevance_score", 0)
                         doc = candidates[index].copy()
-                        doc['rerank_score'] = score
+                        doc["rerank_score"] = score
                         reranked_results.append(doc)
 
                     logger.info(f"重排序完成: {len(reranked_results)} 个结果")
@@ -113,6 +113,7 @@ class Reranker:
 
 # 创建全局Reranker实例
 reranker = None
+
 
 def get_reranker():
     """获取全局Reranker实例"""

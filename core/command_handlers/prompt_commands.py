@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -15,15 +14,11 @@
 提示词管理命令处理
 """
 
-import logging
-
 from ..config import ADMIN_LIST, logger
 from ..i18n import get_text
 from ..poll_prompt_manager import load_poll_prompt, save_poll_prompt
 from ..prompt_manager import load_prompt, save_prompt
 from ..states import get_user_context
-
-logger = logging.getLogger(__name__)
 
 
 async def handle_show_prompt(event):
@@ -33,9 +28,9 @@ async def handle_show_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply(get_text('error.permission_denied'))
+        await event.reply(get_text("error.permission_denied"))
         return
 
     logger.info(f"执行命令 {command} 成功")
@@ -51,9 +46,9 @@ async def handle_set_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply(get_text('error.permission_denied'))
+        await event.reply(get_text("error.permission_denied"))
         return
 
     # 使用状态管理器
@@ -78,14 +73,18 @@ async def handle_prompt_input(event):
     logger.info(f"收到用户 {sender_id} 的提示词输入")
 
     # 检查是否是命令消息，如果是则不处理
-    if input_text.startswith('/'):
+    if input_text.startswith("/"):
         logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
-        await event.reply(get_text('prompt.error_command'))
+        await event.reply(get_text("prompt.error_command"))
         return
 
     # 获取新提示词
     new_prompt = input_text.strip()
-    logger.debug(f"用户 {sender_id} 设置的新提示词: {new_prompt[:100]}..." if len(new_prompt) > 100 else f"用户 {sender_id} 设置的新提示词: {new_prompt}")
+    logger.debug(
+        f"用户 {sender_id} 设置的新提示词: {new_prompt[:100]}..."
+        if len(new_prompt) > 100
+        else f"用户 {sender_id} 设置的新提示词: {new_prompt}"
+    )
 
     # 更新提示词
     save_prompt(new_prompt)
@@ -106,9 +105,9 @@ async def handle_show_poll_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply(get_text('error.permission_denied'))
+        await event.reply(get_text("error.permission_denied"))
         return
 
     logger.info(f"执行命令 {command} 成功")
@@ -124,9 +123,9 @@ async def handle_set_poll_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
-        await event.reply(get_text('error.permission_denied'))
+        await event.reply(get_text("error.permission_denied"))
         return
 
     # 使用状态管理器
@@ -151,14 +150,18 @@ async def handle_poll_prompt_input(event):
     logger.info(f"收到用户 {sender_id} 的投票提示词输入")
 
     # 检查是否是命令消息，如果是则不处理
-    if input_text.startswith('/'):
+    if input_text.startswith("/"):
         logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
-        await event.reply(get_text('prompt.error_command'))
+        await event.reply(get_text("prompt.error_command"))
         return
 
     # 获取新提示词
     new_poll_prompt = input_text.strip()
-    logger.debug(f"用户 {sender_id} 设置的新投票提示词: {new_poll_prompt[:100]}..." if len(new_poll_prompt) > 100 else f"用户 {sender_id} 设置的新投票提示词: {new_poll_prompt}")
+    logger.debug(
+        f"用户 {sender_id} 设置的新投票提示词: {new_poll_prompt[:100]}..."
+        if len(new_poll_prompt) > 100
+        else f"用户 {sender_id} 设置的新投票提示词: {new_poll_prompt}"
+    )
 
     # 更新投票提示词
     save_poll_prompt(new_poll_prompt)

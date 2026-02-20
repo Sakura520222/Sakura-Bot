@@ -22,12 +22,13 @@ DEFAULT_LOG_LEVEL = logging.DEBUG
 
 # 日志级别映射
 LOG_LEVEL_MAP = {
-    'DEBUG': logging.DEBUG,
-    'INFO': logging.INFO,
-    'WARNING': logging.WARNING,
-    'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
 }
+
 
 # 日志级别转换函数
 def get_log_level(level_str):
@@ -36,11 +37,12 @@ def get_log_level(level_str):
         return DEFAULT_LOG_LEVEL
     return LOG_LEVEL_MAP.get(level_str.upper(), DEFAULT_LOG_LEVEL)
 
+
 # 初始配置日志
 logging.basicConfig(
     level=DEFAULT_LOG_LEVEL,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -105,21 +107,21 @@ logger.info(f"已加载 .env 文件中的环境变量 (路径: {env_path})")
 # 从环境变量中读取配置
 logger.info("开始从环境变量加载配置...")
 # 语言配置 - 从环境变量获取默认值
-LANGUAGE_FROM_ENV = os.getenv('LANGUAGE', 'zh-CN')
-API_ID = os.getenv('TELEGRAM_API_ID')
-API_HASH = os.getenv('TELEGRAM_API_HASH')
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+LANGUAGE_FROM_ENV = os.getenv("LANGUAGE", "zh-CN")
+API_ID = os.getenv("TELEGRAM_API_ID")
+API_HASH = os.getenv("TELEGRAM_API_HASH")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # AI 配置 - 从环境变量获取默认值
-LLM_API_KEY = os.getenv('LLM_API_KEY', os.getenv('DEEPSEEK_API_KEY'))
-LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.deepseek.com')
-LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
+LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("DEEPSEEK_API_KEY"))
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
 # 频道配置 - 从环境变量获取默认值
-TARGET_CHANNEL = os.getenv('TARGET_CHANNEL')
+TARGET_CHANNEL = os.getenv("TARGET_CHANNEL")
 CHANNELS = []
 if TARGET_CHANNEL:
     # 支持多个频道，用逗号分隔
-    CHANNELS = [channel.strip() for channel in TARGET_CHANNEL.split(',')]
+    CHANNELS = [channel.strip() for channel in TARGET_CHANNEL.split(",")]
     logger.info(f"已从环境变量加载频道配置: {CHANNELS}")
 
 # 是否将报告发送回源频道的配置，默认为True
@@ -139,35 +141,39 @@ ENABLE_VOTE_REGEN_REQUEST = True
 _poll_regenerations_lock = asyncio.Lock()
 
 # 日志级别 - 从环境变量获取默认值
-LOG_LEVEL_FROM_ENV = os.getenv('LOG_LEVEL')
+LOG_LEVEL_FROM_ENV = os.getenv("LOG_LEVEL")
 logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
 
-logger.debug(f"从环境变量加载的配置: API_ID={'***' if API_ID else '未设置'}, API_HASH={'***' if API_HASH else '未设置'}, BOT_TOKEN={'***' if BOT_TOKEN else '未设置'}")
+logger.debug(
+    f"从环境变量加载的配置: API_ID={'***' if API_ID else '未设置'}, API_HASH={'***' if API_HASH else '未设置'}, BOT_TOKEN={'***' if BOT_TOKEN else '未设置'}"
+)
 logger.debug(f"AI配置 - 环境变量默认值: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}")
 logger.debug(f"目标频道列表: {CHANNELS}")
 
 # 管理员 ID 列表，从环境变量读取后转为整数列表
-REPORT_ADMIN_IDS = os.getenv('REPORT_ADMIN_IDS', '')
+REPORT_ADMIN_IDS = os.getenv("REPORT_ADMIN_IDS", "")
 logger.debug(f"从环境变量读取的管理员ID: {REPORT_ADMIN_IDS}")
 
 # 处理管理员ID列表
 ADMIN_LIST = []
 if REPORT_ADMIN_IDS:
     # 支持多个管理员ID，用逗号分隔
-    ADMIN_LIST = [int(admin_id.strip()) for admin_id in REPORT_ADMIN_IDS.split(',')]
+    ADMIN_LIST = [int(admin_id.strip()) for admin_id in REPORT_ADMIN_IDS.split(",")]
     logger.info(f"已从环境变量加载管理员ID列表: {ADMIN_LIST}")
 else:
     # 如果没有配置管理员ID，默认发送给自己
-    ADMIN_LIST = ['me']
+    ADMIN_LIST = ["me"]
     logger.info("未配置管理员ID，默认发送给机器人所有者")
+
 
 # 读取配置文件
 def load_config():
     """从配置文件读取AI配置"""
     import json
+
     logger.info(f"开始读取配置文件: {CONFIG_FILE}")
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
             config = json.load(f)
             logger.info(f"成功读取配置文件，配置项数量: {len(config)}")
             return config
@@ -181,10 +187,12 @@ def load_config():
         logger.error(f"读取配置文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
         return {}
 
+
 # 保存配置文件
 def save_config(config):
     """保存AI配置到文件"""
     import json
+
     logger.info(f"开始保存配置到文件: {CONFIG_FILE}")
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -197,51 +205,62 @@ def save_config(config):
     except Exception as e:
         logger.error(f"保存配置到文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
 
+
 def update_module_variables(config):
     """更新模块变量以匹配配置文件"""
-    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, CHANNELS, SEND_REPORT_TO_SOURCE, SUMMARY_SCHEDULES, CHANNEL_POLL_SETTINGS, POLL_REGEN_THRESHOLD, ENABLE_VOTE_REGEN_REQUEST
+    global \
+        LLM_API_KEY, \
+        LLM_BASE_URL, \
+        LLM_MODEL, \
+        CHANNELS, \
+        SEND_REPORT_TO_SOURCE, \
+        SUMMARY_SCHEDULES, \
+        CHANNEL_POLL_SETTINGS, \
+        POLL_REGEN_THRESHOLD, \
+        ENABLE_VOTE_REGEN_REQUEST
 
     # 更新AI配置
-    LLM_API_KEY = config.get('api_key', LLM_API_KEY)
-    LLM_BASE_URL = config.get('base_url', LLM_BASE_URL)
-    LLM_MODEL = config.get('model', LLM_MODEL)
+    LLM_API_KEY = config.get("api_key", LLM_API_KEY)
+    LLM_BASE_URL = config.get("base_url", LLM_BASE_URL)
+    LLM_MODEL = config.get("model", LLM_MODEL)
 
     # 更新频道列表
-    config_channels = config.get('channels')
+    config_channels = config.get("channels")
     if config_channels and isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已更新内存中的频道列表: {CHANNELS}")
 
     # 更新是否将报告发送回源频道的配置
-    if 'send_report_to_source' in config:
-        SEND_REPORT_TO_SOURCE = config['send_report_to_source']
+    if "send_report_to_source" in config:
+        SEND_REPORT_TO_SOURCE = config["send_report_to_source"]
         logger.info(f"已更新内存中的发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
 
     # 更新是否启用投票功能的配置
-    if 'enable_poll' in config:
-        ENABLE_POLL = config['enable_poll']
+    if "enable_poll" in config:
+        ENABLE_POLL = config["enable_poll"]
         logger.info(f"已更新内存中的投票功能配置: {ENABLE_POLL}")
 
     # 更新频道级时间配置
-    summary_schedules_config = config.get('summary_schedules', {})
+    summary_schedules_config = config.get("summary_schedules", {})
     if isinstance(summary_schedules_config, dict):
         SUMMARY_SCHEDULES = summary_schedules_config
         logger.info(f"已更新内存中的频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
 
     # 更新频道级投票配置
-    channel_poll_config = config.get('channel_poll_settings', {})
+    channel_poll_config = config.get("channel_poll_settings", {})
     if isinstance(channel_poll_config, dict):
         CHANNEL_POLL_SETTINGS = channel_poll_config
         logger.info(f"已更新内存中的频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
 
     # 更新投票重新生成请求配置
-    if 'poll_regen_threshold' in config:
-        POLL_REGEN_THRESHOLD = config['poll_regen_threshold']
+    if "poll_regen_threshold" in config:
+        POLL_REGEN_THRESHOLD = config["poll_regen_threshold"]
         logger.info(f"已更新内存中的投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
 
-    if 'enable_vote_regen_request' in config:
-        ENABLE_VOTE_REGEN_REQUEST = config['enable_vote_regen_request']
+    if "enable_vote_regen_request" in config:
+        ENABLE_VOTE_REGEN_REQUEST = config["enable_vote_regen_request"]
         logger.info(f"已更新内存中的投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
+
 
 # 加载配置文件，覆盖环境变量默认值
 logger.info("开始加载配置文件...")
@@ -251,12 +270,14 @@ config = load_config()
 # 优先级：config.json > .env > 默认值(zh-CN)
 LANGUAGE_FROM_CONFIG = None
 if config:
-    LANGUAGE_FROM_CONFIG = config.get('language')
+    LANGUAGE_FROM_CONFIG = config.get("language")
     logger.debug(f"从配置文件读取的语言配置: {LANGUAGE_FROM_CONFIG}")
 
 # 确定最终语言配置
 final_language = LANGUAGE_FROM_CONFIG or LANGUAGE_FROM_ENV
-logger.info(f"最终语言配置: {final_language} (来源: {'配置文件' if LANGUAGE_FROM_CONFIG else '环境变量或默认值'})")
+logger.info(
+    f"最终语言配置: {final_language} (来源: {'配置文件' if LANGUAGE_FROM_CONFIG else '环境变量或默认值'})"
+)
 
 # 初始化国际化模块的语言设置
 from . import i18n
@@ -267,47 +288,47 @@ logger.info(f"国际化模块语言已设置为: {i18n.get_language()}")
 if config:
     logger.debug(f"从配置文件读取的配置: {config}")
     # 只有当配置文件中存在且不为None时才覆盖环境变量的值
-    if 'api_key' in config and config['api_key']:
-        LLM_API_KEY = config['api_key']
+    if "api_key" in config and config["api_key"]:
+        LLM_API_KEY = config["api_key"]
         logger.debug("从配置文件覆盖 LLM_API_KEY")
     else:
         logger.debug("使用环境变量中的 LLM_API_KEY")
 
-    if 'base_url' in config and config['base_url']:
-        LLM_BASE_URL = config['base_url']
+    if "base_url" in config and config["base_url"]:
+        LLM_BASE_URL = config["base_url"]
         logger.debug("从配置文件覆盖 LLM_BASE_URL")
     else:
         logger.debug("使用环境变量中的 LLM_BASE_URL")
 
-    if 'model' in config and config['model']:
-        LLM_MODEL = config['model']
+    if "model" in config and config["model"]:
+        LLM_MODEL = config["model"]
         logger.debug("从配置文件覆盖 LLM_MODEL")
     else:
         logger.debug("使用环境变量中的 LLM_MODEL")
 
     # 从配置文件读取频道列表
-    config_channels = config.get('channels')
+    config_channels = config.get("channels")
     if config_channels and isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已从配置文件加载频道列表: {CHANNELS}")
 
     # 从配置文件读取是否将报告发送回源频道的配置
-    SEND_REPORT_TO_SOURCE = config.get('send_report_to_source', SEND_REPORT_TO_SOURCE)
+    SEND_REPORT_TO_SOURCE = config.get("send_report_to_source", SEND_REPORT_TO_SOURCE)
     logger.info(f"已从配置文件加载发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
 
     # 从配置文件读取是否启用投票功能的配置
-    ENABLE_POLL = config.get('enable_poll', ENABLE_POLL)
+    ENABLE_POLL = config.get("enable_poll", ENABLE_POLL)
     logger.info(f"已从配置文件加载投票功能配置: {ENABLE_POLL}")
 
     # 从配置文件读取投票重新生成请求配置
-    POLL_REGEN_THRESHOLD = config.get('poll_regen_threshold', POLL_REGEN_THRESHOLD)
+    POLL_REGEN_THRESHOLD = config.get("poll_regen_threshold", POLL_REGEN_THRESHOLD)
     logger.info(f"已从配置文件加载投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
 
-    ENABLE_VOTE_REGEN_REQUEST = config.get('enable_vote_regen_request', ENABLE_VOTE_REGEN_REQUEST)
+    ENABLE_VOTE_REGEN_REQUEST = config.get("enable_vote_regen_request", ENABLE_VOTE_REGEN_REQUEST)
     logger.info(f"已从配置文件加载投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
 
     # 从配置文件读取日志级别
-    LOG_LEVEL_FROM_CONFIG = config.get('log_level')
+    LOG_LEVEL_FROM_CONFIG = config.get("log_level")
     logger.info("已使用配置文件覆盖AI配置默认值")
 else:
     logger.info("未找到配置文件或配置文件为空，使用默认配置")
@@ -322,7 +343,9 @@ root_logger = logging.getLogger()
 current_level = root_logger.getEffectiveLevel()
 if current_level != final_log_level:
     root_logger.setLevel(final_log_level)
-    logger.info(f"日志级别已从 {logging.getLevelName(current_level)} 更改为 {logging.getLevelName(final_log_level)}")
+    logger.info(
+        f"日志级别已从 {logging.getLevelName(current_level)} 更改为 {logging.getLevelName(final_log_level)}"
+    )
 else:
     logger.info(f"当前日志级别: {logging.getLevelName(current_level)}")
 
@@ -335,9 +358,11 @@ BOT_STATE_SHUTTING_DOWN = "shutting_down"
 _bot_state = BOT_STATE_RUNNING
 _scheduler_instance = None
 
+
 def get_bot_state():
     """获取当前机器人状态"""
     return _bot_state
+
 
 def set_bot_state(state):
     """设置机器人状态"""
@@ -351,26 +376,29 @@ def set_bot_state(state):
         logger.error(f"无效的机器人状态: {state}")
         return False
 
+
 def set_scheduler_instance(scheduler):
     """设置调度器实例，供其他模块访问"""
     global _scheduler_instance
     _scheduler_instance = scheduler
     logger.info("调度器实例已设置")
 
+
 def get_scheduler_instance():
     """获取调度器实例"""
     return _scheduler_instance
 
+
 # 自动总结时间配置
 # 默认时间：每周一早上9点
-DEFAULT_SUMMARY_DAY = 'mon'  # 星期几：mon, tue, wed, thu, fri, sat, sun
-DEFAULT_SUMMARY_HOUR = 9     # 小时：0-23
-DEFAULT_SUMMARY_MINUTE = 0   # 分钟：0-59
+DEFAULT_SUMMARY_DAY = "mon"  # 星期几：mon, tue, wed, thu, fri, sat, sun
+DEFAULT_SUMMARY_HOUR = 9  # 小时：0-23
+DEFAULT_SUMMARY_MINUTE = 0  # 分钟：0-59
 
 # 从配置文件读取频道级时间配置
 SUMMARY_SCHEDULES = {}
 if config:
-    summary_schedules_config = config.get('summary_schedules', {})
+    summary_schedules_config = config.get("summary_schedules", {})
     if isinstance(summary_schedules_config, dict):
         SUMMARY_SCHEDULES = summary_schedules_config
         logger.info(f"已从配置文件加载频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
@@ -380,12 +408,13 @@ if config:
 # 频道级投票配置
 CHANNEL_POLL_SETTINGS = {}
 if config:
-    channel_poll_config = config.get('channel_poll_settings', {})
+    channel_poll_config = config.get("channel_poll_settings", {})
     if isinstance(channel_poll_config, dict):
         CHANNEL_POLL_SETTINGS = channel_poll_config
         logger.info(f"已从配置文件加载频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
     else:
         logger.warning("配置文件中的channel_poll_settings格式不正确，使用默认配置")
+
 
 # 获取频道的时间配置
 def get_channel_schedule(channel):
@@ -404,11 +433,12 @@ def get_channel_schedule(channel):
     else:
         # 返回默认配置
         return {
-            'frequency': 'weekly',
-            'days': [DEFAULT_SUMMARY_DAY],
-            'hour': DEFAULT_SUMMARY_HOUR,
-            'minute': DEFAULT_SUMMARY_MINUTE
+            "frequency": "weekly",
+            "days": [DEFAULT_SUMMARY_DAY],
+            "hour": DEFAULT_SUMMARY_HOUR,
+            "minute": DEFAULT_SUMMARY_MINUTE,
         }
+
 
 # 设置频道的时间配置
 def set_channel_schedule(channel, day=None, hour=None, minute=None):
@@ -427,10 +457,13 @@ def set_channel_schedule(channel, day=None, hour=None, minute=None):
     """
     if day is not None:
         # 旧格式，转换为 weekly 模式
-        return set_channel_schedule_v2(channel, 'weekly', days=[day], hour=hour, minute=minute)
+        return set_channel_schedule_v2(channel, "weekly", days=[day], hour=hour, minute=minute)
     else:
         # 仅更新时间，保持默认星期
-        return set_channel_schedule_v2(channel, 'weekly', days=[DEFAULT_SUMMARY_DAY], hour=hour, minute=minute)
+        return set_channel_schedule_v2(
+            channel, "weekly", days=[DEFAULT_SUMMARY_DAY], hour=hour, minute=minute
+        )
+
 
 # 删除频道的时间配置
 def delete_channel_schedule(channel):
@@ -447,9 +480,9 @@ def delete_channel_schedule(channel):
         current_config = load_config()
 
         # 检查是否存在配置
-        if 'summary_schedules' in current_config and channel in current_config['summary_schedules']:
+        if "summary_schedules" in current_config and channel in current_config["summary_schedules"]:
             # 删除频道配置
-            del current_config['summary_schedules'][channel]
+            del current_config["summary_schedules"][channel]
 
             # 保存配置（save_config会自动更新模块变量）
             save_config(current_config)
@@ -463,6 +496,7 @@ def delete_channel_schedule(channel):
         logger.error(f"删除频道时间配置时出错: {type(e).__name__}: {e}", exc_info=True)
         return False
 
+
 # 验证时间配置
 def validate_schedule(day, hour, minute):
     """验证时间配置是否有效
@@ -475,7 +509,7 @@ def validate_schedule(day, hour, minute):
     Returns:
         tuple: (是否有效, 错误信息)
     """
-    valid_days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+    valid_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
     if day not in valid_days:
         return False, f"无效的星期几: {day}，有效值: {', '.join(valid_days)}"
@@ -488,7 +522,9 @@ def validate_schedule(day, hour, minute):
 
     return True, "配置有效"
 
+
 # ==================== 多频率模式支持函数 ====================
+
 
 def normalize_schedule_config(schedule_dict):
     """将配置标准化为新格式，处理向后兼容
@@ -500,31 +536,31 @@ def normalize_schedule_config(schedule_dict):
         dict: 标准化后的配置，包含 frequency, days, hour, minute
     """
     # 如果包含 frequency 字段，已经是新格式
-    if 'frequency' in schedule_dict:
+    if "frequency" in schedule_dict:
         # 确保 days 字段存在（weekly 模式）
-        if schedule_dict['frequency'] == 'weekly' and 'days' not in schedule_dict:
+        if schedule_dict["frequency"] == "weekly" and "days" not in schedule_dict:
             # 如果没有 days 字段但有 day 字段，转换它
-            if 'day' in schedule_dict:
-                schedule_dict['days'] = [schedule_dict['day']]
+            if "day" in schedule_dict:
+                schedule_dict["days"] = [schedule_dict["day"]]
             else:
-                schedule_dict['days'] = [DEFAULT_SUMMARY_DAY]
+                schedule_dict["days"] = [DEFAULT_SUMMARY_DAY]
         return schedule_dict
 
     # 向后兼容：旧格式 (day 字段)
-    if 'day' in schedule_dict:
+    if "day" in schedule_dict:
         return {
-            'frequency': 'weekly',
-            'days': [schedule_dict['day']],
-            'hour': schedule_dict.get('hour', DEFAULT_SUMMARY_HOUR),
-            'minute': schedule_dict.get('minute', DEFAULT_SUMMARY_MINUTE)
+            "frequency": "weekly",
+            "days": [schedule_dict["day"]],
+            "hour": schedule_dict.get("hour", DEFAULT_SUMMARY_HOUR),
+            "minute": schedule_dict.get("minute", DEFAULT_SUMMARY_MINUTE),
         }
 
     # 默认配置
     return {
-        'frequency': 'weekly',
-        'days': [DEFAULT_SUMMARY_DAY],
-        'hour': schedule_dict.get('hour', DEFAULT_SUMMARY_HOUR),
-        'minute': schedule_dict.get('minute', DEFAULT_SUMMARY_MINUTE)
+        "frequency": "weekly",
+        "days": [DEFAULT_SUMMARY_DAY],
+        "hour": schedule_dict.get("hour", DEFAULT_SUMMARY_HOUR),
+        "minute": schedule_dict.get("minute", DEFAULT_SUMMARY_MINUTE),
     }
 
 
@@ -537,17 +573,17 @@ def validate_schedule_v2(config_dict):
     Returns:
         tuple: (是否有效, 错误信息)
     """
-    valid_days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-    valid_frequencies = ['daily', 'weekly']
+    valid_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    valid_frequencies = ["daily", "weekly"]
 
     # 验证 frequency
-    frequency = config_dict.get('frequency')
+    frequency = config_dict.get("frequency")
     if frequency not in valid_frequencies:
         return False, f"无效的频率: {frequency}，有效值: {', '.join(valid_frequencies)}"
 
     # 验证 days（仅 weekly 模式需要）
-    if frequency == 'weekly':
-        days = config_dict.get('days', [])
+    if frequency == "weekly":
+        days = config_dict.get("days", [])
         if not isinstance(days, list) or not days:
             return False, "weekly 模式必须提供 days 字段（非空数组）"
 
@@ -556,8 +592,8 @@ def validate_schedule_v2(config_dict):
                 return False, f"无效的星期几: {day}，有效值: {', '.join(valid_days)}"
 
     # 验证时间
-    hour = config_dict.get('hour')
-    minute = config_dict.get('minute')
+    hour = config_dict.get("hour")
+    minute = config_dict.get("minute")
 
     if not isinstance(hour, int) or hour < 0 or hour > 23:
         return False, f"无效的小时: {hour}，有效范围: 0-23"
@@ -584,16 +620,16 @@ def set_channel_schedule_v2(channel, frequency, days=None, hour=None, minute=Non
     try:
         # 构建配置字典
         config_dict = {
-            'frequency': frequency,
-            'hour': hour if hour is not None else DEFAULT_SUMMARY_HOUR,
-            'minute': minute if minute is not None else DEFAULT_SUMMARY_MINUTE
+            "frequency": frequency,
+            "hour": hour if hour is not None else DEFAULT_SUMMARY_HOUR,
+            "minute": minute if minute is not None else DEFAULT_SUMMARY_MINUTE,
         }
 
         # weekly 模式需要 days 字段
-        if frequency == 'weekly':
+        if frequency == "weekly":
             if days is None:
                 days = [DEFAULT_SUMMARY_DAY]
-            config_dict['days'] = days
+            config_dict["days"] = days
 
         # 验证配置
         is_valid, error_msg = validate_schedule_v2(config_dict)
@@ -605,11 +641,11 @@ def set_channel_schedule_v2(channel, frequency, days=None, hour=None, minute=Non
         current_config = load_config()
 
         # 确保summary_schedules字段存在
-        if 'summary_schedules' not in current_config:
-            current_config['summary_schedules'] = {}
+        if "summary_schedules" not in current_config:
+            current_config["summary_schedules"] = {}
 
         # 更新配置
-        current_config['summary_schedules'][channel] = config_dict
+        current_config["summary_schedules"][channel] = config_dict
 
         # 保存配置
         save_config(current_config)
@@ -630,33 +666,34 @@ def build_cron_trigger(schedule_config):
     Returns:
         dict: 包含 cron 触发器参数的字典
     """
-    frequency = schedule_config.get('frequency', 'weekly')
+    frequency = schedule_config.get("frequency", "weekly")
 
-    if frequency == 'daily':
+    if frequency == "daily":
         # 每天模式
         return {
-            'day_of_week': '*',  # 每天
-            'hour': schedule_config['hour'],
-            'minute': schedule_config['minute']
+            "day_of_week": "*",  # 每天
+            "hour": schedule_config["hour"],
+            "minute": schedule_config["minute"],
         }
-    elif frequency == 'weekly':
+    elif frequency == "weekly":
         # 每周模式（支持多天）
-        days_str = ','.join(schedule_config['days'])
+        days_str = ",".join(schedule_config["days"])
         return {
-            'day_of_week': days_str,
-            'hour': schedule_config['hour'],
-            'minute': schedule_config['minute']
+            "day_of_week": days_str,
+            "hour": schedule_config["hour"],
+            "minute": schedule_config["minute"],
         }
     else:
         # 默认：每周一
         return {
-            'day_of_week': 'mon',
-            'hour': schedule_config.get('hour', DEFAULT_SUMMARY_HOUR),
-            'minute': schedule_config.get('minute', DEFAULT_SUMMARY_MINUTE)
+            "day_of_week": "mon",
+            "hour": schedule_config.get("hour", DEFAULT_SUMMARY_HOUR),
+            "minute": schedule_config.get("minute", DEFAULT_SUMMARY_MINUTE),
         }
 
 
 # ==================== 频道级投票配置管理函数 ====================
+
 
 def get_channel_poll_config(channel):
     """获取指定频道的投票配置
@@ -672,14 +709,14 @@ def get_channel_poll_config(channel):
     if channel in CHANNEL_POLL_SETTINGS:
         config = CHANNEL_POLL_SETTINGS[channel]
         return {
-            'enabled': config.get('enabled', None),  # None 表示使用全局配置
-            'send_to_channel': config.get('send_to_channel', False)  # 默认讨论组模式
+            "enabled": config.get("enabled", None),  # None 表示使用全局配置
+            "send_to_channel": config.get("send_to_channel", False),  # 默认讨论组模式
         }
     else:
         # 没有独立配置，返回默认配置
         return {
-            'enabled': None,  # 使用全局 ENABLE_POLL
-            'send_to_channel': False  # 默认讨论组模式
+            "enabled": None,  # 使用全局 ENABLE_POLL
+            "send_to_channel": False,  # 默认讨论组模式
         }
 
 
@@ -701,23 +738,25 @@ def set_channel_poll_config(channel, enabled=None, send_to_channel=None):
         current_config = load_config()
 
         # 确保channel_poll_settings字段存在
-        if 'channel_poll_settings' not in current_config:
-            current_config['channel_poll_settings'] = {}
+        if "channel_poll_settings" not in current_config:
+            current_config["channel_poll_settings"] = {}
 
         # 获取频道当前配置
-        if channel not in current_config['channel_poll_settings']:
-            current_config['channel_poll_settings'][channel] = {}
+        if channel not in current_config["channel_poll_settings"]:
+            current_config["channel_poll_settings"][channel] = {}
 
-        channel_config = current_config['channel_poll_settings'][channel]
+        channel_config = current_config["channel_poll_settings"][channel]
 
         # 更新配置（只更新提供的参数）
         if enabled is not None:
-            channel_config['enabled'] = enabled
+            channel_config["enabled"] = enabled
             logger.info(f"设置频道 {channel} 的投票启用状态: {enabled}")
 
         if send_to_channel is not None:
-            channel_config['send_to_channel'] = send_to_channel
-            logger.info(f"设置频道 {channel} 的投票发送位置: {'频道' if send_to_channel else '讨论组'}")
+            channel_config["send_to_channel"] = send_to_channel
+            logger.info(
+                f"设置频道 {channel} 的投票发送位置: {'频道' if send_to_channel else '讨论组'}"
+            )
 
         # 保存配置
         save_config(current_config)
@@ -745,9 +784,12 @@ def delete_channel_poll_config(channel):
         current_config = load_config()
 
         # 检查是否存在配置
-        if 'channel_poll_settings' in current_config and channel in current_config['channel_poll_settings']:
+        if (
+            "channel_poll_settings" in current_config
+            and channel in current_config["channel_poll_settings"]
+        ):
             # 删除频道配置
-            del current_config['channel_poll_settings'][channel]
+            del current_config["channel_poll_settings"][channel]
 
             # 保存配置
             save_config(current_config)
@@ -773,9 +815,10 @@ def load_poll_regenerations():
         dict: 投票重新生成数据字典
     """
     import json
+
     if os.path.exists(POLL_REGENERATIONS_FILE):
         try:
-            with open(POLL_REGENERATIONS_FILE, "r", encoding="utf-8") as f:
+            with open(POLL_REGENERATIONS_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"加载投票重新生成数据失败: {e}")
@@ -790,6 +833,7 @@ def save_poll_regenerations(data):
         data: 要保存的数据字典
     """
     import json
+
     try:
         with open(POLL_REGENERATIONS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -797,9 +841,16 @@ def save_poll_regenerations(data):
         logger.error(f"保存投票重新生成数据失败: {e}")
 
 
-def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
-                         button_msg_id, summary_text, channel_name, send_to_channel,
-                         discussion_forward_msg_id=None):
+def add_poll_regeneration(
+    channel,
+    summary_msg_id,
+    poll_msg_id,
+    button_msg_id,
+    summary_text,
+    channel_name,
+    send_to_channel,
+    discussion_forward_msg_id=None,
+):
     """添加一条投票重新生成记录
 
     Args:
@@ -813,6 +864,7 @@ def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
         discussion_forward_msg_id: 讨论组中的转发消息ID(仅讨论组模式需要)
     """
     from datetime import datetime
+
     data = load_poll_regenerations()
     if channel not in data:
         data[channel] = {}
@@ -824,7 +876,7 @@ def add_poll_regeneration(channel, summary_msg_id, poll_msg_id,
         "timestamp": datetime.now().isoformat(),
         "send_to_channel": send_to_channel,
         "vote_count": 0,  # 初始化投票计数
-        "voters": []  # 初始化已投票用户列表
+        "voters": [],  # 初始化已投票用户列表
     }
     # 如果是讨论组模式，保存转发消息ID
     if not send_to_channel and discussion_forward_msg_id is not None:
@@ -889,6 +941,7 @@ def cleanup_old_regenerations(days=30):
         int: 清理的记录数量
     """
     from datetime import datetime, timedelta
+
     data = load_poll_regenerations()
     cutoff_time = datetime.now() - timedelta(days=days)
     count = 0
@@ -926,25 +979,29 @@ async def increment_vote_count(channel, summary_msg_id, user_id):
 
         # 检查记录是否存在
         if channel not in data or str(summary_msg_id) not in data[channel]:
-            logger.warning(f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}")
+            logger.warning(
+                f"投票重新生成记录不存在: channel={channel}, summary_id={summary_msg_id}"
+            )
             return False, 0, False
 
         record = data[channel][str(summary_msg_id)]
 
         # 检查用户是否已投票
-        if user_id in record.get('voters', []):
+        if user_id in record.get("voters", []):
             logger.info(f"用户 {user_id} 已经投票过了")
-            return False, record.get('vote_count', 0), True
+            return False, record.get("vote_count", 0), True
 
         # 增加投票计数
-        record['vote_count'] = record.get('vote_count', 0) + 1
-        record.setdefault('voters', []).append(user_id)
+        record["vote_count"] = record.get("vote_count", 0) + 1
+        record.setdefault("voters", []).append(user_id)
 
         # 保存数据
         save_poll_regenerations(data)
 
-        logger.info(f"投票计数已更新: channel={channel}, summary_id={summary_msg_id}, count={record['vote_count']}, user_id={user_id}")
-        return True, record['vote_count'], False
+        logger.info(
+            f"投票计数已更新: channel={channel}, summary_id={summary_msg_id}, count={record['vote_count']}, user_id={user_id}"
+        )
+        return True, record["vote_count"], False
 
 
 def reset_vote_count(channel, summary_msg_id):
@@ -967,8 +1024,8 @@ def reset_vote_count(channel, summary_msg_id):
         return False
 
     # 重置计数和投票者列表
-    data[channel][str(summary_msg_id)]['vote_count'] = 0
-    data[channel][str(summary_msg_id)]['voters'] = []
+    data[channel][str(summary_msg_id)]["vote_count"] = 0
+    data[channel][str(summary_msg_id)]["voters"] = []
 
     # 保存数据
     save_poll_regenerations(data)
@@ -992,10 +1049,11 @@ def get_vote_count(channel, summary_msg_id):
     if channel not in data or str(summary_msg_id) not in data[channel]:
         return 0
 
-    return data[channel][str(summary_msg_id)].get('vote_count', 0)
+    return data[channel][str(summary_msg_id)].get("vote_count", 0)
 
 
 # ==================== 讨论组ID缓存管理 ====================
+
 
 def get_cached_discussion_group_id(channel_url):
     """获取缓存的讨论组ID
@@ -1061,13 +1119,16 @@ async def get_discussion_group_id_cached(client, channel_url):
 
         # 获取讨论组ID
         discussion_group_id = None
-        if hasattr(full_channel, 'linked_chat_id') and full_channel.linked_chat_id:
+        if hasattr(full_channel, "linked_chat_id") and full_channel.linked_chat_id:
             discussion_group_id = full_channel.linked_chat_id
         else:
             # 尝试使用GetFullChannelRequest
             logger.debug(f"频道 {channel_url} 没有linked_chat_id属性,尝试GetFullChannelRequest")
             full_info = await client(GetFullChannelRequest(full_channel))
-            if hasattr(full_info.full_chat, 'linked_chat_id') and full_info.full_chat.linked_chat_id:
+            if (
+                hasattr(full_info.full_chat, "linked_chat_id")
+                and full_info.full_chat.linked_chat_id
+            ):
                 discussion_group_id = full_info.full_chat.linked_chat_id
 
         if discussion_group_id:
@@ -1090,6 +1151,7 @@ async def get_discussion_group_id_cached(client, channel_url):
 
 # ==================== 问答Bot人格配置管理 ====================
 
+
 def get_qa_bot_persona():
     """获取问答Bot的人格描述
 
@@ -1104,18 +1166,18 @@ def get_qa_bot_persona():
     """
     # 1. 先尝试从配置文件读取
     config = load_config()
-    persona_from_config = config.get('qa_bot_persona')
+    persona_from_config = config.get("qa_bot_persona")
     if persona_from_config:
         logger.debug("使用配置文件中的问答Bot人格")
         return persona_from_config
 
     # 2. 再尝试从环境变量读取
-    persona_from_env = os.getenv('QA_BOT_PERSONA')
+    persona_from_env = os.getenv("QA_BOT_PERSONA")
     if persona_from_env:
         # 检查是否是文件路径（如果以.txt结尾或路径包含文件分隔符）
-        if persona_from_env.endswith('.txt') or '\\' in persona_from_env or '/' in persona_from_env:
+        if persona_from_env.endswith(".txt") or "\\" in persona_from_env or "/" in persona_from_env:
             try:
-                with open(persona_from_env, 'r', encoding='utf-8') as f:
+                with open(persona_from_env, encoding="utf-8") as f:
                     persona = f.read().strip()
                     logger.debug(f"从环境变量指定的文件加载问答Bot人格: {persona_from_env}")
                     return persona
@@ -1128,7 +1190,7 @@ def get_qa_bot_persona():
 
     # 3. 尝试从默认文件读取
     try:
-        with open(QA_PERSONA_FILE, 'r', encoding='utf-8') as f:
+        with open(QA_PERSONA_FILE, encoding="utf-8") as f:
             persona = f.read().strip()
             logger.debug(f"从默认文件加载问答Bot人格: {QA_PERSONA_FILE}")
             return persona
@@ -1136,7 +1198,7 @@ def get_qa_bot_persona():
         # 4. 文件不存在，返回默认人格并创建文件
         logger.info(f"人格文件 {QA_PERSONA_FILE} 不存在，创建默认文件")
         try:
-            with open(QA_PERSONA_FILE, 'w', encoding='utf-8') as f:
+            with open(QA_PERSONA_FILE, "w", encoding="utf-8") as f:
                 f.write(DEFAULT_QA_PERSONA)
             logger.info(f"已创建默认人格文件: {QA_PERSONA_FILE}")
         except Exception as e:

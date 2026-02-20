@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -18,8 +17,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 from .database import get_db_manager
 
@@ -39,10 +37,10 @@ class ConversationManager:
         """初始化会话管理器"""
         self.db = get_db_manager()
         # 内存缓存：user_id -> {session_id, last_active}
-        self._session_cache: Dict[int, Dict[str, any]] = {}
+        self._session_cache: dict[int, dict[str, any]] = {}
         logger.info("会话管理器初始化完成")
 
-    def get_or_create_session(self, user_id: int) -> Tuple[str, bool]:
+    def get_or_create_session(self, user_id: int) -> tuple[str, bool]:
         """
         获取或创建用户会话
 
@@ -53,18 +51,18 @@ class ConversationManager:
             (session_id, is_new_session) - 会话ID和是否为新会话
         """
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             # 检查缓存中的会话
             if user_id in self._session_cache:
                 cached = self._session_cache[user_id]
-                session_id = cached['session_id']
-                last_active = cached['last_active']
+                session_id = cached["session_id"]
+                last_active = cached["last_active"]
 
                 # 检查是否超时
                 if (now - last_active) < timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
                     # 会话仍然有效，更新活动时间
-                    cached['last_active'] = now
+                    cached["last_active"] = now
                     logger.debug(f"用户 {user_id} 继续使用会话 {session_id}")
                     return session_id, False
                 else:
@@ -73,10 +71,7 @@ class ConversationManager:
 
             # 创建新会话
             session_id = str(uuid.uuid4())
-            self._session_cache[user_id] = {
-                'session_id': session_id,
-                'last_active': now
-            }
+            self._session_cache[user_id] = {"session_id": session_id, "last_active": now}
 
             logger.info(f"为用户 {user_id} 创建新会话 {session_id}")
             return session_id, True
@@ -86,9 +81,9 @@ class ConversationManager:
             # 降级：返回一个随机会话ID
             return str(uuid.uuid4()), True
 
-    def save_message(self, user_id: int, session_id: str,
-                    role: str, content: str,
-                    metadata: Optional[Dict] = None) -> bool:
+    def save_message(
+        self, user_id: int, session_id: str, role: str, content: str, metadata: dict | None = None
+    ) -> bool:
         """
         保存对话消息
 
@@ -109,13 +104,13 @@ class ConversationManager:
                 session_id=session_id,
                 role=role,
                 content=content,
-                metadata=metadata
+                metadata=metadata,
             )
 
             if success:
                 # 更新缓存的活动时间
                 if user_id in self._session_cache:
-                    self._session_cache[user_id]['last_active'] = datetime.now(timezone.utc)
+                    self._session_cache[user_id]["last_active"] = datetime.now(UTC)
 
             return success
 
@@ -123,8 +118,7 @@ class ConversationManager:
             logger.error(f"保存消息失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_conversation_history(self, user_id: int,
-                                 session_id: str) -> list:
+    def get_conversation_history(self, user_id: int, session_id: str) -> list:
         """
         获取对话历史（用于RAG上下文）
 
@@ -137,9 +131,7 @@ class ConversationManager:
         """
         try:
             history = self.db.get_conversation_history(
-                user_id=user_id,
-                session_id=session_id,
-                limit=self.MAX_MESSAGES_PER_SESSION
+                user_id=user_id, session_id=session_id, limit=self.MAX_MESSAGES_PER_SESSION
             )
             return history
 
@@ -147,8 +139,7 @@ class ConversationManager:
             logger.error(f"获取对话历史失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def clear_user_history(self, user_id: int,
-                          session_id: Optional[str] = None) -> int:
+    def clear_user_history(self, user_id: int, session_id: str | None = None) -> int:
         """
         清除用户对话历史
 
@@ -170,7 +161,7 @@ class ConversationManager:
             else:
                 # 如果清除了当前会话，也清除缓存
                 if user_id in self._session_cache:
-                    if self._session_cache[user_id]['session_id'] == session_id:
+                    if self._session_cache[user_id]["session_id"] == session_id:
                         del self._session_cache[user_id]
 
             return deleted
@@ -195,11 +186,11 @@ class ConversationManager:
         context_parts = []
 
         for item in history:
-            role = item['role']
-            content = item['content']
+            role = item["role"]
+            content = item["content"]
 
             # 角色名称映射
-            role_name = "用户" if role == 'user' else "助手"
+            role_name = "用户" if role == "user" else "助手"
 
             # 截断过长的消息（避免token浪费）
             if len(content) > 500:
@@ -209,7 +200,7 @@ class ConversationManager:
 
         return "\n".join(context_parts)
 
-    def get_session_info(self, user_id: int) -> Optional[Dict]:
+    def get_session_info(self, user_id: int) -> dict | None:
         """
         获取用户的会话信息
 
@@ -224,11 +215,11 @@ class ConversationManager:
                 return None
 
             cached = self._session_cache[user_id]
-            session_id = cached['session_id']
-            last_active = cached['last_active']
+            session_id = cached["session_id"]
+            last_active = cached["last_active"]
 
             # 计算会话时长
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             duration = now - last_active
 
             # 获取会话中的消息数
@@ -236,11 +227,11 @@ class ConversationManager:
             message_count = len(history)
 
             return {
-                'session_id': session_id,
-                'last_active': last_active.isoformat(),
-                'duration_seconds': int(duration.total_seconds()),
-                'message_count': message_count,
-                'is_active': duration < timedelta(minutes=self.SESSION_TIMEOUT_MINUTES)
+                "session_id": session_id,
+                "last_active": last_active.isoformat(),
+                "duration_seconds": int(duration.total_seconds()),
+                "message_count": message_count,
+                "is_active": duration < timedelta(minutes=self.SESSION_TIMEOUT_MINUTES),
             }
 
         except Exception as e:
@@ -261,11 +252,11 @@ class ConversationManager:
             deleted = self.db.delete_old_conversations(days)
 
             # 清理缓存中不活跃的会话
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             expired_users = []
 
             for user_id, cached in self._session_cache.items():
-                if (now - cached['last_active']) > timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
+                if (now - cached["last_active"]) > timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
                     expired_users.append(user_id)
 
             for user_id in expired_users:
@@ -281,6 +272,7 @@ class ConversationManager:
 
 # 创建全局会话管理器实例
 conversation_manager = None
+
 
 def get_conversation_manager():
     """获取全局会话管理器实例"""

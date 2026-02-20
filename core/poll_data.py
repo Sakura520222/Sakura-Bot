@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 # 投票重新生成记录类型
 PollRegenerationRecord = dict[
     str,  # 'channel', 'summary_msg_id', 'poll_msg_id', 'button_msg_id',
-          # 'summary_text', 'channel_name', 'timestamp', 'send_to_channel',
-          # 'vote_count', 'voters', 'discussion_forward_msg_id'
-    str | int | bool | list[int] | None
+    # 'summary_text', 'channel_name', 'timestamp', 'send_to_channel',
+    # 'vote_count', 'voters', 'discussion_forward_msg_id'
+    str | int | bool | list[int] | None,
 ]
 
 
@@ -125,7 +125,7 @@ class PollRegenerationManager:
         summary_text: str,
         channel_name: str,
         send_to_channel: bool,
-        discussion_forward_msg_id: int | None = None
+        discussion_forward_msg_id: int | None = None,
     ) -> None:
         """添加一条投票重新生成记录
 
@@ -144,31 +144,34 @@ class PollRegenerationManager:
         async with self._lock:
             try:
                 async with aiosqlite.connect(self._db_path) as db:
-                    await db.execute("""
+                    await db.execute(
+                        """
                         INSERT OR REPLACE INTO poll_regenerations
                         (channel, summary_msg_id, poll_msg_id, button_msg_id,
                          summary_text, channel_name, send_to_channel,
                          discussion_forward_msg_id, vote_count)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-                    """, (
-                        channel, summary_msg_id, poll_msg_id, button_msg_id,
-                        summary_text, channel_name, int(send_to_channel),
-                        discussion_forward_msg_id
-                    ))
+                    """,
+                        (
+                            channel,
+                            summary_msg_id,
+                            poll_msg_id,
+                            button_msg_id,
+                            summary_text,
+                            channel_name,
+                            int(send_to_channel),
+                            discussion_forward_msg_id,
+                        ),
+                    )
                     await db.commit()
 
                 logger.info(
-                    f"已添加投票重新生成记录: channel={channel}, "
-                    f"summary_id={summary_msg_id}"
+                    f"已添加投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
                 raise DatabaseError(f"添加记录失败: {e}")
 
-    async def get_record(
-        self,
-        channel: str,
-        summary_msg_id: int
-    ) -> PollRegenerationRecord | None:
+    async def get_record(self, channel: str, summary_msg_id: int) -> PollRegenerationRecord | None:
         """获取指定的投票重新生成记录
 
         Args:
@@ -183,19 +186,25 @@ class PollRegenerationManager:
         try:
             async with aiosqlite.connect(self._db_path) as db:
                 db.row_factory = aiosqlite.Row
-                async with db.execute("""
+                async with db.execute(
+                    """
                     SELECT * FROM poll_regenerations
                     WHERE channel = ? AND summary_msg_id = ?
-                """, (channel, summary_msg_id)) as cursor:
+                """,
+                    (channel, summary_msg_id),
+                ) as cursor:
                     row = await cursor.fetchone()
 
                     if row:
                         # 获取投票者列表
                         voters = []
-                        async with db.execute("""
+                        async with db.execute(
+                            """
                             SELECT user_id FROM poll_voters
                             WHERE channel = ? AND summary_msg_id = ?
-                        """, (channel, summary_msg_id)) as voter_cursor:
+                        """,
+                            (channel, summary_msg_id),
+                        ) as voter_cursor:
                             async for voter_row in voter_cursor:
                                 voters.append(voter_row[0])
 
@@ -206,11 +215,7 @@ class PollRegenerationManager:
             raise DatabaseError(f"获取记录失败: {e}")
 
     async def update_message_ids(
-        self,
-        channel: str,
-        summary_msg_id: int,
-        poll_msg_id: int,
-        button_msg_id: int
+        self, channel: str, summary_msg_id: int, poll_msg_id: int, button_msg_id: int
     ) -> None:
         """更新投票重新生成记录的消息 ID
 
@@ -225,25 +230,23 @@ class PollRegenerationManager:
         async with self._lock:
             try:
                 async with aiosqlite.connect(self._db_path) as db:
-                    await db.execute("""
+                    await db.execute(
+                        """
                         UPDATE poll_regenerations
                         SET poll_msg_id = ?, button_msg_id = ?
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (poll_msg_id, button_msg_id, channel, summary_msg_id))
+                    """,
+                        (poll_msg_id, button_msg_id, channel, summary_msg_id),
+                    )
                     await db.commit()
 
                 logger.info(
-                    f"已更新投票重新生成记录: channel={channel}, "
-                    f"summary_id={summary_msg_id}"
+                    f"已更新投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
                 raise DatabaseError(f"更新记录失败: {e}")
 
-    async def delete_record(
-        self,
-        channel: str,
-        summary_msg_id: int
-    ) -> None:
+    async def delete_record(self, channel: str, summary_msg_id: int) -> None:
         """删除指定的投票重新生成记录
 
         Args:
@@ -256,24 +259,23 @@ class PollRegenerationManager:
             try:
                 async with aiosqlite.connect(self._db_path) as db:
                     # 删除投票者（CASCADE 会自动处理）
-                    await db.execute("""
+                    await db.execute(
+                        """
                         DELETE FROM poll_regenerations
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id))
+                    """,
+                        (channel, summary_msg_id),
+                    )
                     await db.commit()
 
                 logger.info(
-                    f"已删除投票重新生成记录: channel={channel}, "
-                    f"summary_id={summary_msg_id}"
+                    f"已删除投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
                 raise DatabaseError(f"删除记录失败: {e}")
 
     async def increment_vote_count(
-        self,
-        channel: str,
-        summary_msg_id: int,
-        user_id: int
+        self, channel: str, summary_msg_id: int, user_id: int
     ) -> tuple[bool, int, bool]:
         """增加投票计数
 
@@ -291,10 +293,13 @@ class PollRegenerationManager:
             try:
                 async with aiosqlite.connect(self._db_path) as db:
                     # 检查记录是否存在
-                    async with db.execute("""
+                    async with db.execute(
+                        """
                         SELECT vote_count FROM poll_regenerations
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id)) as cursor:
+                    """,
+                        (channel, summary_msg_id),
+                    ) as cursor:
                         row = await cursor.fetchone()
                         if not row:
                             logger.warning(
@@ -306,34 +311,46 @@ class PollRegenerationManager:
                     current_count = row[0]
 
                     # 检查用户是否已投票
-                    async with db.execute("""
+                    async with db.execute(
+                        """
                         SELECT 1 FROM poll_voters
                         WHERE channel = ? AND summary_msg_id = ? AND user_id = ?
-                    """, (channel, summary_msg_id, user_id)) as cursor:
+                    """,
+                        (channel, summary_msg_id, user_id),
+                    ) as cursor:
                         if await cursor.fetchone():
                             logger.info(f"用户 {user_id} 已经投票过了")
                             return False, current_count, True
 
                     # 增加投票计数
-                    await db.execute("""
+                    await db.execute(
+                        """
                         UPDATE poll_regenerations
                         SET vote_count = vote_count + 1
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id))
+                    """,
+                        (channel, summary_msg_id),
+                    )
 
                     # 记录投票者
-                    await db.execute("""
+                    await db.execute(
+                        """
                         INSERT INTO poll_voters (channel, summary_msg_id, user_id)
                         VALUES (?, ?, ?)
-                    """, (channel, summary_msg_id, user_id))
+                    """,
+                        (channel, summary_msg_id, user_id),
+                    )
 
                     await db.commit()
 
                     # 获取更新后的计数
-                    async with db.execute("""
+                    async with db.execute(
+                        """
                         SELECT vote_count FROM poll_regenerations
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id)) as cursor:
+                    """,
+                        (channel, summary_msg_id),
+                    ) as cursor:
                         row = await cursor.fetchone()
                         new_count = row[0]
 
@@ -348,11 +365,7 @@ class PollRegenerationManager:
             except Exception as e:
                 raise DatabaseError(f"增加投票计数失败: {e}")
 
-    async def reset_vote_count(
-        self,
-        channel: str,
-        summary_msg_id: int
-    ) -> bool:
+    async def reset_vote_count(self, channel: str, summary_msg_id: int) -> bool:
         """重置投票计数
 
         Args:
@@ -368,10 +381,13 @@ class PollRegenerationManager:
             try:
                 async with aiosqlite.connect(self._db_path) as db:
                     # 检查记录是否存在
-                    async with db.execute("""
+                    async with db.execute(
+                        """
                         SELECT 1 FROM poll_regenerations
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id)) as cursor:
+                    """,
+                        (channel, summary_msg_id),
+                    ) as cursor:
                         if not await cursor.fetchone():
                             logger.warning(
                                 f"投票重新生成记录不存在: channel={channel}, "
@@ -380,34 +396,33 @@ class PollRegenerationManager:
                             return False
 
                     # 重置计数
-                    await db.execute("""
+                    await db.execute(
+                        """
                         UPDATE poll_regenerations
                         SET vote_count = 0
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id))
+                    """,
+                        (channel, summary_msg_id),
+                    )
 
                     # 删除投票者记录
-                    await db.execute("""
+                    await db.execute(
+                        """
                         DELETE FROM poll_voters
                         WHERE channel = ? AND summary_msg_id = ?
-                    """, (channel, summary_msg_id))
+                    """,
+                        (channel, summary_msg_id),
+                    )
 
                     await db.commit()
 
-                    logger.info(
-                        f"投票计数已重置: channel={channel}, "
-                        f"summary_id={summary_msg_id}"
-                    )
+                    logger.info(f"投票计数已重置: channel={channel}, summary_id={summary_msg_id}")
                     return True
 
             except Exception as e:
                 raise DatabaseError(f"重置投票计数失败: {e}")
 
-    async def get_vote_count(
-        self,
-        channel: str,
-        summary_msg_id: int
-    ) -> int:
+    async def get_vote_count(self, channel: str, summary_msg_id: int) -> int:
         """获取投票计数
 
         Args:
@@ -421,19 +436,19 @@ class PollRegenerationManager:
 
         try:
             async with aiosqlite.connect(self._db_path) as db:
-                async with db.execute("""
+                async with db.execute(
+                    """
                     SELECT vote_count FROM poll_regenerations
                     WHERE channel = ? AND summary_msg_id = ?
-                """, (channel, summary_msg_id)) as cursor:
+                """,
+                    (channel, summary_msg_id),
+                ) as cursor:
                     row = await cursor.fetchone()
                     return row[0] if row else 0
         except Exception as e:
             raise DatabaseError(f"获取投票计数失败: {e}")
 
-    async def cleanup_old_records(
-        self,
-        days: int = CLEANUP_DAYS_DEFAULT
-    ) -> int:
+    async def cleanup_old_records(self, days: int = CLEANUP_DAYS_DEFAULT) -> int:
         """清理超过指定天数的旧记录
 
         Args:
@@ -449,18 +464,19 @@ class PollRegenerationManager:
                 cutoff_time = datetime.now() - timedelta(days=days)
 
                 async with aiosqlite.connect(self._db_path) as db:
-                    cursor = await db.execute("""
+                    cursor = await db.execute(
+                        """
                         DELETE FROM poll_regenerations
                         WHERE timestamp < ?
-                    """, (cutoff_time.isoformat(),))
+                    """,
+                        (cutoff_time.isoformat(),),
+                    )
 
                     count = cursor.rowcount
                     await db.commit()
 
                 if count > 0:
-                    logger.info(
-                        f"已清理 {count} 条超过 {days} 天的投票重新生成记录"
-                    )
+                    logger.info(f"已清理 {count} 条超过 {days} 天的投票重新生成记录")
 
                 return count
 

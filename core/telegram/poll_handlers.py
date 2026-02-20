@@ -40,22 +40,24 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
         # 获取频道实体
         logger.info(f"获取频道实体: {channel}")
         channel_entity = await client.get_entity(channel)
-        logger.info(f"成功获取频道实体: {channel_entity.title if hasattr(channel_entity, 'title') else channel}")
+        logger.info(
+            f"成功获取频道实体: {channel_entity.title if hasattr(channel_entity, 'title') else channel}"
+        )
 
         # 生成投票内容
         logger.info("开始生成投票内容")
         poll_data = generate_poll_from_summary(summary_text)
 
-        if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
+        if not poll_data or "question" not in poll_data or "options" not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")
             poll_data = {
-                "question": get_text('poll.default_question'),
+                "question": get_text("poll.default_question"),
                 "options": [
-                    get_text('poll.default_options.0'),
-                    get_text('poll.default_options.1'),
-                    get_text('poll.default_options.2'),
-                    get_text('poll.default_options.3')
-                ]
+                    get_text("poll.default_options.0"),
+                    get_text("poll.default_options.1"),
+                    get_text("poll.default_options.2"),
+                    get_text("poll.default_options.3"),
+                ],
             }
 
         # 发送投票，使用 reply_to 参数回复总结消息
@@ -64,57 +66,73 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
         # 使用高层 API 发送投票并附加按钮
         try:
             # 清洗并截断问题文本
-            question_text = str(poll_data.get('question', get_text('poll_regen.default_question'))).strip()[:250]
+            question_text = str(
+                poll_data.get("question", get_text("poll_regen.default_question"))
+            ).strip()[:250]
 
             # 构造选项
             poll_answers = []
-            for i, opt in enumerate(poll_data.get('options', [])[:10]):
+            for i, opt in enumerate(poll_data.get("options", [])[:10]):
                 opt_clean = str(opt).strip()[:100]
                 # 选项的text也必须是TextWithEntities类型
-                poll_answers.append(PollAnswer(
-                    text=TextWithEntities(opt_clean, entities=[]),
-                    option=bytes([i])
-                ))
+                poll_answers.append(
+                    PollAnswer(text=TextWithEntities(opt_clean, entities=[]), option=bytes([i]))
+                )
 
             # 构造投票对象
             # 注意：Telethon的Poll构造函数要求question必须是TextWithEntities类型
             poll_obj = Poll(
                 id=0,
-                question=TextWithEntities(question_text, entities=[]),  # 必须包装为TextWithEntities，并传入空的entities列表
+                question=TextWithEntities(
+                    question_text, entities=[]
+                ),  # 必须包装为TextWithEntities，并传入空的entities列表
                 answers=poll_answers,
                 closed=False,
                 public_voters=False,
                 multiple_choice=False,
-                quiz=False
+                quiz=False,
             )
 
             # 构造内联按钮
             button_markup = []
             # 如果启用投票重新生成请求功能，添加请求按钮
             if ENABLE_VOTE_REGEN_REQUEST:
-                button_markup.append([Button.inline(
-                    get_text('poll_regen.request_button', count=0, threshold=POLL_REGEN_THRESHOLD),
-                    data=f"request_regen_{summary_message_id}".encode('utf-8')
-                )])
+                button_markup.append(
+                    [
+                        Button.inline(
+                            get_text(
+                                "poll_regen.request_button", count=0, threshold=POLL_REGEN_THRESHOLD
+                            ),
+                            data=f"request_regen_{summary_message_id}".encode(),
+                        )
+                    ]
+                )
             # 添加管理员重新生成按钮
-            button_markup.append([Button.inline(
-                get_text('poll_regen.admin_button'),
-                data=f"regen_poll_{summary_message_id}".encode('utf-8')
-            )])
+            button_markup.append(
+                [
+                    Button.inline(
+                        get_text("poll_regen.admin_button"),
+                        data=f"regen_poll_{summary_message_id}".encode(),
+                    )
+                ]
+            )
 
             # 使用 send_message 发送投票并附加按钮
             poll_msg = await client.send_message(
                 channel,
                 file=InputMediaPoll(poll=poll_obj),
                 buttons=button_markup,
-                reply_to=int(summary_message_id)
+                reply_to=int(summary_message_id),
             )
 
-            logger.info(f"✅ 成功发送投票到频道并回复消息 {summary_message_id}, 投票消息ID: {poll_msg.id}")
+            logger.info(
+                f"✅ 成功发送投票到频道并回复消息 {summary_message_id}, 投票消息ID: {poll_msg.id}"
+            )
 
             # 保存映射关系到存储
             from ..config import add_poll_regeneration
-            channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
+
+            channel_name = channel_entity.title if hasattr(channel_entity, "title") else channel
             add_poll_regeneration(
                 channel=channel,
                 summary_msg_id=summary_message_id,
@@ -122,18 +140,19 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
                 button_msg_id=None,  # 按钮直接附加在投票消息上，无需单独存储
                 summary_text=summary_text,
                 channel_name=channel_name,
-                send_to_channel=True
+                send_to_channel=True,
             )
 
             # 返回消息ID
             return {
                 "poll_msg_id": poll_msg.id,
-                "button_msg_id": None  # 按钮直接附加在投票消息上
+                "button_msg_id": None,  # 按钮直接附加在投票消息上
             }
 
         except Exception as e:
             logger.error(f"发送投票到频道失败: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return None
 
@@ -166,10 +185,11 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
         logger.info(f"获取频道实体: {channel}")
         channel_entity = await client.get_entity(channel)
         channel_id = channel_entity.id
-        channel_name = channel_entity.title if hasattr(channel_entity, 'title') else channel
+        channel_name = channel_entity.title if hasattr(channel_entity, "title") else channel
 
         # 检查频道是否有绑定的讨论组(使用缓存版本)
         from ..config import get_discussion_group_id_cached
+
         discussion_group_id = await get_discussion_group_id_cached(client, channel)
 
         if not discussion_group_id:
@@ -191,16 +211,16 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
         logger.info("开始生成投票内容")
         poll_data = generate_poll_from_summary(summary_text)
 
-        if not poll_data or 'question' not in poll_data or 'options' not in poll_data:
+        if not poll_data or "question" not in poll_data or "options" not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")
             poll_data = {
-                "question": get_text('poll.default_question'),
+                "question": get_text("poll.default_question"),
                 "options": [
-                    get_text('poll.default_options.0'),
-                    get_text('poll.default_options.1'),
-                    get_text('poll.default_options.2'),
-                    get_text('poll.default_options.3')
-                ]
+                    get_text("poll.default_options.0"),
+                    get_text("poll.default_options.1"),
+                    get_text("poll.default_options.2"),
+                    get_text("poll.default_options.3"),
+                ],
             }
 
         # 使用事件监听方式等待转发消息
@@ -208,6 +228,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
 
         # 创建事件Future来等待转发消息
         from asyncio import Future
+
         forward_message_future = Future()
 
         # 定义事件处理器
@@ -216,12 +237,15 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
             msg = event.message
 
             # 检查是否是转发消息
-            if (hasattr(msg, 'fwd_from') and msg.fwd_from and
-                hasattr(msg.fwd_from, 'from_id') and msg.fwd_from.from_id and
-                hasattr(msg.fwd_from.from_id, 'channel_id') and
-                msg.fwd_from.from_id.channel_id == channel_id and
-                msg.fwd_from.channel_post == summary_message_id):
-
+            if (
+                hasattr(msg, "fwd_from")
+                and msg.fwd_from
+                and hasattr(msg.fwd_from, "from_id")
+                and msg.fwd_from.from_id
+                and hasattr(msg.fwd_from.from_id, "channel_id")
+                and msg.fwd_from.from_id.channel_id == channel_id
+                and msg.fwd_from.channel_post == summary_message_id
+            ):
                 logger.info(f"收到转发消息，讨论组消息ID: {msg.id}")
                 forward_message_future.set_result(msg)
 
@@ -240,54 +264,77 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
 
             try:
                 # 1. 严格清洗并截断
-                question_text = str(poll_data.get('question', get_text('poll_regen.default_question'))).strip()[:250]
+                question_text = str(
+                    poll_data.get("question", get_text("poll_regen.default_question"))
+                ).strip()[:250]
 
                 # 2. 构造选项，选项的text也必须是TextWithEntities类型
                 poll_answers = []
-                for i, opt in enumerate(poll_data.get('options', [])[:10]):
+                for i, opt in enumerate(poll_data.get("options", [])[:10]):
                     opt_clean = str(opt).strip()[:100]
-                    poll_answers.append(PollAnswer(
-                        text=TextWithEntities(opt_clean, entities=[]),  # 必须包装为TextWithEntities
-                        option=bytes([i])
-                    ))
+                    poll_answers.append(
+                        PollAnswer(
+                            text=TextWithEntities(
+                                opt_clean, entities=[]
+                            ),  # 必须包装为TextWithEntities
+                            option=bytes([i]),
+                        )
+                    )
 
                 # 3. 手动构造Poll对象（question必须包装为TextWithEntities）
                 poll_obj = Poll(
                     id=0,
-                    question=TextWithEntities(question_text, entities=[]),  # 必须包装为TextWithEntities，并传入空的entities列表
+                    question=TextWithEntities(
+                        question_text, entities=[]
+                    ),  # 必须包装为TextWithEntities，并传入空的entities列表
                     answers=poll_answers,
                     closed=False,
                     public_voters=False,
                     multiple_choice=False,
-                    quiz=False
+                    quiz=False,
                 )
 
                 # 4. 构造内联按钮
                 button_markup = []
                 # 如果启用投票重新生成请求功能，添加请求按钮
                 if ENABLE_VOTE_REGEN_REQUEST:
-                    button_markup.append([Button.inline(
-                        get_text('poll_regen.request_button', count=0, threshold=POLL_REGEN_THRESHOLD),
-                        data=f"request_regen_{summary_message_id}".encode('utf-8')
-                    )])
+                    button_markup.append(
+                        [
+                            Button.inline(
+                                get_text(
+                                    "poll_regen.request_button",
+                                    count=0,
+                                    threshold=POLL_REGEN_THRESHOLD,
+                                ),
+                                data=f"request_regen_{summary_message_id}".encode(),
+                            )
+                        ]
+                    )
                 # 添加管理员重新生成按钮
-                button_markup.append([Button.inline(
-                    get_text('poll_regen.admin_button'),
-                    data=f"regen_poll_{summary_message_id}".encode('utf-8')
-                )])
+                button_markup.append(
+                    [
+                        Button.inline(
+                            get_text("poll_regen.admin_button"),
+                            data=f"regen_poll_{summary_message_id}".encode(),
+                        )
+                    ]
+                )
 
                 # 5. 使用 send_message 发送投票并附加按钮
                 poll_msg = await client.send_message(
                     discussion_group_id,
                     file=InputMediaPoll(poll=poll_obj),
                     buttons=button_markup,
-                    reply_to=forward_message.id
+                    reply_to=forward_message.id,
                 )
 
-                logger.info(f"✅ [高层API模式] 投票发送成功: {question_text}, 消息ID: {poll_msg.id}")
+                logger.info(
+                    f"✅ [高层API模式] 投票发送成功: {question_text}, 消息ID: {poll_msg.id}"
+                )
 
                 # 保存映射关系到存储
                 from ..config import add_poll_regeneration
+
                 add_poll_regeneration(
                     channel=channel,
                     summary_msg_id=summary_message_id,
@@ -296,22 +343,23 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                     summary_text=summary_text,
                     channel_name=channel_name,
                     send_to_channel=False,
-                    discussion_forward_msg_id=forward_message.id
+                    discussion_forward_msg_id=forward_message.id,
                 )
 
                 # 返回消息ID
                 return {
                     "poll_msg_id": poll_msg.id,
-                    "button_msg_id": None  # 按钮直接附加在投票消息上
+                    "button_msg_id": None,  # 按钮直接附加在投票消息上
                 }
 
             except Exception as e:
                 logger.error(f"❌ 发送投票失败: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
                 return None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("等待转发消息超时（10秒），可能转发延迟或未成功")
             # 移除事件处理器
             client.remove_event_handler(on_discussion_message)
@@ -319,10 +367,14 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
             # 尝试发送独立消息
             try:
                 logger.info("尝试发送独立投票消息")
-                options_text = "\n".join([f"• {opt}" for opt in poll_data['options']])
+                options_text = "\n".join([f"• {opt}" for opt in poll_data["options"]])
                 await client.send_message(
                     discussion_group_id,
-                    get_text('poll.timeout_fallback', question=poll_data['question'], options=options_text)
+                    get_text(
+                        "poll.timeout_fallback",
+                        question=poll_data["question"],
+                        options=options_text,
+                    ),
                 )
                 logger.info("成功发送独立投票消息")
                 return None
@@ -352,7 +404,7 @@ async def send_poll(client, channel, summary_message_id, summary_text):
     poll_config = get_channel_poll_config(channel)
 
     # 检查是否启用投票
-    enabled = poll_config['enabled']
+    enabled = poll_config["enabled"]
     if enabled is None:
         # 没有独立配置，使用全局配置
         enabled = ENABLE_POLL
@@ -362,11 +414,13 @@ async def send_poll(client, channel, summary_message_id, summary_text):
         return None
 
     # 根据配置决定发送位置
-    if poll_config['send_to_channel']:
+    if poll_config["send_to_channel"]:
         # 频道模式：直接回复总结消息
         logger.info(f"频道 {channel} 配置为频道模式，投票将发送到频道")
         return await send_poll_to_channel(client, channel, summary_message_id, summary_text)
     else:
         # 讨论组模式：发送到讨论组，回复转发消息
         logger.info(f"频道 {channel} 配置为讨论组模式，投票将发送到讨论组")
-        return await send_poll_to_discussion_group(client, channel, summary_message_id, summary_text)
+        return await send_poll_to_discussion_group(
+            client, channel, summary_message_id, summary_text
+        )

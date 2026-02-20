@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -41,9 +40,9 @@ def start_qa_bot():
         # 检查是否已经运行
         if _qa_bot_process:
             return {
-                'success': False,
-                'message': get_text('qabot.already_running', pid=_qa_bot_process.pid),
-                'pid': _qa_bot_process.pid
+                "success": False,
+                "message": get_text("qabot.already_running", pid=_qa_bot_process.pid),
+                "pid": _qa_bot_process.pid,
             }
 
         # 检查是否启用问答Bot
@@ -52,41 +51,38 @@ def start_qa_bot():
 
         if not qa_bot_enabled:
             logger.info("问答Bot未启用 (QA_BOT_ENABLED=False)")
-            return {
-                'success': False,
-                'message': get_text('qabot.not_enabled'),
-                'pid': None
-            }
+            return {"success": False, "message": get_text("qabot.not_enabled"), "pid": None}
 
         if not qa_bot_token:
             logger.warning("未配置QA_BOT_TOKEN，跳过启动问答Bot")
             return {
-                'success': False,
-                'message': get_text('qabot.token_not_configured'),
-                'pid': None
+                "success": False,
+                "message": get_text("qabot.token_not_configured"),
+                "pid": None,
             }
 
         logger.info("正在启动问答Bot...")
         # 使用subprocess在后台运行qa_bot.py
         _qa_bot_process = subprocess.Popen(
-            [sys.executable, "qa_bot.py"],
-            cwd=os.path.dirname(os.path.abspath(sys.argv[0]))
+            [sys.executable, "qa_bot.py"], cwd=os.path.dirname(os.path.abspath(sys.argv[0]))
         )
         _qa_bot_start_time = time.time()
 
         logger.info(f"问答Bot已启动 (PID: {_qa_bot_process.pid})")
         return {
-            'success': True,
-            'message': get_text('qabot.started', pid=_qa_bot_process.pid),
-            'pid': _qa_bot_process.pid
+            "success": True,
+            "message": get_text("qabot.started", pid=_qa_bot_process.pid),
+            "pid": _qa_bot_process.pid,
         }
 
     except Exception as e:
         logger.error(f"启动问答Bot失败: {type(e).__name__}: {e}", exc_info=True)
         return {
-            'success': False,
-            'message': get_text('qabot.start_success', message=f"Startup failed: {type(e).__name__}: {e}"),
-            'pid': None
+            "success": False,
+            "message": get_text(
+                "qabot.start_success", message=f"Startup failed: {type(e).__name__}: {e}"
+            ),
+            "pid": None,
         }
 
 
@@ -104,32 +100,20 @@ def stop_qa_bot():
             _qa_bot_process.wait(timeout=5)
             logger.info("问答Bot已停止")
             _qa_bot_start_time = None
-            return {
-                'success': True,
-                'message': get_text('qabot.stopped', pid=_qa_bot_process.pid)
-            }
+            return {"success": True, "message": get_text("qabot.stopped", pid=_qa_bot_process.pid)}
         except Exception as e:
             logger.error(f"停止问答Bot失败: {type(e).__name__}: {e}")
             try:
                 _qa_bot_process.kill()
                 _qa_bot_start_time = None
-                return {
-                    'success': True,
-                    'message': get_text('qabot.force_stopped')
-                }
+                return {"success": True, "message": get_text("qabot.force_stopped")}
             except Exception:
-                return {
-                    'success': False,
-                    'message': f"Stop failed: {type(e).__name__}: {e}"
-                }
+                return {"success": False, "message": f"Stop failed: {type(e).__name__}: {e}"}
         finally:
             _qa_bot_process = None
     else:
         logger.debug("问答Bot未运行，无需停止")
-        return {
-            'success': True,
-            'message': get_text('qabot.not_running_short')
-        }
+        return {"success": True, "message": get_text("qabot.not_running_short")}
 
 
 def get_qa_bot_process():
@@ -147,29 +131,25 @@ def restart_qa_bot():
 
     # 先停止
     stop_result = stop_qa_bot()
-    if not stop_result['success']:
-        return {
-            'success': False,
-            'message': f"Stop failed: {stop_result['message']}",
-            'pid': None
-        }
+    if not stop_result["success"]:
+        return {"success": False, "message": f"Stop failed: {stop_result['message']}", "pid": None}
 
     # 等待一小段时间确保进程完全停止
     time.sleep(1)
 
     # 再启动
     start_result = start_qa_bot()
-    if start_result['success']:
+    if start_result["success"]:
         return {
-            'success': True,
-            'message': get_text('qabot.restarted', pid=start_result['pid']),
-            'pid': start_result['pid']
+            "success": True,
+            "message": get_text("qabot.restarted", pid=start_result["pid"]),
+            "pid": start_result["pid"],
         }
     else:
         return {
-            'success': False,
-            'message': f"Restart failed: {start_result['message']}",
-            'pid': None
+            "success": False,
+            "message": f"Restart failed: {start_result['message']}",
+            "pid": None,
         }
 
 
@@ -212,12 +192,12 @@ def get_qa_bot_status():
             _qa_bot_start_time = None
 
     return {
-        'running': is_running,
-        'pid': pid,
-        'start_time': _qa_bot_start_time,
-        'uptime_seconds': uptime,
-        'enabled': qa_bot_enabled,
-        'token_configured': bool(qa_bot_token)
+        "running": is_running,
+        "pid": pid,
+        "start_time": _qa_bot_start_time,
+        "uptime_seconds": uptime,
+        "enabled": qa_bot_enabled,
+        "token_configured": bool(qa_bot_token),
     }
 
 
@@ -230,20 +210,20 @@ def check_qa_bot_health():
     status = get_qa_bot_status()
 
     # 如果未启用，不需要检查
-    if not status['enabled']:
-        return True, False, get_text('qabot.not_enabled')
+    if not status["enabled"]:
+        return True, False, get_text("qabot.not_enabled")
 
     # 如果没有配置token，无法启动
-    if not status['token_configured']:
-        return False, False, get_text('qabot.token_not_configured')
+    if not status["token_configured"]:
+        return False, False, get_text("qabot.token_not_configured")
 
     # 如果进程正在运行，健康
-    if status['running']:
-        uptime_str = f"{status['uptime_seconds']:.0f}" if status['uptime_seconds'] else "0"
-        return True, False, get_text('qabot.running_normal', pid=status['pid'], uptime=uptime_str)
+    if status["running"]:
+        uptime_str = f"{status['uptime_seconds']:.0f}" if status["uptime_seconds"] else "0"
+        return True, False, get_text("qabot.running_normal", pid=status["pid"], uptime=uptime_str)
 
     # 进程未运行但应该运行，需要重启
-    return False, True, get_text('qabot.process_not_running')
+    return False, True, get_text("qabot.process_not_running")
 
 
 def format_uptime(seconds):

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2026 Sakura-Bot
 #
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
@@ -17,7 +16,8 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import UTC
+from typing import Any
 
 from .ai_client import client_llm
 from .database import get_db_manager
@@ -34,7 +34,7 @@ class MemoryManager:
         self.db = get_db_manager()
         logger.info("记忆管理器初始化完成")
 
-    def extract_metadata(self, summary_text: str) -> Dict[str, Any]:
+    def extract_metadata(self, summary_text: str) -> dict[str, Any]:
         """
         从总结中提取元数据（关键词、主题、情感、实体）
 
@@ -78,9 +78,9 @@ class MemoryManager:
                 model=get_llm_model(),
                 messages=[
                     {"role": "system", "content": "你是一个专业的文本分析助手，擅长提取关键信息。"},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
-                temperature=0.3
+                temperature=0.3,
             )
 
             result_text = response.choices[0].message.content.strip()
@@ -89,7 +89,8 @@ class MemoryManager:
             try:
                 # 提取JSON部分
                 import re
-                json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+
+                json_match = re.search(r"\{.*\}", result_text, re.DOTALL)
                 if json_match:
                     metadata = json.loads(json_match.group())
                 else:
@@ -107,17 +108,13 @@ class MemoryManager:
             logger.error(f"提取元数据失败: {type(e).__name__}: {e}", exc_info=True)
             return self._get_default_metadata(summary_text)
 
-    def _get_default_metadata(self, summary_text: str) -> Dict[str, Any]:
+    def _get_default_metadata(self, summary_text: str) -> dict[str, Any]:
         """获取默认元数据"""
-        return {
-            "keywords": [],
-            "topics": [],
-            "sentiment": "neutral",
-            "entities": []
-        }
+        return {"keywords": [], "topics": [], "sentiment": "neutral", "entities": []}
 
-    def update_channel_profile(self, channel_id: str, channel_name: str,
-                               summary_text: str, metadata: Dict[str, Any]) -> None:
+    def update_channel_profile(
+        self, channel_id: str, channel_name: str, summary_text: str, metadata: dict[str, Any]
+    ) -> None:
         """
         更新频道画像
 
@@ -139,7 +136,7 @@ class MemoryManager:
                 keywords=keywords,
                 topics=topics,
                 sentiment=sentiment,
-                entities=entities
+                entities=entities,
             )
 
             logger.info(f"已更新频道画像: {channel_name}")
@@ -147,7 +144,7 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"更新频道画像失败: {type(e).__name__}: {e}", exc_info=True)
 
-    def get_channel_context(self, channel_id: Optional[str] = None) -> str:
+    def get_channel_context(self, channel_id: str | None = None) -> str:
         """
         获取频道上下文信息（用于AI生成回答）
 
@@ -170,11 +167,7 @@ class MemoryManager:
             profile.get("tone", "neutral")
             total_summaries = profile.get("total_summaries", 0)
 
-            style_map = {
-                "tech": "技术专业",
-                "casual": "轻松闲聊",
-                "neutral": "中立客观"
-            }
+            style_map = {"tech": "技术专业", "casual": "轻松闲聊", "neutral": "中立客观"}
 
             context = f"频道特点: {style_map.get(style, '中立')}\n"
             if topics:
@@ -187,11 +180,14 @@ class MemoryManager:
             logger.error(f"获取频道上下文失败: {type(e).__name__}: {e}", exc_info=True)
             return ""
 
-    def search_summaries(self, keywords: List[str] = None,
-                        topics: List[str] = None,
-                        time_range_days: int = 7,
-                        channel_id: Optional[str] = None,
-                        limit: int = 10) -> List[Dict[str, Any]]:
+    def search_summaries(
+        self,
+        keywords: list[str] = None,
+        topics: list[str] = None,
+        time_range_days: int = 7,
+        channel_id: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
         """
         搜索相关总结
 
@@ -206,18 +202,15 @@ class MemoryManager:
             匹配的总结列表
         """
         try:
-            from datetime import datetime, timedelta, timezone
+            from datetime import datetime, timedelta
 
             # 计算时间范围
-            end_date = datetime.now(timezone.utc)
+            end_date = datetime.now(UTC)
             start_date = end_date - timedelta(days=time_range_days)
 
             # 获取基础总结
             summaries = self.db.get_summaries(
-                channel_id=channel_id,
-                limit=limit,
-                start_date=start_date,
-                end_date=end_date
+                channel_id=channel_id, limit=limit, start_date=start_date, end_date=end_date
             )
 
             # 如果没有关键词，直接返回
@@ -255,10 +248,11 @@ class MemoryManager:
                 )
 
                 # 检查主题匹配
-                topic_match = any(
-                    topic.lower() in str(summary_topics).lower()
-                    for topic in topics
-                ) if topics else True
+                topic_match = (
+                    any(topic.lower() in str(summary_topics).lower() for topic in topics)
+                    if topics
+                    else True
+                )
 
                 if keyword_match or topic_match:
                     filtered.append(summary)
@@ -273,6 +267,7 @@ class MemoryManager:
 
 # 创建全局记忆管理器实例
 memory_manager = None
+
 
 def get_memory_manager():
     """获取全局记忆管理器实例"""

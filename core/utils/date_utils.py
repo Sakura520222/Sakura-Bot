@@ -3,7 +3,7 @@
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,14 @@ def extract_date_range_from_summary(summary_text):
             end_month = int(weekly_match.group(3))
             end_day = int(weekly_match.group(4))
 
-            current_year = datetime.now(timezone.utc).year
+            current_year = datetime.now(UTC).year
 
-            start_time = datetime(current_year, start_month, start_day, tzinfo=timezone.utc)
-            end_time = datetime(current_year, end_month, end_day, 23, 59, 59, tzinfo=timezone.utc)
+            start_time = datetime(current_year, start_month, start_day, tzinfo=UTC)
+            end_time = datetime(current_year, end_month, end_day, 23, 59, 59, tzinfo=UTC)
 
             # 如果结束时间早于开始时间，说明跨年了
             if end_time < start_time:
-                end_time = datetime(current_year + 1, end_month, end_day, 23, 59, 59, tzinfo=timezone.utc)
+                end_time = datetime(current_year + 1, end_month, end_day, 23, 59, 59, tzinfo=UTC)
 
             return start_time, end_time
 
@@ -49,10 +49,10 @@ def extract_date_range_from_summary(summary_text):
         if daily_match:
             month = int(daily_match.group(1))
             day = int(daily_match.group(2))
-            current_year = datetime.now(timezone.utc).year
+            current_year = datetime.now(UTC).year
 
-            start_time = datetime(current_year, month, day, tzinfo=timezone.utc)
-            end_time = datetime(current_year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+            start_time = datetime(current_year, month, day, tzinfo=UTC)
+            end_time = datetime(current_year, month, day, 23, 59, 59, tzinfo=UTC)
 
             return start_time, end_time
 
