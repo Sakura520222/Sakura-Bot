@@ -83,14 +83,24 @@ jobs:
       - name: 读取当前版本和最新条目
         id: read_current_version
         run: |
-          # 读取版本号
+          # 读取 main.py 中的当前版本号
           if [ -f main.py ]; then
-            VERSION=$(grep -o "__version__ = \"[^\"]*\"" main.py | cut -d'"' -f2)
+            CURRENT_VERSION=$(grep -o "__version__ = \"[^\"]*\"" main.py | cut -d'"' -f2)
           else
-            VERSION="未知版本"
+            CURRENT_VERSION="未知版本"
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "当前版本: $VERSION"
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "main.py 当前版本: $CURRENT_VERSION"
+          
+          # 读取 CHANGELOG.md 中记录的最新版本号
+          LAST_VERSION=$(grep -oP '^## \[\K[^\]]+' CHANGELOG.md | head -1)
+          echo "last_version=$LAST_VERSION" >> $GITHUB_OUTPUT
+          echo "CHANGELOG 最新版本: $LAST_VERSION"
+          
+          # 获取今天日期
+          TODAY=$(date +'%Y-%m-%d')
+          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "今天日期: $TODAY"
           
           # 读取 CHANGELOG 最新条目的日期
           LAST_DATE=$(head -n 5 CHANGELOG.md | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
@@ -100,26 +110,27 @@ jobs:
           echo "last_date=$LAST_DATE" >> $GITHUB_OUTPUT
           echo "最新条目日期: $LAST_DATE"
           
-          # 获取今天日期
-          TODAY=$(date +'%Y-%m-%d')
-          echo "today=$TODAY" >> $GITHUB_OUTPUT
-          echo "今天日期: $TODAY"
-          
-          # 判断是否需要创建新的日期条目
-          if [ "$LAST_DATE" = "$TODAY" ]; then
-            echo "mode=append" >> $GITHUB_OUTPUT
-            echo "模式: 追加到当天条目"
+          # 判断是否需要创建新版本块
+          if [ "$CURRENT_VERSION" = "$LAST_VERSION" ]; then
+            # 版本号相同，追加到当前版本
+            if [ "$LAST_DATE" = "$TODAY" ]; then
+              echo "mode=append_today" >> $GITHUB_OUTPUT
+              echo "模式: 追加到当天条目"
+            else
+              echo "mode=append_existing" >> $GITHUB_OUTPUT
+              echo "模式: 追加到现有版本（不同日期）"
+            fi
           else
+            # 版本号不同，创建新版本块
             echo "mode=new" >> $GITHUB_OUTPUT
-            echo "模式: 创建新日期条目"
+            echo "模式: 创建新版本块 ($CURRENT_VERSION > $LAST_VERSION)"
           fi
       
       - name: 生成 Changelog 条目
         id: generate_changelog
         run: |
-          VERSION="${{ steps.read_current_version.outputs.version }}"
+          CURRENT_VERSION="${{ steps.read_current_version.outputs.current_version }}"
           TODAY="${{ steps.read_current_version.outputs.today }}"
-          LAST_DATE="${{ steps.read_current_version.outputs.last_date }}"
           MODE="${{ steps.read_current_version.outputs.mode }}"
           CHANGE_TYPE="${{ steps.analyze_type.outputs.change_type }}"
           TITLE="${{ github.event.pull_request.title }}"
@@ -127,24 +138,11 @@ jobs:
           PR_NUM="${{ github.event.pull_request.number }}"
           
           # 根据模式生成不同的条目格式
-          if [ "$MODE" = "append" ]; then
-            # 追加模式：只生成分类和条目
+          if [ "$MODE" = "new" ]; then
+            # 新版本模式：生成完整的版本块
             {
-              echo "### \${CHANGE_TYPE}"
-              echo "- \${TITLE} (PR #\${PR_NUM})"
+              echo "## [\${VERSION}] - \${DATE}"
               echo ""
-            } > changelog_entry.txt
-            # 处理提交信息（如果有）
-            if [ -n "$COMMITS" ]; then
-              echo "" >> changelog_entry.txt
-              echo "$COMMITS" | while IFS= read -r commit; do
-                echo "  - $commit" >> changelog_entry.txt
-              done
-            fi
-            echo "" >> changelog_entry.txt
-          else
-            # 新日期模式：生成完整的版本块
-            {
               echo "### \${CHANGE_TYPE}"
               echo "- \${TITLE} (PR #\${PR_NUM})"
               echo ""
@@ -154,18 +152,23 @@ jobs:
               echo "$COMMITS" | while IFS= read -r commit; do
                 echo "- $commit" >> changelog_entry.txt
               done
-            else
-              echo "（无提交信息）" >> changelog_entry.txt
             fi
             {
               echo ""
               echo "---"
               echo ""
             } >> changelog_entry.txt
+          else
+            # 追加模式：只生成分类和条目
+            {
+              echo "### \${CHANGE_TYPE}"
+              echo "- **\${TITLE}** (PR #\${PR_NUM})"
+              echo ""
+            } > changelog_entry.txt
           fi
           
           # 替换变量（使用临时文件避免替换问题）
-          sed "s/\${VERSION}/${VERSION}/g; s/\${DATE}/${TODAY}/g; s/\${CHANGE_TYPE}/${CHANGE_TYPE}/g; s/\${TITLE}/${TITLE}/g; s/\${PR_NUM}/${PR_NUM}/g" changelog_entry.txt > changelog_entry.tmp
+          sed "s/\${VERSION}/${CURRENT_VERSION}/g; s/\${DATE}/${TODAY}/g; s/\${CHANGE_TYPE}/${CHANGE_TYPE}/g; s/\${TITLE}/${TITLE}/g; s/\${PR_NUM}/${PR_NUM}/g" changelog_entry.txt > changelog_entry.tmp
           mv changelog_entry.tmp changelog_entry.txt
           
           echo "entry_file=changelog_entry.txt" >> $GITHUB_OUTPUT
@@ -181,11 +184,10 @@ jobs:
       - name: 更新 CHANGELOG.md
         run: |
           ENTRY_FILE="${{ steps.generate_changelog.outputs.entry_file }}"
-          LAST_DATE="${{ steps.read_current_version.outputs.last_date }}"
-          TODAY="${{ steps.read_current_version.outputs.today }}"
+          MODE="${{ steps.read_current_version.outputs.mode }}"
           
-          if [ "$LAST_DATE" = "$TODAY" ]; then
-            # 追加模式：在当天第一个 ### 分类之前插入
+          if [ "$MODE" = "new" ]; then
+            # 新版本模式：在文件标题之后插入新版本块
             awk -v entry_file="$ENTRY_FILE" '
               BEGIN { 
                 inserted = 0
@@ -195,8 +197,8 @@ jobs:
                 }
                 close(entry_file)
               }
-              /^### / && inserted == 0 {
-                # 先插入新条目
+              /^## \[/ && inserted == 0 {
+                # 在第一个版本块之前插入新条目
                 for (i = 1; i <= n; i++) {
                   print new_entries[i]
                 }
@@ -207,9 +209,30 @@ jobs:
             ' CHANGELOG.md > CHANGELOG.md.new
             mv CHANGELOG.md.new CHANGELOG.md
           else
-            # 新日期模式：在文件最开头插入新版本块
-            cat "$ENTRY_FILE" > CHANGELOG.md.new
-            cat CHANGELOG.md >> CHANGELOG.md.new
+            # 追加模式：在当前版本块的第一个 ### 分类之前插入
+            awk -v entry_file="$ENTRY_FILE" '
+              BEGIN { 
+                inserted = 0
+                in_version = 0
+                # 读取新条目到数组
+                while ((getline line < entry_file) > 0) {
+                  new_entries[++n] = line
+                }
+                close(entry_file)
+              }
+              /^## \[/ {
+                in_version = 1
+              }
+              /^### / && in_version == 1 && inserted == 0 {
+                # 在当前版本块的第一个分类之前插入新条目
+                for (i = 1; i <= n; i++) {
+                  print new_entries[i]
+                }
+                print ""
+                inserted = 1
+              }
+              { print }
+            ' CHANGELOG.md > CHANGELOG.md.new
             mv CHANGELOG.md.new CHANGELOG.md
           fi
           
