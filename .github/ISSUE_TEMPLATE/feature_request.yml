@@ -1,0 +1,183 @@
+name: ✨ 功能请求
+description: 建议一个新功能或改进
+title: '[FEATURE] '
+labels: ['enhancement', 'triage']
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的功能建议！你的反馈帮助我们让 Sakura-Bot 变得更好。
+        
+        💡 **在提交前，请先思考：**
+        - 这个功能是否对大多数用户有用？
+        - 是否有现有方案可以解决？
+        - 实现这个功能的成本是否合理？
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: 📋 提交前检查
+      description: 提交 Issue 前，请确认以下事项
+      options:
+        - label: 我已经搜索了已有 Issues，没有发现相同请求
+          required: true
+        - label: 我已经查阅了 [README](../README.md) 和 [Wiki](../wiki)
+          required: true
+        - label: 我已经考虑过这个功能的适用范围和实现成本
+          required: true
+        - label: 我能清晰描述这个功能的使用场景
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 🚀 功能概述
+      description: 用一句话简要描述你想要的功能
+      placeholder: 简要描述功能...
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 💡 当前问题
+      description: 描述当前的限制或痛点
+      placeholder: |
+        当前遇到的问题是...
+        这个限制导致了...
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: ✨ 期望改进
+      description: 描述期望的功能如何解决问题
+      placeholder: |
+        如果有这个功能，我就可以...
+        这将带来以下好处：1. ... 2. ... 3. ...
+      required: true
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: 📖 使用场景
+      description: 提供具体的使用场景和示例
+      placeholder: |
+        **场景 1：**
+        作为 [用户类型]，我想要 [功能]，以便 [目的]。
+        
+        **场景 2：**
+        [描述另一个使用场景]
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: 🎯 影响范围
+      description: 这个功能会影响多少用户？
+      options:
+        - 👤 个人 - 仅对我个人有用
+        - 👥 小部分用户 - 少数特定用户需要
+        - 👨‍👩‍👧‍👦 大部分用户 - 多数用户会受益
+        - 🌍 所有用户 - 所有人都需要这个功能
+      required: true
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: 🔧 实现复杂度
+      description: 你认为这个功能的实现难度如何？
+      options:
+        - 🟢 简单 - 小改动即可实现
+        - 🟡 中等 - 需要一定工作量
+        - 🟠 复杂 - 需要较大改动
+        - 🔴 需重构 - 可能需要重构现有代码
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: ⚡ 优先级
+      description: 这个功能对你来说有多重要？
+      options:
+        - 🔴 高优先级 - 迫切需要，影响核心使用
+        - 🟡 中优先级 - 重要但非紧急
+        - 🟢 低优先级 - 有则更好，无也可
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: 📋 功能详情
+      description: 提供更多关于该功能的详细信息
+      placeholder: |
+        ### 功能需求
+        1. 需求1
+        2. 需求2
+        3. 需求3
+        
+        ### 用户交互
+        [描述用户如何与该功能交互]
+        
+        ### API/配置变更
+        [描述需要的 API 或配置变更]
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 🎨 替代方案
+      description: 描述你考虑过的替代解决方案
+      placeholder: |
+        我已经尝试过以下方案：
+        1. [方案1] - 问题是...
+        2. [方案2] - 问题是...
+      required: false
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: 📸 示例/参考
+      description: 提供截图、示例代码或其他参考资料
+      placeholder: |
+        **示例代码：**
+        ```python
+        # 代码示例
+        ```
+        
+        **参考链接：**
+        - [相关项目/文档 1]
+        - [相关项目/文档 2]
+        
+        **截图/设计图：**
+        [可拖拽图片]
+      required: false
+
+  - type: textarea
+    id: related
+    attributes:
+      label: 🔗 相关功能
+      description: 这个功能与现有功能的关联
+      placeholder: |
+        相关功能：[功能名称]
+        相关 Issue: #[issue 编号]
+        相关 PR: #[PR 编号]
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 🤝 贡献意愿
+      options:
+        - label: 我愿意实现此功能
+        - label: 我可以协助测试
+        - label: 我可以提供更多设计细节
+        - label: 我可以编写相关文档
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 📝 额外信息
+      description: 其他有助于理解该请求的信息
+      required: false

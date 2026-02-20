@@ -1,0 +1,155 @@
+name: ❓ 问题咨询
+description: 使用过程中的疑问和咨询
+title: '[QUESTION] '
+labels: ['question', 'triage']
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎提问！在提问之前，请先确认以下几点：
+        
+        📚 **请先查阅以下资源：**
+        - [README.md](../README.md) - 项目说明和快速开始
+        - [Wiki](../wiki) - 详细的功能文档
+        - [已有 Issues](../../issues) - 可能有人问过类似问题
+        
+        💬 **更好的提问方式：**
+        - GitHub Issue：适合**项目相关的问题**（bug、功能、文档）
+        - GitHub Discussions：适合**使用咨询、技术讨论、经验分享**
+        - Telegram 频道：适合**实时交流、快速问答**
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: 📋 提交前检查
+      description: 提交前，请确认以下事项
+      options:
+        - label: 我已经在 [Issues](../../issues) 和 [Discussions](../../discussions) 中搜索过，没有找到答案
+          required: true
+        - label: 我已经查阅了 [README](../README.md) 和 [Wiki](../wiki) 相关文档
+          required: true
+        - label: 我的问题与项目直接相关，而非通用的 Python/AI 问题
+          required: true
+        - label: 如果这是 bug 报告，我会使用 "Bug 报告" 模板
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 🏷️ 问题类别
+      description: 你的问题属于哪一类？
+      options:
+        - 🔧 安装部署 - 安装、配置、环境问题
+        - ⚙️ 功能使用 - 如何使用某个功能
+        - 🎛️ 配置问题 - 配置文件、环境变量设置
+        - 🔌 API 问题 - API 调用、配置
+        - 🤖 AI 模型 - 模型选择、参数配置
+        - 💾 数据存储 - 数据库、向量存储
+        - 📊 性能问题 - 响应速度、资源占用
+        - 🔐 权限认证 - Bot 权限、频道配置
+        - 其他问题
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: 📝 问题概述
+      description: 用一句话概括你的问题
+      placeholder: 如：如何配置多个 Telegram 频道？
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: 🔍 详细描述
+      description: 详细描述你的问题，包括你想要达成什么目标
+      placeholder: |
+        我想要实现...
+        目前的情况是...
+        我尝试了...但是...
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 🌍 环境信息
+      description: 提供你的环境信息
+      placeholder: |
+        - Bot 版本: [如 v1.0.0]
+        - Python 版本: [如 Python 3.11.0]
+        - 操作系统: [如 Ubuntu 22.04 / Windows 11]
+        - 部署方式: [Docker / 本地运行]
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: ⚙️ 相关配置
+      description: 如果与配置相关，请提供（移除敏感信息）
+      placeholder: |
+        ```json
+        {
+          "channel_id": "...",
+          "ai_provider": "..."
+        }
+        ```
+      required: false
+
+  - type: textarea
+    id: steps_taken
+    attributes:
+      label: 🔨 已尝试的方法
+      description: 描述你已经尝试过的解决方法
+      placeholder: |
+        1. 我尝试了...结果是...
+        2. 我参考了文档中的...但是...
+        3. 我修改了配置...然后...
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 📋 日志信息
+      description: 如果有相关日志或错误信息，请粘贴
+      placeholder: |
+        ```
+        [粘贴相关日志]
+        ```
+      required: false
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 🖼️ 截图
+      description: 如果适用，提供截图帮助说明问题（可直接拖拽图片）
+      required: false
+
+  - type: textarea
+    id: expected_help
+    attributes:
+      label: 🎯 期望的帮助
+      description: 你希望得到什么样的帮助？
+      placeholder: |
+        我希望了解...
+        我需要知道如何...
+        期待得到的答案是...
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 📝 额外信息
+      description: 其他有助于回答问题的信息
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        
+        💡 **小贴士：**
+        - 如果问题得到解决，请评论说明解决方案，帮助其他有相同问题的人
+        - 如果这是一个通用问题，我们可能会将内容移至 Discussions
+        - 对于快速响应，也可以加入我们的 Telegram 社区讨论

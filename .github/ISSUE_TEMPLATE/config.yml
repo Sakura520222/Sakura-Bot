@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 文档中心
+    url: https://github.com/Sakura520222/Sakura-Bot/wiki
+    about: 查看详细的功能文档、快速开始指南和常见问题
+  - name: 💬 GitHub Discussions
+    url: https://github.com/Sakura520222/Sakura-Bot/discussions
+    about: 在 Discussions 中进行使用咨询、技术讨论和经验分享
+  - name: 🐛 报告安全漏洞
+    url: mailto:security@example.com
+    about: 请通过私密渠道报告安全漏洞，不要在公开 Issue 中讨论

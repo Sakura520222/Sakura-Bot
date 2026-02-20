@@ -1,0 +1,143 @@
+name: 📖 文档改进
+description: 报告文档错误、缺失或不清晰的地方
+title: '[DOCS] '
+labels: ['documentation', 'triage']
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进文档！好的文档是项目成功的关键。
+        
+        📝 **文档类型包括：**
+        - README/安装指南
+        - Wiki 文档
+        - 代码注释
+        - API 文档
+        - 配置说明
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: 📋 提交前检查
+      description: 提交 Issue 前，请确认以下事项
+      options:
+        - label: 我已经搜索了已有 Issues，没有发现相同的文档问题
+          required: true
+        - label: 我已经确认文档确实存在此问题
+          required: true
+        - label: 我可以清楚地描述文档的不足之处
+          required: true
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: 📁 文档类型
+      description: 问题出现在哪个文档？
+      options:
+        - README.md
+        - Wiki 文档
+        - 代码注释
+        - API 文档
+        - 配置文件说明 (config.example.json)
+        - 环境变量说明 (.env.example)
+        - 其他文档
+      required: true
+
+  - type: input
+    id: doc_location
+    attributes:
+      label: 🔗 文档位置
+      description: 请提供具体的文件路径或链接
+      placeholder: 如 README.md 第 X 行，或 Wiki/某文档
+      required: true
+
+  - type: textarea
+    id: current_content
+    attributes:
+      label: 📄 当前内容
+      description: 引用有问题的原文
+      placeholder: |
+        粘贴有问题的文档段落...
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: 🐛 问题类型
+      description: 文档存在什么问题？
+      options:
+        - ❌ 错误信息 - 文档内容不正确
+        - 😵 模糊不清 - 描述不够清楚
+        - 📚 缺失内容 - 缺少必要的信息
+        - 🔗 链接失效 - 链接指向错误或失效
+        - 🎨 格式问题 - 排版、格式错误
+        - 📷 缺少示例 - 需要更多示例说明
+        - 🌐 语言问题 - 翻译或措辞问题
+        - 其他问题
+      required: true
+
+  - type: textarea
+    id: suggested_content
+    attributes:
+      label: ✍️ 建议内容
+      description: 你认为应该如何修改？（可选）
+      placeholder: |
+        建议修改为...
+        或者添加以下内容...
+      required: false
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: 💡 改进理由
+      description: 为什么需要这样改进？
+      placeholder: |
+        当前内容的问题在于...
+        这样改进会让用户...
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 🚨 影响程度
+      description: 这个文档问题的影响有多大？
+      options:
+        - 🔴 严重 - 导致用户无法使用或严重误解
+        - 🟡 中等 - 影响用户体验，但不阻碍使用
+        - 🟢 轻微 - 小问题，不影响理解
+      required: true
+
+  - type: textarea
+    id: user_scenario
+    attributes:
+      label: 👤 用户场景
+      description: 描述你遇到这个问题时的场景
+      placeholder: |
+        我在使用 [功能] 时查看文档，发现...
+        我是一名 [新手/有经验的] 用户，当时我在...
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 🖼️ 截图
+      description: 如果适用，提供截图标注问题位置（可直接拖拽图片）
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 🤝 贡献意愿
+      options:
+        - label: 我愿意直接修改文档并提交 PR
+        - label: 我可以协助完善文档
+        - label: 我可以提供更多示例
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 📝 额外信息
+      description: 其他有助于改进文档的信息
+      required: false
