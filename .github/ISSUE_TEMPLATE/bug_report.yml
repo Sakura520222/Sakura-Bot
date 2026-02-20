@@ -9,154 +9,138 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢你报告问题！请填写以下信息帮助我们快速定位和修复问题。
+        感谢你报告问题!请填写以下信息帮助我们快速定位和修复问题。
         
-        ⚠️ **请勿在 Issue 中暴露敏感信息**（如 Token、API Key、密码等）。
+        ⚠️ **请勿在 Issue 中暴露敏感信息**(如 Token、API Key、密码等)。
 
   - type: checkboxes
     id: prerequisites
     attributes:
-      label: 📋 提交前检查
-      description: 提交 Issue 前，请确认以下事项
+      label: "📋 提交前检查"
+      description: "提交 Issue 前,请确认以下事项"
       options:
-        - label: 我已经搜索了已有 Issues，没有发现重复项
+        - label: "我已经搜索了已有 Issues,没有发现重复项"
           required: true
-        - label: 我已经查阅了 [README](../README.md) 和 [Wiki](../wiki)
+        - label: "我已经查阅了 README 和 Wiki"
           required: true
-        - label: 我正在使用最新版本的代码
+        - label: "我正在使用最新版本的代码"
           required: true
-        - label: 我已经在本地复现了这个问题
-          required: false
+        - label: "我已经在本地复现了这个问题"
 
   - type: textarea
     id: description
     attributes:
-      label: 🐛 问题描述
-      description: 简要描述遇到的问题
-      placeholder: 简要描述遇到了什么问题...
+      label: "🐛 问题描述"
+      description: "简要描述遇到的问题"
+      placeholder: "简要描述遇到了什么问题..."
+    validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: 🔍 复现步骤
-      description: 提供复现该问题的详细步骤
+      label: "🔍 复现步骤"
+      description: "提供复现该问题的详细步骤"
       placeholder: |
         1. 步骤1
         2. 步骤2
         3. 步骤3
+    validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: ✅ 预期行为
-      description: 描述你期望发生什么
-      placeholder: 我期望...
+      label: "✅ 预期行为"
+      description: "描述你期望发生什么"
+    validations:
       required: true
 
   - type: textarea
     id: actual
     attributes:
-      label: ❌ 实际行为
-      description: 描述实际发生了什么
-      placeholder: 实际上发生了...
+      label: "❌ 实际行为"
+      description: "描述实际发生了什么"
+    validations:
       required: true
 
   - type: dropdown
     id: severity
     attributes:
-      label: 🚨 严重程度
-      description: 这个问题的严重程度如何？
+      label: "🚨 严重程度"
       options:
-        - 🔴 致命 - Bot 完全无法使用
-        - 🟠 严重 - 核心功能无法使用
-        - 🟡 一般 - 部分功能受影响
-        - 🟢 轻微 - 小问题但不影响使用
+        - "🔴 致命 - Bot 完全无法使用"
+        - "🟠 严重 - 核心功能无法使用"
+        - "🟡 一般 - 部分功能受影响"
+        - "🟢 轻微 - 小问题但不影响使用"
+    validations:
       required: true
 
   - type: dropdown
     id: reproducibility
     attributes:
-      label: 🎲 复现概率
-      description: 这个问题出现的频率
+      label: "🎲 复现概率"
       options:
-        - 💥 必现 - 每次都会出现
-        - 📶 经常 - 大部分时候出现
-        - 🌤️ 偶发 - 有时出现
-        - 🎲 难复现 - 很少出现，需要特定条件
+        - "💥 必现 - 每次都会出现"
+        - "📶 经常 - 大部分时候出现"
+        - "🌤️ 偶发 - 有时出现"
+        - "🎲 难复现 - 很少出现,需要特定条件"
+    validations:
       required: true
 
   - type: dropdown
     id: deployment
     attributes:
-      label: 🏗️ 部署方式
-      description: 你是如何部署 Bot 的？
+      label: "🏗️ 部署方式"
       options:
-        - Docker
-        - 本地运行 (Python)
-        - Docker Compose
-        - 其他
+        - "Docker"
+        - "本地运行 (Python)"
+        - "Docker Compose"
+        - "其他"
+    validations:
       required: true
 
   - type: textarea
     id: environment
     attributes:
-      label: 🌍 环境信息
-      description: 提供详细的环境信息
+      label: "🌍 环境信息"
       placeholder: |
-        - Bot 版本: [如 v1.0.0 或 commit hash]
-        - Python 版本: [如 Python 3.11.0]
-        - 操作系统: [如 Ubuntu 22.04 / Windows 11 / macOS]
-        - Docker 版本: [如果使用 Docker]
-        - 数据库: [SQLite / PostgreSQL / 其他]
+        - Bot 版本: 
+        - Python 版本: 
+        - 操作系统: 
+    validations:
       required: true
 
   - type: textarea
     id: config
     attributes:
-      label: ⚙️ 配置信息
-      description: 提供相关配置（移除敏感信息）
+      label: "⚙️ 配置信息"
+      description: "提供相关配置(移除敏感信息)"
       placeholder: |
         ```json
         {
-          "channel_id": "你的频道ID",
-          "ai_provider": "openai/anthropic/其他"
-          // 其他相关配置
+          "ai_provider": "openai"
         }
         ```
-      required: false
 
   - type: textarea
     id: logs
     attributes:
-      label: 📋 日志信息
-      description: 粘贴完整的错误堆栈或相关日志
-      placeholder: |
-        ```
-        [错误日志粘贴在这里]
-        ```
-        提示：使用 `DEBUG=true` 运行可以获取更详细的日志
+      label: "📋 日志信息"
+      description: "粘贴完整的错误堆栈或相关日志"
+    validations:
       required: true
 
   - type: textarea
     id: media
     attributes:
-      label: 🖼️ 截图/录屏
-      description: 如果适用，添加截图或录屏来帮助解释问题（可直接拖拽图片）
-      required: false
-
-  - type: textarea
-    id: additional
-    attributes:
-      label: 📝 额外信息
-      description: 其他有助于解决问题的信息
-      required: false
+      label: "🖼️ 截图/录屏"
+      description: "可直接拖拽图片"
 
   - type: checkboxes
     id: contribution
     attributes:
-      label: 🤝 贡献意愿
+      label: "🤝 贡献意愿"
       options:
-        - label: 我愿意协助修复此问题
-        - label: 我可以提供更多调试信息
+        - label: "我愿意协助修复此问题"
+        - label: "我可以提供更多调试信息"
