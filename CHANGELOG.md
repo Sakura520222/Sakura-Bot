@@ -8,6 +8,10 @@
 ## [1.5.9] - 2026-02-19
 
 ### 改进
+- **chore(ci): 修复 GitHub Actions 工作流配置的缩进错误** (PR #19)
+
+
+### 改进
 - **chore(github-actions): 优化 PR 分析工作流中的 CHANGELOG 更新逻辑** (PR #17)
 
 
