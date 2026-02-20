@@ -186,14 +186,14 @@ jobs:
           
           if [ "$LAST_DATE" = "$TODAY" ]; then
             # 追加模式：在当天第一个 ### 分类之前插入
-            awk '
+            awk -v entry_file="$ENTRY_FILE" '
               BEGIN { 
                 inserted = 0
                 # 读取新条目到数组
-                while ((getline line < "'"$ENTRY_FILE"'") > 0) {
+                while ((getline line < entry_file) > 0) {
                   new_entries[++n] = line
                 }
-                close("'$ENTRY_FILE'")
+                close(entry_file)
               }
               /^### / && inserted == 0 {
                 # 先插入新条目
@@ -208,7 +208,7 @@ jobs:
             mv CHANGELOG.md.new CHANGELOG.md
           else
             # 新日期模式：在文件最开头插入新版本块
-            cat "'"$ENTRY_FILE"'" > CHANGELOG.md.new
+            cat "$ENTRY_FILE" > CHANGELOG.md.new
             cat CHANGELOG.md >> CHANGELOG.md.new
             mv CHANGELOG.md.new CHANGELOG.md
           fi
