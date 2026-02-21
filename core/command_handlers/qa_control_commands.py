@@ -90,7 +90,7 @@ async def handle_qa_status(event):
 
         try:
             db = get_db_manager()
-            stats = db.get_qa_bot_statistics()
+            stats = await db.get_qa_bot_statistics()
 
             lines.append(get_text("qabot.total_users", count=stats.get("total_users", 0)))
             lines.append(get_text("qabot.active_users", count=stats.get("active_users", 0)))
@@ -263,7 +263,7 @@ async def handle_qa_stats(event):
         # 获取数据库统计
         try:
             db = get_db_manager()
-            stats = db.get_qa_bot_statistics()
+            stats = await db.get_qa_bot_statistics()
 
             lines.append(get_text("qabot.user_stats"))
             lines.append(get_text("qabot.total_users", count=stats.get("total_users", 0)))

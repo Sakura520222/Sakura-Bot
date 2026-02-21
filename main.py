@@ -90,9 +90,18 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.5.9"
+__version__ = "1.6.0"
 
 from core.process_manager import start_qa_bot, stop_qa_bot
+from core.command_handlers.database_migration_commands import (
+    handle_db_clear,
+    handle_db_clear_cancel,
+    handle_db_clear_confirm,
+    handle_migrate_check,
+    handle_migrate_start,
+    handle_migrate_status,
+)
+from core.database import get_db_manager
 
 
 def cleanup_handler(signum, frame):
@@ -178,6 +187,15 @@ async def main():
         logger.info("初始化错误处理系统...")
         initialize_error_handling()
         logger.info("错误处理系统初始化完成")
+
+        # 初始化数据库连接（如果使用MySQL）
+        logger.info("初始化数据库连接...")
+        db_manager = get_db_manager()
+        if hasattr(db_manager, 'init_database') and hasattr(db_manager, 'pool') and db_manager.pool is None:
+            await db_manager.init_database()
+            logger.info("数据库连接池初始化完成")
+        else:
+            logger.info("数据库连接已存在或不需要初始化")
 
         # 初始化调度器
         scheduler = AsyncIOScheduler()
@@ -451,7 +469,16 @@ async def main():
         # 10. 语言设置命令
         client.add_event_handler(handle_language, NewMessage(pattern="/language|/语言"))
 
-        # 11. 问答Bot控制命令
+        # 11. 数据库迁移命令
+        client.add_event_handler(handle_migrate_check, NewMessage(pattern="/migrate_check|/迁移检查"))
+        client.add_event_handler(handle_migrate_start, NewMessage(pattern="/migrate_start|/开始迁移"))
+        client.add_event_handler(handle_migrate_status, NewMessage(pattern="/migrate_status|/迁移状态"))
+        # 12. 数据库清空命令
+        client.add_event_handler(handle_db_clear, NewMessage(pattern="/db_clear|/清空数据库"))
+        client.add_event_handler(handle_db_clear_confirm, NewMessage(pattern="/db_clear_confirm|/确认清空数据库"))
+        client.add_event_handler(handle_db_clear_cancel, NewMessage(pattern="/db_clear_cancel|/取消清空数据库"))
+
+        # 13. 问答Bot控制命令
         client.add_event_handler(handle_qa_status, NewMessage(pattern="/qa_status|/qa_状态"))
         client.add_event_handler(handle_qa_start, NewMessage(pattern="/qa_start|/qa_启动"))
         client.add_event_handler(handle_qa_stop, NewMessage(pattern="/qa_stop|/qa_停止"))
@@ -558,7 +585,13 @@ async def main():
             BotCommand(command="stats", description="查看统计数据"),
             # 9. 语言设置命令
             BotCommand(command="language", description="切换界面语言"),
-            # 10. 问答Bot控制命令
+            # 10. 数据库迁移命令
+            BotCommand(command="migrate_check", description="检查数据库迁移准备状态"),
+            BotCommand(command="migrate_start", description="开始数据库迁移"),
+            BotCommand(command="migrate_status", description="查看数据库迁移进度"),
+            # 11. 数据库清空命令
+            BotCommand(command="db_clear", description="清空MySQL数据库（危险操作）"),
+            # 12. 问答Bot控制命令
             BotCommand(command="qa_status", description="查看问答Bot运行状态"),
             BotCommand(command="qa_start", description="启动问答Bot"),
             BotCommand(command="qa_stop", description="停止问答Bot"),
@@ -589,6 +622,44 @@ async def main():
         logger.info("开始向管理员发送启动消息...")
         await send_startup_message(client)
         logger.info("启动消息发送完成")
+
+        # 检查数据库类型，如果使用SQLite则建议迁移
+        logger.info("检查数据库类型...")
+        
+        # 读取环境变量判断当前使用的数据库类型
+        current_db_type = os.getenv("DATABASE_TYPE", "sqlite").lower()
+        
+        # 只在当前使用 SQLite 时才提示迁移
+        if current_db_type == "sqlite":
+            db_manager = get_db_manager()
+            from core.i18n import get_text
+
+            # 检查SQLite数据库文件是否存在且有数据
+            sqlite_db_path = "data/summaries.db"
+            
+            if os.path.exists(sqlite_db_path):
+                # 检查数据库大小，如果有数据则提示迁移
+                db_size = os.path.getsize(sqlite_db_path)
+                if db_size > 0:
+                    logger.info(f"检测到SQLite数据库，大小: {db_size} 字节")
+                    
+                    for admin_id in ADMIN_LIST:
+                        try:
+                            await client.send_message(
+                                admin_id,
+                                get_text("database.startup_old_database"),
+                                parse_mode="md",
+                                link_preview=False
+                            )
+                            logger.info(f"已向管理员 {admin_id} 发送数据库迁移建议")
+                        except Exception as e:
+                            logger.error(f"向管理员 {admin_id} 发送迁移建议失败: {e}")
+                else:
+                    logger.info("SQLite数据库为空，跳过迁移提示")
+            else:
+                logger.info("未检测到SQLite数据库文件，跳过迁移提示")
+        else:
+            logger.info(f"使用 {current_db_type.upper()} 数据库，无需迁移")
 
         # 检查是否是重启后的首次运行
         if os.path.exists(RESTART_FLAG_FILE):

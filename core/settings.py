@@ -33,7 +33,7 @@ from .constants import (
 
 # 加载 .env 文件
 env_path = Path(__file__).parent.parent / "data" / ".env"
-load_dotenv(env_path)
+load_dotenv(env_path, override=True)  # 使用 override=True 确保 .env 文件的值会覆盖系统环境变量
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,7 @@ class TelegramSettings(BaseSettings):
         return v
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -72,8 +71,7 @@ class AISettings(BaseSettings):
         return self.api_key or self.deepseek_api_key
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -90,8 +88,7 @@ class ChannelSettings(BaseSettings):
         return []
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -111,8 +108,7 @@ class AdminSettings(BaseSettings):
         return ["me"]
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -138,8 +134,7 @@ class LogSettings(BaseSettings):
         return level_map.get(self.log_level, 10)
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -160,8 +155,40 @@ class PollSettings(BaseSettings):
         return v
 
     class Config:
-        env_file = str(env_path)
-        env_file_encoding = "utf-8"
+        # 移除 env_file 配置，使用全局的 load_dotenv
+        extra = "ignore"
+
+
+class DatabaseSettings(BaseSettings):
+    """数据库相关配置"""
+
+    database_type: str = Field(default="sqlite", alias="DATABASE_TYPE")
+
+    # MySQL 配置
+    mysql_host: str = Field(default="localhost", alias="MYSQL_HOST")
+    mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
+    mysql_user: str = Field(default="root", alias="MYSQL_USER")
+    mysql_password: str = Field(default="", alias="MYSQL_PASSWORD")
+    mysql_database: str = Field(default="sakura_bot_db", alias="MYSQL_DATABASE")
+    mysql_charset: str = Field(default="utf8mb4", alias="MYSQL_CHARSET")
+
+    # 连接池配置
+    mysql_pool_size: int = Field(default=5, alias="MYSQL_POOL_SIZE")
+    mysql_max_overflow: int = Field(default=10, alias="MYSQL_MAX_OVERFLOW")
+    mysql_pool_timeout: int = Field(default=30, alias="MYSQL_POOL_TIMEOUT")
+
+    @field_validator("database_type")
+    @classmethod
+    def validate_database_type(cls, v: str) -> str:
+        valid_types = ["sqlite", "mysql"]
+        v_lower = v.lower()
+        if v_lower not in valid_types:
+            logger.warning(f"无效的数据库类型: {v}，使用默认值 sqlite")
+            return "sqlite"
+        return v_lower
+
+    class Config:
+        # 移除 env_file 配置，使用全局的 load_dotenv
         extra = "ignore"
 
 
@@ -176,6 +203,7 @@ class Settings:
         self.admin = AdminSettings()
         self.log = LogSettings()
         self.poll = PollSettings()
+        self.database = DatabaseSettings()
 
         # 其他配置
         self.send_report_to_source = True

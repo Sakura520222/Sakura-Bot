@@ -58,7 +58,7 @@ class QuotaManager:
         """检查用户是否为管理员"""
         return user_id in ADMIN_LIST or ADMIN_LIST == ["me"]
 
-    def check_quota(self, user_id: int) -> dict[str, Any]:
+    async def check_quota(self, user_id: int) -> dict[str, Any]:
         """
         检查用户配额
 
@@ -80,7 +80,7 @@ class QuotaManager:
             is_admin = self.is_admin(user_id)
 
             # 检查每日总限额
-            total_used_today = self.db.get_total_daily_usage()
+            total_used_today = await self.db.get_total_daily_usage()
             if total_used_today >= self.total_daily_limit and not is_admin:
                 logger.warning(f"今日总配额已用尽: {total_used_today}/{self.total_daily_limit}")
                 return {
@@ -93,7 +93,7 @@ class QuotaManager:
                 }
 
             # 检查并增加用户配额
-            result = self.db.check_and_increment_quota(
+            result = await self.db.check_and_increment_quota(
                 user_id=user_id, daily_limit=self.daily_limit, is_admin=is_admin
             )
 
@@ -142,7 +142,7 @@ class QuotaManager:
                 "message": "⚠️ **系统错误**\n\n配额检查失败，请稍后再试。",
             }
 
-    def get_usage_status(self, user_id: int) -> dict[str, Any]:
+    async def get_usage_status(self, user_id: int) -> dict[str, Any]:
         """
         获取用户使用状态（不消耗配额）
 
@@ -154,8 +154,8 @@ class QuotaManager:
         """
         try:
             is_admin = self.is_admin(user_id)
-            quota = self.db.get_quota_usage(user_id)
-            total_used = self.db.get_total_daily_usage()
+            quota = await self.db.get_quota_usage(user_id)
+            total_used = await self.db.get_total_daily_usage()
 
             if is_admin:
                 return {
@@ -186,7 +186,7 @@ class QuotaManager:
             logger.error(f"获取使用状态失败: {type(e).__name__}: {e}", exc_info=True)
             return {"user_id": user_id, "error": str(e)}
 
-    def get_system_status(self) -> dict[str, Any]:
+    async def get_system_status(self) -> dict[str, Any]:
         """
         获取系统配额状态
 
@@ -194,7 +194,7 @@ class QuotaManager:
             系统状态信息
         """
         try:
-            total_used = self.db.get_total_daily_usage()
+            total_used = await self.db.get_total_daily_usage()
             total_remaining = max(0, self.total_daily_limit - total_used)
 
             return {

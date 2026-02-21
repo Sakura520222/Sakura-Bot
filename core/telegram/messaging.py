@@ -721,7 +721,7 @@ async def send_report(
 
                 # 保存到数据库
                 db = get_db_manager()
-                summary_id = db.save_summary(
+                summary_id = await db.save_summary(
                     channel_id=save_channel_id,
                     channel_name=save_channel_name,
                     summary_text=summary_text_for_source,

@@ -104,7 +104,7 @@ class QAEngineV3:
             session_id, is_new_session = self.conversation_mgr.get_or_create_session(user_id)
 
             # 2. 保存用户消息
-            self.conversation_mgr.save_message(
+            await self.conversation_mgr.save_message(
                 user_id=user_id, session_id=session_id, role="user", content=query
             )
 
@@ -125,7 +125,7 @@ class QAEngineV3:
                 )
 
             # 5. 保存助手回复
-            self.conversation_mgr.save_message(
+            await self.conversation_mgr.save_message(
                 user_id=user_id, session_id=session_id, role="assistant", content=answer
             )
 
@@ -190,7 +190,7 @@ class QAEngineV3:
             time_range = parsed.get("time_range")  # 可能为 None
 
             # 获取对话历史
-            conversation_history = self.conversation_mgr.get_conversation_history(
+            conversation_history = await self.conversation_mgr.get_conversation_history(
                 user_id, session_id
             )
             logger.debug(f"用户 {user_id} 的对话历史: {len(conversation_history)} 条")
@@ -237,7 +237,7 @@ class QAEngineV3:
             if keywords or len(semantic_results) < 5:
                 try:
                     search_days = time_range if time_range is not None else 90
-                    keyword_results = self.memory_manager.search_summaries(
+                    keyword_results = await self.memory_manager.search_summaries(
                         keywords=keywords, time_range_days=search_days, limit=10
                     )
                     logger.info(f"关键词检索: 找到 {len(keyword_results)} 条结果")
@@ -394,7 +394,7 @@ class QAEngineV3:
 
         return [item["summary"] for item in sorted_results]
 
-    def _build_rag_prompts(
+    async def _build_rag_prompts(
         self,
         query: str,
         summaries: list[dict[str, Any]],
@@ -419,7 +419,7 @@ class QAEngineV3:
         )
         channel_context = ""
         if len(channel_ids) == 1 and channel_ids[0]:
-            channel_context = self.memory_manager.get_channel_context(channel_ids[0])
+            channel_context = await self.memory_manager.get_channel_context(channel_ids[0])
         elif len(channel_ids) > 1:
             channel_context = "多频道综合查询"
 
@@ -478,7 +478,7 @@ class QAEngineV3:
             生成的回答
         """
         try:
-            system_prompt, user_prompt = self._build_rag_prompts(
+            system_prompt, user_prompt = await self._build_rag_prompts(
                 query=query,
                 summaries=summaries,
                 keywords=keywords,
@@ -556,7 +556,7 @@ class QAEngineV3:
         """
         import asyncio
 
-        system_prompt, user_prompt = self._build_rag_prompts(
+        system_prompt, user_prompt = await self._build_rag_prompts(
             query=query,
             summaries=summaries,
             keywords=keywords,
@@ -620,7 +620,7 @@ class QAEngineV3:
             session_id, is_new_session = self.conversation_mgr.get_or_create_session(user_id)
 
             # 2. 保存用户消息
-            self.conversation_mgr.save_message(
+            await self.conversation_mgr.save_message(
                 user_id=user_id, session_id=session_id, role="user", content=query
             )
 
@@ -632,7 +632,7 @@ class QAEngineV3:
             if intent == "status":
                 answer = await self._handle_status_query()
                 yield answer
-                self.conversation_mgr.save_message(
+                await self.conversation_mgr.save_message(
                     user_id=user_id, session_id=session_id, role="assistant", content=answer
                 )
                 yield "__DONE__"
@@ -641,7 +641,7 @@ class QAEngineV3:
             if intent == "stats":
                 answer = await self._handle_stats_query(parsed)
                 yield answer
-                self.conversation_mgr.save_message(
+                await self.conversation_mgr.save_message(
                     user_id=user_id, session_id=session_id, role="assistant", content=answer
                 )
                 yield "__DONE__"
@@ -655,7 +655,7 @@ class QAEngineV3:
             keywords = parsed.get("keywords", [])
             time_range = parsed.get("time_range")
 
-            conversation_history = self.conversation_mgr.get_conversation_history(
+            conversation_history = await self.conversation_mgr.get_conversation_history(
                 user_id, session_id
             )
 
@@ -699,7 +699,7 @@ class QAEngineV3:
             if keywords or len(semantic_results) < 5:
                 try:
                     search_days = time_range if time_range is not None else 90
-                    keyword_results = self.memory_manager.search_summaries(
+                    keyword_results = await self.memory_manager.search_summaries(
                         keywords=keywords, time_range_days=search_days, limit=10
                     )
                 except Exception as e:
@@ -732,7 +732,7 @@ class QAEngineV3:
                 else:
                     no_result = "🔍 未找到相关总结。\n\n💡 提示：尝试调整关键词或时间范围。"
                 yield no_result
-                self.conversation_mgr.save_message(
+                await self.conversation_mgr.save_message(
                     user_id=user_id, session_id=session_id, role="assistant", content=no_result
                 )
                 yield "__DONE__"
@@ -770,7 +770,7 @@ class QAEngineV3:
             # 保存完整回答到对话历史
             if is_new_session:
                 full_answer = "🍃 *开始新的对话。*\n\n" + full_answer
-            self.conversation_mgr.save_message(
+            await self.conversation_mgr.save_message(
                 user_id=user_id, session_id=session_id, role="assistant", content=full_answer
             )
 

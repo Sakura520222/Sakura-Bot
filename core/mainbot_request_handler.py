@@ -49,8 +49,13 @@ class MainBotRequestHandler:
             telethon_client: Telethon 客户端实例（可选，用于 Telethon）
         """
         try:
+            # 检查数据库连接池是否已初始化
+            if not hasattr(self.db, 'pool') or self.db.pool is None:
+                logger.debug("数据库连接池未初始化，跳过请求检查")
+                return
+
             # 获取所有pending状态的请求
-            pending_requests = self.db.get_pending_requests()
+            pending_requests = await self.db.get_pending_requests()
 
             if not pending_requests:
                 return
@@ -67,7 +72,7 @@ class MainBotRequestHandler:
         except Exception as e:
             logger.error(f"检查请求失败: {type(e).__name__}: {e}", exc_info=True)
 
-    def _build_admin_message(self, request: dict[str, Any]) -> str:
+    async def _build_admin_message(self, request: dict[str, Any]) -> str:
         """
         构建管理员通知消息
 
@@ -83,7 +88,7 @@ class MainBotRequestHandler:
         created_at = request.get("created_at", "")
 
         # 获取请求者信息
-        user_info = self.db.get_user_info(requested_by)
+        user_info = await self.db.get_user_info(requested_by)
         if not user_info:
             user_name = f"用户_{requested_by}"
         else:
@@ -117,10 +122,10 @@ class MainBotRequestHandler:
             request_id = request.get("id")
             request.get("target_channel")
             # 更新状态为processing
-            self.db.update_request_status(request_id, "processing")
+            await self.db.update_request_status(request_id, "processing")
 
             # 构建消息
-            message = self._build_admin_message(request)
+            message = await self._build_admin_message(request)
 
             # 创建确认按钮
             keyboard = [
@@ -149,7 +154,7 @@ class MainBotRequestHandler:
         except Exception as e:
             logger.error(f"通知管理员失败: {type(e).__name__}: {e}", exc_info=True)
             # 恢复请求状态
-            self.db.update_request_status(request["id"], "pending")
+            await self.db.update_request_status(request["id"], "pending")
 
     async def _notify_admin_with_telethon(self, request: dict[str, Any], client) -> None:
         """
@@ -164,10 +169,10 @@ class MainBotRequestHandler:
             request.get("target_channel")
 
             # 更新状态为processing
-            self.db.update_request_status(request_id, "processing")
+            await self.db.update_request_status(request_id, "processing")
 
             # 构建消息
-            message = self._build_admin_message(request)
+            message = await self._build_admin_message(request)
 
             # 构建 Telethon 风格的按钮
             buttons = [
@@ -190,7 +195,7 @@ class MainBotRequestHandler:
         except Exception as e:
             logger.error(f"Telethon 通知管理员失败: {type(e).__name__}: {e}", exc_info=True)
             # 恢复请求状态
-            self.db.update_request_status(request["id"], "pending")
+            await self.db.update_request_status(request["id"], "pending")
 
     async def handle_callback_query(self, event, client) -> None:
         """
@@ -214,7 +219,7 @@ class MainBotRequestHandler:
             request_id = int(parts[2])
 
             # 获取请求信息
-            request = self.db.get_request_status(request_id)
+            request = await self.db.get_request_status(request_id)
             if not request:
                 await event.edit("❌ 请求不存在或已过期")
                 return
@@ -256,7 +261,7 @@ class MainBotRequestHandler:
             # 检查结果
             if result["success"]:
                 # 更新数据库状态
-                self.db.update_request_status(
+                await self.db.update_request_status(
                     request_id,
                     "completed",
                     result={
@@ -296,7 +301,7 @@ class MainBotRequestHandler:
             else:
                 # 生成失败
                 error_msg = result.get("error", "未知错误")
-                self.db.update_request_status(request_id, "failed", result={"error": error_msg})
+                await self.db.update_request_status(request_id, "failed", result={"error": error_msg})
                 await event.edit(f"❌ 生成总结失败: {error_msg}")
 
                 # 通知请求者
@@ -306,7 +311,7 @@ class MainBotRequestHandler:
 
         except Exception as e:
             logger.error(f"处理总结请求失败: {type(e).__name__}: {e}", exc_info=True)
-            self.db.update_request_status(request_id, "failed", result={"error": str(e)})
+            await self.db.update_request_status(request_id, "failed", result={"error": str(e)})
             await event.edit(f"❌ 生成总结失败: {str(e)}")
 
             # 通知请求者
@@ -327,7 +332,7 @@ class MainBotRequestHandler:
             channel_id = request["target_channel"]
 
             # 更新状态
-            self.db.update_request_status(
+            await self.db.update_request_status(
                 request_id, "failed", result={"error": "管理员拒绝了请求"}
             )
 
@@ -350,7 +355,7 @@ class MainBotRequestHandler:
         """
         try:
             # 获取请求信息
-            request = self.db.get_request_status(request_id)
+            request = await self.db.get_request_status(request_id)
             if not request:
                 return
 
@@ -365,7 +370,7 @@ class MainBotRequestHandler:
             # 方案3：使用Telegram的Bot API直接发送（需要问答Bot的token）
 
             # 当前使用方案1：写入通知队列
-            self.db.create_notification(
+            await self.db.create_notification(
                 user_id=requested_by,
                 notification_type="request_result",
                 content={"request_id": request_id, "channel_id": channel_id, "message": message},

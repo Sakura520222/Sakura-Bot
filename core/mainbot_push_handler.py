@@ -68,8 +68,13 @@ class MainBotPushHandler:
                 logger.warning("问答Bot未初始化，无法发送通知")
                 return 0
 
+            # 检查数据库连接池是否可用
+            if not hasattr(self.db, 'pool') or self.db.pool is None:
+                logger.warning("数据库连接池未初始化，无法获取订阅者")
+                return 0
+
             # 获取订阅用户
-            subscribers = self.db.get_channel_subscribers(channel_id, "summary")
+            subscribers = await self.db.get_channel_subscribers(channel_id, "summary")
 
             if not subscribers:
                 logger.info(f"频道 {channel_name} ({channel_id}) 没有订阅用户")
@@ -108,10 +113,10 @@ class MainBotPushHandler:
                     if "bot was blocked by the user" in str(e):
                         logger.warning(f"用户 {user_id} 已阻止Bot，取消订阅")
                         # 自动取消该用户的订阅
-                        self.db.remove_subscription(user_id, channel_id)
+                        await self.db.remove_subscription(user_id, channel_id)
                     elif "user is deactivated" in str(e):
                         logger.warning(f"用户 {user_id} 账号已停用，取消订阅")
-                        self.db.remove_subscription(user_id, channel_id)
+                        await self.db.remove_subscription(user_id, channel_id)
                     else:
                         logger.error(f"通知用户 {user_id} 失败: {e}")
                 except Exception as e:
@@ -136,7 +141,7 @@ class MainBotPushHandler:
                 return 0
 
             # 获取待发送通知
-            notifications = self.db.get_pending_notifications(limit=50)
+            notifications = await self.db.get_pending_notifications(limit=50)
 
             if not notifications:
                 return 0
@@ -166,19 +171,19 @@ class MainBotPushHandler:
                     )
 
                     # 更新状态
-                    self.db.update_notification_status(notification_id, "sent")
+                    await self.db.update_notification_status(notification_id, "sent")
                     success_count += 1
 
                 except TelegramError as e:
                     if "bot was blocked by the user" in str(e):
                         logger.warning(f"用户 {user_id} 已阻止Bot")
-                        self.db.update_notification_status(notification["id"], "failed")
+                        await self.db.update_notification_status(notification["id"], "failed")
                     else:
                         logger.error(f"发送通知失败: {e}")
-                        self.db.update_notification_status(notification["id"], "failed")
+                        await self.db.update_notification_status(notification["id"], "failed")
                 except Exception as e:
                     logger.error(f"处理通知失败: {type(e).__name__}: {e}")
-                    self.db.update_notification_status(notification["id"], "failed")
+                    await self.db.update_notification_status(notification["id"], "failed")
 
             return success_count
 

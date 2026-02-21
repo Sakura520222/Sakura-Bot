@@ -31,7 +31,7 @@ class QAUserSystem:
         self.db = get_db_manager()
         logger.info("问答Bot用户系统初始化完成")
 
-    def register_user(
+    async def register_user(
         self, user_id: int, username: str = None, first_name: str = None
     ) -> dict[str, Any]:
         """
@@ -47,13 +47,13 @@ class QAUserSystem:
         """
         try:
             # 检查是否已注册
-            if self.db.is_user_registered(user_id):
+            if await self.db.is_user_registered(user_id):
                 # 更新活跃时间
-                self.db.update_user_activity(user_id)
+                await self.db.update_user_activity(user_id)
                 return {"success": True, "new_user": False, "message": "欢迎回来！"}
 
             # 注册新用户
-            success = self.db.register_user(user_id, username, first_name)
+            success = await self.db.register_user(user_id, username, first_name)
 
             if success:
                 return {
@@ -68,7 +68,7 @@ class QAUserSystem:
             logger.error(f"用户注册失败: {type(e).__name__}: {e}", exc_info=True)
             return {"success": False, "message": "注册时发生错误。"}
 
-    def get_available_channels(self) -> list[dict[str, Any]]:
+    async def get_available_channels(self) -> list[dict[str, Any]]:
         """
         获取可订阅的频道列表
 
@@ -76,13 +76,13 @@ class QAUserSystem:
             频道列表
         """
         try:
-            channels = self.db.get_all_channels()
+            channels = await self.db.get_all_channels()
             return channels
         except Exception as e:
             logger.error(f"获取频道列表失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def add_subscription(
+    async def add_subscription(
         self, user_id: int, channel_id: str, channel_name: str = None
     ) -> dict[str, Any]:
         """
@@ -98,11 +98,11 @@ class QAUserSystem:
         """
         try:
             # 检查是否已订阅
-            if self.db.is_subscribed(user_id, channel_id):
+            if await self.db.is_subscribed(user_id, channel_id):
                 return {"success": False, "message": "您已经订阅了此频道的总结推送。"}
 
             # 添加订阅
-            success = self.db.add_subscription(user_id, channel_id, channel_name, "summary")
+            success = await self.db.add_subscription(user_id, channel_id, channel_name, "summary")
 
             if success:
                 return {
@@ -116,7 +116,7 @@ class QAUserSystem:
             logger.error(f"添加订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return {"success": False, "message": "订阅时发生错误。"}
 
-    def remove_subscription(self, user_id: int, channel_id: str) -> dict[str, Any]:
+    async def remove_subscription(self, user_id: int, channel_id: str) -> dict[str, Any]:
         """
         移除订阅
 
@@ -128,7 +128,7 @@ class QAUserSystem:
             操作结果字典
         """
         try:
-            deleted_count = self.db.remove_subscription(user_id, channel_id, "summary")
+            deleted_count = await self.db.remove_subscription(user_id, channel_id, "summary")
 
             if deleted_count > 0:
                 return {"success": True, "message": "✅ 已取消该频道的订阅"}
@@ -139,7 +139,7 @@ class QAUserSystem:
             logger.error(f"移除订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return {"success": False, "message": "取消订阅时发生错误。"}
 
-    def get_user_subscriptions(self, user_id: int) -> list[dict[str, Any]]:
+    async def get_user_subscriptions(self, user_id: int) -> list[dict[str, Any]]:
         """
         获取用户订阅列表
 
@@ -150,7 +150,7 @@ class QAUserSystem:
             订阅列表
         """
         try:
-            subscriptions = self.db.get_user_subscriptions(user_id, "summary")
+            subscriptions = await self.db.get_user_subscriptions(user_id, "summary")
             return subscriptions
         except Exception as e:
             logger.error(f"获取用户订阅失败: {type(e).__name__}: {e}", exc_info=True)

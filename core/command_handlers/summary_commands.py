@@ -161,7 +161,7 @@ async def generate_channel_summary(
 
             # 保存到数据库
             db = get_db_manager()
-            summary_id = db.save_summary(
+            summary_id = await db.save_summary(
                 channel_id=channel_id,
                 channel_name=channel_actual_name,
                 summary_text=report_text,
@@ -429,7 +429,7 @@ async def handle_manual_summary(event):
 
                     # 保存到数据库
                     db = get_db_manager()
-                    summary_id = db.save_summary(
+                    summary_id = await db.save_summary(
                         channel_id=channel,
                         channel_name=channel_actual_name,
                         summary_text=report_text,

@@ -126,6 +126,9 @@ python main.py
 | **🤖 跨Bot通信** | 问答Bot和主Bot通过数据库队列实现进程间通信 | ✅ |
 | **🔧 代码优化** | 总结生成流程模块化，支持代码复用和统一管理 | ✅ |
 | **📱 命令菜单** | QA Bot自动注册命令菜单，用户可直接查看所有可用命令 | ✅ |
+| **🗄️ MySQL数据库支持** | 新增MySQL数据库支持，提升性能和并发能力 | ✅ |
+| **🔄 数据库迁移** | 一键从SQLite迁移到MySQL，自动备份和数据验证 | ✅ |
+| **⚡ 启动时检查** | 自动检测旧数据库并通知管理员迁移建议 | ✅ |
 
 ---
 
@@ -222,6 +225,42 @@ python main.py
 | 命令 | 别名 | 功能 | 示例 |
 |------|------|------|------|
 | `/language` | `/语言` | 查看或切换界面语言 | `/language` / `/language zh-CN` |
+
+#### 数据库迁移
+
+| 命令 | 别名 | 功能 | 示例 |
+|------|------|------|------|
+| `/migrate_check` | `/迁移检查` | 检查迁移准备状态 | `/migrate_check` |
+| `/migrate_start` | `/开始迁移` | 开始数据库迁移 | `/migrate_start` |
+| `/migrate_status` | `/迁移状态` | 查看迁移进度 | `/migrate_status` |
+
+**迁移说明**：
+- 支持从SQLite一键迁移到MySQL数据库
+- 迁移前自动备份，安全可靠
+- 适合生产环境和高并发场景
+
+**MySQL配置示例**：
+```env
+# ===== 数据库配置 =====
+DATABASE_TYPE=mysql  # sqlite 或 mysql
+
+# MySQL配置（使用MySQL时必需）
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=your_mysql_user
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=sakura_bot_db
+MYSQL_CHARSET=utf8mb4
+MYSQL_POOL_SIZE=5
+MYSQL_MAX_OVERFLOW=10
+MYSQL_POOL_TIMEOUT=30
+```
+
+**迁移步骤**：
+1. 创建MySQL数据库：`CREATE DATABASE sakura_bot_db CHARACTER SET utf8mb4;`
+2. 在 `.env` 中配置MySQL连接信息
+3. 使用 `/migrate_check` 检查准备状态
+4. 使用 `/migrate_start` 开始迁移
 
 ### QA Bot 命令
 

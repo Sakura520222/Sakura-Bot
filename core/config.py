@@ -103,7 +103,7 @@ DEFAULT_QA_PERSONA = """你是一个专业的智能资讯助手，擅长从历�
 # 加载 .env 文件中的变量
 # 显式指定 .env 文件路径（data/.env）
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", ".env")
-load_dotenv(env_path)
+load_dotenv(env_path, override=True)  # 使用 override=True 确保 .env 文件的值会覆盖系统环境变量
 logger.info(f"已加载 .env 文件中的环境变量 (路径: {env_path})")
 
 # 从环境变量中读取配置

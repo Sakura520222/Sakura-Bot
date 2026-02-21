@@ -22,8 +22,10 @@ from .i18n import get_text
 logger = logging.getLogger(__name__)
 
 
-class DatabaseManager:
-    """总结历史记录数据库管理器"""
+# ⚠️ 警告：此类已废弃，请使用 get_db_manager() 函数获取数据库管理器
+# 保留此类仅用于向后兼容，将来的版本可能会移除
+class DatabaseManagerLegacy:
+    """总结历史记录数据库管理器（已废弃）"""
 
     def __init__(self, db_path=None):
         """
@@ -32,6 +34,13 @@ class DatabaseManager:
         Args:
             db_path: 数据库文件路径，默认为 data/summaries.db
         """
+        import warnings
+        warnings.warn(
+            "DatabaseManager 类已废弃，请使用 get_db_manager() 函数获取数据库管理器实例",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         if db_path is None:
             db_path = os.path.join("data", "summaries.db")
         self.db_path = db_path
@@ -2337,10 +2346,111 @@ class DatabaseManager:
 db_manager = None
 
 
+def reload_db_manager():
+    """
+    强制重新加载数据库管理器实例
+    
+    重新读取环境变量并创建新的数据库管理器实例
+    用于迁移后切换数据库类型
+    
+    ⚠️ 注意：此函数为同步函数，但可能需要关闭异步数据库连接
+    """
+    global db_manager
+    
+    # 关闭旧连接（如果有 close 方法）
+    if db_manager and hasattr(db_manager, 'close'):
+        try:
+            # 检查是否是异步数据库管理器
+            import asyncio
+            import inspect
+            
+            # 尝试创建事件循环来关闭异步连接
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 事件循环正在运行，创建任务
+                    if asyncio.iscoroutinefunction(db_manager.close):
+                        asyncio.create_task(db_manager.close())
+                        logger.info("✅ 已调度异步数据库连接关闭任务")
+                    else:
+                        db_manager.close()
+                        logger.info("✅ 已关闭旧的数据库连接")
+                else:
+                    # 事件循环未运行，直接运行
+                    if asyncio.iscoroutinefunction(db_manager.close):
+                        loop.run_until_complete(db_manager.close())
+                        logger.info("✅ 已关闭旧的异步数据库连接")
+                    else:
+                        db_manager.close()
+                        logger.info("✅ 已关闭旧的数据库连接")
+            except RuntimeError:
+                # 没有事件循环，尝试创建新的
+                if asyncio.iscoroutinefunction(db_manager.close):
+                    asyncio.run(db_manager.close())
+                    logger.info("✅ 已关闭旧的异步数据库连接")
+                else:
+                    db_manager.close()
+                    logger.info("✅ 已关闭旧的数据库连接")
+                    
+        except Exception as e:
+            logger.error(f"❌ 关闭旧数据库连接失败: {e}")
+            # 即使关闭失败也继续，允许旧连接被垃圾回收
+    
+    # 重置为 None
+    db_manager = None
+    
+    # 重新加载环境变量
+    from .settings import get_settings
+    import os
+    
+    # 强制重新读取 .env 文件
+    env_path = os.path.join("data", ".env")
+    if os.path.exists(env_path):
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=True)
+        logger.info(f"✅ 已重新加载环境变量: {env_path}")
+    
+    # 创建新实例
+    settings = get_settings()
+    db_type = getattr(settings, 'DATABASE_TYPE', 'sqlite').lower()
+    
+    logger.info(f"🔄 正在切换数据库管理器到: {db_type.upper()}")
+    
+    if db_type == 'mysql':
+        from .database_mysql import MySQLManager
+        db_manager = MySQLManager()
+        logger.info(f"✅ 数据库管理器已切换到: MySQL")
+    else:
+        from .database_sqlite import SQLiteManager
+        db_manager = SQLiteManager()
+        logger.info(f"✅ 数据库管理器已切换到: SQLite")
+    
+    return db_manager
+
+
 def get_db_manager():
-    """获取全局数据库管理器实例"""
+    """
+    获取全局数据库管理器实例
+    
+    根据环境变量 DATABASE_TYPE 选择数据库管理器:
+    - 'sqlite': 使用 SQLiteManager
+    - 'mysql': 使用 MySQLManager
+    """
     global db_manager
     if db_manager is None:
-        # 使用 data/summaries.db 作为默认路径
-        db_manager = DatabaseManager(os.path.join("data", "summaries.db"))
+        from .settings import get_settings
+        
+        settings = get_settings()
+        # 正确的属性访问方式：settings.database.database_type
+        db_type = settings.database.database_type
+        
+        if db_type == 'mysql':
+            from .database_mysql import MySQLManager
+            logger.info("使用 MySQL 数据库管理器")
+            db_manager = MySQLManager()
+        else:
+            from .database_sqlite import SQLiteManager
+            logger.info("使用 SQLite 数据库管理器")
+            db_manager = SQLiteManager()
+    
     return db_manager
