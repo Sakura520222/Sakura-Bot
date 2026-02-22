@@ -114,7 +114,7 @@ class PollRegenerationManager:
 
             logger.info("投票重新生成数据库已初始化")
         except Exception as e:
-            raise DatabaseError(f"初始化数据库失败: {e}")
+            raise DatabaseError(f"初始化数据库失败: {e}") from e
 
     async def add_record(
         self,
@@ -169,7 +169,7 @@ class PollRegenerationManager:
                     f"已添加投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
-                raise DatabaseError(f"添加记录失败: {e}")
+                raise DatabaseError(f"添加记录失败: {e}") from e
 
     async def get_record(self, channel: str, summary_msg_id: int) -> PollRegenerationRecord | None:
         """获取指定的投票重新生成记录
@@ -212,7 +212,7 @@ class PollRegenerationManager:
 
                     return None
         except Exception as e:
-            raise DatabaseError(f"获取记录失败: {e}")
+            raise DatabaseError(f"获取记录失败: {e}") from e
 
     async def update_message_ids(
         self, channel: str, summary_msg_id: int, poll_msg_id: int, button_msg_id: int
@@ -244,7 +244,7 @@ class PollRegenerationManager:
                     f"已更新投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
-                raise DatabaseError(f"更新记录失败: {e}")
+                raise DatabaseError(f"更新记录失败: {e}") from e
 
     async def delete_record(self, channel: str, summary_msg_id: int) -> None:
         """删除指定的投票重新生成记录
@@ -272,7 +272,7 @@ class PollRegenerationManager:
                     f"已删除投票重新生成记录: channel={channel}, summary_id={summary_msg_id}"
                 )
             except Exception as e:
-                raise DatabaseError(f"删除记录失败: {e}")
+                raise DatabaseError(f"删除记录失败: {e}") from e
 
     async def increment_vote_count(
         self, channel: str, summary_msg_id: int, user_id: int
@@ -363,7 +363,7 @@ class PollRegenerationManager:
                     return True, new_count, False
 
             except Exception as e:
-                raise DatabaseError(f"增加投票计数失败: {e}")
+                raise DatabaseError(f"增加投票计数失败: {e}") from e
 
     async def reset_vote_count(self, channel: str, summary_msg_id: int) -> bool:
         """重置投票计数
@@ -420,7 +420,7 @@ class PollRegenerationManager:
                     return True
 
             except Exception as e:
-                raise DatabaseError(f"重置投票计数失败: {e}")
+                raise DatabaseError(f"重置投票计数失败: {e}") from e
 
     async def get_vote_count(self, channel: str, summary_msg_id: int) -> int:
         """获取投票计数
@@ -446,7 +446,7 @@ class PollRegenerationManager:
                     row = await cursor.fetchone()
                     return row[0] if row else 0
         except Exception as e:
-            raise DatabaseError(f"获取投票计数失败: {e}")
+            raise DatabaseError(f"获取投票计数失败: {e}") from e
 
     async def cleanup_old_records(self, days: int = CLEANUP_DAYS_DEFAULT) -> int:
         """清理超过指定天数的旧记录
@@ -481,7 +481,7 @@ class PollRegenerationManager:
                 return count
 
             except Exception as e:
-                raise DatabaseError(f"清理旧记录失败: {e}")
+                raise DatabaseError(f"清理旧记录失败: {e}") from e
 
 
 # 全局数据管理器实例

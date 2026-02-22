@@ -11,13 +11,15 @@
 # 许可证全文：参见 LICENSE 文件
 
 """
-其他命令处理（系统、调度、投票、数据管理、UI命令）
+其他命令处理(系统、调度、投票、数据管理、UI命令)
 """
 
+import asyncio
 import logging
 import os
-import subprocess
 import sys
+
+import aiofiles
 
 from ..config import (
     ADMIN_LIST,
@@ -134,20 +136,87 @@ async def handle_restart(event):
         return
 
     logger.info(f"开始执行 {command} 命令")
-    await event.reply(get_text("bot.restarting"))
-    logger.info("机器人重启命令已执行，正在重启...")
 
-    with open(RESTART_FLAG_FILE, "w") as f:
-        f.write(str(sender_id))
+    # 检测是否在 PM2 环境下运行
+    # PM2 会注入 PM2_HOME 或 PM2_JSON_PROCESSING 等环境变量
+    is_pm2 = False
 
-    # 重启前先停止问答Bot，新进程启动后会重新创建
-    from core.process_manager import stop_qa_bot
+    # 检查环境变量
+    if "PM2_HOME" in os.environ or "PM2_JSON_PROCESSING" in os.environ:
+        is_pm2 = True
+    # Linux 下检查父进程命令行
+    elif sys.platform != "win32" and hasattr(os, "getppid"):
+        try:
+            # 使用 asyncio.to_thread 避免阻塞事件循环
+            cmdline_path = f"/proc/{os.getppid()}/cmdline"
+            if await asyncio.to_thread(os.path.exists, cmdline_path):
+                content = await asyncio.to_thread(lambda: open(cmdline_path).read())
+                if "PM2" in content:
+                    is_pm2 = True
+        except Exception:
+            # 忽略检查失败，默认认为不是 PM2 环境
+            pass
 
-    stop_qa_bot()
+    if is_pm2:
+        logger.info("检测到 PM2 环境，使用 PM2 自动重启机制")
+        await event.reply(get_text("bot.restarting"))
+        logger.info("机器人重启命令已执行，PM2 将自动重启进程...")
 
-    python = sys.executable
-    subprocess.Popen([python] + sys.argv)
-    sys.exit(0)
+        # 写入重启标记
+        async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
+            await f.write(str(sender_id))
+
+        # 优雅关闭资源，然后让 PM2 负责重启
+        logger.info("正在优雅关闭资源...")
+        from main import graceful_shutdown_resources
+
+        await graceful_shutdown_resources()
+
+        logger.info("资源已关闭，退出进程以触发 PM2 自动重启")
+        raise SystemExit(0)
+    else:
+        # 非 PM2 环境：手动创建新进程
+        logger.info("非 PM2 环境，手动创建新进程")
+        await event.reply(get_text("bot.restarting"))
+        logger.info("机器人重启命令已执行，正在重启...")
+
+        # 写入重启标记
+        async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
+            await f.write(str(sender_id))
+
+        # 创建新进程（在当前进程退出前）
+        python = sys.executable
+        logger.info(f"正在创建新进程: {python} {' '.join(sys.argv)}")
+
+        # 使用 asyncio.to_thread 避免 subprocess.Popen 阻塞事件循环
+        import subprocess
+
+        def create_new_process():
+            if sys.platform == "win32":
+                creation_flags = subprocess.DETACHED_PROCESS
+            else:
+                creation_flags = 0
+
+            # 不重定向输出，让新进程继承父进程的 stdout 和 stderr
+            # 这样日志可以正常显示在终端或 PM2 日志中
+            return subprocess.Popen(
+                [python] + sys.argv,
+                creationflags=creation_flags,
+                start_new_session=True,
+                # stdout 和 stderr 默认为 None，会继承父进程的输出流
+            )
+
+        await asyncio.to_thread(create_new_process)
+        logger.info("新进程已创建，日志输出已启用")
+
+        # 优雅关闭资源
+        logger.info("正在优雅关闭资源...")
+        from main import graceful_shutdown_resources
+
+        await graceful_shutdown_resources()
+
+        logger.info("重启流程完成，当前进程即将退出")
+        raise SystemExit(0)
 
 
 async def handle_shutdown(event):
@@ -166,11 +235,6 @@ async def handle_shutdown(event):
 
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
 
-    scheduler = get_scheduler_instance()
-    if scheduler:
-        scheduler.shutdown(wait=False)
-        logger.info("调度器已停止")
-
     logger.info("机器人关机命令已执行，正在关闭...")
 
     try:
@@ -182,15 +246,18 @@ async def handle_shutdown(event):
     except Exception as e:
         logger.error(f"发送关机通知失败: {e}")
 
-    # 停止问答Bot
-    from core.process_manager import stop_qa_bot
+    # 等待消息发送完成
+    await asyncio.sleep(1)
 
-    stop_qa_bot()
+    # 优雅关闭所有资源
+    logger.info("正在优雅关闭所有资源...")
+    from main import graceful_shutdown_resources
 
-    import time
+    await graceful_shutdown_resources()
 
-    time.sleep(1)
-    sys.exit(0)
+    logger.info("关机流程完成，当前进程即将退出")
+    # 在异步上下文中使用 raise SystemExit 更安全
+    raise SystemExit(0)
 
 
 async def handle_pause(event):
@@ -928,7 +995,7 @@ async def handle_changelog(event):
     try:
         changelog_file = "CHANGELOG.md"
 
-        if not os.path.exists(changelog_file):
+        if not await asyncio.to_thread(os.path.exists, changelog_file):
             logger.error(f"更新日志文件 {changelog_file} 不存在")
             await event.reply(get_text("changelog.not_found", filename=changelog_file))
             return

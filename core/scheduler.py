@@ -213,7 +213,7 @@ async def main_job(channel=None):
 
                         # 保存到数据库
                         db = get_db_manager()
-                        summary_id = db.save_summary(
+                        summary_id = await db.save_summary(
                             channel_id=channel,
                             channel_name=channel_name,
                             summary_text=report_text,

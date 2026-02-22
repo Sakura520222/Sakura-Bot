@@ -24,17 +24,16 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pylint mypy isort
+          pip install ruff pylint mypy
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
-      - name: Ruff 快速检查
+      - name: Ruff 代码质量检查 (Lint)
         run: |
-          ruff check . --output-format=github --select=E,F,W,I --ignore=E501
+          ruff check . --output-format=github
       
-      - name: 导入排序检查（仅供参考）
+      - name: Ruff 代码格式检查 (Format)
         run: |
-          isort --check-only --diff . || echo "导入排序检查仅供参考，不影响CI通过"
-        continue-on-error: true
+          ruff format --check .
       
       - name: 代码复杂度检查（可选）
         run: |
@@ -117,23 +116,72 @@ jobs:
       - name: 安装测试依赖
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio
+          pip install pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
-      - name: 运行测试
+      - name: 运行单元测试（快速）
         run: |
           if [ -d tests ]; then
-            pytest tests/ -v --cov=core --cov-report=xml --cov-report=term
+            pytest tests/ -v -m "not slow and not integration" \
+              --cov=core \
+              --cov-report=xml \
+              --cov-report=term-missing \
+              --cov-report=html:htmlcov \
+              --cov-fail-under=50 \
+              --tb=short \
+              --strict-markers
           else
             echo "未找到测试目录，跳过测试"
           fi
       
-      - name: 上传覆盖率报告
+      - name: 运行集成测试（如果单元测试通过）
+        if: success()
+        run: |
+          if [ -d tests ]; then
+            pytest tests/ -v -m "integration" \
+              --cov=core \
+              --cov-append \
+              --cov-report=term-missing \
+              --tb=short \
+              --strict-markers || true
+          fi
+      
+      - name: 生成测试报告摘要
+        if: always()
+        run: |
+          echo "## 📊 测试结果摘要" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage.xml ]; then
+            echo "### 覆盖率报告" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            pytest --cov=core --cov-report=term >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: 上传覆盖率报告到 Codecov
         uses: codecov/codecov-action@v4
         if: always()
         with:
           file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
           fail_ci_if_error: false
+      
+      - name: 上传覆盖率 HTML 报告
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 30
+      
+      - name: PR 评论覆盖率报告
+        uses: py-cov-action/python-coverage-comment-action@v3
+        if: success() && github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          MINIMUM_GREEN: 60
+          MINIMUM_ORANGE: 40
 
   summary:
     name: CI 检查汇总

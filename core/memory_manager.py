@@ -112,7 +112,7 @@ class MemoryManager:
         """获取默认元数据"""
         return {"keywords": [], "topics": [], "sentiment": "neutral", "entities": []}
 
-    def update_channel_profile(
+    async def update_channel_profile(
         self, channel_id: str, channel_name: str, summary_text: str, metadata: dict[str, Any]
     ) -> None:
         """
@@ -130,7 +130,7 @@ class MemoryManager:
             sentiment = metadata.get("sentiment", "neutral")
             entities = metadata.get("entities", [])
 
-            self.db.update_channel_profile(
+            await self.db.update_channel_profile(
                 channel_id=channel_id,
                 channel_name=channel_name,
                 keywords=keywords,
@@ -144,7 +144,7 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"更新频道画像失败: {type(e).__name__}: {e}", exc_info=True)
 
-    def get_channel_context(self, channel_id: str | None = None) -> str:
+    async def get_channel_context(self, channel_id: str | None = None) -> str:
         """
         获取频道上下文信息（用于AI生成回答）
 
@@ -158,7 +158,7 @@ class MemoryManager:
             if not channel_id:
                 return "这是一个多频道总结系统。"
 
-            profile = self.db.get_channel_profile(channel_id)
+            profile = await self.db.get_channel_profile(channel_id)
             if not profile:
                 return f"频道: {channel_id.split('/')[-1]}"
 
@@ -180,7 +180,7 @@ class MemoryManager:
             logger.error(f"获取频道上下文失败: {type(e).__name__}: {e}", exc_info=True)
             return ""
 
-    def search_summaries(
+    async def search_summaries(
         self,
         keywords: list[str] = None,
         topics: list[str] = None,
@@ -209,7 +209,7 @@ class MemoryManager:
             start_date = end_date - timedelta(days=time_range_days)
 
             # 获取基础总结
-            summaries = self.db.get_summaries(
+            summaries = await self.db.get_summaries(
                 channel_id=channel_id, limit=limit, start_date=start_date, end_date=end_date
             )
 

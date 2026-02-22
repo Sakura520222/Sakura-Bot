@@ -5,10 +5,11 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "ASYNC"]
 extend-select = ["B"]
+# 忽略行长度检查（已在 line-length 中统一配置）
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # 针对特定文件可以放宽限制
-"core/database.py" = ["E722"]
 
 [tool.ruff.format]
 quote-style = "double"

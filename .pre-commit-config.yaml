@@ -1,0 +1,26 @@
+# Pre-commit 钩子配置
+# 安装: pip install pre-commit
+# 激活: pre-commit install
+# 跳过: git commit --no-verify -m "message"
+
+repos:
+  # Ruff - 代码检查和格式化
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.2
+    hooks:
+      # 代码检查
+      - id: ruff
+        name: Ruff 代码检查
+        args: [--fix, --exit-non-zero-on-fix]
+      # 代码格式化
+      - id: ruff-format
+        name: Ruff 代码格式化
+
+  # 其他有用的检查（可选）
+  # - repo: https://github.com/pre-commit/pre-commit-hooks
+  #   rev: v4.5.0
+  #   hooks:
+  #     - id: trailing-whitespace
+  #     - id: end-of-file-fixer
+  #     - id: check-yaml
+  #     - id: check-added-large-files

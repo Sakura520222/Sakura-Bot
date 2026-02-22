@@ -153,7 +153,9 @@ def retry_with_backoff(
                     if attempt == config["max_retries"]:
                         # 重试次数耗尽
                         logger.error(f"{func.__name__} 重试次数耗尽 ({config['max_retries']} 次)")
-                        raise RetryExhaustedError(f"{func.__name__} 重试次数耗尽", last_exception)
+                        raise RetryExhaustedError(
+                            f"{func.__name__} 重试次数耗尽", last_exception
+                        ) from last_exception
 
                     # 计算延迟时间
                     if config["exponential_backoff"]:
@@ -207,7 +209,9 @@ def retry_with_backoff(
                     if attempt == config["max_retries"]:
                         # 重试次数耗尽
                         logger.error(f"{func.__name__} 重试次数耗尽 ({config['max_retries']} 次)")
-                        raise RetryExhaustedError(f"{func.__name__} 重试次数耗尽", last_exception)
+                        raise RetryExhaustedError(
+                            f"{func.__name__} 重试次数耗尽", last_exception
+                        ) from last_exception
 
                     # 计算延迟时间
                     if config["exponential_backoff"]:
@@ -354,7 +358,7 @@ async def check_telegram_connection():
             me = await client.get_me()
             return f"Telegram连接正常，机器人: @{me.username}"
     except Exception as e:
-        raise Exception(f"Telegram连接失败: {e}")
+        raise Exception(f"Telegram连接失败: {e}") from e
 
 
 async def check_ai_api():
@@ -371,7 +375,7 @@ async def check_ai_api():
         )
         return f"AI API连接正常，模型: {LLM_MODEL}"
     except Exception as e:
-        raise Exception(f"AI API连接失败: {e}")
+        raise Exception(f"AI API连接失败: {e}") from e
 
 
 async def check_database_connection():

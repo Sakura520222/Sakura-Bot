@@ -51,6 +51,14 @@ def analyze_with_ai(messages, current_prompt):
     Args:
         messages: 要分析的消息列表
         current_prompt: 当前使用的提示词
+
+    Returns:
+        str: AI 生成的摘要文本
+
+    Raises:
+        ConnectionError: 连接失败
+        TimeoutError: 请求超时
+        Exception: 其他错误
     """
     logger.info("开始调用AI进行消息汇总")
 
@@ -67,34 +75,29 @@ def analyze_with_ai(messages, current_prompt):
     )
     logger.debug(f"AI请求总长度: {len(prompt)}字符")
 
-    try:
-        from datetime import datetime
+    from datetime import datetime
 
-        start_time = datetime.now()
-        response = client_llm.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
-        end_time = datetime.now()
+    start_time = datetime.now()
+    response = client_llm.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。",
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    end_time = datetime.now()
 
-        processing_time = (end_time - start_time).total_seconds()
-        logger.info(f"AI分析完成，处理时间: {processing_time:.2f}秒")
-        logger.debug(
-            f"AI响应状态: 成功，选择索引={response.choices[0].index}, 完成原因={response.choices[0].finish_reason}"
-        )
-        logger.debug(f"AI响应长度: {len(response.choices[0].message.content)}字符")
+    processing_time = (end_time - start_time).total_seconds()
+    logger.info(f"AI分析完成，处理时间: {processing_time:.2f}秒")
+    logger.debug(
+        f"AI响应状态: 成功，选择索引={response.choices[0].index}, 完成原因={response.choices[0].finish_reason}"
+    )
+    logger.debug(f"AI响应长度: {len(response.choices[0].message.content)}字符")
 
-        return response.choices[0].message.content
-    except Exception as e:
-        record_error(e, "analyze_with_ai")
-        logger.error(f"AI分析失败: {type(e).__name__}: {e}", exc_info=True)
-        return f"AI 分析失败: {e}"
+    return response.choices[0].message.content
 
 
 @retry_with_backoff(

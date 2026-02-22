@@ -14,6 +14,7 @@
 历史记录相关命令处理
 """
 
+import inspect
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -70,7 +71,13 @@ async def handle_history(event):
         if days:
             start_date = datetime.now(UTC) - timedelta(days=days)
 
-        summaries = db.get_summaries(channel_id=channel_id, limit=10, start_date=start_date)
+        # 兼容同步和异步数据库管理器
+        if inspect.iscoroutinefunction(db.get_summaries):
+            summaries = await db.get_summaries(
+                channel_id=channel_id, limit=10, start_date=start_date
+            )
+        else:
+            summaries = db.get_summaries(channel_id=channel_id, limit=10, start_date=start_date)
 
         if not summaries:
             if channel_id:
@@ -90,7 +97,7 @@ async def handle_history(event):
         result = f"📋 **{channel_name} {get_text('history.title_suffix')}**\n\n"
         result += get_text("history.found_count", count=total_count, display=min(total_count, 10))
 
-        for i, summary in enumerate(summaries[:10], 1):
+        for summary in summaries[:10]:
             created_at = summary.get("created_at", get_text("history.unknown_time"))
             summary_type = summary.get("summary_type", "weekly")
             message_count = summary.get("message_count", 0)
@@ -186,7 +193,11 @@ async def handle_export(event):
 
         # 导出数据
         db = get_db_manager()
-        filename = db.export_summaries(output_format=output_format, channel_id=channel_id)
+        # 兼容同步和异步数据库管理器
+        if inspect.iscoroutinefunction(db.export_summaries):
+            filename = await db.export_summaries(output_format=output_format, channel_id=channel_id)
+        else:
+            filename = db.export_summaries(output_format=output_format, channel_id=channel_id)
 
         if filename:
             # 发送文件
@@ -245,7 +256,11 @@ async def handle_stats(event):
 
         if channel_id:
             # 显示指定频道的统计
-            stats = db.get_statistics(channel_id=channel_id)
+            # 兼容同步和异步数据库管理器
+            if inspect.iscoroutinefunction(db.get_statistics):
+                stats = await db.get_statistics(channel_id=channel_id)
+            else:
+                stats = db.get_statistics(channel_id=channel_id)
             channel_name = channel_id.split("/")[-1]
 
             if not stats or stats.get("total_count", 0) == 0:
@@ -304,7 +319,11 @@ async def handle_stats(event):
             result = get_text("history.overview_title") + "\n\n"
 
             # 获取各频道统计
-            channel_ranking = db.get_channel_ranking(limit=10)
+            # 兼容同步和异步数据库管理器
+            if inspect.iscoroutinefunction(db.get_channel_ranking):
+                channel_ranking = await db.get_channel_ranking(limit=10)
+            else:
+                channel_ranking = db.get_channel_ranking(limit=10)
 
             if not channel_ranking:
                 await event.reply(get_text("history.all_no_records"))
@@ -332,7 +351,11 @@ async def handle_stats(event):
                 )
 
             # 总体统计
-            overall_stats = db.get_statistics()
+            # 兼容同步和异步数据库管理器
+            if inspect.iscoroutinefunction(db.get_statistics):
+                overall_stats = await db.get_statistics()
+            else:
+                overall_stats = db.get_statistics()
             result += "---\n\n"
             result += get_text("history.overall_stats") + "\n"
             result += (

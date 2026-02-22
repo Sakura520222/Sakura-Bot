@@ -91,6 +91,28 @@ class QABot:
 
         logger.info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持 + 用户系统）")
 
+    async def initialize_database(self):
+        """初始化数据库连接"""
+        try:
+            from core.database import get_db_manager
+
+            db = get_db_manager()
+
+            # 如果是MySQL数据库，需要初始化连接池
+            if hasattr(db, "init_database") and hasattr(db, "pool") and db.pool is None:
+                logger.info("正在初始化MySQL数据库连接池...")
+                await db.init_database()
+
+                # 检查连接池是否成功创建
+                if db.pool is None:
+                    logger.error("数据库连接池初始化失败，pool 仍为 None")
+                    raise RuntimeError("MySQL连接池创建失败")
+
+                logger.info("MySQL数据库连接池初始化完成")
+        except Exception as e:
+            logger.error(f"初始化数据库失败: {type(e).__name__}: {e}", exc_info=True)
+            raise
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/start命令"""
 
@@ -162,7 +184,7 @@ class QABot:
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/status命令"""
         user_id = update.effective_user.id
-        status_info = self.quota_manager.get_usage_status(user_id)
+        status_info = await self.quota_manager.get_usage_status(user_id)
 
         # 构建配额状态文本
         if status_info.get("is_admin"):
@@ -180,7 +202,7 @@ class QABot:
             )
 
         # 获取会话信息
-        session_info = self.conversation_mgr.get_session_info(user_id)
+        session_info = await self.conversation_mgr.get_session_info(user_id)
 
         session_text = ""
         if session_info:
@@ -209,7 +231,7 @@ class QABot:
         user_id = update.effective_user.id
 
         # 清除所有对话历史
-        deleted_count = self.conversation_mgr.clear_user_history(user_id)
+        deleted_count = await self.conversation_mgr.clear_user_history(user_id)
 
         message = f"""🗑️ **对话记忆已清除**
 
@@ -255,12 +277,12 @@ class QABot:
         user_id = update.effective_user.id
 
         # 自动注册用户
-        self.user_system.register_user(
+        await self.user_system.register_user(
             user_id, update.effective_user.username, update.effective_user.first_name
         )
 
         # 获取频道列表
-        channels = self.user_system.get_available_channels()
+        channels = await self.user_system.get_available_channels()
         message = self.user_system.format_channels_list(channels)
 
         await update.message.reply_text(message, parse_mode="Markdown")
@@ -270,7 +292,7 @@ class QABot:
         user_id = update.effective_user.id
 
         # 自动注册用户
-        self.user_system.register_user(
+        await self.user_system.register_user(
             user_id, update.effective_user.username, update.effective_user.first_name
         )
 
@@ -291,7 +313,7 @@ class QABot:
         channel_url = context.args[0]
 
         # 获取频道列表，查找频道名称
-        channels = self.user_system.get_available_channels()
+        channels = await self.user_system.get_available_channels()
         channel_name = None
         for ch in channels:
             if ch.get("channel_id") == channel_url:
@@ -303,7 +325,7 @@ class QABot:
             channel_name = channel_url.split("/")[-1]
 
         # 添加订阅
-        result = self.user_system.add_subscription(user_id, channel_url, channel_name)
+        result = await self.user_system.add_subscription(user_id, channel_url, channel_name)
         await update.message.reply_text(result["message"], parse_mode="Markdown")
 
     async def unsubscribe_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -313,7 +335,7 @@ class QABot:
         # 检查参数
         if not context.args or len(context.args) < 1:
             # 如果没有参数，显示订阅列表让用户选择
-            subscriptions = self.user_system.get_user_subscriptions(user_id)
+            subscriptions = await self.user_system.get_user_subscriptions(user_id)
             if not subscriptions:
                 message = "您还没有订阅任何频道。"
             else:
@@ -329,7 +351,7 @@ class QABot:
             return
 
         channel_url = context.args[0]
-        result = self.user_system.remove_subscription(user_id, channel_url)
+        result = await self.user_system.remove_subscription(user_id, channel_url)
         await update.message.reply_text(result["message"], parse_mode="Markdown")
 
     async def my_subscriptions_command(
@@ -338,7 +360,7 @@ class QABot:
         """处理/mysubscriptions命令 - 查看我的订阅"""
         user_id = update.effective_user.id
 
-        subscriptions = self.user_system.get_user_subscriptions(user_id)
+        subscriptions = await self.user_system.get_user_subscriptions(user_id)
         message = self.user_system.format_subscriptions_list(subscriptions)
 
         await update.message.reply_text(message, parse_mode="Markdown")
@@ -350,7 +372,7 @@ class QABot:
         user_id = update.effective_user.id
 
         # 自动注册用户
-        self.user_system.register_user(
+        await self.user_system.register_user(
             user_id, update.effective_user.username, update.effective_user.first_name
         )
 
@@ -370,7 +392,7 @@ class QABot:
         channel_url = context.args[0]
 
         # 获取频道名称
-        channels = self.user_system.get_available_channels()
+        channels = await self.user_system.get_available_channels()
         channel_name = None
         for ch in channels:
             if ch.get("channel_id") == channel_url:
@@ -400,7 +422,7 @@ class QABot:
 
         try:
             # 1. 检查配额
-            quota_check = self.quota_manager.check_quota(user_id)
+            quota_check = await self.quota_manager.check_quota(user_id)
             if not quota_check.get("allowed", False):
                 await update.message.reply_text(quota_check.get("message", "配额不足"))
                 return
@@ -666,7 +688,10 @@ class QABot:
 
         # 设置命令菜单注册回调
         async def register_commands(application):
-            """注册命令菜单"""
+            """注册命令菜单和初始化数据库"""
+            # 初始化数据库连接
+            await self.initialize_database()
+
             logger.info("注册问答Bot命令菜单...")
             commands = [
                 BotCommand("start", "查看欢迎信息"),

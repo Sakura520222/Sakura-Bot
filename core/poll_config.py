@@ -73,9 +73,9 @@ class ChannelPollConfigManager:
                 logger.warning("配置文件中的 channel_poll_settings 格式不正确")
                 self._poll_settings = {}
         except json.JSONDecodeError as e:
-            raise ConfigurationError(f"配置文件格式错误: {e}")
+            raise ConfigurationError(f"配置文件格式错误: {e}") from e
         except Exception as e:
-            raise ConfigurationError(f"加载配置文件失败: {e}")
+            raise ConfigurationError(f"加载配置文件失败: {e}") from e
 
     def _save_settings(self) -> None:
         """保存投票配置到文件"""
@@ -98,7 +98,7 @@ class ChannelPollConfigManager:
 
             logger.info(f"已保存 {len(self._poll_settings)} 个频道的投票配置")
         except Exception as e:
-            raise ConfigurationError(f"保存配置文件失败: {e}")
+            raise ConfigurationError(f"保存配置文件失败: {e}") from e
 
     def get_config(self, channel: str) -> ChannelPollConfig:
         """获取指定频道的投票配置

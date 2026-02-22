@@ -81,7 +81,7 @@ class ConversationManager:
             # 降级：返回一个随机会话ID
             return str(uuid.uuid4()), True
 
-    def save_message(
+    async def save_message(
         self, user_id: int, session_id: str, role: str, content: str, metadata: dict | None = None
     ) -> bool:
         """
@@ -99,7 +99,7 @@ class ConversationManager:
         """
         try:
             # 保存到数据库
-            success = self.db.save_conversation(
+            success = await self.db.save_conversation(
                 user_id=user_id,
                 session_id=session_id,
                 role=role,
@@ -118,7 +118,7 @@ class ConversationManager:
             logger.error(f"保存消息失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    def get_conversation_history(self, user_id: int, session_id: str) -> list:
+    async def get_conversation_history(self, user_id: int, session_id: str) -> list:
         """
         获取对话历史（用于RAG上下文）
 
@@ -130,7 +130,7 @@ class ConversationManager:
             对话历史列表，格式：[{'role': 'user', 'content': '...'}, ...]
         """
         try:
-            history = self.db.get_conversation_history(
+            history = await self.db.get_conversation_history(
                 user_id=user_id, session_id=session_id, limit=self.MAX_MESSAGES_PER_SESSION
             )
             return history
@@ -139,7 +139,7 @@ class ConversationManager:
             logger.error(f"获取对话历史失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def clear_user_history(self, user_id: int, session_id: str | None = None) -> int:
+    async def clear_user_history(self, user_id: int, session_id: str | None = None) -> int:
         """
         清除用户对话历史
 
@@ -152,7 +152,7 @@ class ConversationManager:
         """
         try:
             # 从数据库删除
-            deleted = self.db.clear_user_conversations(user_id, session_id)
+            deleted = await self.db.clear_user_conversations(user_id, session_id)
 
             # 如果清除了所有会话，清除缓存
             if session_id is None:
@@ -200,7 +200,7 @@ class ConversationManager:
 
         return "\n".join(context_parts)
 
-    def get_session_info(self, user_id: int) -> dict | None:
+    async def get_session_info(self, user_id: int) -> dict | None:
         """
         获取用户的会话信息
 
@@ -223,7 +223,7 @@ class ConversationManager:
             duration = now - last_active
 
             # 获取会话中的消息数
-            history = self.db.get_conversation_history(user_id, session_id, limit=1000)
+            history = await self.db.get_conversation_history(user_id, session_id, limit=1000)
             message_count = len(history)
 
             return {
@@ -238,7 +238,7 @@ class ConversationManager:
             logger.error(f"获取会话信息失败: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def cleanup_old_sessions(self, days: int = 7) -> int:
+    async def cleanup_old_sessions(self, days: int = 7) -> int:
         """
         清理旧的对话记录（定期维护任务）
 
@@ -249,7 +249,7 @@ class ConversationManager:
             删除的记录数
         """
         try:
-            deleted = self.db.delete_old_conversations(days)
+            deleted = await self.db.delete_old_conversations(days)
 
             # 清理缓存中不活跃的会话
             now = datetime.now(UTC)

@@ -256,3 +256,8 @@ Thumbs.db
 tmpclaude-*-cwd
 data/vectors/
 CI日志/
+
+# Ruff 日志文件
+logs/
+*.log
+.sourcery.yaml

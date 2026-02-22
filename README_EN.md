@@ -126,6 +126,9 @@ python main.py
 | **🤖 Cross-Bot Communication** | QA bot and main bot communicate via database queue for inter-process communication | ✅ |
 | **🔧 Code Optimization** | Modularized summary generation process with code reuse and unified management | ✅ |
 | **📱 Command Menu** | QA Bot automatically registers command menu for direct access to all available commands | ✅ |
+| **🗄️ MySQL Database Support** | New MySQL database support for improved performance and concurrency | ✅ |
+| **🔄 Database Migration** | One-click migration from SQLite to MySQL with automatic backup and validation | ✅ |
+| **⚡ Startup Check** | Automatically detects old databases and notifies admins with migration suggestions | ✅ |
 
 ---
 
@@ -222,6 +225,42 @@ python main.py
 | Command | Aliases | Description | Example |
 |---------|---------|-------------|---------|
 | `/language` | `/语言` | View or switch interface language | `/language` / `/language en-US` |
+
+#### Database Migration
+
+| Command | Aliases | Description | Example |
+|---------|---------|-------------|---------|
+| `/migrate_check` | `/迁移检查` | Check migration readiness | `/migrate_check` |
+| `/migrate_start` | `/开始迁移` | Start database migration | `/migrate_start` |
+| `/migrate_status` | `/迁移状态` | View migration progress | `/migrate_status` |
+
+**Migration Notes**:
+- Support one-click migration from SQLite to MySQL database
+- Automatic backup before migration, safe and reliable
+- Suitable for production environments and high-concurrency scenarios
+
+**MySQL Configuration Example**:
+```env
+# ===== Database Configuration =====
+DATABASE_TYPE=mysql  # sqlite or mysql
+
+# MySQL Configuration (required when using MySQL)
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=your_mysql_user
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=sakura_bot_db
+MYSQL_CHARSET=utf8mb4
+MYSQL_POOL_SIZE=5
+MYSQL_MAX_OVERFLOW=10
+MYSQL_POOL_TIMEOUT=30
+```
+
+**Migration Steps**:
+1. Create MySQL database: `CREATE DATABASE sakura_bot_db CHARACTER SET utf8mb4;`
+2. Configure MySQL connection in `.env`
+3. Use `/migrate_check` to check readiness
+4. Use `/migrate_start` to begin migration
 
 ### QA Bot Commands
 

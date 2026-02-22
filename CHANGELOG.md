@@ -5,6 +5,184 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0] - 2026-02-21
+
+### 🎉 重大更新 - 数据库架构全面升级
+
+#### 新增
+- **MySQL数据库支持**：新增MySQL数据库支持，提升性能和并发能力
+  - **数据库抽象层**：创建 `DatabaseManagerBase` 基类，统一数据库接口
+  - **MySQL管理器**：使用 aiomysql 实现异步 MySQL 管理
+    - 连接池管理（可配置大小和超时）
+    - 强制使用 utf8mb4 字符集（支持 Emoji）
+    - JSON 类型存储复杂数据（MySQL 5.7+）
+    - 完整的索引优化和事务支持
+  - **SQLite管理器重构**：将原 DatabaseManager 重构为 SQLiteManager
+    - 保持原有所有功能完全兼容
+    - 继承 DatabaseManagerBase 基类
+    - 保留 SQLite 作为默认数据库
+
+- **数据库迁移系统**：完整的 SQLite 到 MySQL 迁移工具
+  - **迁移器模块**：`DatabaseMigrator` 类提供一站式迁移服务
+  - **流式处理**：采用流式读取 + 分批插入策略，避免内存溢出
+  - **自动备份**：迁移前自动备份 SQLite 数据库
+  - **数据验证**：迁移后自动验证数据完整性
+  - **进度跟踪**：实时显示迁移进度和状态
+  - **错误恢复**：失败时保留备份，可手动恢复
+
+- **迁移命令系统**：管理员可通过命令完成迁移
+  - `/migrate_check` - 检查迁移准备状态
+    - 检测 SQLite 数据库是否存在
+    - 验证 MySQL 配置是否完整
+    - 测试 MySQL 连接是否成功
+    - 显示各表记录数统计
+    - 评估迁移准备情况
+  
+  - `/migrate_start` - 开始数据库迁移
+    - 自动执行完整迁移流程
+    - 实时显示进度和状态
+    - 完成后显示详细统计
+    - 验证数据完整性
+  
+  - `/migrate_status` - 查看迁移进度
+    - 显示当前迁移状态
+    - 显示进度条和百分比
+    - 显示各表迁移统计
+    - 支持中英文命令别名
+
+- **启动时数据库检查**：自动检测旧数据库并通知管理员
+  - 检测到 SQLite 数据库时发送迁移建议
+  - 提供 `/migrate_check` 快捷入口
+  - 帮助管理员了解迁移收益
+
+#### 新增文件
+- **core/database_base.py** - 数据库管理器抽象基类（380行）
+  - 定义统一的数据库接口
+  - 包含所有抽象方法声明
+  - 提供类型提示和文档字符串
+
+- **core/database_mysql.py** - MySQL 数据库管理器（1450行）
+  - 使用 aiomysql 实现异步操作
+  - 连接池管理
+  - 完整的 CRUD 操作
+  - 所有抽象方法的实现
+
+- **core/database_sqlite.py** - SQLite 数据库管理器（重构）
+  - 从原 database.py 重构而来
+  - 继承 DatabaseManagerBase
+  - 保持所有原有功能
+
+- **core/database_migrator.py** - 数据库迁移工具（680行）
+  - 检查迁移准备状态
+  - 执行完整迁移流程
+  - 数据备份和验证
+  - 进度跟踪和错误处理
+
+- **core/command_handlers/database_migration_commands.py** - 迁移命令处理器
+  - 处理三个迁移命令
+  - 权限检查和错误处理
+  - 格式化输出和状态显示
+
+#### 配置增强
+- **.env 新增配置项**：
+  - `DATABASE_TYPE` - 数据库类型（sqlite/mysql）
+  - `MYSQL_HOST` - MySQL 主机地址
+  - `MYSQL_PORT` - MySQL 端口
+  - `MYSQL_USER` - MySQL 用户名
+  - `MYSQL_PASSWORD` - MySQL 密码
+  - `MYSQL_DATABASE` - MySQL 数据库名
+  - `MYSQL_CHARSET` - MySQL 字符集（默认 utf8mb4）
+  - `MYSQL_POOL_SIZE` - 连接池大小（默认 5）
+  - `MYSQL_MAX_OVERFLOW` - 最大溢出连接数（默认 10）
+  - `MYSQL_POOL_TIMEOUT` - 连接池超时（默认 30）
+
+- **requirements.txt 新增依赖**：
+  - `aiomysql>=0.2.0` - 异步 MySQL 驱动
+
+#### 国际化更新
+- **数据库迁移相关翻译**：
+  - 新增 30+ 个中英文翻译键
+  - 覆盖迁移准备、执行、状态查询
+  - 包含成功、失败、错误提示
+  - 支持进度显示和统计信息
+
+#### 技术特性
+- **数据库抽象层设计**：
+  ```python
+  class DatabaseManagerBase(ABC):
+      @abstractmethod
+      def save_summary(...) -> int | None
+      @abstractmethod
+      def get_summaries(...) -> list[dict[str, Any]]
+      # ... 20+ 个抽象方法
+  ```
+
+- **统一数据库入口**：
+  ```python
+  def get_db_manager():
+      """根据配置返回对应的管理器实例"""
+      db_type = os.getenv("DATABASE_TYPE", "sqlite")
+      if db_type == "mysql":
+          return MySQLManager(...)
+      return SQLiteManager(...)
+  ```
+
+- **迁移流程**：
+  ```
+  1. 检查迁移准备状态
+  2. 备份 SQLite 数据库
+  3. 按表迁移数据（考虑外键依赖）
+  4. 验证数据完整性
+  5. 显示迁移结果
+  ```
+
+#### 性能提升
+- **并发性能**：MySQL 连接池支持高并发
+- **查询优化**：MySQL 索引优化查询速度
+- **大数据支持**：流式处理支持大表迁移
+- **连接复用**：连接池减少连接开销
+
+#### 向后兼容
+- **完全兼容 SQLite**：
+  - 默认使用 SQLite 数据库
+  - 所有现有功能保持不变
+  - 未配置 MySQL 时自动使用 SQLite
+
+- **渐进式迁移**：
+  - 可选择迁移到 MySQL
+  - 迁移前自动备份
+  - 失败时可恢复
+
+#### 使用场景
+- **小型部署**：使用 SQLite，零配置
+- **中大型部署**：迁移到 MySQL，提升性能
+- **高并发场景**：MySQL 连接池支持高并发
+- **数据迁移**：一键从 SQLite 迁移到 MySQL
+
+#### 注意事项
+- MySQL 需要提前创建数据库：`CREATE DATABASE sakura_bot_db CHARACTER SET utf8mb4;`
+- 迁移前确保 MySQL 服务正常运行
+- 迁移过程中请勿停止机器人
+- 建议在低峰期执行迁移操作
+- 迁移完成后修改 `.env` 的 `DATABASE_TYPE=mysql` 并重启
+
+#### 迁移命令示例
+```bash
+# 检查迁移准备状态
+/migrate_check
+
+# 开始迁移
+/migrate_start
+
+# 查看迁移进度
+/migrate_status
+```
+
+#### 文档更新
+- 更新 README.md 添加 MySQL 配置说明
+- 更新 README_EN.md 同步英文版
+- 更新 CHANGELOG.md 记录 v1.6.0 变更
+
 ## [1.5.9] - 2026-02-19
 
 ### 改进
