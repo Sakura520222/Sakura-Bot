@@ -50,7 +50,7 @@ class MainBotRequestHandler:
         """
         try:
             # 检查数据库连接池是否已初始化
-            if not hasattr(self.db, 'pool') or self.db.pool is None:
+            if not hasattr(self.db, "pool") or self.db.pool is None:
                 logger.debug("数据库连接池未初始化，跳过请求检查")
                 return
 
@@ -301,7 +301,9 @@ class MainBotRequestHandler:
             else:
                 # 生成失败
                 error_msg = result.get("error", "未知错误")
-                await self.db.update_request_status(request_id, "failed", result={"error": error_msg})
+                await self.db.update_request_status(
+                    request_id, "failed", result={"error": error_msg}
+                )
                 await event.edit(f"❌ 生成总结失败: {error_msg}")
 
                 # 通知请求者

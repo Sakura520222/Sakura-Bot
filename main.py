@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 
+import aiofiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telethon import TelegramClient
 from telethon.events import CallbackQuery, NewMessage
@@ -191,7 +192,11 @@ async def main():
         # 初始化数据库连接（如果使用MySQL）
         logger.info("初始化数据库连接...")
         db_manager = get_db_manager()
-        if hasattr(db_manager, 'init_database') and hasattr(db_manager, 'pool') and db_manager.pool is None:
+        if (
+            hasattr(db_manager, "init_database")
+            and hasattr(db_manager, "pool")
+            and db_manager.pool is None
+        ):
             await db_manager.init_database()
             logger.info("数据库连接池初始化完成")
         else:
@@ -470,13 +475,23 @@ async def main():
         client.add_event_handler(handle_language, NewMessage(pattern="/language|/语言"))
 
         # 11. 数据库迁移命令
-        client.add_event_handler(handle_migrate_check, NewMessage(pattern="/migrate_check|/迁移检查"))
-        client.add_event_handler(handle_migrate_start, NewMessage(pattern="/migrate_start|/开始迁移"))
-        client.add_event_handler(handle_migrate_status, NewMessage(pattern="/migrate_status|/迁移状态"))
+        client.add_event_handler(
+            handle_migrate_check, NewMessage(pattern="/migrate_check|/迁移检查")
+        )
+        client.add_event_handler(
+            handle_migrate_start, NewMessage(pattern="/migrate_start|/开始迁移")
+        )
+        client.add_event_handler(
+            handle_migrate_status, NewMessage(pattern="/migrate_status|/迁移状态")
+        )
         # 12. 数据库清空命令
         client.add_event_handler(handle_db_clear, NewMessage(pattern="/db_clear|/清空数据库"))
-        client.add_event_handler(handle_db_clear_confirm, NewMessage(pattern="/db_clear_confirm|/确认清空数据库"))
-        client.add_event_handler(handle_db_clear_cancel, NewMessage(pattern="/db_clear_cancel|/取消清空数据库"))
+        client.add_event_handler(
+            handle_db_clear_confirm, NewMessage(pattern="/db_clear_confirm|/确认清空数据库")
+        )
+        client.add_event_handler(
+            handle_db_clear_cancel, NewMessage(pattern="/db_clear_cancel|/取消清空数据库")
+        )
 
         # 13. 问答Bot控制命令
         client.add_event_handler(handle_qa_status, NewMessage(pattern="/qa_status|/qa_状态"))
@@ -637,9 +652,9 @@ async def main():
             # 检查SQLite数据库文件是否存在且有数据
             sqlite_db_path = "data/summaries.db"
 
-            if os.path.exists(sqlite_db_path):
+            if await aiofiles.os.path.exists(sqlite_db_path):
                 # 检查数据库大小，如果有数据则提示迁移
-                db_size = os.path.getsize(sqlite_db_path)
+                db_size = await aiofiles.os.path.getsize(sqlite_db_path)
                 if db_size > 0:
                     logger.info(f"检测到SQLite数据库，大小: {db_size} 字节")
 
@@ -649,7 +664,7 @@ async def main():
                                 admin_id,
                                 get_text("database.startup_old_database"),
                                 parse_mode="md",
-                                link_preview=False
+                                link_preview=False,
                             )
                             logger.info(f"已向管理员 {admin_id} 发送数据库迁移建议")
                         except Exception as e:
@@ -662,10 +677,10 @@ async def main():
             logger.info(f"使用 {current_db_type.upper()} 数据库，无需迁移")
 
         # 检查是否是重启后的首次运行
-        if os.path.exists(RESTART_FLAG_FILE):
+        if await aiofiles.os.path.exists(RESTART_FLAG_FILE):
             try:
-                with open(RESTART_FLAG_FILE) as f:
-                    content = f.read().strip()
+                async with aiofiles.open(RESTART_FLAG_FILE) as f:
+                    content = await f.read().strip()
 
                 # 尝试解析为用户ID
                 try:
@@ -680,17 +695,17 @@ async def main():
                     logger.info(f"检测到重启标记，但内容不是有效的用户ID: {content}")
 
                 # 删除重启标记文件
-                os.remove(RESTART_FLAG_FILE)
+                await aiofiles.os.remove(RESTART_FLAG_FILE)
                 logger.info("重启标记文件已删除")
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
 
         # 检查关机标记文件
         SHUTDOWN_FLAG_FILE = ".shutdown_flag"
-        if os.path.exists(SHUTDOWN_FLAG_FILE):
+        if await aiofiles.os.path.exists(SHUTDOWN_FLAG_FILE):
             try:
-                with open(SHUTDOWN_FLAG_FILE) as f:
-                    shutdown_user = f.read().strip()
+                async with aiofiles.open(SHUTDOWN_FLAG_FILE) as f:
+                    shutdown_user = await f.read().strip()
 
                 logger.info(f"检测到关机标记，操作者: {shutdown_user}")
 
@@ -705,13 +720,11 @@ async def main():
                         logger.error(f"向管理员 {admin_id} 发送关机通知失败: {e}")
 
                 # 删除关机标记文件
-                os.remove(SHUTDOWN_FLAG_FILE)
+                await aiofiles.os.remove(SHUTDOWN_FLAG_FILE)
                 logger.info("关机标记文件已删除")
 
                 # 等待消息发送完成
-                import time
-
-                time.sleep(2)
+                await asyncio.sleep(2)
 
                 # 执行关机
                 logger.info("执行关机操作...")
@@ -721,8 +734,8 @@ async def main():
                 logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
                 # 即使出错也尝试删除关机标记文件，避免遗留
                 try:
-                    if os.path.exists(SHUTDOWN_FLAG_FILE):
-                        os.remove(SHUTDOWN_FLAG_FILE)
+                    if await aiofiles.os.path.exists(SHUTDOWN_FLAG_FILE):
+                        await aiofiles.os.remove(SHUTDOWN_FLAG_FILE)
                         logger.info("出错后已清理关机标记文件")
                 except Exception as cleanup_error:
                     logger.error(f"清理关机标记文件时出错: {cleanup_error}")

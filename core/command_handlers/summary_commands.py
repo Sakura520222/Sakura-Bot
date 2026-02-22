@@ -15,9 +15,10 @@
 """
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import aiofiles
 
 from ..ai_client import analyze_with_ai
 from ..config import (
@@ -583,18 +584,22 @@ async def handle_clear_summary_time(event):
             else:
                 specific_channel = f"https://t.me/{channel_part}"
 
-        if os.path.exists(LAST_SUMMARY_FILE):
+        if await aiofiles.os.path.exists(LAST_SUMMARY_FILE):
             if specific_channel:
                 # 清除特定频道的时间记录
-                with open(LAST_SUMMARY_FILE, encoding="utf-8") as f:
-                    content = f.read().strip()
+                async with aiofiles.open(LAST_SUMMARY_FILE, encoding="utf-8") as f:
+                    content = await f.read().strip()
                     if content:
                         existing_data = json.loads(content)
                         if specific_channel in existing_data:
                             del existing_data[specific_channel]
                             # 写回文件
-                            with open(LAST_SUMMARY_FILE, "w", encoding="utf-8") as f_write:
-                                json.dump(existing_data, f_write, ensure_ascii=False, indent=2)
+                            async with aiofiles.open(
+                                LAST_SUMMARY_FILE, "w", encoding="utf-8"
+                            ) as f_write:
+                                await f_write.write(
+                                    json.dumps(existing_data, ensure_ascii=False, indent=2)
+                                )
                             logger.info(f"已清除频道 {specific_channel} 的上次总结时间记录")
                             await event.reply(
                                 get_text(
@@ -615,7 +620,7 @@ async def handle_clear_summary_time(event):
                         await event.reply(get_text("summarytime.clear_empty_file"))
             else:
                 # 清除所有频道的时间记录
-                os.remove(LAST_SUMMARY_FILE)
+                await aiofiles.os.remove(LAST_SUMMARY_FILE)
                 logger.info(f"已清除所有频道的上次总结时间记录，文件 {LAST_SUMMARY_FILE} 已删除")
                 await event.reply(get_text("summarytime.clear_all_success"))
         else:

@@ -277,7 +277,9 @@ class MySQLManager(DatabaseManagerBase):
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     # 将列表转换为JSON字符串存储（MySQL支持JSON类型）
-                    summary_ids_json = json.dumps(summary_message_ids) if summary_message_ids else None
+                    summary_ids_json = (
+                        json.dumps(summary_message_ids) if summary_message_ids else None
+                    )
 
                     await cursor.execute(
                         """
@@ -668,10 +670,17 @@ class MySQLManager(DatabaseManagerBase):
                             "user_id": user_id,
                             "date": date,
                             "usage_count": row["usage_count"],
-                            "last_reset": row["last_reset"].isoformat() if row["last_reset"] else None,
+                            "last_reset": row["last_reset"].isoformat()
+                            if row["last_reset"]
+                            else None,
                         }
                     else:
-                        return {"user_id": user_id, "date": date, "usage_count": 0, "last_reset": None}
+                        return {
+                            "user_id": user_id,
+                            "date": date,
+                            "usage_count": 0,
+                            "last_reset": None,
+                        }
 
         except Exception as e:
             logger.error(f"获取配额使用失败: {type(e).__name__}: {e}", exc_info=True)
@@ -796,7 +805,9 @@ class MySQLManager(DatabaseManagerBase):
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    await cursor.execute("SELECT * FROM channel_profiles WHERE channel_id = %s", (channel_id,))
+                    await cursor.execute(
+                        "SELECT * FROM channel_profiles WHERE channel_id = %s", (channel_id,)
+                    )
                     row = await cursor.fetchone()
 
                     if row:
@@ -829,7 +840,9 @@ class MySQLManager(DatabaseManagerBase):
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     # 获取现有画像
-                    await cursor.execute("SELECT * FROM channel_profiles WHERE channel_id = %s", (channel_id,))
+                    await cursor.execute(
+                        "SELECT * FROM channel_profiles WHERE channel_id = %s", (channel_id,)
+                    )
                     existing = await cursor.fetchone()
 
                     # 统计该频道的总结数和平均消息长度
@@ -865,7 +878,9 @@ class MySQLManager(DatabaseManagerBase):
 
                     # 转换为JSON存储
                     topics_json = json.dumps(topics, ensure_ascii=False) if topics else None
-                    keywords_json = json.dumps(keywords_freq, ensure_ascii=False) if keywords_freq else None
+                    keywords_json = (
+                        json.dumps(keywords_freq, ensure_ascii=False) if keywords_freq else None
+                    )
 
                     # 推断频道风格
                     if topics:
@@ -985,7 +1000,9 @@ class MySQLManager(DatabaseManagerBase):
 
                     await conn.commit()
 
-                    logger.debug(f"保存对话记录: user_id={user_id}, session={session_id}, role={role}")
+                    logger.debug(
+                        f"保存对话记录: user_id={user_id}, session={session_id}, role={role}"
+                    )
                     return True
 
         except Exception as e:
@@ -1151,7 +1168,9 @@ class MySQLManager(DatabaseManagerBase):
                     now = datetime.now(UTC).isoformat()
 
                     # 先检查用户是否存在
-                    await cursor.execute("SELECT registered_at FROM users WHERE user_id = %s", (user_id,))
+                    await cursor.execute(
+                        "SELECT registered_at FROM users WHERE user_id = %s", (user_id,)
+                    )
                     existing = await cursor.fetchone()
 
                     if existing:
@@ -1250,7 +1269,9 @@ class MySQLManager(DatabaseManagerBase):
             logger.error(f"设置用户权限失败: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    async def get_registered_users(self, active_days: int = 30, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_registered_users(
+        self, active_days: int = 30, limit: int = 100
+    ) -> list[dict[str, Any]]:
         """获取注册用户列表"""
         try:
             async with self.pool.acquire() as conn:
@@ -1351,7 +1372,9 @@ class MySQLManager(DatabaseManagerBase):
             logger.error(f"移除订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
-    async def get_user_subscriptions(self, user_id: int, sub_type: str = None) -> list[dict[str, Any]]:
+    async def get_user_subscriptions(
+        self, user_id: int, sub_type: str = None
+    ) -> list[dict[str, Any]]:
         """获取用户的订阅列表"""
         try:
             async with self.pool.acquire() as conn:
@@ -1381,7 +1404,9 @@ class MySQLManager(DatabaseManagerBase):
             logger.error(f"获取用户订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    async def get_channel_subscribers(self, channel_id: str, sub_type: str = "summary") -> list[int]:
+    async def get_channel_subscribers(
+        self, channel_id: str, sub_type: str = "summary"
+    ) -> list[int]:
         """获取频道的订阅用户ID列表"""
         try:
             async with self.pool.acquire() as conn:
@@ -1468,7 +1493,9 @@ class MySQLManager(DatabaseManagerBase):
                     await conn.commit()
                     request_id = cursor.lastrowid
 
-                    logger.info(f"创建请求: id={request_id}, type={request_type}, user={requested_by}")
+                    logger.info(
+                        f"创建请求: id={request_id}, type={request_type}, user={requested_by}"
+                    )
                     return request_id
 
         except Exception as e:
@@ -1612,7 +1639,9 @@ class MySQLManager(DatabaseManagerBase):
                     await conn.commit()
                     notification_id = cursor.lastrowid
 
-                    logger.info(f"创建通知: id={notification_id}, type={notification_type}, user={user_id}")
+                    logger.info(
+                        f"创建通知: id={notification_id}, type={notification_type}, user={user_id}"
+                    )
                     return notification_id
 
         except Exception as e:
@@ -1780,7 +1809,9 @@ class MySQLManager(DatabaseManagerBase):
                     stats["active_subscriptions"] = (await cursor.fetchone())[0] or 0
 
                     # 请求统计
-                    await cursor.execute("SELECT COUNT(*) FROM request_queue WHERE status = 'pending'")
+                    await cursor.execute(
+                        "SELECT COUNT(*) FROM request_queue WHERE status = 'pending'"
+                    )
                     stats["pending_requests"] = (await cursor.fetchone())[0] or 0
 
                     # 今日完成的请求数

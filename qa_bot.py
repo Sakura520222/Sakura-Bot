@@ -95,10 +95,11 @@ class QABot:
         """初始化数据库连接"""
         try:
             from core.database import get_db_manager
+
             db = get_db_manager()
 
             # 如果是MySQL数据库，需要初始化连接池
-            if hasattr(db, 'init_database') and hasattr(db, 'pool') and db.pool is None:
+            if hasattr(db, "init_database") and hasattr(db, "pool") and db.pool is None:
                 logger.info("正在初始化MySQL数据库连接池...")
                 await db.init_database()
 

@@ -73,7 +73,9 @@ async def handle_history(event):
 
         # 兼容同步和异步数据库管理器
         if inspect.iscoroutinefunction(db.get_summaries):
-            summaries = await db.get_summaries(channel_id=channel_id, limit=10, start_date=start_date)
+            summaries = await db.get_summaries(
+                channel_id=channel_id, limit=10, start_date=start_date
+            )
         else:
             summaries = db.get_summaries(channel_id=channel_id, limit=10, start_date=start_date)
 
@@ -95,7 +97,7 @@ async def handle_history(event):
         result = f"📋 **{channel_name} {get_text('history.title_suffix')}**\n\n"
         result += get_text("history.found_count", count=total_count, display=min(total_count, 10))
 
-        for i, summary in enumerate(summaries[:10], 1):
+        for summary in summaries[:10]:
             created_at = summary.get("created_at", get_text("history.unknown_time"))
             summary_type = summary.get("summary_type", "weekly")
             message_count = summary.get("message_count", 0)

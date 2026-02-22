@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from core.database import get_db_manager
 
 # 加载环境变量
-load_dotenv('data/.env')
+load_dotenv("data/.env")
 
 
 async def main():
@@ -52,7 +52,7 @@ async def main():
     # 先显示所有记录的created_at
     print("\n  📋 所有记录的created_at:")
     for i, s in enumerate(all_summaries, 1):
-        created_at = s.get('created_at')
+        created_at = s.get("created_at")
         print(f"     {i}. {created_at} (类型: {type(created_at).__name__})")
 
     print("\n  开始时间范围测试:")
@@ -70,9 +70,7 @@ async def main():
         print(f"    - end_date: {now} (ISO: {now.isoformat()})")
 
         summaries_in_range = await db.get_summaries(
-            limit=10000,
-            start_date=start_date,
-            end_date=now
+            limit=10000, start_date=start_date, end_date=now
         )
         count = len(summaries_in_range)
         print(f"    - 结果: {count} 条")
@@ -83,16 +81,16 @@ async def main():
     print("-" * 60)
 
     if all_summaries:
-        dates = [s.get('created_at') for s in all_summaries if s.get('created_at')]
+        dates = [s.get("created_at") for s in all_summaries if s.get("created_at")]
         if dates:
             earliest = min(dates)
             latest = max(dates)
             print(f"  📌 最早总结: {earliest}")
             print(f"  📌 最新总结: {latest}")
             if isinstance(earliest, str):
-                earliest = datetime.fromisoformat(earliest.replace('Z', '+00:00'))
+                earliest = datetime.fromisoformat(earliest.replace("Z", "+00:00"))
             if isinstance(latest, str):
-                latest = datetime.fromisoformat(latest.replace('Z', '+00:00'))
+                latest = datetime.fromisoformat(latest.replace("Z", "+00:00"))
             days_span = (latest - earliest).days if latest > earliest else 0
             print(f"  📌 跨度: {days_span} 天")
 
@@ -103,7 +101,7 @@ async def main():
 
     channels = {}
     for summary in all_summaries:
-        channel_name = summary.get('channel_name', '未知频道')
+        channel_name = summary.get("channel_name", "未知频道")
         channels[channel_name] = channels.get(channel_name, 0) + 1
 
     for channel, count in sorted(channels.items(), key=lambda x: x[1], reverse=True):
@@ -114,12 +112,12 @@ async def main():
     print("5. 关键词检测")
     print("-" * 60)
 
-    keywords_to_check = ['卡池', 'pool', 'gacha', '抽卡', '召唤']
+    keywords_to_check = ["卡池", "pool", "gacha", "抽卡", "召唤"]
 
     for keyword in keywords_to_check:
         matching_summaries = []
         for summary in all_summaries:
-            text = summary.get('summary_text', '').lower()
+            text = summary.get("summary_text", "").lower()
             if keyword.lower() in text:
                 matching_summaries.append(summary)
 
@@ -128,14 +126,14 @@ async def main():
         if matching_summaries:
             print("     示例:")
             for i, s in enumerate(matching_summaries[:3], 1):
-                channel = s.get('channel_name', '未知')
-                created_at = s.get('created_at')
+                channel = s.get("channel_name", "未知")
+                created_at = s.get("created_at")
                 # 处理datetime对象和字符串
                 if isinstance(created_at, datetime):
-                    created = created_at.strftime('%Y-%m-%d')
+                    created = created_at.strftime("%Y-%m-%d")
                 else:
-                    created = str(created_at)[:10] if created_at else '未知'
-                text_preview = s.get('summary_text', '')[:100]
+                    created = str(created_at)[:10] if created_at else "未知"
+                text_preview = s.get("summary_text", "")[:100]
                 print(f"       {i}. {channel} ({created}): {text_preview}...")
 
     # 6. 最近5条总结详情
@@ -160,9 +158,7 @@ async def main():
     print("=" * 60)
 
     summaries_90days = await db.get_summaries(
-        limit=10000,
-        start_date=now - timedelta(days=90),
-        end_date=now
+        limit=10000, start_date=now - timedelta(days=90), end_date=now
     )
 
     if len(all_summaries) > 0 and len(summaries_90days) == 0:
@@ -180,7 +176,7 @@ async def main():
         print("   - 请检查关键词匹配逻辑")
 
     # 关闭数据库连接
-    if hasattr(db, 'close'):
+    if hasattr(db, "close"):
         await db.close()
 
     print("\n" + "=" * 60)

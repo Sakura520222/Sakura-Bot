@@ -62,4 +62,5 @@ class SQLiteManager(DatabaseManagerLegacy):
             sqlite3.Connection
         """
         import sqlite3
+
         return sqlite3.connect(self.db_path)

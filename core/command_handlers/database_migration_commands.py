@@ -16,8 +16,11 @@
 处理从SQLite到MySQL的数据库迁移相关命令
 """
 
+import asyncio
 import os
+from pathlib import Path
 
+import aiofiles
 from telethon.events import NewMessage
 
 from core.config import ADMIN_LIST, logger
@@ -97,7 +100,9 @@ async def handle_migrate_check(event: NewMessage.Event):
             message += f"💡 {get_text('database.migrate.can_start')}: /migrate_start"
         else:
             message += f"❌ {get_text('database.migrate.not_ready')}\n"
-            message += f"📝 {get_text('database.migrate.reason')}: {result.get('message', 'Unknown')}\n"
+            message += (
+                f"📝 {get_text('database.migrate.reason')}: {result.get('message', 'Unknown')}\n"
+            )
 
         await event.reply(message)
 
@@ -166,8 +171,8 @@ async def handle_migrate_start(event: NewMessage.Event):
             total_migrated = 0
             total_failed = 0
             for table, table_stats in stats.items():
-                migrated = table_stats.get('migrated', 0)
-                failed = table_stats.get('failed', 0)
+                migrated = table_stats.get("migrated", 0)
+                failed = table_stats.get("failed", 0)
                 total_migrated += migrated
                 total_failed += failed
                 message += f"📊 {table}: {get_text('database.migrate.migrated')} {migrated}"
@@ -200,27 +205,27 @@ async def handle_migrate_start(event: NewMessage.Event):
 
             try:
                 # 1. 修改 .env 配置
-                env_path = "data/.env"
-                with open(env_path, 'r', encoding='utf-8') as f:
-                    env_content = f.read()
+                env_path = Path("data/.env")
+                async with aiofiles.open(env_path, encoding="utf-8") as f:
+                    env_content = await f.read()
 
                 # 替换 DATABASE_TYPE
                 new_env_content = env_content
-                for line in env_content.split('\n'):
-                    if line.strip().startswith('DATABASE_TYPE='):
-                        new_env_content = new_env_content.replace(line, 'DATABASE_TYPE=mysql')
+                for line in env_content.split("\n"):
+                    if line.strip().startswith("DATABASE_TYPE="):
+                        new_env_content = new_env_content.replace(line, "DATABASE_TYPE=mysql")
                         break
 
-                with open(env_path, 'w', encoding='utf-8') as f:
-                    f.write(new_env_content)
+                async with aiofiles.open(env_path, "w", encoding="utf-8") as f:
+                    await f.write(new_env_content)
 
                 message += f"✅ {get_text('database.migrate.auto_switch')}\n"
                 logger.info("✅ 已自动切换 .env 配置为 MySQL")
 
                 # 2. 删除旧 SQLite 文件（已有备份）
                 sqlite_db_path = "data/summaries.db"
-                if os.path.exists(sqlite_db_path):
-                    os.remove(sqlite_db_path)
+                if await aiofiles.os.path.exists(sqlite_db_path):
+                    await aiofiles.os.remove(sqlite_db_path)
                     message += f"✅ {get_text('database.migrate.sqlite_deleted')}\n"
                     logger.info(f"✅ 已删除旧 SQLite 数据库文件: {sqlite_db_path}")
                 else:
@@ -232,11 +237,11 @@ async def handle_migrate_start(event: NewMessage.Event):
                 message += f"📁 备份文件: {backup}"
 
                 # 延迟3秒后重启
-                import asyncio
                 await asyncio.sleep(3)
 
                 # 调用重启命令
                 from core.command_handlers.other_commands import handle_restart
+
                 await handle_restart(event)
 
             except Exception as e:
@@ -356,8 +361,12 @@ async def handle_db_clear(event: NewMessage.Event):
         # 构建确认消息
         message = f"⚠️ {get_text('database.clear.warning')}\n\n"
         message += f"📊 {get_text('database.clear.current_data')}:\n"
-        message += f"• {get_text('database.migrate.total_records')}: {stats.get('total_messages', 0)}\n"
-        message += f"• {get_text('database.clear.total_summaries')}: {stats.get('total_count', 0)}\n\n"
+        message += (
+            f"• {get_text('database.migrate.total_records')}: {stats.get('total_messages', 0)}\n"
+        )
+        message += (
+            f"• {get_text('database.clear.total_summaries')}: {stats.get('total_count', 0)}\n\n"
+        )
         message += f"🚨 {get_text('database.clear.irreversible')}\n\n"
         message += f"💡 {get_text('database.clear.confirm_instruction')}\n"
         message += f"📝 {get_text('database.clear.confirm_command')}: /db_clear_confirm"
@@ -418,7 +427,7 @@ async def handle_db_clear_confirm(event: NewMessage.Event):
             "request_queue",
             "notification_queue",
             "channel_profiles",
-            "db_version"
+            "db_version",
         ]
 
         cleared_tables = []
@@ -501,16 +510,14 @@ async def handle_migrate_cleanup(event: NewMessage.Event):
         sqlite_db_path = "data/summaries.db"
 
         # 检查 SQLite 文件是否存在
-        if not os.path.exists(sqlite_db_path):
+        if not await aiofiles.os.path.exists(sqlite_db_path):
             await event.reply(
-                f"✅ SQLite 数据库文件不存在\n\n"
-                f"路径: {sqlite_db_path}\n\n"
-                f"可能已被删除或从未存在"
+                f"✅ SQLite 数据库文件不存在\n\n路径: {sqlite_db_path}\n\n可能已被删除或从未存在"
             )
             return
 
         # 获取文件大小
-        file_size = os.path.getsize(sqlite_db_path)
+        file_size = await aiofiles.os.path.getsize(sqlite_db_path)
         file_size_mb = file_size / (1024 * 1024)
 
         # 构建确认消息
@@ -549,20 +556,28 @@ async def handle_migrate_cleanup_confirm(event: NewMessage.Event):
         sqlite_db_path = "data/summaries.db"
 
         # 检查文件是否存在
-        if not os.path.exists(sqlite_db_path):
-            await event.reply(
-                f"✅ SQLite 数据库文件不存在\n\n"
-                f"路径: {sqlite_db_path}"
-            )
+        if not await aiofiles.os.path.exists(sqlite_db_path):
+            await event.reply(f"✅ SQLite 数据库文件不存在\n\n路径: {sqlite_db_path}")
             return
 
         # 删除文件
-        os.remove(sqlite_db_path)
+        await aiofiles.os.remove(sqlite_db_path)
         logger.info(f"✅ SQLite 数据库文件已删除: {sqlite_db_path}")
 
-        # 检查是否有备份文件
-        import glob
-        backup_files = glob.glob(f"{sqlite_db_path}.backup_*")
+        # 检查是否有备份文件（使用os.listdir代替pathlib）
+        import os
+
+        backup_dir = os.path.dirname(sqlite_db_path)
+        backup_prefix = os.path.basename(sqlite_db_path) + ".backup_"
+        backup_files = (
+            [
+                os.path.join(backup_dir, f)
+                for f in os.listdir(backup_dir)
+                if f.startswith(backup_prefix)
+            ]
+            if await aiofiles.os.path.exists(backup_dir)
+            else []
+        )
 
         message = "✅ SQLite 数据库文件已删除\n\n"
         message += f"📁 已删除: {sqlite_db_path}\n\n"

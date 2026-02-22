@@ -24,17 +24,16 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pylint mypy isort
+          pip install ruff pylint mypy
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
-      - name: Ruff 快速检查
+      - name: Ruff 代码质量检查 (Lint)
         run: |
-          ruff check . --output-format=github --select=E,F,W,I --ignore=E501
+          ruff check . --output-format=github
       
-      - name: 导入排序检查（仅供参考）
+      - name: Ruff 代码格式检查 (Format)
         run: |
-          isort --check-only --diff . || echo "导入排序检查仅供参考，不影响CI通过"
-        continue-on-error: true
+          ruff format --check .
       
       - name: 代码复杂度检查（可选）
         run: |

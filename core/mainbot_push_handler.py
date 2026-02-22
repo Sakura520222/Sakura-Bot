@@ -69,7 +69,7 @@ class MainBotPushHandler:
                 return 0
 
             # 检查数据库连接池是否可用
-            if not hasattr(self.db, 'pool') or self.db.pool is None:
+            if not hasattr(self.db, "pool") or self.db.pool is None:
                 logger.warning("数据库连接池未初始化，无法获取订阅者")
                 return 0
 

@@ -24,10 +24,6 @@ from typing import Any
 class DatabaseManagerBase(ABC):
     """数据库管理器抽象基类"""
 
-    def __init__(self):
-        """初始化数据库管理器"""
-        pass
-
     @abstractmethod
     def init_database(self):
         """初始化数据库和表结构"""

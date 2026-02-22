@@ -18,10 +18,11 @@
 
 import json
 import logging
-import os
 import shutil
 from datetime import UTC, datetime
 from typing import Any
+
+import aiofiles
 
 from .database_mysql import MySQLManager
 from .database_sqlite import SQLiteManager
@@ -65,7 +66,7 @@ class DatabaseMigrator:
 
         try:
             # 检查SQLite数据库是否存在
-            if os.path.exists(self.sqlite_path):
+            if await aiofiles.os.path.exists(self.sqlite_path):
                 result["sqlite_exists"] = True
 
                 # 连接SQLite获取表信息
@@ -97,8 +98,7 @@ class DatabaseMigrator:
 
             # 检查MySQL配置
             if all(
-                k in self.mysql_config
-                for k in ["host", "port", "user", "password", "database"]
+                k in self.mysql_config for k in ["host", "port", "user", "password", "database"]
             ):
                 result["mysql_configured"] = True
 
@@ -118,7 +118,9 @@ class DatabaseMigrator:
                         result["message"] = get_text("database.migrate.check_passed")
 
                 except Exception as e:
-                    result["message"] = f"{get_text('database.migrate.mysql_connect_error')}: {str(e)}"
+                    result["message"] = (
+                        f"{get_text('database.migrate.mysql_connect_error')}: {str(e)}"
+                    )
                     logger.error(f"MySQL连接检查失败: {e}", exc_info=True)
 
             else:
@@ -178,7 +180,9 @@ class DatabaseMigrator:
             for idx, (table_name, migrate_func) in enumerate(migration_order):
                 try:
                     logger.info(f"开始迁移表: {table_name}")
-                    self.migration_status["message"] = f"{get_text('database.migrate.migrating_table')}: {table_name}"
+                    self.migration_status["message"] = (
+                        f"{get_text('database.migrate.migrating_table')}: {table_name}"
+                    )
 
                     stats = await migrate_func(chunk_size)
                     self.migration_status["table_stats"][table_name] = stats
@@ -217,7 +221,9 @@ class DatabaseMigrator:
             logger.error(f"迁移失败: {e}", exc_info=True)
 
             self.migration_status["status"] = "failed"
-            self.migration_status["message"] = f"{get_text('database.migrate.migration_failed')}: {str(e)}"
+            self.migration_status["message"] = (
+                f"{get_text('database.migrate.migration_failed')}: {str(e)}"
+            )
             self.migration_status["end_time"] = datetime.now(UTC).isoformat()
 
             return {
@@ -388,6 +394,7 @@ class DatabaseMigrator:
 
                     # 转换时间字符串为 datetime 对象
                     from datetime import datetime
+
                     start_time = None
                     end_time = None
 
@@ -395,7 +402,9 @@ class DatabaseMigrator:
                         try:
                             # 尝试解析 ISO 格式时间字符串
                             if isinstance(start_time_str, str):
-                                start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                                start_time = datetime.fromisoformat(
+                                    start_time_str.replace("Z", "+00:00")
+                                )
                             else:
                                 start_time = start_time_str
                         except Exception as e:
@@ -404,7 +413,9 @@ class DatabaseMigrator:
                     if end_time_str:
                         try:
                             if isinstance(end_time_str, str):
-                                end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                                end_time = datetime.fromisoformat(
+                                    end_time_str.replace("Z", "+00:00")
+                                )
                             else:
                                 end_time = end_time_str
                         except Exception as e:
@@ -632,7 +643,11 @@ class DatabaseMigrator:
                             mysql_stats[table] = 0
 
             # 比较结果
-            verification = {"sqlite_stats": sqlite_stats, "mysql_stats": mysql_stats, "matched": True}
+            verification = {
+                "sqlite_stats": sqlite_stats,
+                "mysql_stats": mysql_stats,
+                "matched": True,
+            }
 
             for table in tables:
                 if sqlite_stats[table] != mysql_stats[table]:

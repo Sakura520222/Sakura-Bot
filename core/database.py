@@ -35,10 +35,11 @@ class DatabaseManagerLegacy:
             db_path: 数据库文件路径，默认为 data/summaries.db
         """
         import warnings
+
         warnings.warn(
             "DatabaseManager 类已废弃，请使用 get_db_manager() 函数获取数据库管理器实例",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
         if db_path is None:
@@ -2358,7 +2359,7 @@ def reload_db_manager():
     global db_manager
 
     # 关闭旧连接（如果有 close 方法）
-    if db_manager and hasattr(db_manager, 'close'):
+    if db_manager and hasattr(db_manager, "close"):
         try:
             # 检查是否是异步数据库管理器
             import asyncio
@@ -2407,21 +2408,24 @@ def reload_db_manager():
     env_path = os.path.join("data", ".env")
     if os.path.exists(env_path):
         from dotenv import load_dotenv
+
         load_dotenv(env_path, override=True)
         logger.info(f"✅ 已重新加载环境变量: {env_path}")
 
     # 创建新实例
     settings = get_settings()
-    db_type = getattr(settings, 'DATABASE_TYPE', 'sqlite').lower()
+    db_type = getattr(settings, "DATABASE_TYPE", "sqlite").lower()
 
     logger.info(f"🔄 正在切换数据库管理器到: {db_type.upper()}")
 
-    if db_type == 'mysql':
+    if db_type == "mysql":
         from .database_mysql import MySQLManager
+
         db_manager = MySQLManager()
         logger.info("✅ 数据库管理器已切换到: MySQL")
     else:
         from .database_sqlite import SQLiteManager
+
         db_manager = SQLiteManager()
         logger.info("✅ 数据库管理器已切换到: SQLite")
 
@@ -2444,12 +2448,14 @@ def get_db_manager():
         # 正确的属性访问方式：settings.database.database_type
         db_type = settings.database.database_type
 
-        if db_type == 'mysql':
+        if db_type == "mysql":
             from .database_mysql import MySQLManager
+
             logger.info("使用 MySQL 数据库管理器")
             db_manager = MySQLManager()
         else:
             from .database_sqlite import SQLiteManager
+
             logger.info("使用 SQLite 数据库管理器")
             db_manager = SQLiteManager()
 
