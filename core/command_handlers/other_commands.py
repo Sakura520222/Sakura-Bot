@@ -11,13 +11,15 @@
 # 许可证全文：参见 LICENSE 文件
 
 """
-其他命令处理（系统、调度、投票、数据管理、UI命令）
+其他命令处理(系统、调度、投票、数据管理、UI命令)
 """
 
+import asyncio
 import logging
 import os
-import subprocess
 import sys
+
+import aiofiles
 
 from ..config import (
     ADMIN_LIST,
@@ -137,8 +139,8 @@ async def handle_restart(event):
     await event.reply(get_text("bot.restarting"))
     logger.info("机器人重启命令已执行，正在重启...")
 
-    with open(RESTART_FLAG_FILE, "w") as f:
-        f.write(str(sender_id))
+    async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
+        await f.write(str(sender_id))
 
     # 重启前先停止问答Bot，新进程启动后会重新创建
     from core.process_manager import stop_qa_bot
@@ -146,7 +148,7 @@ async def handle_restart(event):
     stop_qa_bot()
 
     python = sys.executable
-    subprocess.Popen([python] + sys.argv)
+    await asyncio.create_subprocess_exec(python, *sys.argv)
     sys.exit(0)
 
 
@@ -187,9 +189,7 @@ async def handle_shutdown(event):
 
     stop_qa_bot()
 
-    import time
-
-    time.sleep(1)
+    await asyncio.sleep(1)
     sys.exit(0)
 
 
@@ -928,7 +928,7 @@ async def handle_changelog(event):
     try:
         changelog_file = "CHANGELOG.md"
 
-        if not os.path.exists(changelog_file):
+        if not await asyncio.to_thread(os.path.exists, changelog_file):
             logger.error(f"更新日志文件 {changelog_file} 不存在")
             await event.reply(get_text("changelog.not_found", filename=changelog_file))
             return

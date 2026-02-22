@@ -10,7 +10,6 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # 针对特定文件可以放宽限制
-"core/database.py" = ["E722"]
 
 [tool.ruff.format]
 quote-style = "double"
