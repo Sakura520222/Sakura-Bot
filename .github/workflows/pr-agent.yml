@@ -23,6 +23,7 @@ jobs:
           OPENAI_API_BASE: "https://open.bigmodel.cn/api/coding/paas/v4"
           OPENAI_KEY: ${{ secrets.ZHIPU_API_KEY }} 
           CONFIG.MODEL: "glm-4.7" # 建议使用 glm-4 或 glm-4-flash
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: 200000
           
           # --- 2. 强制中文输出配置 ---
           PR_REVIEW.CONFIG.LANGUAGE: "zh"
