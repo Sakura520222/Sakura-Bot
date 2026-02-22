@@ -32,16 +32,13 @@ class TestConfigModule:
 
         assert isinstance(CHANNELS, list)
 
-    @pytest.mark.skipif(
-        os.getenv("TELEGRAM_API_ID") is None, reason="需要 TELEGRAM_API_ID 环境变量"
-    )
     def test_api_id_from_env(self):
         """测试从环境变量获取 API ID"""
-        from core.config import get_api_id
+        from core.settings import get_api_id
 
         api_id = get_api_id()
         assert api_id is not None
-        assert isinstance(api_id, str)
+        assert isinstance(api_id, int)
 
     def test_get_channel_schedule_with_valid_channel(self):
         """测试获取有效频道的调度配置"""

@@ -52,9 +52,7 @@ class TelegramSettings(BaseSettings):
             raise ValueError("API_ID 必须为正整数")
         return v
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class AISettings(BaseSettings):
@@ -70,9 +68,7 @@ class AISettings(BaseSettings):
         """获取有效的 API Key（优先使用 LLM_API_KEY）"""
         return self.api_key or self.deepseek_api_key
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class ChannelSettings(BaseSettings):
@@ -87,9 +83,7 @@ class ChannelSettings(BaseSettings):
             return [ch.strip() for ch in self.target_channel.split(",") if ch.strip()]
         return []
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class AdminSettings(BaseSettings):
@@ -107,9 +101,7 @@ class AdminSettings(BaseSettings):
                 logger.warning("管理员 ID 格式错误，使用默认值 'me'")
         return ["me"]
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class LogSettings(BaseSettings):
@@ -133,9 +125,7 @@ class LogSettings(BaseSettings):
         level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
         return level_map.get(self.log_level, 10)
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class PollSettings(BaseSettings):
@@ -154,9 +144,7 @@ class PollSettings(BaseSettings):
             raise ValueError("投票重新生成阈值必须 >= 1")
         return v
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class DatabaseSettings(BaseSettings):
@@ -187,9 +175,7 @@ class DatabaseSettings(BaseSettings):
             return "sqlite"
         return v_lower
 
-    class Config:
-        # 移除 env_file 配置，使用全局的 load_dotenv
-        extra = "ignore"
+    model_config = {"extra": "ignore"}
 
 
 class Settings:
