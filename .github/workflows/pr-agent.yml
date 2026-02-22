@@ -1,0 +1,38 @@
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, review_requested]
+  issue_comment:
+    types: [created]
+
+jobs:
+  pr_agent_job:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+    name: Run pr agent
+    steps:
+      - name: PR Agent action step
+        id: pragent
+        uses: qodo-ai/pr-agent@main
+        env:
+          # --- 1. 智谱 AI (Zhipu) 接口适配 ---
+          # PR-Agent 通过 LiteLLM 支持 OpenAI 兼容格式
+          OPENAI_API_BASE: "https://open.bigmodel.cn/api/coding/paas/v4"
+          OPENAI_KEY: ${{ secrets.ZHIPU_API_KEY }} 
+          CONFIG.MODEL: "glm-4.7" # 建议使用 glm-4 或 glm-4-flash
+          
+          # --- 2. 强制中文输出配置 ---
+          PR_REVIEW.CONFIG.LANGUAGE: "zh"
+          PR_DESCRIPTION.CONFIG.LANGUAGE: "zh"
+          PR_CODE_SUGGESTIONS.CONFIG.LANGUAGE: "zh"
+          PR_ADD_DOCS.CONFIG.LANGUAGE: "zh"
+          
+          # --- 3. 基础认证与自动化设置 ---
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "true"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "true"
+          GITHUB_ACTION_CONFIG.PR_ACTIONS: '["opened", "reopened", "ready_for_review", "review_requested"]'
