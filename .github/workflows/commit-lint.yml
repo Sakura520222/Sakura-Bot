@@ -38,20 +38,25 @@ jobs:
           INVALID_COMMITS=""
           VALID_TYPES="feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert"
           
-          while IFS= read -r commit; do
+          # 使用 printf 避免变量被当作命令执行
+          printf '%s\n' "$COMMITS" | while IFS= read -r commit || [ -n "$commit" ]; do
+            # 跳过空行
+            [ -z "$commit" ] && continue
+            
             # 跳过自动生成的 merge commits
             if echo "$commit" | grep -q "^Merge branch"; then
               echo "⏭️  跳过 merge commit: $commit"
               continue
             fi
             
-            # 检查是否符合 Conventional Commits 格式
-            if ! echo "$commit" | grep -qE "^(${VALID_TYPES})(\(.+\))?: .+"; then
-              INVALID_COMMITS="${INVALID_COMMITS}\n❌ $commit"
+            # 检查是否符合 Conventional Commits 格式（只检查标题，不超过100字符）
+            commit_title=$(echo "$commit" | cut -c1-100)
+            if ! echo "$commit_title" | grep -qE "^(${VALID_TYPES})(\(.+\))?: .+"; then
+              INVALID_COMMITS="${INVALID_COMMITS}\n❌ $commit_title"
             else
-              echo "✅ $commit"
+              echo "✅ $commit_title"
             fi
-          done <<< "$COMMITS"
+          done
           
           if [ -n "$INVALID_COMMITS" ]; then
             echo "invalid=true" >> $GITHUB_OUTPUT
