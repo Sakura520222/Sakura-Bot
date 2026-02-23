@@ -29,16 +29,29 @@
   - **修复**：在集成测试步骤添加与单元测试相同的 `env` 配置块
   - **结果**：集成测试现在能够正确读取环境变量并正常运行
 
-- **CI覆盖率评论失败**：修复了 PR 覆盖率评论功能无法读取覆盖率数据的问题
-  - **问题**：`py-cov-action` 报错 "NotADirectoryError: Not a directory: coverage.json"，无法生成 PR 覆盖率评论
-  - **原因**：
-    - pytest-cov 只生成了 XML 和 HTML 格式的覆盖率报告，但 py-cov-action 需要读取 `.coverage` 二进制数据文件
-    - 错误配置了 `COVERAGE_PATH: coverage.json`，该参数应该指向包含 `.coverage` 文件的目录，而不是 JSON 报告文件
+- **CI覆盖率评论失败（完整修复）**：彻底修复了 PR 覆盖率评论功能的所有问题
+  - **问题演变**：
+    1. 首次报错：`py-cov-action` 报错 "No data to report"，无法生成 PR 覆盖率评论
+    2. 第二次报错：`NotADirectoryError: Not a directory: coverage.json`，路径配置错误
+    3. 最终报错：`subprocess.CalledProcessError: Command '('coverage', 'json', '-o', '-')' returned non-zero exit status 1`，缺少 coverage 工具
+  
+  - **根本原因**：
+    1. pytest-cov 虽然会生成 `.coverage` 二进制数据文件，但 `py-cov-action` 需要通过 `coverage` 命令（来自 coverage.py 包）来读取这些数据
+    2. CI 环境中只安装了 `pytest-cov`，没有安装独立的 `coverage` 包
+    3. `py-cov-action` 内部执行 `coverage json -o -` 命令时失败，因为找不到 `coverage` 命令
+  
+  - **完整修复**：
+    1. 在 CI 配置的"安装测试依赖"步骤中添加 `coverage` 包
+    2. 移除 `py-cov-action` 配置中的 `COVERAGE_PATH` 参数，让其使用默认行为（在项目根目录查找 `.coverage` 文件）
+    3. 保留 `--cov-report=json:coverage.json` 生成独立的 JSON 报告（供其他工具使用）
+  
   - **影响**：PR 中看不到覆盖率评论，开发者无法快速了解测试覆盖率变化
-  - **修复**：
-    - 在 pytest 命令中添加 `--cov-report=json:coverage.json` 生成 JSON 格式报告（供其他工具使用）
-    - 移除 py-cov-action 配置中的 `COVERAGE_PATH` 参数，让其使用默认行为（在项目根目录查找 `.coverage` 文件）
-  - **结果**：PR 中正确显示覆盖率评论，包含覆盖率百分比和文件级详情
+  
+  - **结果**：
+    - ✓ `py-cov-action` 成功读取 `.coverage` 文件
+    - ✓ PR 中正确显示覆盖率评论，包含覆盖率百分比和文件级详情
+    - ✓ 绿色/橙色/红色阈值正常工作（60%/40%）
+    - ✓ 不会因为缺少工具而失败
 
 ### 改进
 - **代码风格统一**：使用 Ruff 统一代码风格，修复所有代码规范问题
