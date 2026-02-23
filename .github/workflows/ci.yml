@@ -135,9 +135,9 @@ jobs:
           DATABASE_TYPE: sqlite
         run: |
           if [ -d tests ]; then
-            pytest tests/ -v -m "not slow and not integration" \
+            coverage run -m pytest tests/ -v -m "not slow and not integration" \
               --cov=core \
-              --cov-report=xml \
+              --cov-report=xml:coverage.xml \
               --cov-report=json:coverage.json \
               --cov-report=term-missing \
               --cov-report=html:htmlcov \
@@ -214,14 +214,13 @@ jobs:
           path: htmlcov/
           retention-days: 30
       
-      - name: PR 评论覆盖率报告（调试模式）
+      - name: PR 评论覆盖率报告
         uses: py-cov-action/python-coverage-comment-action@v3
         if: success() && github.event_name == 'pull_request'
         with:
           GITHUB_TOKEN: ${{ github.token }}
           MINIMUM_GREEN: 60
           MINIMUM_ORANGE: 40
-          VERBOSE: "true"
 
   summary:
     name: CI 检查汇总
