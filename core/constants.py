@@ -46,6 +46,17 @@ DEFAULT_SUMMARY_MINUTE = 0  # 分钟：0-59
 # 有效的星期几
 VALID_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
+# 星期几中文名称映射
+DAY_NAMES_CN = {
+    "mon": "周一",
+    "tue": "周二",
+    "wed": "周三",
+    "thu": "周四",
+    "fri": "周五",
+    "sat": "周六",
+    "sun": "周日",
+}
+
 # 有效的频率类型
 VALID_FREQUENCIES = ["daily", "weekly"]
 

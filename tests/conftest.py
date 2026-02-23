@@ -18,6 +18,42 @@ import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
+def setup_test_environment():
+    """
+    在测试开始前设置必要的环境变量
+
+    这个 fixture 确保：
+    1. 所有测试都有基本的环境变量可用
+    2. 避免模块导入时因为缺少 API key 而失败
+    3. 提供一致的测试环境
+
+    注意：必须在模块导入之前运行，所以使用 session 级别和 autouse=True
+    """
+    # 设置 Telegram 配置
+    os.environ.setdefault("TELEGRAM_API_ID", "123456")
+    os.environ.setdefault("TELEGRAM_API_HASH", "test_hash")
+    os.environ.setdefault("TELEGRAM_BOT_TOKEN", "123456:ABCDEF")
+
+    # 设置 AI 配置
+    os.environ.setdefault("LLM_API_KEY", "test_llm_api_key")
+    os.environ.setdefault("LLM_BASE_URL", "https://api.test.com")
+    os.environ.setdefault("LLM_MODEL", "test-model")
+
+    # 设置管理员配置
+    os.environ.setdefault("REPORT_ADMIN_IDS", "123456,789012")
+
+    # 设置语言和日志
+    os.environ.setdefault("LANGUAGE", "zh-CN")
+    os.environ.setdefault("LOG_LEVEL", "DEBUG")
+
+    # 设置其他配置
+    os.environ.setdefault("ENABLE_POLL", "true")
+    os.environ.setdefault("DATABASE_TYPE", "sqlite")
+
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def clean_environment():
     """在测试会话开始时清空环境变量，但保留Python必要变量
 

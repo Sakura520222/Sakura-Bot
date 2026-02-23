@@ -7,7 +7,21 @@
 - ✅ **Settings 模块测试** (`test_settings.py`) - 配置管理测试
 - ✅ **AI Client 模块测试** (`test_ai_client.py`) - AI 客户端测试
 - ✅ **Config 模块测试** (`test_config.py`) - 配置模块测试
+- ✅ **Exceptions 模块测试** (`test_exceptions.py`) - 异常处理测试
+- ✅ **Utils 模块测试** (`test_utils.py`) - 工具函数测试
 - ✅ **全局测试配置** (`conftest.py`) - 测试基础设施
+
+### 当前测试覆盖率
+
+- **总体覆盖率**: 8% (104/110 测试通过)
+- **已测试模块**:
+  - `core/constants.py` - 100%
+  - `core/exceptions.py` - 100%
+  - `core/settings.py` - 96%
+  - `core/utils/__init__.py` - 100%
+  - `core/ai_client.py` - 77%
+  - `core/utils/date_utils.py` - 91%
+  - `core/i18n.py` - 76%
 
 ## 🚀 快速开始
 

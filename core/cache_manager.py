@@ -18,7 +18,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import dict as dict_type
 
 from .constants import DATA_DIR
 
@@ -36,7 +35,7 @@ class DiscussionCache:
 
     def __init__(self):
         """初始化缓存"""
-        self._memory_cache: dict_type[str, int] = {}
+        self._memory_cache: dict[str, int] = {}
         self._load_from_disk()
 
     def _load_from_disk(self) -> None:
@@ -114,7 +113,7 @@ class DiscussionCache:
         logger.info(f"已清除所有讨论组缓存: {count} 条记录")
         self._save_to_disk()
 
-    def get_all(self) -> dict_type[str, int]:
+    def get_all(self) -> dict[str, int]:
         """获取所有缓存数据
 
         Returns:

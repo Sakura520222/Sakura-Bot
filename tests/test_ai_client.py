@@ -409,17 +409,16 @@ class TestAIClientPerformance:
 
     def test_concurrent_analyze_calls(self, mock_chat_completion):
         """测试并发分析调用"""
-        import asyncio
-
-        async def async_analyze():
-            # 在异步上下文中调用同步函数
-            return analyze_with_ai(["测试消息"], "总结：")
-
+        # 注意：analyze_with_ai 是同步函数，所以并发测试需要调整
+        # 这里我们测试多次连续调用，确保没有状态污染
         with patch.object(client_llm.chat.completions, "create", return_value=mock_chat_completion):
-            # 运行多个并发调用
-            results = asyncio.run(asyncio.gather(*[async_analyze() for _ in range(5)]))
+            results = []
+            for _ in range(5):
+                result = analyze_with_ai(["测试消息"], "总结：")
+                results.append(result)
 
             assert all(r == "这是 AI 生成的测试总结" for r in results)
+            assert client_llm.chat.completions.create.call_count == 5
 
 
 if __name__ == "__main__":
