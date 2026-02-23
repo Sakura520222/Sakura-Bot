@@ -7,6 +7,21 @@
 
 ## [1.6.1] - 2026-02-24
 
+### 修复
+- **CI提交信息检查误报**：修复了提交信息规范检查对 merge commits 的误报问题
+  - **问题**：PR 合并时自动生成的 merge commit（如 "Merge branch 'main' into feature"）不符合 Conventional Commits 格式
+  - **原因**：commit-lint 工作流没有过滤自动生成的 merge commits
+  - **影响**：所有包含 merge commit 的 PR 都会被 CI 拒绝
+  - **修复**：在 commit-lint.yml 中添加 merge commits 过滤逻辑
+  - **结果**：现在自动跳过所有 merge commits，只检查用户手动提交的 commit
+
+- **CI集成测试环境变量缺失**：修复了 GitHub Actions 集成测试阶段缺少环境变量配置的问题
+  - **问题**：集成测试步骤没有配置 `env` 块,导致模块初始化时无法读取必要的环境变量
+  - **原因**：单元测试阶段有完整的 `env` 配置,但集成测试阶段遗漏了该配置
+  - **影响**：集成测试失败,错误信息为 "The api_key client option must be set"
+  - **修复**：在集成测试步骤添加与单元测试相同的 `env` 配置块
+  - **结果**：集成测试现在能够正确读取环境变量并正常运行
+
 ### 改进
 - **代码风格统一**：使用 Ruff 统一代码风格，修复所有代码规范问题
   - 自动修复 403 个代码问题（未使用导入、空白行、文件末尾换行等）

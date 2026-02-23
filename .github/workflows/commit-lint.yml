@@ -34,6 +34,12 @@ jobs:
           VALID_TYPES="feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert"
           
           while IFS= read -r commit; do
+            # 跳过自动生成的 merge commits
+            if echo "$commit" | grep -q "^Merge branch"; then
+              echo "⏭️  跳过 merge commit: $commit"
+              continue
+            fi
+            
             # 检查是否符合 Conventional Commits 格式
             if ! echo "$commit" | grep -qE "^(${VALID_TYPES})(\(.+\))?: .+"; then
               INVALID_COMMITS="${INVALID_COMMITS}\n❌ $commit"

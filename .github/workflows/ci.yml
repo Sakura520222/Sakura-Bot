@@ -149,6 +149,19 @@ jobs:
       
       - name: 运行集成测试（如果单元测试通过）
         if: success()
+        env:
+          # 集成测试环境变量（与单元测试保持一致）
+          TELEGRAM_API_ID: 123456
+          TELEGRAM_API_HASH: test_ci_hash_12345
+          TELEGRAM_BOT_TOKEN: 123456:ABCDEF_test_ci_token
+          LLM_API_KEY: test_ci_api_key_for_testing_only
+          LLM_BASE_URL: https://api.test.com
+          LLM_MODEL: test-model
+          REPORT_ADMIN_IDS: 123456,789012
+          LANGUAGE: zh-CN
+          LOG_LEVEL: DEBUG
+          ENABLE_POLL: "true"
+          DATABASE_TYPE: sqlite
         run: |
           if [ -d tests ]; then
             pytest tests/ -v -m "integration" \
