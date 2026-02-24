@@ -10,7 +10,7 @@
 
 > **基于AI技术的智能Telegram频道管理工具** 🤖✨
 
-[English](README_EN.md) | [文档](wiki) | [报告问题](https://github.com/Sakura520222/Sakura-Bot/issues) | [功能建议](https://github.com/Sakura520222/Sakura-Bot/issues)
+[English](README_EN.md) | [📖 Wiki](wiki/Home.md) | [📘 用户文档](wiki/User-Guide.md) | [👨‍💻 开发者文档](wiki/Developer-Guide.md) | [报告问题](https://github.com/Sakura520222/Sakura-Bot/issues) | [功能建议](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 ---
 

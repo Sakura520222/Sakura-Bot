@@ -143,7 +143,7 @@ jobs:
             exit 1
           fi
       
-      - name: 检查版本是否已存在
+      - name: 检查版本是否已存在及附件状态
         id: check_version
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
@@ -151,41 +151,49 @@ jobs:
           FORCE_UPDATE="${{ github.event.inputs.force_update || 'false' }}"
           
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            if [ "$FORCE_UPDATE" = "true" ]; then
-              echo "⚠️ 版本 $VERSION 的发布已存在，但强制更新已启用"
-              echo "SHOULD_CREATE=false" >> $GITHUB_OUTPUT
-              echo "SHOULD_UPDATE=true" >> $GITHUB_OUTPUT
-              echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
-            else
-              echo "⚠️ 版本 $VERSION 的发布已存在，将跳过创建"
-              echo "SHOULD_CREATE=false" >> $GITHUB_OUTPUT
+            echo "✅ 版本 $VERSION 的发布已存在"
+            echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "SHOULD_CREATE=false" >> $GITHUB_OUTPUT
+            
+            # 检查是否有附件
+            ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
+            echo "现有附件数量: $ASSETS"
+            
+            if [ "$ASSETS" -eq 0 ]; then
+              echo "ℹ️ Release 存在但没有附件，将添加附件"
+              echo "SHOULD_ADD_ASSETS=true" >> $GITHUB_OUTPUT
+              echo "SHOULD_UPDATE_ASSETS=false" >> $GITHUB_OUTPUT
+              echo "HAS_ASSETS=false" >> $GITHUB_OUTPUT
               echo "SHOULD_UPDATE=false" >> $GITHUB_OUTPUT
-              echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+            else
+              echo "HAS_ASSETS=true" >> $GITHUB_OUTPUT
+              if [ "$FORCE_UPDATE" = "true" ]; then
+                echo "⚠️ Release 已存在且有附件，但强制更新已启用"
+                echo "SHOULD_ADD_ASSETS=false" >> $GITHUB_OUTPUT
+                echo "SHOULD_UPDATE_ASSETS=true" >> $GITHUB_OUTPUT
+                echo "SHOULD_UPDATE=true" >> $GITHUB_OUTPUT
+              else
+                echo "ℹ️ Release 已存在且有附件，将跳过更新"
+                echo "SHOULD_ADD_ASSETS=false" >> $GITHUB_OUTPUT
+                echo "SHOULD_UPDATE_ASSETS=false" >> $GITHUB_OUTPUT
+                echo "SHOULD_UPDATE=false" >> $GITHUB_OUTPUT
+              fi
             fi
           else
             echo "✅ 版本 $VERSION 是新版本，将创建发布"
-            echo "SHOULD_CREATE=true" >> $GITHUB_OUTPUT
-            echo "SHOULD_UPDATE=false" >> $GITHUB_OUTPUT
             echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "SHOULD_CREATE=true" >> $GITHUB_OUTPUT
+            echo "SHOULD_ADD_ASSETS=false" >> $GITHUB_OUTPUT
+            echo "SHOULD_UPDATE_ASSETS=false" >> $GITHUB_OUTPUT
+            echo "SHOULD_UPDATE=false" >> $GITHUB_OUTPUT
+            echo "HAS_ASSETS=false" >> $GITHUB_OUTPUT
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: 生成发布信息
-        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true' || steps.check_version.outputs.SHOULD_UPDATE == 'true' || steps.check_version.outputs.SHOULD_ADD_ASSETS == 'true'
         id: generate_release_info
-        run: |
-          VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
-          TAG_NAME="v${VERSION}"
-          echo "RELEASE_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "发布标签: ${TAG_NAME}"
-          
-          RELEASE_TITLE="🚀 Release v${VERSION}"
-          echo "RELEASE_TITLE=${RELEASE_TITLE}" >> $GITHUB_OUTPUT
-      
-      - name: 生成发布信息
-        if: steps.check_version.outputs.SHOULD_UPDATE == 'true'
-        id: generate_release_info_update
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           TAG_NAME="v${VERSION}"
@@ -231,7 +239,7 @@ jobs:
           generate_release_notes: false
       
       - name: 创建发布资源包
-        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true' || steps.check_version.outputs.SHOULD_ADD_ASSETS == 'true' || steps.check_version.outputs.SHOULD_UPDATE == 'true'
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
@@ -241,7 +249,14 @@ jobs:
           
           mkdir -p "$RELEASE_DIR"
           
-          echo "📦 正在打包发布资源..."
+          if [ "${{ steps.check_version.outputs.SHOULD_CREATE }}" = "true" ]; then
+            echo "📦 正在打包发布资源..."
+          elif [ "${{ steps.check_version.outputs.SHOULD_ADD_ASSETS }}" = "true" ]; then
+            echo "📦 正在为已有Release添加资源包..."
+          else
+            echo "🔄 正在为已存在的Release打包资源..."
+          fi
+          
           echo "📋 打包配置:" > packaging_manifest.txt
           echo "- 版本: ${VERSION}" >> packaging_manifest.txt
           echo "- 包含测试: ${INCLUDE_TESTS}" >> packaging_manifest.txt
@@ -331,12 +346,19 @@ jobs:
           cat packaging_manifest.txt
       
       - name: 上传发布资源
-        if: steps.check_version.outputs.SHOULD_CREATE == 'true'
+        if: steps.check_version.outputs.SHOULD_CREATE == 'true' || steps.check_version.outputs.SHOULD_ADD_ASSETS == 'true' || steps.check_version.outputs.SHOULD_UPDATE == 'true'
         run: |
           RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
           ASSET_NAME="Sakura-Bot-${RELEASE_NAME}"
           
-          echo "正在上传资源到 Release..."
+          if [ "${{ steps.check_version.outputs.SHOULD_CREATE }}" = "true" ]; then
+            echo "正在上传资源到 Release..."
+          elif [ "${{ steps.check_version.outputs.SHOULD_ADD_ASSETS }}" = "true" ]; then
+            echo "正在上传资源到Release..."
+          else
+            echo "正在更新Release的附件..."
+          fi
+          
           gh release upload "$RELEASE_NAME" "${ASSET_NAME}.tar.gz" "${ASSET_NAME}.zip" --clobber
           
           echo "✅ 资源上传完成"
@@ -392,119 +414,58 @@ jobs:
           echo "✅ 版本: **v${VERSION}**" >> $GITHUB_STEP_SUMMARY
           echo "📊 包含提交: **${{ needs.analyze-changes.outputs.commit_count }}** 个" >> $GITHUB_STEP_SUMMARY
           echo "🔗 发布页面: [${RELEASE_URL}](${RELEASE_URL})" >> $GITHUB_STEP_SUMMARY
+
       
-      - name: 更新Release - 创建发布资源包
-        if: steps.check_version.outputs.SHOULD_UPDATE == 'true'
+      - name: 添加附件 - 发送 Telegram 通知
+        if: steps.check_version.outputs.SHOULD_ADD_ASSETS == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHANNEL_ID }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/v${VERSION}"
+            
+            MESSAGE="📦 **Release附件添加通知**
+            
+            Sakura-Bot v${VERSION} 的附件已添加！
+            
+            📦 版本: v${VERSION}
+            
+            📥 **下载链接**:
+            ${RELEASE_URL}
+            
+            ℹ️ 注意：Release描述已由PR合并维护，此处仅添加了附件文件
+            
+            ---
+            由 GitHub Actions 自动添加"
+            
+            # 发送消息到 Telegram
+            curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=Markdown" \
+              -d "disable_web_page_preview=true"
+            
+            echo "✅ Telegram通知已发送"
+          else
+            echo "⚠️ 未配置 Telegram 通知"
+          fi
+      
+      - name: 添加附件 - 生成摘要
+        if: steps.check_version.outputs.SHOULD_ADD_ASSETS == 'true'
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
-          RELEASE_NAME="${{ steps.generate_release_info_update.outputs.RELEASE_NAME }}"
-          RELEASE_DIR="Sakura-Bot-${RELEASE_NAME}"
-          INCLUDE_TESTS="${{ github.event.inputs.include_tests || 'true' }}"
-          INCLUDE_WIKI="${{ github.event.inputs.include_wiki || 'true' }}"
+          RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_NAME}"
           
-          mkdir -p "$RELEASE_DIR"
-          
-          echo "🔄 正在为已存在的Release打包资源..."
-          echo "📋 打包配置:" > packaging_manifest.txt
-          echo "- 版本: ${VERSION}" >> packaging_manifest.txt
-          echo "- 包含测试: ${INCLUDE_TESTS}" >> packaging_manifest.txt
-          echo "- 包含Wiki: ${INCLUDE_WIKI}" >> packaging_manifest.txt
-          echo "" >> packaging_manifest.txt
-          echo "📦 包含文件:" >> packaging_manifest.txt
-          
-          # 复制核心代码
-          if [ -f "main.py" ]; then 
-            cp main.py "$RELEASE_DIR/"
-            echo "- main.py" >> packaging_manifest.txt
-          fi
-          if [ -f "qa_bot.py" ]; then 
-            cp qa_bot.py "$RELEASE_DIR/"
-            echo "- qa_bot.py" >> packaging_manifest.txt
-          fi
-          find core -name "*.py" -exec cp --parents {} "$RELEASE_DIR/" \;
-          rm -rf "$RELEASE_DIR/core/__pycache__"
-          echo "- core/ (所有Python文件)" >> packaging_manifest.txt
-          
-          # 复制配置文件
-          [ -f "pyproject.toml" ] && cp pyproject.toml "$RELEASE_DIR/" && echo "- pyproject.toml" >> packaging_manifest.txt
-          [ -f "pytest.ini" ] && cp pytest.ini "$RELEASE_DIR/" && echo "- pytest.ini" >> packaging_manifest.txt
-          [ -f ".gitignore" ] && cp .gitignore "$RELEASE_DIR/" && echo "- .gitignore" >> packaging_manifest.txt
-          
-          # 可选：包含tests目录
-          if [ "$INCLUDE_TESTS" = "true" ] && [ -d "tests" ]; then
-            cp -r tests "$RELEASE_DIR/"
-            echo "- tests/" >> packaging_manifest.txt
-          fi
-          
-          # 可选：包含wiki文档
-          if [ "$INCLUDE_WIKI" = "true" ] && [ -d "wiki" ]; then
-            cp -r wiki "$RELEASE_DIR/"
-            echo "- wiki/" >> packaging_manifest.txt
-          fi
-          
-          # 创建必要的目录
-          mkdir -p "$RELEASE_DIR/data"
-          mkdir -p "$RELEASE_DIR/data/sessions"
-          mkdir -p "$RELEASE_DIR/data/vectors"
-          
-          # 复制配置文件
-          [ -f "data/.env.example" ] && cp "data/.env.example" "$RELEASE_DIR/data/" && echo "- data/.env.example" >> packaging_manifest.txt
-          [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/data/" && echo "- data/config.example.json" >> packaging_manifest.txt
-          [ -f "data/prompt.txt" ] && cp "data/prompt.txt" "$RELEASE_DIR/data/" && echo "- data/prompt.txt" >> packaging_manifest.txt
-          [ -f "data/poll_prompt.txt" ] && cp "data/poll_prompt.txt" "$RELEASE_DIR/data/" && echo "- data/poll_prompt.txt" >> packaging_manifest.txt
-          [ -f "data/qa_persona.txt" ] && cp "data/qa_persona.txt" "$RELEASE_DIR/data/" && echo "- data/qa_persona.txt" >> packaging_manifest.txt
-          
-          # 复制必要文件
-          [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/" && echo "- requirements.txt" >> packaging_manifest.txt
-          [ -f "README.md" ] && cp README.md "$RELEASE_DIR/" && echo "- README.md" >> packaging_manifest.txt
-          [ -f "README_EN.md" ] && cp README_EN.md "$RELEASE_DIR/" && echo "- README_EN.md" >> packaging_manifest.txt
-          [ -f "CHANGELOG.md" ] && cp CHANGELOG.md "$RELEASE_DIR/" && echo "- CHANGELOG.md" >> packaging_manifest.txt
-          [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/" && echo "- LICENSE" >> packaging_manifest.txt
-          [ -f "CONTRIBUTING.md" ] && cp CONTRIBUTING.md "$RELEASE_DIR/" && echo "- CONTRIBUTING.md" >> packaging_manifest.txt
-          
-          # 复制启动脚本
-          [ -f "start.bat" ] && cp start.bat "$RELEASE_DIR/" && echo "- start.bat" >> packaging_manifest.txt
-          [ -f "start.sh" ] && cp start.sh "$RELEASE_DIR/" && echo "- start.sh" >> packaging_manifest.txt
-          
-          # 复制 Docker 文件
-          [ -f "Dockerfile" ] && cp Dockerfile "$RELEASE_DIR/" && echo "- Dockerfile" >> packaging_manifest.txt
-          [ -f "docker-compose.yml" ] && cp docker-compose.yml "$RELEASE_DIR/" && echo "- docker-compose.yml" >> packaging_manifest.txt
-          [ -f "docker-entrypoint.sh" ] && cp docker-entrypoint.sh "$RELEASE_DIR/" && echo "- docker-entrypoint.sh" >> packaging_manifest.txt
-          [ -f ".dockerignore" ] && cp .dockerignore "$RELEASE_DIR/" && echo "- .dockerignore" >> packaging_manifest.txt
-          
-          # 设置可执行权限
-          chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
-          chmod +x "$RELEASE_DIR/docker-entrypoint.sh" 2>/dev/null || true
-          
-          # 创建压缩包
-          echo "" >> packaging_manifest.txt
-          echo "🗜️ 正在创建压缩包..." >> packaging_manifest.txt
-          tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR/"
-          zip -q -r "${RELEASE_DIR}.zip" "$RELEASE_DIR/"
-          
-          # 计算文件大小
-          TAR_SIZE=$(du -h "${RELEASE_DIR}.tar.gz" | cut -f1)
-          ZIP_SIZE=$(du -h "${RELEASE_DIR}.zip" | cut -f1)
-          
-          echo "✅ 资源包创建完成" >> packaging_manifest.txt
-          echo "- ${RELEASE_DIR}.tar.gz: ${TAR_SIZE}" >> packaging_manifest.txt
-          echo "- ${RELEASE_DIR}.zip: ${ZIP_SIZE}" >> packaging_manifest.txt
-          
-          echo "✅ 资源包创建完成"
-          cat packaging_manifest.txt
-      
-      - name: 更新Release - 上传发布资源
-        if: steps.check_version.outputs.SHOULD_UPDATE == 'true'
-        run: |
-          RELEASE_NAME="${{ steps.generate_release_info_update.outputs.RELEASE_NAME }}"
-          ASSET_NAME="Sakura-Bot-${RELEASE_NAME}"
-          
-          echo "正在更新Release的附件..."
-          gh release upload "$RELEASE_NAME" "${ASSET_NAME}.tar.gz" "${ASSET_NAME}.zip" --clobber
-          
-          echo "✅ Release附件更新完成"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "# 📦 Release ${RELEASE_NAME} 附件添加成功" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ 版本: **v${VERSION}**" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 发布页面: [${RELEASE_URL}](${RELEASE_URL})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️ **注意**: Release描述已由PR合并维护，此处仅添加了附件文件" >> $GITHUB_STEP_SUMMARY
+
       
       - name: 更新Release - 发送 Telegram 通知
         if: steps.check_version.outputs.SHOULD_UPDATE == 'true'
@@ -546,7 +507,7 @@ jobs:
         if: steps.check_version.outputs.SHOULD_UPDATE == 'true'
         run: |
           VERSION="${{ steps.get_version.outputs.PY_VERSION }}"
-          RELEASE_NAME="${{ steps.generate_release_info_update.outputs.RELEASE_NAME }}"
+          RELEASE_NAME="${{ steps.generate_release_info.outputs.RELEASE_NAME }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_NAME}"
           
           echo "# 🔄 Release ${RELEASE_NAME} 附件更新成功" >> $GITHUB_STEP_SUMMARY
