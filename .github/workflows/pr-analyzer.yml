@@ -304,6 +304,12 @@ jobs:
               const notes = fs.readFileSync('release_notes.txt', 'utf8');
               notesPreview = notes.length > 500 ? notes.substring(0, 500) + '...' : notes;
             } catch (e) {
+              // 在工作流日志中记录警告，便于调试读取失败原因
+              if (typeof core !== 'undefined' && core && typeof core.warning === 'function') {
+                core.warning(`读取 release_notes.txt 失败: ${e instanceof Error ? e.message : String(e)}`);
+              } else {
+                console.warn('读取 release_notes.txt 失败:', e);
+              }
               notesPreview = '(无法读取预览)';
             }
             
