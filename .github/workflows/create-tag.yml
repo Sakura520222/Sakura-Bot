@@ -3,10 +3,8 @@ name: 自动创建 Release
 on:
   workflow_run:
     workflows: ["PR 自动分析并更新 Release"]
-    types:
-      - completed
-    branches:
-      - main
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       force_update:
