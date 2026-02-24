@@ -107,7 +107,7 @@ def setup_test_environment():
 
 ### 中期（待实施）
 
-详见 `docs/TECHNICAL_DEBT.md`
+详见 `wiki/Developer-Technical-Debt.md`
 
 - [ ] **实施延迟初始化重构**（高优先级）
   - 重构 `core/ai_client.py` 使用工厂函数模式
@@ -176,7 +176,7 @@ git push origin dev
 
 ## 📝 相关文档
 
-- **技术债务**: `docs/TECHNICAL_DEBT.md`
+- **技术债务**: `wiki/Developer-Technical-Debt.md`
 - **测试文档**: `tests/README.md`
 - **CI 配置**: `.github/workflows/ci.yml`
 - **测试配置**: `tests/conftest.py`

@@ -28,6 +28,11 @@
   - 添加文档分类标识（用户文档/开发者文档、类型、难度、更新时间）
   - 更新 README.md 添加 Wiki 导航链接
   - 采用 Diátaxis 文档框架（教程/操作指南/参考资料/解释说明）
+- **文档目录统一**：将 `docs/` 目录下的文档迁移至 `wiki/` 目录,统一项目文档存放位置
+  - `docs/CI_TEST_FIX.md` → `wiki/Developer-CI-Test-Fix.md`
+  - `docs/TECHNICAL_DEBT.md` → `wiki/Developer-Technical-Debt.md`
+  - `docs/WORKFLOW-MERGE-FIX.md` → `wiki/Developer-Workflow-Merge-Fix.md`
+  - 更新文档内部引用路径,确保链接正确
 
 ### 修复
 - **GitHub 工作流 Release 附件缺失问题**：修复了 PR 合并后 Release 创建时没有附件的问题
