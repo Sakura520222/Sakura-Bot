@@ -70,10 +70,12 @@ jobs:
           echo "change_type=$CHANGE_TYPE" >> $GITHUB_OUTPUT
           echo "变更类型: $CHANGE_TYPE"
       
-      - name: 提取提交信息
+      - name: 提取提交信息到文件
         id: extract_commits
         run: |
-          COMMITS=$(git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+          git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > /tmp/commits_list.txt
+          
+          COMMITS=$(cat /tmp/commits_list.txt)
           echo "commits<<EOF" >> $GITHUB_OUTPUT
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -129,13 +131,13 @@ jobs:
       - name: 生成 Release 描述
         id: generate_release_notes
         run: |
-          VERSION="${{ steps.read_version.outputs.current_version }}"
-          TODAY="${{ steps.read_version.outputs.today }}"
-          CHANGE_TYPE="${{ steps.analyze_type.outputs.change_type }}"
-          TITLE="${{ github.event.pull_request.title }}"
-          COMMITS="${{ steps.extract_commits.outputs.commits }}"
-          PR_NUM="${{ github.event.pull_request.number }}"
-          EXISTS="${{ steps.check_release.outputs.exists }}"
+          VERSION='${{ steps.read_version.outputs.current_version }}'
+          TODAY='${{ steps.read_version.outputs.today }}'
+          CHANGE_TYPE='${{ steps.analyze_type.outputs.change_type }}'
+          TITLE='${{ github.event.pull_request.title }}'
+          PR_NUM='${{ github.event.pull_request.number }}'
+          EXISTS='${{ steps.check_release.outputs.exists }}'
+          COMMITS_FILE="/tmp/commits_list.txt"
           
           if [ "$EXISTS" = "false" ]; then
             # 新 Release：生成初始描述
@@ -147,11 +149,11 @@ jobs:
               echo ""
             } > new_entry.txt
             
-            # 添加提交信息
-            if [ -n "$COMMITS" ]; then
-              echo "$COMMITS" | while IFS= read -r commit; do
-                echo "- ${commit}" >> new_entry.txt
-              done
+            # 添加提交信息（从文件读取）
+            if [ -s "$COMMITS_FILE" ]; then
+              while IFS= read -r commit; do
+                [ -n "$commit" ] && echo "- ${commit}" >> new_entry.txt
+              done < "$COMMITS_FILE"
               echo "" >> new_entry.txt
             fi
             
@@ -164,7 +166,7 @@ jobs:
             echo "生成了新的 Release 描述"
           else
             # 更新现有 Release
-            LAST_DATE="${{ steps.check_release.outputs.last_date }}"
+            LAST_DATE='${{ steps.check_release.outputs.last_date }}'
             
             # 生成新条目
             {
@@ -173,10 +175,11 @@ jobs:
               echo ""
             } > new_entry.txt
             
-            if [ -n "$COMMITS" ]; then
-              echo "$COMMITS" | while IFS= read -r commit; do
-                echo "- ${commit}" >> new_entry.txt
-              done
+            # 添加提交信息（从文件读取）
+            if [ -s "$COMMITS_FILE" ]; then
+              while IFS= read -r commit; do
+                [ -n "$commit" ] && echo "- ${commit}" >> new_entry.txt
+              done < "$COMMITS_FILE"
               echo "" >> new_entry.txt
             fi
             
@@ -344,5 +347,6 @@ jobs:
       - name: 清理临时文件
         if: always()
         run: |
-          rm -f release_notes.txt current_body.txt 2>/dev/null || true
+          rm -f release_notes.txt current_body.txt new_entry.txt header.txt 2>/dev/null || true
+          rm -f /tmp/commits.txt /tmp/commits_list.txt 2>/dev/null || true
           echo "✅ 临时文件已清理"
