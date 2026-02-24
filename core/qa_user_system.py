@@ -157,7 +157,7 @@ class QAUserSystem:
             logger.error(f"获取用户订阅失败: {type(e).__name__}: {e}", exc_info=True)
             return []
 
-    def create_summary_request(
+    async def create_summary_request(
         self, user_id: int, channel_id: str, channel_name: str = None
     ) -> dict[str, Any]:
         """
@@ -172,8 +172,8 @@ class QAUserSystem:
             请求结果字典
         """
         try:
-            # 创建请求记录
-            request_id = self.db.create_request(
+            # 创建请求记录（异步调用）
+            request_id = await self.db.create_request(
                 request_type="summary",
                 requested_by=user_id,
                 target_channel=channel_id,
@@ -181,6 +181,7 @@ class QAUserSystem:
             )
 
             if request_id:
+                # 使用 HTML 格式避免 Markdown 解析错误
                 return {
                     "success": True,
                     "request_id": request_id,

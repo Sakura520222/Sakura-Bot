@@ -388,15 +388,15 @@ class QABot:
 
         # 检查参数
         if not context.args or len(context.args) < 1:
-            message = """📝 **请求生成总结**
+            message = """📝 <b>请求生成总结</b>
 
 使用方法:
-`/request_summary <频道链接>`
+<code>/request_summary <频道链接></code>
 
 此命令会向管理员提交请求，请管理员为指定频道生成总结。
 
-💡 使用 `/listchannels` 查看可用的频道。"""
-            await update.message.reply_text(message, parse_mode="Markdown")
+💡 使用 <code>/listchannels</code> 查看可用的频道。"""
+            await update.message.reply_text(message, parse_mode="HTML")
             return
 
         channel_url = context.args[0]
@@ -412,9 +412,9 @@ class QABot:
         if not channel_name:
             channel_name = channel_url.split("/")[-1]
 
-        # 创建请求
-        result = self.user_system.create_summary_request(user_id, channel_url, channel_name)
-        await update.message.reply_text(result["message"], parse_mode="Markdown")
+        # 创建请求（异步调用）
+        result = await self.user_system.create_summary_request(user_id, channel_url, channel_name)
+        await update.message.reply_text(result["message"], parse_mode="HTML")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理用户消息（流式输出 - 单条消息动态编辑）"""
