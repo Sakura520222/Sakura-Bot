@@ -261,6 +261,11 @@ CI日志/
 logs/
 *.log
 
+# 覆盖率报告数据
+coverage.json
+
+# 临时调试文件
+query
 
 .sourcery.yaml
 .clinerules/
