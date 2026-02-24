@@ -302,8 +302,14 @@ jobs:
             const fs = require('fs');
             let notesPreview = '';
             try {
+              // 检查文件是否存在
+              if (!fs.existsSync('release_notes.txt')) {
+                throw new Error('release_notes.txt 文件不存在');
+              }
               const notes = fs.readFileSync('release_notes.txt', 'utf8');
-              notesPreview = notes.length > 500 ? notes.substring(0, 500) + '...' : notes;
+              // 转义反引号以避免破坏 Markdown 代码块
+              notesPreview = notes.replace(/`/g, '\\`');
+              notesPreview = notesPreview.length > 500 ? notesPreview.substring(0, 500) + '...' : notesPreview;
             } catch (e) {
               core.warning(`读取 release_notes.txt 失败: ${e instanceof Error ? e.message : String(e)}`);
               notesPreview = '(无法读取预览)';

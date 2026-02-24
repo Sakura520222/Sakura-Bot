@@ -8,6 +8,9 @@ jobs:
   commit-lint:
     name: 检查提交信息格式
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     
     steps:
       - name: 检出代码
@@ -123,12 +126,12 @@ jobs:
             comment += `2. 或创建新的修正提交\n`;
             comment += `3. 推送更改后 PR 将自动重新检查`;
             
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.payload.pull_request.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: comment
-            })
+            });
       
       - name: 设置检查状态
         if: steps.lint_commits.outputs.invalid == 'true'
