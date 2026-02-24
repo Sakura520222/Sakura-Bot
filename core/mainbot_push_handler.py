@@ -68,9 +68,10 @@ class MainBotPushHandler:
                 logger.warning("问答Bot未初始化，无法发送通知")
                 return 0
 
-            # 检查数据库连接池是否可用
-            if not hasattr(self.db, "pool") or self.db.pool is None:
-                logger.warning("数据库连接池未初始化，无法获取订阅者")
+            # SQLite 不使用连接池，MySQL 才需要检查
+            # 检查数据库是否已初始化
+            if not hasattr(self.db, "_db_type"):
+                logger.warning("数据库管理器未初始化，无法获取订阅者")
                 return 0
 
             # 获取订阅用户

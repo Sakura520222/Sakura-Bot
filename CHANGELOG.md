@@ -5,255 +5,43 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.6.1] - 2026-02-24
+## [1.6.0] - 2026-02-24
 
-### 修复
-- **CI提交信息检查误报**：修复了提交信息规范检查对 merge commits 的误报问题
-  - **问题**：PR 合并时自动生成的 merge commit（如 "Merge branch 'main' into feature"）不符合 Conventional Commits 格式
-  - **原因**：commit-lint 工作流没有过滤自动生成的 merge commits
-  - **影响**：所有包含 merge commit 的 PR 都会被 CI 拒绝
-  - **修复**：在 commit-lint.yml 中添加 merge commits 过滤逻辑
-  - **结果**：现在自动跳过所有 merge commits，只检查用户手动提交的 commit
-
-- **CI提交信息处理错误**：修复了提交信息检查脚本的 bash 变量处理问题
-  - **问题**：使用 `done <<< "$COMMITS"` 时，bash 将多行提交信息当作命令执行，导致 "File name too long" 错误
-  - **原因**：heredoc (`<<<`) 机制会将变量的每一行当作独立的命令执行，而不是数据处理
-  - **影响**：多行提交信息导致 CI 脚本报错退出，PR 无法通过检查
-  - **修复**：改用 `printf '%s\n' "$COMMITS" | while IFS= read -r commit` 方式处理，确保变量被当作数据而非命令
-  - **结果**：正确处理所有格式的提交信息，避免命令注入风险
-
-- **CI集成测试环境变量缺失**：修复了 GitHub Actions 集成测试阶段缺少环境变量配置的问题
-  - **问题**：集成测试步骤没有配置 `env` 块,导致模块初始化时无法读取必要的环境变量
-  - **原因**：单元测试阶段有完整的 `env` 配置,但集成测试阶段遗漏了该配置
-  - **影响**：集成测试失败,错误信息为 "The api_key client option must be set"
-  - **修复**：在集成测试步骤添加与单元测试相同的 `env` 配置块
-  - **结果**：集成测试现在能够正确读取环境变量并正常运行
-
-- **CI覆盖率评论失败（完整修复）**：彻底修复了 PR 覆盖率评论功能的所有问题
-  - **问题演变**：
-    1. 首次报错：`py-cov-action` 报错 "No data to report"，无法生成 PR 覆盖率评论
-    2. 第二次报错：`NotADirectoryError: Not a directory: coverage.json`，路径配置错误
-    3. 最终报错：`subprocess.CalledProcessError: Command '('coverage', 'json', '-o', '-')' returned non-zero exit status 1`，缺少 coverage 工具
-  
-  - **根本原因**：
-    1. pytest-cov 虽然会生成 `.coverage` 二进制数据文件，但 `py-cov-action` 需要通过 `coverage` 命令（来自 coverage.py 包）来读取这些数据
-    2. CI 环境中只安装了 `pytest-cov`，没有安装独立的 `coverage` 包
-    3. `py-cov-action` 内部执行 `coverage json -o -` 命令时失败，因为找不到 `coverage` 命令
-  
-  - **完整修复**：
-    1. 在 CI 配置的"安装测试依赖"步骤中添加 `coverage` 包
-    2. 移除 `py-cov-action` 配置中的 `COVERAGE_PATH` 参数，让其使用默认行为（在项目根目录查找 `.coverage` 文件）
-    3. 保留 `--cov-report=json:coverage.json` 生成独立的 JSON 报告（供其他工具使用）
-  
-  - **影响**：PR 中看不到覆盖率评论，开发者无法快速了解测试覆盖率变化
-  
-  - **结果**：
-    - ✓ `py-cov-action` 成功读取 `.coverage` 文件
-    - ✓ PR 中正确显示覆盖率评论，包含覆盖率百分比和文件级详情
-    - ✓ 绿色/橙色/红色阈值正常工作（60%/40%）
-    - ✓ 不会因为缺少工具而失败
-
-### 改进
-- **代码风格统一**：使用 Ruff 统一代码风格，修复所有代码规范问题
-  - 自动修复 403 个代码问题（未使用导入、空白行、文件末尾换行等）
-  - 手动修复 3 个问题（空白行、缺失导入）
-  - 格式化 20 个文件，统一代码风格
-  - 所有代码检查通过，符合 PEP 8 规范
-
-### 修复
-- **导入优化**：移除未使用的导入，清理代码冗余
-  - 移除测试文件中的未使用导入（MagicMock、Path、各种未使用的模块）
-  - 修复 `test_error_handler.py` 中缺失的 `setup_graceful_shutdown` 导入
-  - 优化导入排序，符合 PEP 8 规范
-
-- **代码格式化**：统一代码格式，提升可读性
-  - 统一引号风格为双引号
-  - 统一缩进为空格
-  - 修复所有空白行问题
-  - 确保所有文件末尾有换行符
-
-### 测试验证
-- 所有 427 个单元测试通过
-- 测试覆盖率 22%
-- 无功能回归
-
-## [1.6.0] - 2026-02-21
-
-### 🎉 重大更新 - 数据库架构全面升级
+### 🎉 重大更新 - 数据库架构全面升级与完善
 
 #### 新增
-- **MySQL数据库支持**：新增MySQL数据库支持，提升性能和并发能力
-  - **数据库抽象层**：创建 `DatabaseManagerBase` 基类，统一数据库接口
-  - **MySQL管理器**：使用 aiomysql 实现异步 MySQL 管理
-    - 连接池管理（可配置大小和超时）
-    - 强制使用 utf8mb4 字符集（支持 Emoji）
-    - JSON 类型存储复杂数据（MySQL 5.7+）
-    - 完整的索引优化和事务支持
-  - **SQLite管理器重构**：将原 DatabaseManager 重构为 SQLiteManager
-    - 保持原有所有功能完全兼容
-    - 继承 DatabaseManagerBase 基类
-    - 保留 SQLite 作为默认数据库
+- MySQL数据库支持
+- 数据库迁移系统
+- 迁移命令系统
+- 启动时数据库检查
 
-- **数据库迁移系统**：完整的 SQLite 到 MySQL 迁移工具
-  - **迁移器模块**：`DatabaseMigrator` 类提供一站式迁移服务
-  - **流式处理**：采用流式读取 + 分批插入策略，避免内存溢出
-  - **自动备份**：迁移前自动备份 SQLite 数据库
-  - **数据验证**：迁移后自动验证数据完整性
-  - **进度跟踪**：实时显示迁移进度和状态
-  - **错误恢复**：失败时保留备份，可手动恢复
-
-- **迁移命令系统**：管理员可通过命令完成迁移
-  - `/migrate_check` - 检查迁移准备状态
-    - 检测 SQLite 数据库是否存在
-    - 验证 MySQL 配置是否完整
-    - 测试 MySQL 连接是否成功
-    - 显示各表记录数统计
-    - 评估迁移准备情况
+#### 修复
+- **数据库异步接口兼容性**
+  - 为 SQLiteManager 添加完整的异步方法包装层（30+ 方法）
+  - 修复 SQLite 和 MySQL 统一异步 API 问题
   
-  - `/migrate_start` - 开始数据库迁移
-    - 自动执行完整迁移流程
-    - 实时显示进度和状态
-    - 完成后显示详细统计
-    - 验证数据完整性
+- **aiofiles.os.path 使用错误**
+  - 修复所有使用 `aiofiles.os.path` 的地方，改用 `asyncio.to_thread()`
+  - 影响多个模块：database_migrator、database_migration_commands、summary_commands
   
-  - `/migrate_status` - 查看迁移进度
-    - 显示当前迁移状态
-    - 显示进度条和百分比
-    - 显示各表迁移统计
-    - 支持中英文命令别名
+- **数据库连接池检查逻辑**
+  - 修复 mainbot_push_handler 中的检查逻辑，改用 `_db_type` 属性
+  
+- **用户排名显示问题**
+  - 修复用户信息未保存、查询逻辑错误等问题
+  - 优化用户显示格式（优先用户名，其次名字）
 
-- **启动时数据库检查**：自动检测旧数据库并通知管理员
-  - 检测到 SQLite 数据库时发送迁移建议
-  - 提供 `/migrate_check` 快捷入口
-  - 帮助管理员了解迁移收益
+#### 改进
+- **CI/CD 完善**
+  - 修复提交信息检查、环境变量、覆盖率评论等问题
+  
+- **代码质量**
+  - 运行 Ruff 代码风格检查，修复 403 个问题
 
-#### 新增文件
-- **core/database_base.py** - 数据库管理器抽象基类（380行）
-  - 定义统一的数据库接口
-  - 包含所有抽象方法声明
-  - 提供类型提示和文档字符串
+#### 测试
+- **数据库迁移器单元测试**
+  - 新增 test_database_migrator.py，17 个测试用例，覆盖率 40%+
 
-- **core/database_mysql.py** - MySQL 数据库管理器（1450行）
-  - 使用 aiomysql 实现异步操作
-  - 连接池管理
-  - 完整的 CRUD 操作
-  - 所有抽象方法的实现
-
-- **core/database_sqlite.py** - SQLite 数据库管理器（重构）
-  - 从原 database.py 重构而来
-  - 继承 DatabaseManagerBase
-  - 保持所有原有功能
-
-- **core/database_migrator.py** - 数据库迁移工具（680行）
-  - 检查迁移准备状态
-  - 执行完整迁移流程
-  - 数据备份和验证
-  - 进度跟踪和错误处理
-
-- **core/command_handlers/database_migration_commands.py** - 迁移命令处理器
-  - 处理三个迁移命令
-  - 权限检查和错误处理
-  - 格式化输出和状态显示
-
-#### 配置增强
-- **.env 新增配置项**：
-  - `DATABASE_TYPE` - 数据库类型（sqlite/mysql）
-  - `MYSQL_HOST` - MySQL 主机地址
-  - `MYSQL_PORT` - MySQL 端口
-  - `MYSQL_USER` - MySQL 用户名
-  - `MYSQL_PASSWORD` - MySQL 密码
-  - `MYSQL_DATABASE` - MySQL 数据库名
-  - `MYSQL_CHARSET` - MySQL 字符集（默认 utf8mb4）
-  - `MYSQL_POOL_SIZE` - 连接池大小（默认 5）
-  - `MYSQL_MAX_OVERFLOW` - 最大溢出连接数（默认 10）
-  - `MYSQL_POOL_TIMEOUT` - 连接池超时（默认 30）
-
-- **requirements.txt 新增依赖**：
-  - `aiomysql>=0.2.0` - 异步 MySQL 驱动
-
-#### 国际化更新
-- **数据库迁移相关翻译**：
-  - 新增 30+ 个中英文翻译键
-  - 覆盖迁移准备、执行、状态查询
-  - 包含成功、失败、错误提示
-  - 支持进度显示和统计信息
-
-#### 技术特性
-- **数据库抽象层设计**：
-  ```python
-  class DatabaseManagerBase(ABC):
-      @abstractmethod
-      def save_summary(...) -> int | None
-      @abstractmethod
-      def get_summaries(...) -> list[dict[str, Any]]
-      # ... 20+ 个抽象方法
-  ```
-
-- **统一数据库入口**：
-  ```python
-  def get_db_manager():
-      """根据配置返回对应的管理器实例"""
-      db_type = os.getenv("DATABASE_TYPE", "sqlite")
-      if db_type == "mysql":
-          return MySQLManager(...)
-      return SQLiteManager(...)
-  ```
-
-- **迁移流程**：
-  ```
-  1. 检查迁移准备状态
-  2. 备份 SQLite 数据库
-  3. 按表迁移数据（考虑外键依赖）
-  4. 验证数据完整性
-  5. 显示迁移结果
-  ```
-
-#### 性能提升
-- **并发性能**：MySQL 连接池支持高并发
-- **查询优化**：MySQL 索引优化查询速度
-- **大数据支持**：流式处理支持大表迁移
-- **连接复用**：连接池减少连接开销
-
-#### 向后兼容
-- **完全兼容 SQLite**：
-  - 默认使用 SQLite 数据库
-  - 所有现有功能保持不变
-  - 未配置 MySQL 时自动使用 SQLite
-
-- **渐进式迁移**：
-  - 可选择迁移到 MySQL
-  - 迁移前自动备份
-  - 失败时可恢复
-
-#### 使用场景
-- **小型部署**：使用 SQLite，零配置
-- **中大型部署**：迁移到 MySQL，提升性能
-- **高并发场景**：MySQL 连接池支持高并发
-- **数据迁移**：一键从 SQLite 迁移到 MySQL
-
-#### 注意事项
-- MySQL 需要提前创建数据库：`CREATE DATABASE sakura_bot_db CHARACTER SET utf8mb4;`
-- 迁移前确保 MySQL 服务正常运行
-- 迁移过程中请勿停止机器人
-- 建议在低峰期执行迁移操作
-- 迁移完成后修改 `.env` 的 `DATABASE_TYPE=mysql` 并重启
-
-#### 迁移命令示例
-```bash
-# 检查迁移准备状态
-/migrate_check
-
-# 开始迁移
-/migrate_start
-
-# 查看迁移进度
-/migrate_status
-```
-
-#### 文档更新
-- 更新 README.md 添加 MySQL 配置说明
-- 更新 README_EN.md 同步英文版
-- 更新 CHANGELOG.md 记录 v1.6.0 变更
 
 ## [1.5.9] - 2026-02-19
 

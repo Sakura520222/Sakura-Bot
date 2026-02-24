@@ -418,6 +418,11 @@ class QABot:
         if not query or not query.strip():
             return
 
+        # 自动注册用户（确保数据库中有用户信息）
+        await self.user_system.register_user(
+            user_id, update.effective_user.username, update.effective_user.first_name
+        )
+
         logger.info(f"收到查询: user_id={user_id}, query={query}")
 
         try:

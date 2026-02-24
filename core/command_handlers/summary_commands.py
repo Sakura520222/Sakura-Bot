@@ -14,7 +14,9 @@
 总结相关命令处理
 """
 
+import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -584,7 +586,7 @@ async def handle_clear_summary_time(event):
             else:
                 specific_channel = f"https://t.me/{channel_part}"
 
-        if await aiofiles.os.path.exists(LAST_SUMMARY_FILE):
+        if await asyncio.to_thread(os.path.exists, LAST_SUMMARY_FILE):
             if specific_channel:
                 # 清除特定频道的时间记录
                 async with aiofiles.open(LAST_SUMMARY_FILE, encoding="utf-8") as f:
@@ -620,7 +622,7 @@ async def handle_clear_summary_time(event):
                         await event.reply(get_text("summarytime.clear_empty_file"))
             else:
                 # 清除所有频道的时间记录
-                await aiofiles.os.remove(LAST_SUMMARY_FILE)
+                await asyncio.to_thread(os.remove, LAST_SUMMARY_FILE)
                 logger.info(f"已清除所有频道的上次总结时间记录，文件 {LAST_SUMMARY_FILE} 已删除")
                 await event.reply(get_text("summarytime.clear_all_success"))
         else:

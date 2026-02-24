@@ -224,8 +224,8 @@ async def handle_migrate_start(event: NewMessage.Event):
 
                 # 2. 删除旧 SQLite 文件（已有备份）
                 sqlite_db_path = "data/summaries.db"
-                if await aiofiles.os.path.exists(sqlite_db_path):
-                    await aiofiles.os.remove(sqlite_db_path)
+                if await asyncio.to_thread(os.path.exists, sqlite_db_path):
+                    await asyncio.to_thread(os.remove, sqlite_db_path)
                     message += f"✅ {get_text('database.migrate.sqlite_deleted')}\n"
                     logger.info(f"✅ 已删除旧 SQLite 数据库文件: {sqlite_db_path}")
                 else:
@@ -510,14 +510,14 @@ async def handle_migrate_cleanup(event: NewMessage.Event):
         sqlite_db_path = "data/summaries.db"
 
         # 检查 SQLite 文件是否存在
-        if not await aiofiles.os.path.exists(sqlite_db_path):
+        if not await asyncio.to_thread(os.path.exists, sqlite_db_path):
             await event.reply(
                 f"✅ SQLite 数据库文件不存在\n\n路径: {sqlite_db_path}\n\n可能已被删除或从未存在"
             )
             return
 
         # 获取文件大小
-        file_size = await aiofiles.os.path.getsize(sqlite_db_path)
+        file_size = await asyncio.to_thread(os.path.getsize, sqlite_db_path)
         file_size_mb = file_size / (1024 * 1024)
 
         # 构建确认消息
@@ -556,17 +556,15 @@ async def handle_migrate_cleanup_confirm(event: NewMessage.Event):
         sqlite_db_path = "data/summaries.db"
 
         # 检查文件是否存在
-        if not await aiofiles.os.path.exists(sqlite_db_path):
+        if not await asyncio.to_thread(os.path.exists, sqlite_db_path):
             await event.reply(f"✅ SQLite 数据库文件不存在\n\n路径: {sqlite_db_path}")
             return
 
         # 删除文件
-        await aiofiles.os.remove(sqlite_db_path)
+        await asyncio.to_thread(os.remove, sqlite_db_path)
         logger.info(f"✅ SQLite 数据库文件已删除: {sqlite_db_path}")
 
-        # 检查是否有备份文件（使用os.listdir代替pathlib）
-        import os
-
+        # 检查是否有备份文件
         backup_dir = os.path.dirname(sqlite_db_path)
         backup_prefix = os.path.basename(sqlite_db_path) + ".backup_"
         backup_files = (
@@ -575,7 +573,7 @@ async def handle_migrate_cleanup_confirm(event: NewMessage.Event):
                 for f in os.listdir(backup_dir)
                 if f.startswith(backup_prefix)
             ]
-            if await aiofiles.os.path.exists(backup_dir)
+            if await asyncio.to_thread(os.path.exists, backup_dir)
             else []
         )
 

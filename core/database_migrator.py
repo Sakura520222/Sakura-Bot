@@ -16,13 +16,13 @@
 提供从SQLite到MySQL的数据库迁移功能，采用流式读取+分批插入策略
 """
 
+import asyncio
 import json
 import logging
+import os
 import shutil
 from datetime import UTC, datetime
 from typing import Any
-
-import aiofiles
 
 from .database_mysql import MySQLManager
 from .database_sqlite import SQLiteManager
@@ -65,8 +65,8 @@ class DatabaseMigrator:
         }
 
         try:
-            # 检查SQLite数据库是否存在
-            if await aiofiles.os.path.exists(self.sqlite_path):
+            # 检查SQLite数据库是否存在（使用异步方式）
+            if await asyncio.to_thread(os.path.exists, self.sqlite_path):
                 result["sqlite_exists"] = True
 
                 # 连接SQLite获取表信息

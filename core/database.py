@@ -2298,13 +2298,15 @@ class DatabaseManagerLegacy:
             cursor.execute("SELECT COUNT(*) FROM request_queue")
             stats["total_requests"] = cursor.fetchone()[0] or 0
 
-            # 活跃用户排行（前10）
+            # 活跃用户排行（前10）- 使用 LEFT JOIN 确保所有有查询记录的用户都显示
             cursor.execute("""
-                SELECT u.user_id, u.username, u.first_name,
+                SELECT COALESCE(u.user_id, q.user_id) as user_id,
+                       u.username,
+                       u.first_name,
                        SUM(q.usage_count) as query_count
-                FROM users u
-                INNER JOIN usage_quota q ON u.user_id = q.user_id
-                GROUP BY u.user_id, u.username, u.first_name
+                FROM usage_quota q
+                LEFT JOIN users u ON q.user_id = u.user_id
+                GROUP BY q.user_id, u.user_id, u.username, u.first_name
                 ORDER BY query_count DESC
                 LIMIT 10
             """)
@@ -2319,6 +2321,12 @@ class DatabaseManagerLegacy:
                     }
                 )
             stats["top_users"] = top_users
+
+            logger.info(f"查询到 {len(top_users)} 个活跃用户排名")
+            for user in top_users[:3]:  # 记录前3名用于调试
+                logger.info(
+                    f"  - 用户ID={user['user_id']}, 用户名={user['username']}, 查询次数={user['query_count']}"
+                )
 
             # 频道订阅分布
             cursor.execute("""
