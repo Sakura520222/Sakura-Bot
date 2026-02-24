@@ -135,13 +135,16 @@ jobs:
           DATABASE_TYPE: sqlite
         run: |
           if [ -d tests ]; then
-            coverage run -m pytest tests/ -v -m "not slow and not integration" \
+            pytest tests/ -v -m "not slow and not integration" \
+              --cov=core \
+              --cov-report=xml \
+              --cov-report=json \
+              --cov-report=html:htmlcov \
+              --cov-report=term-missing \
+              --cov-fail-under=20 \
               --tb=short \
               --strict-markers
             coverage xml
-            coverage json
-            coverage html
-            coverage report
           else
             echo "未找到测试目录，跳过测试"
           fi
