@@ -298,7 +298,7 @@ jobs:
             const exists = `${{ steps.check_release.outputs.exists }}`;
             const action = exists === 'true' ? '更新' : '创建';
             
-            // 读取 release_notes.txt 文件内容（前 500 字符）
+            // 读取 release_notes.txt 文件内容（按字节数安全截断预览，避免截断多字节字符）
             const fs = require('fs');
             let notesPreview = '';
             try {
@@ -309,7 +309,26 @@ jobs:
               const notes = fs.readFileSync('release_notes.txt', 'utf8');
               // 转义反引号以避免破坏 Markdown 代码块
               notesPreview = notes.replace(/`/g, '\\`');
-              notesPreview = notesPreview.length > 500 ? notesPreview.substring(0, 500) + '...' : notesPreview;
+
+              // 按 UTF-8 字节长度进行截断，确保不截断多字节字符（如 emoji）
+              const MAX_PREVIEW_BYTES = 1000;
+              const truncateByBytes = (input, maxBytes) => {
+                let bytes = 0;
+                let result = '';
+
+                for (const ch of input) {
+                  const chBytes = Buffer.byteLength(ch, 'utf8');
+                  if (bytes + chBytes > maxBytes) {
+                    break;
+                  }
+                  bytes += chBytes;
+                  result += ch;
+                }
+
+                return result.length < input.length ? `${result}...` : result;
+              };
+
+              notesPreview = truncateByBytes(notesPreview, MAX_PREVIEW_BYTES);
             } catch (e) {
               core.warning(`读取 release_notes.txt 失败: ${e instanceof Error ? e.message : String(e)}`);
               notesPreview = '(无法读取预览)';
