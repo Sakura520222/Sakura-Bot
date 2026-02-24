@@ -51,17 +51,27 @@ class QAFormatter(logging.Formatter):
         return super().format(record)
 
 
-# 配置基础日志
+# 配置基础日志 - 使用 WARNING 作为全局级别，避免第三方库输出过多日志
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
-# 获取logger
+# 为 QABot 创建独立的 logger 并设置 INFO 级别
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-# 为所有处理器应用自定义格式
-for handler in logging.root.handlers:
+# 为 QABot 的 logger 添加专用 handler
+if not logger.handlers:
+    handler = logging.StreamHandler()
     handler.setFormatter(QAFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+
+# 确保日志不传播到 root logger（避免重复输出）
+logger.propagate = False
+
+# 抑制第三方库的 INFO 日志输出
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 
 # 获取配置
