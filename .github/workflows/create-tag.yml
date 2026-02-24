@@ -164,6 +164,7 @@ jobs:
               echo "SHOULD_ADD_ASSETS=true" >> $GITHUB_OUTPUT
               echo "SHOULD_UPDATE_ASSETS=false" >> $GITHUB_OUTPUT
               echo "HAS_ASSETS=false" >> $GITHUB_OUTPUT
+              echo "SHOULD_UPDATE=false" >> $GITHUB_OUTPUT
             else
               echo "HAS_ASSETS=true" >> $GITHUB_OUTPUT
               if [ "$FORCE_UPDATE" = "true" ]; then
