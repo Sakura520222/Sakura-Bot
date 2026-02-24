@@ -133,7 +133,7 @@ async def main_job(channel=None):
             if messages:
                 logger.info(f"开始处理频道 {channel} 的消息，共 {len(messages)} 条消息")
                 current_prompt = load_prompt()
-                summary = analyze_with_ai(messages, current_prompt)
+                summary = await analyze_with_ai(messages, current_prompt)
 
                 # 获取活动的客户端实例和频道的实际名称用于报告标题
                 active_client = get_active_client()

@@ -300,7 +300,7 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
 
         summary_text = regen_data["summary_text"]
         logger.info(get_text("poll_regen.generating"))
-        new_poll_data = generate_poll_from_summary(summary_text)
+        new_poll_data = await generate_poll_from_summary(summary_text)
         logger.info(f"✅ 新投票生成成功: {new_poll_data['question']}")
 
         # 3. 根据原投票的发送位置,发送新投票

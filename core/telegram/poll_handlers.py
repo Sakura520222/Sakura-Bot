@@ -46,7 +46,7 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
 
         # 生成投票内容
         logger.info("开始生成投票内容")
-        poll_data = generate_poll_from_summary(summary_text)
+        poll_data = await generate_poll_from_summary(summary_text)
 
         if not poll_data or "question" not in poll_data or "options" not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")
@@ -209,7 +209,7 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
 
         # 生成投票内容
         logger.info("开始生成投票内容")
-        poll_data = generate_poll_from_summary(summary_text)
+        poll_data = await generate_poll_from_summary(summary_text)
 
         if not poll_data or "question" not in poll_data or "options" not in poll_data:
             logger.error("生成投票内容失败，使用默认投票")

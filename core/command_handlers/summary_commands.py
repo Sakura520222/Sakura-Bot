@@ -122,7 +122,7 @@ async def generate_channel_summary(
 
         # 5. AI生成总结
         current_prompt = load_prompt()
-        summary = analyze_with_ai(messages, current_prompt)
+        summary = await analyze_with_ai(messages, current_prompt)
 
         # 6. 计算日期范围和生成报告标题
         end_date = datetime.now(UTC)
@@ -382,7 +382,7 @@ async def handle_manual_summary(event):
                     get_text("summary.start_processing", channel=channel, count=len(messages))
                 )
                 current_prompt = load_prompt()
-                summary = analyze_with_ai(messages, current_prompt)
+                summary = await analyze_with_ai(messages, current_prompt)
                 # 获取频道实际名称
                 try:
                     channel_entity = await event.client.get_entity(channel)

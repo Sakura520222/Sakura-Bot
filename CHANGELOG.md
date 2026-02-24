@@ -16,6 +16,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+  ## [1.6.2] - 2026-02-25
+
+### 重构
+- **AI 客户端异步化改造**：将 AI 客户端调用从同步模式改为异步模式
+  - 将 `analyze_with_ai()` 和 `generate_poll_from_summary()` 函数改为异步函数
+  - 引入 `AsyncOpenAI` 客户端并初始化，用于异步 API 调用
+  - 更新所有调用这两个函数的地方，添加 `await` 关键字
+  - 影响范围：
+    - [core/ai_client.py](e:\项目\Sakura-Bot\core\ai_client.py) - 核心异步客户端实现
+    - [core/command_handlers/summary_commands.py](e:\项目\Sakura-Bot\core\command_handlers\summary_commands.py) - 频道总结生成
+    - [core/poll_regeneration_handlers.py](e:\项目\Sakura-Bot\core\poll_regeneration_handlers.py) - 投票重新生成
+    - [core/scheduler.py](e:\项目\Sakura-Bot\core\scheduler.py) - 定时任务调度
+    - [core/telegram/poll_handlers.py](e:\项目\Sakura-Bot\core\telegram\poll_handlers.py) - 投票发送处理
+  - 改进效果：提升系统并发处理能力，避免阻塞事件循环，支持多个 AI 请求并行处理
+
+### 测试
+- **AI 客户端异步测试更新**：更新 [tests/test_ai_client.py](e:\项目\Sakura-Bot\tests\test_ai_client.py)
+  - 支持异步函数测试
+  - 添加 `AsyncMock` 支持，验证异步客户端调用
+
   ## [1.6.1] - 2026-02-24
 
 ### 修复

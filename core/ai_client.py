@@ -12,7 +12,7 @@
 
 import logging
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from .error_handler import record_error, retry_with_backoff
 from .i18n import get_text
@@ -37,6 +37,11 @@ client_llm = OpenAI(api_key=api_key, base_url=base_url)
 
 logger.info("AI客户端初始化完成")
 
+# 初始化异步 AI 客户端
+logger.info("开始初始化异步AI客户端...")
+async_client_llm = AsyncOpenAI(api_key=api_key, base_url=base_url)
+logger.info("异步AI客户端初始化完成")
+
 
 @retry_with_backoff(
     max_retries=3,
@@ -45,8 +50,8 @@ logger.info("AI客户端初始化完成")
     exponential_backoff=True,
     retry_on_exceptions=(ConnectionError, TimeoutError, Exception),
 )
-def analyze_with_ai(messages, current_prompt):
-    """调用 AI 进行汇总
+async def analyze_with_ai(messages, current_prompt):
+    """调用 AI 进行汇总（异步版本）
 
     Args:
         messages: 要分析的消息列表
@@ -60,7 +65,7 @@ def analyze_with_ai(messages, current_prompt):
         TimeoutError: 请求超时
         Exception: 其他错误
     """
-    logger.info("开始调用AI进行消息汇总")
+    logger.info("开始调用AI进行消息汇总（异步）")
 
     if not messages:
         logger.info("没有需要分析的消息，返回空结果")
@@ -78,7 +83,7 @@ def analyze_with_ai(messages, current_prompt):
     from datetime import datetime
 
     start_time = datetime.now()
-    response = client_llm.chat.completions.create(
+    response = await async_client_llm.chat.completions.create(
         model=model,
         messages=[
             {
@@ -107,8 +112,8 @@ def analyze_with_ai(messages, current_prompt):
     exponential_backoff=True,
     retry_on_exceptions=(ConnectionError, TimeoutError, Exception),
 )
-def generate_poll_from_summary(summary_text):
-    """根据总结内容生成投票
+async def generate_poll_from_summary(summary_text):
+    """根据总结内容生成投票（异步版本）
 
     Args:
         summary_text: 总结文本
@@ -117,7 +122,7 @@ def generate_poll_from_summary(summary_text):
         dict: 包含question和options的字典，格式为:
             {"question": "投票问题", "options": ["选项1", "选项2", "选项3", "选项4"]}
     """
-    logger.info("开始调用AI生成投票")
+    logger.info("开始调用AI生成投票（异步）")
 
     if not summary_text or len(summary_text.strip()) < 10:
         logger.warning("总结文本太短，无法生成有意义的投票")
@@ -144,7 +149,7 @@ def generate_poll_from_summary(summary_text):
         from datetime import datetime
 
         start_time = datetime.now()
-        response = client_llm.chat.completions.create(
+        response = await async_client_llm.chat.completions.create(
             model=model,
             messages=[
                 {
