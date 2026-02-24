@@ -16,6 +16,25 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.6.1] - 2026-02-24
+
+### 修复
+- **MySQL 日期时间格式错误**：修复用户注册时 `OperationalError: Incorrect datetime value` 错误
+  - 问题：`database_mysql.py` 中的 `register_user()`, `update_user_activity()`, `update_channel_profile()` 函数使用了 `datetime.now(UTC).isoformat()` 生成 ISO 格式字符串（如 `'2026-02-24T12:50:02+00:00'`）
+  - 原因：MySQL 的 DATETIME 字段不接受带时区信息的 ISO 格式字符串
+  - 修复：直接传递 `datetime` 对象而不是字符串，让 aiomysql 自动处理格式转换
+  - 影响：修复了用户注册失败、更新活跃时间失败、更新频道画像失败的问题
+  - 确保所有时间字段使用 UTC 时区的 `datetime` 对象
+
+### 测试
+- **新增日期时间格式单元测试**：`test_database_mysql_datetime_fix.py`
+  - 测试用户注册时 datetime 格式正确性
+  - 测试更新已存在用户时 datetime 格式正确性
+  - 测试更新用户活跃时间时 datetime 格式正确性
+  - 测试更新频道画像时 datetime 格式正确性
+  - 验证 datetime 对象不会被错误转换为 isoformat 字符串
+  - 所有测试通过，覆盖率 100%
+
 ## [1.6.0] - 2026-02-24
 
 ### 🎉 重大更新 - 数据库架构全面升级与完善
