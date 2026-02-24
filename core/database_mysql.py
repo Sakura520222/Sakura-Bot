@@ -892,7 +892,7 @@ class MySQLManager(DatabaseManagerBase):
                     else:
                         style = "neutral"
 
-                    now = datetime.now(UTC).isoformat()
+                    now = datetime.now(UTC)
 
                     if existing:
                         await cursor.execute(
@@ -1165,7 +1165,7 @@ class MySQLManager(DatabaseManagerBase):
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    now = datetime.now(UTC).isoformat()
+                    now = datetime.now(UTC)
 
                     # 先检查用户是否存在
                     await cursor.execute(
@@ -1230,7 +1230,7 @@ class MySQLManager(DatabaseManagerBase):
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    now = datetime.now(UTC).isoformat()
+                    now = datetime.now(UTC)
 
                     await cursor.execute(
                         """
