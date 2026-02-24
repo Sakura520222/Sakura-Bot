@@ -290,7 +290,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const core = require('@actions/core');
             const version = `${{ steps.read_version.outputs.current_version }}`;
             const exists = `${{ steps.check_release.outputs.exists }}`;
             const action = exists === 'true' ? '更新' : '创建';
