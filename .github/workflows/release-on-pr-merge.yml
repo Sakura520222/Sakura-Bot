@@ -85,18 +85,27 @@ jobs:
       - name: 读取当前版本
         id: read_version
         run: |
-          # 读取 main.py 中的当前版本号
+          # 读取 main.py 中的当前版本号（支持单/双引号及不同空格）
           if [ -f main.py ]; then
-            CURRENT_VERSION=$(grep -o "__version__ = \"[^\"]*\"" main.py | cut -d'"' -f2)
+            CURRENT_VERSION=$(
+              sed -n "s/^[[:space:]]*__version__[[:space:]]*=[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" main.py | head -n 1
+            )
+
+            # 如果未能解析出版本号则直接失败，避免创建错误 tag（如 v）
+            if [ -z "$CURRENT_VERSION" ]; then
+              echo "无法从 main.py 解析版本号，请检查 __version__ 定义格式是否正确。" >&2
+              exit 1
+            fi
           else
             CURRENT_VERSION="未知版本"
           fi
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "main.py 当前版本: $CURRENT_VERSION"
-          
+
           # 获取今天日期
           TODAY=$(date +'%Y-%m-%d')
-          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "today=$TODAY" >> "$GITHUB_OUTPUT"
           echo "今天日期: $TODAY"
       
       - name: 检查 Release 是否存在
