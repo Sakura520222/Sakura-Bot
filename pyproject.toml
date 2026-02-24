@@ -23,28 +23,3 @@ multi_line_output = 3
 include_trailing_comma = false
 force_grid_wrap = 0
 use_parentheses = true
-
-[tool.coverage.run]
-source = ["core"]
-omit = [
-    "*/tests/*",
-    "*/test_*",
-    "*/__pycache__/*",
-    "*/site-packages/*"
-]
-relative_files = true
-branch = true
-
-[tool.coverage.report]
-precision = 2
-show_missing = true
-skip_covered = false
-
-[tool.coverage.html]
-directory = "htmlcov"
-
-[tool.coverage.xml]
-output = "coverage.xml"
-
-[tool.coverage.json]
-output = "coverage.json"
