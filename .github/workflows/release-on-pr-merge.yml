@@ -306,6 +306,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
       
       - name: 发送评论到 PR
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -497,7 +498,8 @@ jobs:
             echo "- qa_bot.py" >> packaging_manifest.txt
           fi
           find core -name "*.py" -exec cp --parents {} "$RELEASE_DIR/" \;
-          rm -rf "$RELEASE_DIR/core/__pycache__"
+          # 递归删除 core 目录下所有 __pycache__ 目录，避免它们被打包进发布包
+          find "${RELEASE_DIR}/core" -type d -name '__pycache__' -exec rm -rf {} +
           echo "- core/ (所有Python文件)" >> packaging_manifest.txt
           
           # 复制配置文件

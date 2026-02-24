@@ -18,6 +18,27 @@
 
 ## [1.6.3] - 2026-02-25
 
+### 修复
+- **GitHub Actions workflow_dispatch 场景错误**：修复了手动触发 workflow 时 PR 评论步骤失败的问题
+  - **问题**：`release-on-pr-merge.yml` 在 `workflow_dispatch` 场景下，`context.payload.pull_request` 为 `undefined`，导致 github-script 报错
+  - **原因**：job 允许被 `workflow_dispatch` 触发，但 PR 评论步骤未添加条件判断，在手动触发时会尝试访问不存在的 PR 上下文
+  - **修复**：为"发送评论到 PR"步骤添加条件判断 `if: github.event_name == 'pull_request'`，仅在 PR 事件时执行
+  - **影响范围**：`.github/workflows/release-on-pr-merge.yml` 第 308 行
+  - **修复效果**：
+    - ✅ PR 合并时正常发送评论
+    - ✅ 手动触发时跳过评论步骤，不会报错
+    - ✅ workflow_dispatch 场景下 workflow 正常执行
+
+- **发布包 __pycache__ 清理不彻底**：修复了打包发布资源时未递归删除所有 __pycache__ 目录的问题
+  - **问题**：使用 `rm -rf "$RELEASE_DIR/core/__pycache__"` 只删除顶层的 `__pycache__` 目录，子目录中的缓存文件仍会被打包进发布包
+  - **原因**：core 目录可能包含多级子包（如 `core/feature/__pycache__`），单层删除无法清理所有缓存
+  - **修复**：使用 `find "${RELEASE_DIR}/core" -type d -name '__pycache__' -exec rm -rf {} +` 递归删除所有 __pycache__ 目录
+  - **影响范围**：`.github/workflows/release-on-pr-merge.yml` 第 469 行
+  - **修复效果**：
+    - ✅ 所有层级的 __pycache__ 目录都被清理
+    - ✅ 发布包体积更小，更干净
+    - ✅ 避免缓存文件干扰用户使用
+
 ### 文档
 - **Wiki 重组与分类规范**：按照 GitHub 官方 Wiki 最佳实践重组项目文档
   - 创建 Wiki 首页（`Home.md`）作为文档导航中心
