@@ -26,6 +26,7 @@ jobs:
         with:
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
+          ref: main  # 显式指定 main 分支，避免处于 PR ref 导致 push 失败
       
       - name: 提取 PR 信息
         id: extract_pr_info
