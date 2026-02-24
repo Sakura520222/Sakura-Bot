@@ -153,18 +153,6 @@ async def graceful_shutdown_resources():
     logger.info("所有资源已关闭")
 
 
-def cleanup_handler(signum, frame):
-    """清理处理器"""
-    logger.info(f"收到信号 {signum}，正在清理资源...")
-    stop_qa_bot()
-    sys.exit(0)
-
-
-# 注册清理处理器
-signal.signal(signal.SIGTERM, cleanup_handler)
-signal.signal(signal.SIGINT, cleanup_handler)
-
-
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
     from core.i18n import get_text
@@ -790,8 +778,39 @@ async def main():
 
         # 保持客户端运行
         await client.run_until_disconnected()
+    except KeyboardInterrupt:
+        logger.info("收到键盘中断，正在优雅关闭...")
+        raise  # 重新抛出以便在上层处理
     except Exception as e:
         logger.critical(f"机器人服务初始化或运行失败: {type(e).__name__}: {e}", exc_info=True)
+    finally:
+        # 在主事件循环关闭前清理资源
+        logger.info("正在清理资源...")
+
+        # 1. 停止调度器
+        from core.config import get_scheduler_instance
+
+        scheduler = get_scheduler_instance()
+        if scheduler and scheduler.running:
+            logger.info("停止调度器...")
+            scheduler.shutdown(wait=False)
+
+        # 2. 关闭数据库连接池
+        db_manager = get_db_manager()
+        if hasattr(db_manager, "close") and asyncio.iscoroutinefunction(db_manager.close):
+            try:
+                await db_manager.close()
+                logger.info("数据库连接池已关闭")
+            except Exception as e:
+                logger.error(f"关闭数据库连接池时出错: {type(e).__name__}: {e}")
+
+        # 3. 断开 Telegram 客户端
+        if client.is_connected():
+            try:
+                await client.disconnect()
+                logger.info("Telegram客户端已断开")
+            except Exception as e:
+                logger.error(f"断开Telegram客户端时出错: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
@@ -808,17 +827,81 @@ if __name__ == "__main__":
     else:
         logger.info("所有必要的 API 凭证已配置完成")
 
+        # 创建一个事件循环和用于优雅关闭的 threading.Event
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        shutdown_event = asyncio.Event()
+
+        # 定义信号处理函数
+        def signal_handler(signum, frame):
+            """处理 SIGTERM 和 SIGINT 信号"""
+            signal_name = signal.Signals(signum).name
+            logger.info(f"收到信号 {signal_name} ({signum})，开始优雅关闭...")
+            # 设置事件以通知主循环开始关闭（使用 call_soon_threadsafe 因为 set() 是同步方法）
+            loop.call_soon_threadsafe(shutdown_event.set)
+
+        # 注册信号处理器（在 Windows 上只支持 SIGINT，SIGTERM 可能不可用）
+        try:
+            signal.signal(signal.SIGTERM, signal_handler)
+            logger.info("已注册 SIGTERM 信号处理器")
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"无法注册 SIGTERM 信号处理器: {e}")
+
+        try:
+            signal.signal(signal.SIGINT, signal_handler)
+            logger.info("已注册 SIGINT 信号处理器")
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"无法注册 SIGINT 信号处理器: {e}")
+
         # 启动问答Bot
         start_qa_bot()
 
         # 启动主函数
         try:
             logger.info("开始启动主函数...")
-            asyncio.run(main())
+
+            # 创建主任务和等待关闭信号的任务
+            async def run_with_shutdown():
+                """运行主任务，同时监听关闭信号"""
+                main_task = asyncio.create_task(main())
+
+                # 等待关闭信号或主任务完成
+                await shutdown_event.wait()
+
+                # 如果收到关闭信号，取消主任务并执行优雅关闭
+                if not main_task.done():
+                    logger.info("取消主任务...")
+                    main_task.cancel()
+
+                    try:
+                        await main_task
+                    except asyncio.CancelledError:
+                        logger.info("主任务已取消")
+                    except Exception as e:
+                        logger.error(f"主任务取消时出错: {type(e).__name__}: {e}")
+
+                # 执行优雅关闭
+                logger.info("执行优雅关闭...")
+                await graceful_shutdown_resources()
+
+                # 停止事件循环
+                loop.stop()
+
+            loop.run_until_complete(run_with_shutdown())
+
         except KeyboardInterrupt:
             logger.info("机器人服务已通过键盘中断停止")
         except Exception as e:
             logger.critical(f"主函数执行失败: {type(e).__name__}: {e}", exc_info=True)
         finally:
-            # 确保问答Bot被停止
+            # 确保问答Bot被停止（已在main()的finally中处理了其他资源）
+            logger.info("正在停止问答Bot...")
             stop_qa_bot()
+            logger.info("程序已退出")
+            # 关闭事件循环
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception as e:
+                logger.error(f"关闭异步生成器时出错: {e}")
+            loop.close()

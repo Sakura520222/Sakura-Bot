@@ -50,6 +50,10 @@ def setup_test_environment():
     os.environ.setdefault("ENABLE_POLL", "true")
     os.environ.setdefault("DATABASE_TYPE", "sqlite")
 
+    # 设置用户名（避免 aiomysql 在导入时失败）
+    os.environ.setdefault("USERNAME", "testuser")
+    os.environ.setdefault("USER", "testuser")
+
     yield
 
 

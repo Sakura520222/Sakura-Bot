@@ -25,6 +25,13 @@
 - 数据库迁移系统
 - 迁移命令系统
 - 启动时数据库检查
+- **Windows启动脚本增强**：`start.bat` 现在自动管理虚拟环境
+  - 自动检测虚拟环境是否存在，不存在则自动创建
+  - 自动激活虚拟环境
+  - 自动检查并安装依赖包（通过检测 `telegram` 模块）
+  - 添加详细的日志输出，便于排查问题
+  - 设置控制台编码为 UTF-8，支持中文显示
+  - 添加窗口标题 "Sakura Bot"
 
 #### 修复
 - **版本控制清理**：从版本控制中移除不必要的文件
@@ -32,6 +39,20 @@
   - 移除 `query`（临时调试文件）
   - 更新 `.gitignore` 添加明确的忽略规则
   - 清理后版本控制更加规范，避免提交运行时生成的临时文件
+
+- **MySQL DateTime 格式问题**：修复 MySQL 数据库中 datetime 对象导致的类型错误
+  - 问题：`TypeError: Object of type datetime is not JSON serializable`
+  - 原因：aiomysql 返回的 datetime 对象未转换为字符串
+  - 修复：在 `database_mysql.py` 中所有涉及 datetime 的查询都移除时区信息
+  - 影响：`get_summaries()`, `_format_request_result()`, `_format_summary_push()` 等方法
+  - 确保 datetime 对象在 JSON 序列化前转换为字符串格式
+
+- **Telegram 消息格式问题**：修复推送通知消息的 Markdown 解析错误
+  - 问题：`telegram.error.BadRequest: Can't parse entities: ...`
+  - 原因：使用 Markdown 格式时方括号等特殊字符导致解析失败
+  - 修复：将 `mainbot_push_handler.py` 中的消息格式改为 HTML 模式
+  - 使用 `<b>`, `<code>` 等 HTML 标签替代 Markdown 格式
+  - 提高消息发送的稳定性和可靠性
 
 #### 修复
 - **数据库异步接口兼容性**

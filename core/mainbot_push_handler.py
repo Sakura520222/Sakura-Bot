@@ -92,20 +92,18 @@ class MainBotPushHandler:
 
             for user_id in subscribers:
                 try:
-                    # 发送通知
-                    message = f"""📬 **新总结通知**
+                    # 发送通知 (使用HTML格式，更稳定)
+                    message = f"""📬 <b>新总结通知</b>
 
 频道 {channel_name} 有新的总结发布了！
 
-**总结预览**:
+<b>总结预览</b>:
 {summary_preview}
 
-💡 使用 `/mysubscriptions` 查看您的订阅
-💡 使用 `/unsubscribe <频道链接>` 取消订阅"""
+💡 使用 <code>/mysubscriptions</code> 查看您的订阅
+💡 使用 <code>/unsubscribe <频道链接></code> 取消订阅"""
 
-                    await self.qa_bot.send_message(
-                        chat_id=user_id, text=message, parse_mode="Markdown"
-                    )
+                    await self.qa_bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
 
                     success_count += 1
                     logger.info(f"成功通知用户 {user_id}")
@@ -166,10 +164,8 @@ class MainBotPushHandler:
                     else:
                         message = "您有新的通知"
 
-                    # 发送消息
-                    await self.qa_bot.send_message(
-                        chat_id=user_id, text=message, parse_mode="Markdown"
-                    )
+                    # 发送消息 (使用HTML格式)
+                    await self.qa_bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
 
                     # 更新状态
                     await self.db.update_notification_status(notification_id, "sent")

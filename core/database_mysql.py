@@ -1543,16 +1543,15 @@ class MySQLManager(DatabaseManagerBase):
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    now = datetime.now(UTC).isoformat()
                     result_json = json.dumps(result, ensure_ascii=False) if result else None
 
                     await cursor.execute(
                         """
                         UPDATE request_queue
-                        SET status = %s, result = %s, processed_at = %s
+                        SET status = %s, result = %s, processed_at = NOW()
                         WHERE id = %s
                     """,
-                        (status, result_json, now, request_id),
+                        (status, result_json, request_id),
                     )
 
                     await conn.commit()
@@ -1684,15 +1683,13 @@ class MySQLManager(DatabaseManagerBase):
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    now = datetime.now(UTC).isoformat()
-
                     await cursor.execute(
                         """
                         UPDATE notification_queue
-                        SET status = %s, sent_at = %s
+                        SET status = %s, sent_at = NOW()
                         WHERE id = %s
                     """,
-                        (status, now, notification_id),
+                        (status, notification_id),
                     )
 
                     await conn.commit()
