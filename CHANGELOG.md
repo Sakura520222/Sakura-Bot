@@ -30,6 +30,26 @@
   - 优化日志输出格式，添加状态图标提升可读性
 
 ### 修复
+- **subprocess安全警告修复**：修复了 `handle_restart` 中 `subprocess.Popen` 的安全警告（Ruff S603）
+  - **问题**：Ruff/Sourcery AI 警告 `subprocess.Popen` 可能存在命令注入风险
+  - **分析**：当前代码使用列表形式（list-based），`shell=False`（默认值），实际上是安全的
+  - **修复**：
+    - 添加完整的函数文档字符串，说明安全设计原理
+    - 显式重定向标准流到 `DEVNULL`，防止新进程挂起旧进程的 IO 句柄
+    - 使用 `# noqa: S603` 标记，告诉审计工具此处的变量组合已经过人工审计
+    - 提升进程创建的稳定性和资源管理
+  - **影响文件**：`core/command_handlers/other_commands.py` - `create_new_process()` 函数
+  - **修复效果**：
+    - ✅ Ruff 检查全部通过，无安全警告
+    - ✅ 重启功能更稳定，避免 IO 句柄泄漏
+    - ✅ 代码可维护性提升，安全设计清晰可查
+  - 将关机逻辑统一迁移到关机管理器
+  - 新增 `trigger_shutdown` 函数，统一处理 Ctrl+C 和命令触发的关机流程
+  - 简化 PM2 环境检测逻辑，使用 `shutdown_manager.detect_pm2()` 替代原有实现
+  - 移除 `handle_restart` 中的优雅关闭资源和进程创建代码，改为复用关机流程
+  - 优化日志输出格式，添加状态图标提升可读性
+
+### 修复
 - **SQL注入安全问题**：修复 `database.py` 和 `database_mysql.py` 中的SQL注入风险，使用参数化查询替代字符串拼接
 - **Worker异常处理缺陷**：修复队列任务异常时 `task_done` 未调用导致的队列挂起问题，使用 try/finally 确保每次 get() 都对应一次 task_done()
 - **TimeoutError捕获优化**：将 `TimeoutError` 改为 `asyncio.TimeoutError`，避免掩盖无关的超时问题
