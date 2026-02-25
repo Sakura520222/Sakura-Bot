@@ -30,5 +30,18 @@
       "enabled": true,
       "send_to_channel": false
     }
+  },
+  "comment_welcome": {
+    "default": {
+      "enabled": true,
+      "welcome_message": "comment_welcome.message",
+      "button_text": "comment_welcome.button",
+      "button_action": "request_summary"
+    }
+  },
+  "channel_comment_welcome": {
+    "https://t.me/example_channel1": {
+      "enabled": true
+    }
   }
 }

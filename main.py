@@ -25,6 +25,11 @@ from telethon.tl.types import BotCommand, BotCommandScopeDefault
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from core.channel_comment_welcome import (
+    get_comment_welcome_handler,
+    handle_summary_request_callback,
+    initialize_comment_welcome,
+)
 from core.command_handlers import (
     handle_add_channel,
     handle_ai_config_input,
@@ -59,6 +64,11 @@ from core.command_handlers import (
     handle_shutdown,
     handle_start,
 )
+from core.command_handlers.comment_welcome_commands import (
+    handle_delete_comment_welcome,
+    handle_set_comment_welcome,
+    handle_show_comment_welcome,
+)
 from core.command_handlers.qa_control_commands import (
     handle_qa_restart,
     handle_qa_start,
@@ -91,7 +101,7 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.6.3"
+__version__ = "1.6.4"
 
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,
@@ -106,51 +116,16 @@ from core.process_manager import start_qa_bot, stop_qa_bot
 
 
 async def graceful_shutdown_resources():
-    """优雅关闭所有资源"""
-    logger.info("开始关闭所有资源...")
+    """优雅关闭所有资源（已废弃，请使用 core.shutdown_manager.ShutdownManager）
 
-    # 1. 停止问答Bot
-    logger.info("停止问答Bot...")
-    stop_qa_bot()
-
-    # 2. 停止调度器
-    from core.config import get_scheduler_instance
-
-    scheduler = get_scheduler_instance()
-    if scheduler and scheduler.running:
-        logger.info("停止调度器...")
-        scheduler.shutdown(wait=False)
-
-    # 3. 关闭数据库连接池
-    db_manager = get_db_manager()
-    if hasattr(db_manager, "close") and asyncio.iscoroutinefunction(db_manager.close):
-        logger.info("关闭数据库连接池...")
-        try:
-            await db_manager.close()
-        except Exception as e:
-            logger.error(f"关闭数据库连接池时出错: {type(e).__name__}: {e}")
-
-    # 4. 断开 Telethon 客户端
+    为了向后兼容，保留此函数但重定向到新的关机管理器
+    """
+    from core.shutdown_manager import get_shutdown_manager
     from core.telegram_client import get_active_client
 
+    shutdown_manager = get_shutdown_manager()
     client = get_active_client()
-    if client and client.is_connected():
-        logger.info("断开Telegram客户端...")
-        try:
-            await client.disconnect()
-        except Exception as e:
-            logger.error(f"断开Telegram客户端时出错: {type(e).__name__}: {e}")
-
-    # 5. 等待所有待处理的任务完成（最多3秒）
-    logger.info("等待待处理任务完成...")
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if tasks:
-        try:
-            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=3.0)
-        except TimeoutError:
-            logger.warning(f"部分任务未能在超时前完成，剩余 {len(tasks)} 个任务")
-
-    logger.info("所有资源已关闭")
+    await shutdown_manager.graceful_shutdown(client=client)
 
 
 async def send_startup_message(client):
@@ -510,6 +485,20 @@ async def main():
         # 10. 语言设置命令
         client.add_event_handler(handle_language, NewMessage(pattern="/language|/语言"))
 
+        # 14. 评论区欢迎配置命令
+        client.add_event_handler(
+            handle_show_comment_welcome,
+            NewMessage(pattern="/showcommentwelcome|/show_comment_welcome|/查看评论区欢迎"),
+        )
+        client.add_event_handler(
+            handle_set_comment_welcome,
+            NewMessage(pattern="/setcommentwelcome|/set_comment_welcome|/设置评论区欢迎"),
+        )
+        client.add_event_handler(
+            handle_delete_comment_welcome,
+            NewMessage(pattern="/deletecommentwelcome|/delete_comment_welcome|/删除评论区欢迎"),
+        )
+
         # 11. 数据库迁移命令
         client.add_event_handler(
             handle_migrate_check, NewMessage(pattern="/migrate_check|/迁移检查")
@@ -583,6 +572,28 @@ async def main():
         )
         logger.info("请求处理回调处理器已注册")
 
+        # 初始化频道评论区欢迎消息功能
+        logger.info("初始化频道评论区欢迎消息功能...")
+        try:
+            await initialize_comment_welcome(client, db_manager)
+
+            # 添加评论欢迎消息监听器
+            comment_welcome_handler = get_comment_welcome_handler()
+            client.add_event_handler(
+                comment_welcome_handler.handle_discussion_message,
+                NewMessage(func=lambda e: e.is_channel and not e.out),
+            )
+            logger.info("频道评论区欢迎消息监听器已注册")
+
+            # 添加申请周报总结按钮回调处理器
+            client.add_event_handler(
+                handle_summary_request_callback,
+                CallbackQuery(func=lambda e: e.data and e.data.startswith(b"req_summary:")),
+            )
+            logger.info("申请周报总结按钮回调处理器已注册")
+        except Exception as e:
+            logger.error(f"初始化频道评论区欢迎消息功能失败: {type(e).__name__}: {e}")
+
         logger.info("命令处理器添加完成")
 
         # 启动客户端
@@ -636,6 +647,10 @@ async def main():
             BotCommand(command="stats", description="查看统计数据"),
             # 9. 语言设置命令
             BotCommand(command="language", description="切换界面语言"),
+            # 14. 评论区欢迎配置命令
+            BotCommand(command="showcommentwelcome", description="查看频道评论区欢迎配置"),
+            BotCommand(command="setcommentwelcome", description="设置频道评论区欢迎配置"),
+            BotCommand(command="deletecommentwelcome", description="删除频道评论区欢迎配置"),
             # 10. 数据库迁移命令
             BotCommand(command="migrate_check", description="检查数据库迁移准备状态"),
             BotCommand(command="migrate_start", description="开始数据库迁移"),
@@ -736,46 +751,6 @@ async def main():
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
 
-        # 检查关机标记文件
-        SHUTDOWN_FLAG_FILE = ".shutdown_flag"
-        if await asyncio.to_thread(os.path.exists, SHUTDOWN_FLAG_FILE):
-            try:
-                async with aiofiles.open(SHUTDOWN_FLAG_FILE) as f:
-                    shutdown_user = (await f.read()).strip()
-
-                logger.info(f"检测到关机标记，操作者: {shutdown_user}")
-
-                # 向所有管理员发送关机通知
-                for admin_id in ADMIN_LIST:
-                    try:
-                        await client.send_message(
-                            admin_id, "🤖 机器人已执行关机命令，正在停止运行...", link_preview=False
-                        )
-                        logger.info(f"已向管理员 {admin_id} 发送关机通知")
-                    except Exception as e:
-                        logger.error(f"向管理员 {admin_id} 发送关机通知失败: {e}")
-
-                # 删除关机标记文件
-                await asyncio.to_thread(os.remove, SHUTDOWN_FLAG_FILE)
-                logger.info("关机标记文件已删除")
-
-                # 等待消息发送完成
-                await asyncio.sleep(2)
-
-                # 执行关机
-                logger.info("执行关机操作...")
-                sys.exit(0)
-
-            except Exception as e:
-                logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
-                # 即使出错也尝试删除关机标记文件，避免遗留
-                try:
-                    if await asyncio.to_thread(os.path.exists, SHUTDOWN_FLAG_FILE):
-                        await asyncio.to_thread(os.remove, SHUTDOWN_FLAG_FILE)
-                        logger.info("出错后已清理关机标记文件")
-                except Exception as cleanup_error:
-                    logger.error(f"清理关机标记文件时出错: {cleanup_error}")
-
         # 保持客户端运行
         await client.run_until_disconnected()
     except KeyboardInterrupt:
@@ -854,6 +829,12 @@ if __name__ == "__main__":
         except (AttributeError, ValueError) as e:
             logger.warning(f"无法注册 SIGINT 信号处理器: {e}")
 
+        # 设置全局关机事件
+        from core.config import set_shutdown_event
+
+        set_shutdown_event(shutdown_event)
+        logger.info("全局关机事件已设置到 config 模块")
+
         # 启动问答Bot
         start_qa_bot()
 
@@ -885,7 +866,13 @@ if __name__ == "__main__":
                 logger.info("执行优雅关闭...")
                 await graceful_shutdown_resources()
 
-                # 停止事件循环
+                # 退出程序（使用 os._exit 确保立即退出并关闭控制台）
+                from core.shutdown_manager import get_shutdown_manager
+
+                shutdown_manager = get_shutdown_manager()
+                shutdown_manager.perform_exit(0)
+
+                # 这行代码不会被执行到，因为 perform_exit 会立即终止进程
                 loop.stop()
 
             loop.run_until_complete(run_with_shutdown())

@@ -2350,6 +2350,193 @@ class DatabaseManagerLegacy:
             logger.error(f"获取问答Bot统计信息失败: {type(e).__name__}: {e}", exc_info=True)
             return {}
 
+    # ============ 周报请求管理方法 ============
+
+    def add_summary_request(
+        self,
+        channel_id: str,
+        message_id: int,
+        request_type: str = "manual",
+        requested_by: int = None,
+    ) -> int | None:
+        """
+        添加周报请求记录
+
+        Args:
+            channel_id: 频道URL
+            message_id: 消息ID
+            request_type: 请求类型
+            requested_by: 请求者用户ID
+
+        Returns:
+            请求ID，失败返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            params_json = json.dumps(
+                {"message_id": message_id, "request_type": request_type},
+                ensure_ascii=False,
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_queue
+                (request_type, requested_by, target_channel, params, status)
+                VALUES (?, ?, ?, ?, 'pending')
+            """,
+                ("summary_request", requested_by, channel_id, params_json),
+            )
+
+            conn.commit()
+            request_id = cursor.lastrowid
+            conn.close()
+
+            logger.info(
+                f"添加周报请求: id={request_id}, channel={channel_id}, msg_id={message_id}, user={requested_by}"
+            )
+            return request_id
+
+        except Exception as e:
+            logger.error(f"添加周报请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def check_pending_summary_request(self, channel_id: str) -> bool:
+        """
+        检查指定频道是否有待处理的周报请求
+
+        Args:
+            channel_id: 频道URL
+
+        Returns:
+            是否有待处理的请求
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 检查最近10分钟内是否有pending状态的请求
+            ten_minutes_ago = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM request_queue
+                WHERE request_type = 'summary_request'
+                AND target_channel = ?
+                AND status = 'pending'
+                AND created_at > ?
+            """,
+                (channel_id, ten_minutes_ago),
+            )
+
+            count = cursor.fetchone()[0]
+            conn.close()
+
+            return count > 0
+
+        except Exception as e:
+            logger.error(f"检查待处理周报请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_summary_requests(
+        self, channel_id: str = None, status: str = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        获取周报请求列表
+
+        Args:
+            channel_id: 可选，频道URL过滤
+            status: 可选，状态过滤
+            limit: 返回记录数量
+
+        Returns:
+            请求列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            conditions = ["request_type = ?"]
+            params = ["summary_request"]
+
+            if channel_id:
+                conditions.append("target_channel = ?")
+                params.append(channel_id)
+
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+
+            where_clause = " AND ".join(conditions)
+
+            cursor.execute(
+                f"""
+                SELECT * FROM request_queue
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ?
+            """,
+                params + [limit],
+            )
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            requests = []
+            for row in rows:
+                req = dict(row)
+                # 解析JSON字段
+                if req.get("params"):
+                    try:
+                        req["params"] = json.loads(req["params"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                requests.append(req)
+
+            return requests
+
+        except Exception as e:
+            logger.error(f"获取周报请求列表失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def update_summary_request_status(self, request_id: int, status: str) -> bool:
+        """
+        更新周报请求状态
+
+        Args:
+            request_id: 请求ID
+            status: 新状态
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(UTC).isoformat()
+
+            cursor.execute(
+                """
+                UPDATE request_queue
+                SET status = ?, processed_at = ?
+                WHERE id = ? AND request_type = 'summary_request'
+            """,
+                (status, now, request_id),
+            )
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"更新周报请求状态: id={request_id}, status={status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"更新周报请求状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
 
 # 创建全局数据库管理器实例
 db_manager = None

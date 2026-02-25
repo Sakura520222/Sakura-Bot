@@ -16,6 +16,60 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+  ## [1.6.4] - 2026-02-25
+
+### 新增
+- **频道评论区欢迎配置系统**：实现可配置的评论区欢迎消息功能，支持频道级自定义配置和默认配置
+
+### 重构
+- **重启和关机命令统一使用关机管理器**：重构 `handle_restart` 和 `handle_shutdown`，统一关机逻辑
+  - 将关机逻辑统一迁移到关机管理器
+  - 新增 `trigger_shutdown` 函数，统一处理 Ctrl+C 和命令触发的关机流程
+  - 简化 PM2 环境检测逻辑，使用 `shutdown_manager.detect_pm2()` 替代原有实现
+  - 移除 `handle_restart` 中的优雅关闭资源和进程创建代码，改为复用关机流程
+  - 优化日志输出格式，添加状态图标提升可读性
+
+### 修复
+- **subprocess安全警告修复**：修复了 `handle_restart` 中 `subprocess.Popen` 的安全警告（Ruff S603）
+  - **问题**：Ruff/Sourcery AI 警告 `subprocess.Popen` 可能存在命令注入风险
+  - **分析**：当前代码使用列表形式（list-based），`shell=False`（默认值），实际上是安全的
+  - **修复**：
+    - 添加完整的函数文档字符串，说明安全设计原理
+    - 显式重定向标准流到 `DEVNULL`，防止新进程挂起旧进程的 IO 句柄
+    - 使用 `# noqa: S603` 标记，告诉审计工具此处的变量组合已经过人工审计
+    - 提升进程创建的稳定性和资源管理
+  - **影响文件**：`core/command_handlers/other_commands.py` - `create_new_process()` 函数
+  - **修复效果**：
+    - ✅ Ruff 检查全部通过，无安全警告
+    - ✅ 重启功能更稳定，避免 IO 句柄泄漏
+    - ✅ 代码可维护性提升，安全设计清晰可查
+  - 将关机逻辑统一迁移到关机管理器
+  - 新增 `trigger_shutdown` 函数，统一处理 Ctrl+C 和命令触发的关机流程
+  - 简化 PM2 环境检测逻辑，使用 `shutdown_manager.detect_pm2()` 替代原有实现
+  - 移除 `handle_restart` 中的优雅关闭资源和进程创建代码，改为复用关机流程
+  - 优化日志输出格式，添加状态图标提升可读性
+
+### 修复
+- **SQL注入安全问题**：修复 `database.py` 和 `database_mysql.py` 中的SQL注入风险，使用参数化查询替代字符串拼接
+- **Worker异常处理缺陷**：修复队列任务异常时 `task_done` 未调用导致的队列挂起问题，使用 try/finally 确保每次 get() 都对应一次 task_done()
+- **TimeoutError捕获优化**：将 `TimeoutError` 改为 `asyncio.TimeoutError`，避免掩盖无关的超时问题
+- **配置辅助函数异步化**：将 `core/channel_comment_welcome_config.py` 中的配置函数改为异步实现，使用 `asyncio.to_thread()` 包装同步IO操作
+- **测试改进**：优化 `tests/test_channel_comment_welcome_config.py` 测试，使用 monkeypatch 模拟配置操作，补充测试覆盖率
+
+### 改进
+- **代码质量**：运行 Ruff 检查并修复所有问题（UP041、W292等）
+- **频道评论自动欢迎功能**：
+  - 异步 Task Queue 机制，智能延迟处理防止 FloodWait 限流
+  - 讨论组消息监听器，精准识别频道转发消息
+  - 幂等性控制，使用 grouped_id 去重防止重复发送
+  - 欢迎消息发送支持 i18n，包含内联按钮"申请周报总结"
+  - 按钮回调处理，自动添加周报请求到数据库
+  - 数据库集成，支持周报请求持久化存储
+- **配置管理模块**：支持频道级配置、参数验证、Callback Data 长度验证
+- **命令处理器**：新增 `/showcommentwelcome`、`/setcommentwelcome`、`deletecommentwelcome` 命令，支持中英文别名
+- **国际化支持**：新增 15 个翻译键（中英文）
+- **单元测试**：新增 `tests/test_channel_comment_welcome_config.py`，支持 pytest-asyncio 异步测试
+
 ## [1.6.3] - 2026-02-25
 
 ### 修复

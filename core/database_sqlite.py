@@ -278,3 +278,31 @@ class SQLiteManager(DatabaseManagerLegacy):
     async def delete_old_conversations(self, days: int = 7) -> int:
         """异步包装：删除旧的对话记录"""
         return await asyncio.to_thread(super().delete_old_conversations, days)
+
+    # ============ 周报请求管理方法（异步包装） ============
+
+    async def add_summary_request(
+        self,
+        channel_id: str,
+        message_id: int,
+        request_type: str = "manual",
+        requested_by: int = None,
+    ) -> int | None:
+        """异步包装：添加周报请求记录"""
+        return await asyncio.to_thread(
+            super().add_summary_request, channel_id, message_id, request_type, requested_by
+        )
+
+    async def check_pending_summary_request(self, channel_id: str) -> bool:
+        """异步包装：检查指定频道是否有待处理的周报请求"""
+        return await asyncio.to_thread(super().check_pending_summary_request, channel_id)
+
+    async def get_summary_requests(
+        self, channel_id: str = None, status: str = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """异步包装：获取周报请求列表"""
+        return await asyncio.to_thread(super().get_summary_requests, channel_id, status, limit)
+
+    async def update_summary_request_status(self, request_id: int, status: str) -> bool:
+        """异步包装：更新周报请求状态"""
+        return await asyncio.to_thread(super().update_summary_request_status, request_id, status)
