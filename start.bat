@@ -2,6 +2,10 @@
 chcp 65001 >nul
 title Sakura Bot
 
+:: Set virtual environment Python path
+set "PYTHON_EXE=venv\Scripts\python.exe"
+set "PIP_EXE=venv\Scripts\pip.exe"
+
 if not exist "venv\" (
     echo [INFO] Creating virtual environment...
     python -m venv venv
@@ -14,19 +18,20 @@ if not exist "venv\" (
     echo.
 )
 
-echo [INFO] Activating virtual environment...
-call venv\Scripts\activate.bat
-if errorlevel 1 (
-    echo [ERROR] Failed to activate virtual environment!
+:: Verify virtual environment Python exists
+if not exist "%PYTHON_EXE%" (
+    echo [ERROR] Virtual environment Python not found at: %PYTHON_EXE%
     pause
     exit /b 1
 )
 
+echo [INFO] Using virtual environment Python: %PYTHON_EXE%
+
 echo [INFO] Checking dependencies...
-python -c "import telegram" 2>nul
+"%PYTHON_EXE%" -c "import telegram" 2>nul
 if errorlevel 1 (
     echo [WARNING] Dependencies not installed, installing...
-    pip install -r requirements.txt
+    "%PIP_EXE%" install -r requirements.txt
     if errorlevel 1 (
         echo [ERROR] Failed to install dependencies!
         pause
@@ -38,7 +43,7 @@ if errorlevel 1 (
 
 echo [INFO] Starting Sakura Bot...
 echo.
-python main.py
+"%PYTHON_EXE%" main.py
 
 echo.
 echo [INFO] Program exited

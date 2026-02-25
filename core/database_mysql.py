@@ -1901,6 +1901,141 @@ class MySQLManager(DatabaseManagerBase):
             logger.error(f"执行查询失败: {type(e).__name__}: {e}", exc_info=True)
             raise
 
+    # ============ 周报请求管理方法 ============
+
+    async def add_summary_request(
+        self,
+        channel_id: str,
+        message_id: int,
+        request_type: str = "manual",
+        requested_by: int = None,
+    ) -> int | None:
+        """添加周报请求记录"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO request_queue
+                        (request_type, requested_by, target_channel, params, status)
+                        VALUES (%s, %s, %s, %s, 'pending')
+                    """,
+                        (
+                            "summary_request",
+                            requested_by,
+                            channel_id,
+                            json.dumps(
+                                {"message_id": message_id, "request_type": request_type},
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    )
+
+                    await conn.commit()
+                    request_id = cursor.lastrowid
+
+                    logger.info(
+                        f"添加周报请求: id={request_id}, channel={channel_id}, msg_id={message_id}, user={requested_by}"
+                    )
+                    return request_id
+
+        except Exception as e:
+            logger.error(f"添加周报请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    async def check_pending_summary_request(self, channel_id: str) -> bool:
+        """检查指定频道是否有待处理的周报请求"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 检查最近10分钟内是否有pending状态的请求
+                    await cursor.execute(
+                        """
+                        SELECT COUNT(*) FROM request_queue
+                        WHERE request_type = 'summary_request'
+                        AND target_channel = %s
+                        AND status = 'pending'
+                        AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+                    """,
+                        (channel_id,),
+                    )
+
+                    count = (await cursor.fetchone())[0]
+                    return count > 0
+
+        except Exception as e:
+            logger.error(f"检查待处理周报请求失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def get_summary_requests(
+        self, channel_id: str = None, status: str = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """获取周报请求列表"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    conditions = ["request_type = 'summary_request'"]
+                    params = []
+
+                    if channel_id:
+                        conditions.append("target_channel = %s")
+                        params.append(channel_id)
+
+                    if status:
+                        conditions.append("status = %s")
+                        params.append(status)
+
+                    where_clause = " AND ".join(conditions)
+
+                    await cursor.execute(
+                        f"""
+                        SELECT * FROM request_queue
+                        WHERE {where_clause}
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                    """,
+                        params + [limit],
+                    )
+
+                    requests = await cursor.fetchall()
+
+                    # 解析JSON字段
+                    for req in requests:
+                        if req.get("params"):
+                            try:
+                                req["params"] = json.loads(req["params"])
+                            except Exception:
+                                pass
+
+                    return requests
+
+        except Exception as e:
+            logger.error(f"获取周报请求列表失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    async def update_summary_request_status(self, request_id: int, status: str) -> bool:
+        """更新周报请求状态"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        UPDATE request_queue
+                        SET status = %s, processed_at = NOW()
+                        WHERE id = %s AND request_type = 'summary_request'
+                    """,
+                        (status, request_id),
+                    )
+
+                    await conn.commit()
+
+                    logger.info(f"更新周报请求状态: id={request_id}, status={status}")
+                    return True
+
+        except Exception as e:
+            logger.error(f"更新周报请求状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
     async def close(self):
         """关闭数据库连接池"""
         if self.pool:

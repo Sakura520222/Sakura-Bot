@@ -339,3 +339,33 @@ class DatabaseManagerBase(ABC):
     def close(self):
         """关闭数据库连接"""
         pass
+
+    # ============ 周报请求管理方法 ============
+
+    @abstractmethod
+    def add_summary_request(
+        self,
+        channel_id: str,
+        message_id: int,
+        request_type: str = "manual",
+        requested_by: int = None,
+    ) -> int | None:
+        """添加周报请求记录"""
+        pass
+
+    @abstractmethod
+    def check_pending_summary_request(self, channel_id: str) -> bool:
+        """检查指定频道是否有待处理的周报请求"""
+        pass
+
+    @abstractmethod
+    def get_summary_requests(
+        self, channel_id: str = None, status: str = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """获取周报请求列表"""
+        pass
+
+    @abstractmethod
+    def update_summary_request_status(self, request_id: int, status: str) -> bool:
+        """更新周报请求状态"""
+        pass

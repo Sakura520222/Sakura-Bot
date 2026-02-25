@@ -184,6 +184,21 @@ python main.py
 | `/setchannelpoll` | `/设置频道投票配置` | 设置频道投票配置 | `/setchannelpoll` |
 | `/deletechannelpoll` | `/删除频道投票配置` | 删除频道投票配置 | `/deletechannelpoll` |
 
+#### 评论区欢迎配置
+
+| 命令 | 别名 | 功能 | 示例 |
+|------|------|------|------|
+| `/showcommentwelcome` | `/查看评论区欢迎` | 查看频道评论区欢迎配置 | `/showcommentwelcome` |
+| `/setcommentwelcome` | `/设置评论区欢迎` | 设置频道评论区欢迎配置 | `/setcommentwelcome` |
+| `/deletecommentwelcome` | `/删除评论区欢迎` | 删除频道评论区欢迎配置 | `/deletecommentwelcome` |
+
+**功能说明**：
+- 为每个频道单独配置评论区欢迎消息
+- 支持自定义欢迎消息内容和按钮文本
+- 可为频道禁用欢迎消息功能
+- 默认消息："🌸 评论区已开放，快来抢占沙发吧～"
+- 默认按钮："申请周报总结"
+
 #### 系统控制
 
 | 命令 | 别名 | 功能 | 示例 |

@@ -25,6 +25,11 @@ from telethon.tl.types import BotCommand, BotCommandScopeDefault
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from core.channel_comment_welcome import (
+    get_comment_welcome_handler,
+    handle_summary_request_callback,
+    initialize_comment_welcome,
+)
 from core.command_handlers import (
     handle_add_channel,
     handle_ai_config_input,
@@ -59,6 +64,11 @@ from core.command_handlers import (
     handle_shutdown,
     handle_start,
 )
+from core.command_handlers.comment_welcome_commands import (
+    handle_delete_comment_welcome,
+    handle_set_comment_welcome,
+    handle_show_comment_welcome,
+)
 from core.command_handlers.qa_control_commands import (
     handle_qa_restart,
     handle_qa_start,
@@ -91,7 +101,7 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.6.3"
+__version__ = "1.6.4"
 
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,
@@ -510,6 +520,20 @@ async def main():
         # 10. 语言设置命令
         client.add_event_handler(handle_language, NewMessage(pattern="/language|/语言"))
 
+        # 14. 评论区欢迎配置命令
+        client.add_event_handler(
+            handle_show_comment_welcome,
+            NewMessage(pattern="/showcommentwelcome|/show_comment_welcome|/查看评论区欢迎"),
+        )
+        client.add_event_handler(
+            handle_set_comment_welcome,
+            NewMessage(pattern="/setcommentwelcome|/set_comment_welcome|/设置评论区欢迎"),
+        )
+        client.add_event_handler(
+            handle_delete_comment_welcome,
+            NewMessage(pattern="/deletecommentwelcome|/delete_comment_welcome|/删除评论区欢迎"),
+        )
+
         # 11. 数据库迁移命令
         client.add_event_handler(
             handle_migrate_check, NewMessage(pattern="/migrate_check|/迁移检查")
@@ -583,6 +607,28 @@ async def main():
         )
         logger.info("请求处理回调处理器已注册")
 
+        # 初始化频道评论区欢迎消息功能
+        logger.info("初始化频道评论区欢迎消息功能...")
+        try:
+            await initialize_comment_welcome(client, db_manager)
+
+            # 添加评论欢迎消息监听器
+            comment_welcome_handler = get_comment_welcome_handler()
+            client.add_event_handler(
+                comment_welcome_handler.handle_discussion_message,
+                NewMessage(func=lambda e: e.is_channel and not e.out),
+            )
+            logger.info("频道评论区欢迎消息监听器已注册")
+
+            # 添加申请周报总结按钮回调处理器
+            client.add_event_handler(
+                handle_summary_request_callback,
+                CallbackQuery(func=lambda e: e.data and e.data.startswith(b"req_summary:")),
+            )
+            logger.info("申请周报总结按钮回调处理器已注册")
+        except Exception as e:
+            logger.error(f"初始化频道评论区欢迎消息功能失败: {type(e).__name__}: {e}")
+
         logger.info("命令处理器添加完成")
 
         # 启动客户端
@@ -636,6 +682,10 @@ async def main():
             BotCommand(command="stats", description="查看统计数据"),
             # 9. 语言设置命令
             BotCommand(command="language", description="切换界面语言"),
+            # 14. 评论区欢迎配置命令
+            BotCommand(command="showcommentwelcome", description="查看频道评论区欢迎配置"),
+            BotCommand(command="setcommentwelcome", description="设置频道评论区欢迎配置"),
+            BotCommand(command="deletecommentwelcome", description="删除频道评论区欢迎配置"),
             # 10. 数据库迁移命令
             BotCommand(command="migrate_check", description="检查数据库迁移准备状态"),
             BotCommand(command="migrate_start", description="开始数据库迁移"),

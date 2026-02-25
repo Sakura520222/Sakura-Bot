@@ -526,6 +526,28 @@ MESSAGE_ZH_CN = {
     "database.clear.failed": "清空数据库失败",
     "database.clear.no_pending": "没有待确认的清空操作",
     "database.clear.cancelled": "已取消清空数据库操作",
+    # ========== Comment Welcome Message ==========
+    "comment_welcome.message": "🌸 评论区已开放，快来抢占沙发吧～",
+    "comment_welcome.button": "申请周报总结",
+    "comment_welcome.already_requested": "正在努力总结中，请稍候",
+    "comment_welcome.request_sent": "已收到您的请求，我们会尽快处理",
+    # ========== Comment Welcome Config ==========
+    "comment_welcome.config.title": "📢 评论区欢迎配置",
+    "comment_welcome.config.channel": "频道 {channel}",
+    "comment_welcome.config.status": "• 状态",
+    "comment_welcome.config.message": "• 欢迎消息",
+    "comment_welcome.config.button": "• 按钮文本",
+    "comment_welcome.config.action": "• 按钮行为",
+    "comment_welcome.config.enabled": "✅ 已启用",
+    "comment_welcome.config.disabled": "❌ 已禁用",
+    "comment_welcome.config.no_config": "💡 该频道未配置，使用默认设置",
+    "comment_welcome.config.all_title": "所有频道的评论区欢迎配置",
+    "comment_welcome.config.set_success": "✅ 已成功设置频道 {channel} 的评论区欢迎配置",
+    "comment_welcome.config.set_failed": "❌ 设置失败：{error}",
+    "comment_welcome.config.delete_success": "✅ 已删除频道 {channel} 的评论区欢迎配置",
+    "comment_welcome.config.delete_failed": "❌ 删除失败：{error}",
+    "comment_welcome.config.invalid_params": "❌ 参数无效",
+    "comment_welcome.config.usage": '用法：/setcommentwelcome <channel> <enabled> [welcome_message] [button_text]\n\n示例：\n/setcommentwelcome channel1 true\n/setcommentwelcome channel1 true "欢迎来到评论区" "申请总结"\n/setcommentwelcome channel1 false',
 }
 
 # 英文翻译
@@ -1027,6 +1049,28 @@ MESSAGE_EN_US = {
     "database.clear.failed": "Database clear failed",
     "database.clear.no_pending": "No pending clear operation",
     "database.clear.cancelled": "Database clear operation cancelled",
+    # ========== Comment Welcome Message ==========
+    "comment_welcome.message": "🌸Comments section is now open, come and grab a seat~",
+    "comment_welcome.button": "Request Weekly Summary",
+    "comment_welcome.already_requested": "Working on the summary, please wait",
+    "comment_welcome.request_sent": "Your request has been received, we will process it ASAP",
+    # ========== Comment Welcome Config ==========
+    "comment_welcome.config.title": "📢 Comment Welcome Configuration",
+    "comment_welcome.config.channel": "Channel {channel}",
+    "comment_welcome.config.status": "• Status",
+    "comment_welcome.config.message": "• Welcome Message",
+    "comment_welcome.config.button": "• Button Text",
+    "comment_welcome.config.action": "• Button Action",
+    "comment_welcome.config.enabled": "✅ Enabled",
+    "comment_welcome.config.disabled": "❌ Disabled",
+    "comment_welcome.config.no_config": "💡 Channel not configured, using default settings",
+    "comment_welcome.config.all_title": "Comment Welcome Configuration for All Channels",
+    "comment_welcome.config.set_success": "✅ Successfully set comment welcome configuration for channel {channel}",
+    "comment_welcome.config.set_failed": "❌ Setting failed: {error}",
+    "comment_welcome.config.delete_success": "✅ Successfully deleted comment welcome configuration for channel {channel}",
+    "comment_welcome.config.delete_failed": "❌ Deletion failed: {error}",
+    "comment_welcome.config.invalid_params": "❌ Invalid parameters",
+    "comment_welcome.config.usage": 'Usage: /setcommentwelcome <channel> <enabled> [welcome_message] [button_text]\n\nExamples:\n/setcommentwelcome channel1 true\n/setcommentwelcome channel1 true "Welcome to comments" "Request Summary"\n/setcommentwelcome channel1 false',
 }
 
 
