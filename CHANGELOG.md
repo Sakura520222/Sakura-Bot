@@ -16,114 +16,39 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.6.4] - 2026-02-25
+  ## [1.6.4] - 2026-02-25
 
 ### 新增
-- **频道评论区欢迎配置系统**：实现可配置的评论区欢迎消息功能
+- **频道评论区欢迎配置系统**：实现可配置的评论区欢迎消息功能，支持频道级自定义配置和默认配置
+
+### 重构
+- **重启和关机命令统一使用关机管理器**：重构 `handle_restart` 和 `handle_shutdown`，统一关机逻辑
+  - 将关机逻辑统一迁移到关机管理器
+  - 新增 `trigger_shutdown` 函数，统一处理 Ctrl+C 和命令触发的关机流程
+  - 简化 PM2 环境检测逻辑，使用 `shutdown_manager.detect_pm2()` 替代原有实现
+  - 移除 `handle_restart` 中的优雅关闭资源和进程创建代码，改为复用关机流程
+  - 优化日志输出格式，添加状态图标提升可读性
 
 ### 修复
-- **SQL注入安全问题**（安全）：修复2处SQL字符串拼接导致的安全隐患
-  - **database.py**: 修复 `get_summary_requests()` 中的SQL注入风险，将不受信任的输入与原始SQL查询拼接改为使用TextualSQL预编译语句
-  - **database_mysql.py**: 修复 `get_summary_requests()` 中的SQL注入风险，使用 `%s` 参数化查询替换字符串拼接
-  - **影响**：防止恶意用户通过构造特殊输入执行任意SQL命令
-  - **参考**：Sourcery AI安全建议
-
-- **Worker异常处理缺陷**（Bug）：修复队列任务异常时task_done未调用的问题
-  - **问题**：`_worker` 方法中只有成功时才调用 `task_done()`，异常时不调用导致队列挂起
-  - **修复**：使用 try/finally 包裹处理逻辑，确保每次 get() 都对应一次 task_done()
-  - **影响**：防止队列join()永久挂起和未完成任务计数错误
-  - **参考**：Sourcery AI Bug风险提示
-
-- **TimeoutError捕获优化**（代码质量）：将裸的 `TimeoutError` 改为 `asyncio.TimeoutError`
-  - **问题**：捕获更宽泛的 `TimeoutError` 可能掩盖其他超时错误
-  - **修复**：明确捕获 `asyncio.TimeoutError`，使行为更精确
-  - **影响**：避免掩盖无关的超时问题
-  - **参考**：Sourcery AI代码建议
-
-- **配置辅助函数异步化**（异步规范）：将配置函数改为异步实现
-  - **修改模块**：`core/channel_comment_welcome_config.py`
-  - **变更**：`get_channel_comment_welcome_config()`, `set_channel_comment_welcome_config()`, `delete_channel_comment_welcome_config()`, `get_all_comment_welcome_configs()` 改为异步
-  - **实现**：使用 `asyncio.to_thread()` 包装同步IO操作，避免阻塞事件循环
-  - **影响**：符合项目异步编程规范，确保所有IO操作非阻塞
-
-- **测试改进**（测试质量）：改进测试隔离和覆盖
-  - **使用monkeypatch模拟**：`tests/test_channel_comment_welcome_config.py` 使用 monkeypatch 模拟配置文件操作，避免读写真实文件
-  - **补充测试覆盖**：新增 `TestGetAllCommentWelcomeConfigs` 测试类，补充 `get_all_comment_welcome_configs()` 的测试用例
-  - **异步测试**：所有测试使用 `@pytest.mark.asyncio` 和 `async def`，匹配异步API
-  - **影响**：测试更安全、更独立、覆盖更全面
+- **SQL注入安全问题**：修复 `database.py` 和 `database_mysql.py` 中的SQL注入风险，使用参数化查询替代字符串拼接
+- **Worker异常处理缺陷**：修复队列任务异常时 `task_done` 未调用导致的队列挂起问题，使用 try/finally 确保每次 get() 都对应一次 task_done()
+- **TimeoutError捕获优化**：将 `TimeoutError` 改为 `asyncio.TimeoutError`，避免掩盖无关的超时问题
+- **配置辅助函数异步化**：将 `core/channel_comment_welcome_config.py` 中的配置函数改为异步实现，使用 `asyncio.to_thread()` 包装同步IO操作
+- **测试改进**：优化 `tests/test_channel_comment_welcome_config.py` 测试，使用 monkeypatch 模拟配置操作，补充测试覆盖率
 
 ### 改进
-- **代码质量**：运行Ruff检查并修复所有问题
-  - 修复 UP041: 使用 `TimeoutError` 替代 `asyncio.TimeoutError` 别名
-  - 修复 W292: 文件末尾添加换行符
-  - **结果**：All checks passed!
-  - **配置管理模块**（`core/channel_comment_welcome_config.py`）：
-    - 支持为每个频道单独配置欢迎消息
-    - 默认配置和频道特定配置分离
-    - 异步配置保存和读取
-    - Callback Data 长度验证（64字节限制）
-    - 完整的参数验证（按钮文本长度、按钮行为等）
-  - **命令处理器**（`core/command_handlers/comment_welcome_commands.py`）：
-    - `/showcommentwelcome` - 查看评论区欢迎配置
-      - 查看所有频道配置或指定频道配置
-      - 显示是否为自定义配置
-      - 仅管理员可使用
-    - `/setcommentwelcome` - 设置评论区欢迎配置
-      - 支持启用/禁用功能
-      - 支持自定义欢迎消息和按钮文本
-      - 智能参数解析（支持多种启用/禁用表达）
-      - 参数验证和错误提示
-    - `/deletecommentwelcome` - 删除评论区欢迎配置
-      - 删除后恢复使用默认配置
-      - 显示删除后的默认配置
-    - 支持中英文命令别名
-  - **欢迎消息模块增强**（`core/channel_comment_welcome.py`）：
-    - 集成配置管理模块
-    - 根据配置动态调整发送逻辑
-    - 支持禁用频道不发送欢迎消息
-    - 支持自定义消息内容和按钮文本
-    - 保持原有的异步队列机制和幂等性控制
-  - **配置文件示例更新**：
-    - `data/config.example.json` 添加评论区欢迎配置示例
-    - 包含默认配置和频道特定配置示例
-  - **国际化支持**：
-    - 中文语言包新增 15 个翻译键
-    - 英文语言包新增 15 个翻译键
-    - 覆盖所有命令提示、错误消息和配置显示
-  - **单元测试**：
-    - `tests/test_channel_comment_welcome_config.py` - 配置模块测试
-    - 测试用例覆盖：配置获取、设置、删除、验证
-    - 支持 pytest-asyncio 异步测试
-
-- **频道评论自动欢迎功能**：为主bot实现在每条频道消息的评论区自动发送欢迎消息
-  - **异步Task Queue机制**：使用asyncio.Queue实现消息队列，防止FloodWait限流
-    - 智能延迟处理，根据Telegram限流规则动态调整发送间隔
-    - 队列处理状态监控，实时显示待处理消息数量
-    - 优雅关闭机制，等待队列清空后再退出
-  - **讨论组消息监听器**：监听频道转发到讨论组的消息
-    - 精准识别频道消息的转发消息（fwd_from）
-    - 提取频道ID和消息ID，用于后续回复
-    - 异步事件处理，不阻塞主事件循环
-  - **幂等性控制**：使用grouped_id去重，防止重复发送
-    - 检查消息是否已被处理过
-    - 记录已处理消息的grouped_id
-    - 防止网络重试导致的重复发送
-  - **欢迎消息发送**：回复转发消息发送欢迎内容
-    - 使用reply_to参数回复原始转发消息
-    - 消息内容支持 i18n，默认："🌸 评论区已开放，快来抢占沙发吧～"
-    - 包含内联按钮"申请周报总结"（可自定义）
-  - **按钮回调处理**：处理用户点击按钮事件
-    - 数据编码：channel_id:message_id格式
-    - 自动添加周报请求到数据库
-    - 检查重复请求，10分钟内避免重复
-  - **数据库集成**：周报请求持久化存储
-    - 在数据库基类添加4个周报请求方法
-    - MySQL实现类添加异步方法
-    - SQLite实现类添加同步方法
-    - 支持查询、添加、更新状态操作
-  - **国际化支持**：中英文双语
-    - 添加评论欢迎相关翻译键
-    - 支持多语言提示信息
+- **代码质量**：运行 Ruff 检查并修复所有问题（UP041、W292等）
+- **频道评论自动欢迎功能**：
+  - 异步 Task Queue 机制，智能延迟处理防止 FloodWait 限流
+  - 讨论组消息监听器，精准识别频道转发消息
+  - 幂等性控制，使用 grouped_id 去重防止重复发送
+  - 欢迎消息发送支持 i18n，包含内联按钮"申请周报总结"
+  - 按钮回调处理，自动添加周报请求到数据库
+  - 数据库集成，支持周报请求持久化存储
+- **配置管理模块**：支持频道级配置、参数验证、Callback Data 长度验证
+- **命令处理器**：新增 `/showcommentwelcome`、`/setcommentwelcome`、`deletecommentwelcome` 命令，支持中英文别名
+- **国际化支持**：新增 15 个翻译键（中英文）
+- **单元测试**：新增 `tests/test_channel_comment_welcome_config.py`，支持 pytest-asyncio 异步测试
 
 ## [1.6.3] - 2026-02-25
 

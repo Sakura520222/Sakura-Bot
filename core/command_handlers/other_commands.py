@@ -137,58 +137,38 @@ async def handle_restart(event):
 
     logger.info(f"开始执行 {command} 命令")
 
-    # 检测是否在 PM2 环境下运行
-    # PM2 会注入 PM2_HOME 或 PM2_JSON_PROCESSING 等环境变量
-    is_pm2 = False
+    # 使用关机管理器处理重启
+    from core.shutdown_manager import get_shutdown_manager
 
-    # 检查环境变量
-    if "PM2_HOME" in os.environ or "PM2_JSON_PROCESSING" in os.environ:
-        is_pm2 = True
-    # Linux 下检查父进程命令行
-    elif sys.platform != "win32" and hasattr(os, "getppid"):
-        try:
-            # 使用 asyncio.to_thread 避免阻塞事件循环
-            cmdline_path = f"/proc/{os.getppid()}/cmdline"
-            if await asyncio.to_thread(os.path.exists, cmdline_path):
-                content = await asyncio.to_thread(lambda: open(cmdline_path).read())
-                if "PM2" in content:
-                    is_pm2 = True
-        except Exception:
-            # 忽略检查失败，默认认为不是 PM2 环境
-            pass
+    shutdown_manager = get_shutdown_manager()
+    is_pm2 = shutdown_manager.detect_pm2()
 
     if is_pm2:
-        logger.info("检测到 PM2 环境，使用 PM2 自动重启机制")
+        # PM2 环境：执行关机，由 PM2 自动重启
+        logger.info("✅ [PM2 Mode] /restart 将执行关机，由 PM2 自动重启")
         await event.reply(get_text("bot.restarting"))
-        logger.info("机器人重启命令已执行，PM2 将自动重启进程...")
 
         # 写入重启标记
         async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
             await f.write(str(sender_id))
 
-        # 优雅关闭资源，然后让 PM2 负责重启
-        logger.info("正在优雅关闭资源...")
-        from main import graceful_shutdown_resources
+        # 触发与 Ctrl+C 相同的关机流程
+        from core.config import trigger_shutdown
 
-        await graceful_shutdown_resources()
-
-        logger.info("资源已关闭，退出进程以触发 PM2 自动重启")
-        raise SystemExit(0)
+        trigger_shutdown()
     else:
         # 非 PM2 环境：手动创建新进程
-        logger.info("非 PM2 环境，手动创建新进程")
+        logger.info("ℹ️ [非PM2环境] 手动创建新进程")
         await event.reply(get_text("bot.restarting"))
-        logger.info("机器人重启命令已执行，正在重启...")
 
         # 写入重启标记
         async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
             await f.write(str(sender_id))
 
-        # 创建新进程（在当前进程退出前）
+        # 创建新进程
         python = sys.executable
         logger.info(f"正在创建新进程: {python} {' '.join(sys.argv)}")
 
-        # 使用 asyncio.to_thread 避免 subprocess.Popen 阻塞事件循环
         import subprocess
 
         def create_new_process():
@@ -197,26 +177,19 @@ async def handle_restart(event):
             else:
                 creation_flags = 0
 
-            # 不重定向输出，让新进程继承父进程的 stdout 和 stderr
-            # 这样日志可以正常显示在终端或 PM2 日志中
             return subprocess.Popen(
                 [python] + sys.argv,
                 creationflags=creation_flags,
                 start_new_session=True,
-                # stdout 和 stderr 默认为 None，会继承父进程的输出流
             )
 
         await asyncio.to_thread(create_new_process)
-        logger.info("新进程已创建，日志输出已启用")
+        logger.info("✅ 新进程已创建")
 
-        # 优雅关闭资源
-        logger.info("正在优雅关闭资源...")
-        from main import graceful_shutdown_resources
+        # 触发与 Ctrl+C 相同的关机流程（复用关机流程）
+        from core.config import trigger_shutdown
 
-        await graceful_shutdown_resources()
-
-        logger.info("重启流程完成，当前进程即将退出")
-        raise SystemExit(0)
+        trigger_shutdown()
 
 
 async def handle_shutdown(event):
@@ -235,7 +208,7 @@ async def handle_shutdown(event):
 
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
 
-    logger.info("机器人关机命令已执行，正在关闭...")
+    logger.info("🚪 机器人关机命令已执行，正在关闭...")
 
     try:
         for admin_id in ADMIN_LIST:
@@ -244,20 +217,15 @@ async def handle_shutdown(event):
                     admin_id, get_text("bot.shutting_down"), link_preview=False
                 )
     except Exception as e:
-        logger.error(f"发送关机通知失败: {e}")
+        logger.error(f"❌ 发送关机通知失败: {type(e).__name__}: {e}")
 
     # 等待消息发送完成
     await asyncio.sleep(1)
 
-    # 优雅关闭所有资源
-    logger.info("正在优雅关闭所有资源...")
-    from main import graceful_shutdown_resources
+    # 触发与 Ctrl+C 相同的关机流程
+    from core.config import trigger_shutdown
 
-    await graceful_shutdown_resources()
-
-    logger.info("关机流程完成，当前进程即将退出")
-    # 在异步上下文中使用 raise SystemExit 更安全
-    raise SystemExit(0)
+    trigger_shutdown()
 
 
 async def handle_pause(event):

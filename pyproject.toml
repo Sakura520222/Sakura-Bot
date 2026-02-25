@@ -6,7 +6,9 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "ASYNC"]
 extend-select = ["B"]
 # 忽略行长度检查（已在 line-length 中统一配置）
-ignore = ["E501"]
+# 忽略 ASYNC109（建议使用 asyncio.timeout 而非 timeout 参数）
+# asyncio.timeout 是 Python 3.11+ 特性，我们使用 asyncio.wait_for 以兼容 Python 3.7+
+ignore = ["E501", "ASYNC109"]
 
 [tool.ruff.lint.per-file-ignores]
 # 针对特定文件可以放宽限制

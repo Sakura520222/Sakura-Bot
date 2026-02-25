@@ -357,6 +357,7 @@ BOT_STATE_SHUTTING_DOWN = "shutting_down"
 # 全局状态变量
 _bot_state = BOT_STATE_RUNNING
 _scheduler_instance = None
+_shutdown_event = None  # 全局关机事件，用于触发与 Ctrl+C 相同的关闭流程
 
 
 def get_bot_state():
@@ -387,6 +388,23 @@ def set_scheduler_instance(scheduler):
 def get_scheduler_instance():
     """获取调度器实例"""
     return _scheduler_instance
+
+
+def set_shutdown_event(event):
+    """设置全局关机事件"""
+    global _shutdown_event
+    _shutdown_event = event
+    logger.info("全局关机事件已设置")
+
+
+def trigger_shutdown():
+    """触发关机事件（与 Ctrl+C 相同的效果）"""
+    global _shutdown_event
+    if _shutdown_event is not None:
+        logger.info("🚪 触发关机事件（与 Ctrl+C 相同的效果）")
+        _shutdown_event.set()
+    else:
+        logger.warning("⚠️ 关机事件未设置，无法触发")
 
 
 # 自动总结时间配置

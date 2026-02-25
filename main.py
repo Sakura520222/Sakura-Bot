@@ -116,51 +116,16 @@ from core.process_manager import start_qa_bot, stop_qa_bot
 
 
 async def graceful_shutdown_resources():
-    """优雅关闭所有资源"""
-    logger.info("开始关闭所有资源...")
+    """优雅关闭所有资源（已废弃，请使用 core.shutdown_manager.ShutdownManager）
 
-    # 1. 停止问答Bot
-    logger.info("停止问答Bot...")
-    stop_qa_bot()
-
-    # 2. 停止调度器
-    from core.config import get_scheduler_instance
-
-    scheduler = get_scheduler_instance()
-    if scheduler and scheduler.running:
-        logger.info("停止调度器...")
-        scheduler.shutdown(wait=False)
-
-    # 3. 关闭数据库连接池
-    db_manager = get_db_manager()
-    if hasattr(db_manager, "close") and asyncio.iscoroutinefunction(db_manager.close):
-        logger.info("关闭数据库连接池...")
-        try:
-            await db_manager.close()
-        except Exception as e:
-            logger.error(f"关闭数据库连接池时出错: {type(e).__name__}: {e}")
-
-    # 4. 断开 Telethon 客户端
+    为了向后兼容，保留此函数但重定向到新的关机管理器
+    """
+    from core.shutdown_manager import get_shutdown_manager
     from core.telegram_client import get_active_client
 
+    shutdown_manager = get_shutdown_manager()
     client = get_active_client()
-    if client and client.is_connected():
-        logger.info("断开Telegram客户端...")
-        try:
-            await client.disconnect()
-        except Exception as e:
-            logger.error(f"断开Telegram客户端时出错: {type(e).__name__}: {e}")
-
-    # 5. 等待所有待处理的任务完成（最多3秒）
-    logger.info("等待待处理任务完成...")
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if tasks:
-        try:
-            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=3.0)
-        except TimeoutError:
-            logger.warning(f"部分任务未能在超时前完成，剩余 {len(tasks)} 个任务")
-
-    logger.info("所有资源已关闭")
+    await shutdown_manager.graceful_shutdown(client=client)
 
 
 async def send_startup_message(client):
@@ -786,46 +751,6 @@ async def main():
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
 
-        # 检查关机标记文件
-        SHUTDOWN_FLAG_FILE = ".shutdown_flag"
-        if await asyncio.to_thread(os.path.exists, SHUTDOWN_FLAG_FILE):
-            try:
-                async with aiofiles.open(SHUTDOWN_FLAG_FILE) as f:
-                    shutdown_user = (await f.read()).strip()
-
-                logger.info(f"检测到关机标记，操作者: {shutdown_user}")
-
-                # 向所有管理员发送关机通知
-                for admin_id in ADMIN_LIST:
-                    try:
-                        await client.send_message(
-                            admin_id, "🤖 机器人已执行关机命令，正在停止运行...", link_preview=False
-                        )
-                        logger.info(f"已向管理员 {admin_id} 发送关机通知")
-                    except Exception as e:
-                        logger.error(f"向管理员 {admin_id} 发送关机通知失败: {e}")
-
-                # 删除关机标记文件
-                await asyncio.to_thread(os.remove, SHUTDOWN_FLAG_FILE)
-                logger.info("关机标记文件已删除")
-
-                # 等待消息发送完成
-                await asyncio.sleep(2)
-
-                # 执行关机
-                logger.info("执行关机操作...")
-                sys.exit(0)
-
-            except Exception as e:
-                logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
-                # 即使出错也尝试删除关机标记文件，避免遗留
-                try:
-                    if await asyncio.to_thread(os.path.exists, SHUTDOWN_FLAG_FILE):
-                        await asyncio.to_thread(os.remove, SHUTDOWN_FLAG_FILE)
-                        logger.info("出错后已清理关机标记文件")
-                except Exception as cleanup_error:
-                    logger.error(f"清理关机标记文件时出错: {cleanup_error}")
-
         # 保持客户端运行
         await client.run_until_disconnected()
     except KeyboardInterrupt:
@@ -904,6 +829,12 @@ if __name__ == "__main__":
         except (AttributeError, ValueError) as e:
             logger.warning(f"无法注册 SIGINT 信号处理器: {e}")
 
+        # 设置全局关机事件
+        from core.config import set_shutdown_event
+
+        set_shutdown_event(shutdown_event)
+        logger.info("全局关机事件已设置到 config 模块")
+
         # 启动问答Bot
         start_qa_bot()
 
@@ -935,7 +866,13 @@ if __name__ == "__main__":
                 logger.info("执行优雅关闭...")
                 await graceful_shutdown_resources()
 
-                # 停止事件循环
+                # 退出程序（使用 os._exit 确保立即退出并关闭控制台）
+                from core.shutdown_manager import get_shutdown_manager
+
+                shutdown_manager = get_shutdown_manager()
+                shutdown_manager.perform_exit(0)
+
+                # 这行代码不会被执行到，因为 perform_exit 会立即终止进程
                 loop.stop()
 
             loop.run_until_complete(run_with_shutdown())
