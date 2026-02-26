@@ -50,6 +50,13 @@ from ..config import (
 )
 from ..i18n import get_language, get_supported_languages, get_text, set_language
 from ..utils.message_utils import format_schedule_info
+from ..utils.version_utils import (
+    compare_versions,
+    get_local_version,
+    get_remote_version,
+    git_pull_latest,
+    install_dependencies,
+)
 
 # ==================== 系统控制命令 ====================
 
@@ -996,6 +1003,103 @@ async def handle_changelog(event):
     except Exception as e:
         logger.error(f"发送变更日志文件时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(get_text("changelog.send_error", error=e))
+
+
+async def handle_update(event):
+    """处理 /update 命令，执行一键更新"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    # 权限检查
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply(get_text("error.permission_denied"))
+        return
+
+    try:
+        # 通知开始检查
+        await event.reply(get_text("update.checking"))
+
+        # 获取本地版本
+        local_version = get_local_version()
+        if not local_version:
+            await event.reply(get_text("update.error", error="无法获取本地版本"))
+            return
+
+        # 获取远程版本
+        remote_version = await get_remote_version()
+        if not remote_version:
+            await event.reply(get_text("update.error", error="无法获取远程版本，将执行强制更新"))
+            # 继续执行更新（版本检查失败时的降级处理）
+        else:
+            # 比较版本
+            if compare_versions(local_version, remote_version):
+                await event.reply(
+                    get_text("update.new_found", remote=remote_version, local=local_version)
+                )
+            else:
+                await event.reply(get_text("update.latest", version=local_version))
+                return
+
+        # 检查是否为 Git 仓库
+        import subprocess
+
+        check_git = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            timeout=5,
+        )
+
+        if check_git.returncode != 0:
+            await event.reply(get_text("update.no_git"))
+            return
+
+        # 更新代码
+        await event.reply(get_text("update.updating"))
+        success, message = await git_pull_latest()
+
+        if not success:
+            await event.reply(get_text("update.git_error", error=message))
+            return
+
+        logger.info(f"代码更新: {message}")
+
+        # 安装依赖
+        await event.reply(get_text("update.installing_deps"))
+        success, message = await install_dependencies()
+
+        if not success:
+            await event.reply(get_text("update.deps_error", error=message))
+            return
+
+        logger.info("依赖安装完成")
+
+        # 设置脚本执行权限 (Linux)
+        if sys.platform != "win32":
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["chmod", "+x", "start.sh"],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except Exception as e:
+                logger.warning(f"设置脚本权限失败: {e}")
+
+        # 通知更新完成，准备重启
+        await event.reply(get_text("update.success"))
+
+        # 等待消息发送
+        await asyncio.sleep(1)
+
+        # 复用重启逻辑
+        await handle_restart(event)
+
+    except Exception as e:
+        logger.error(f"更新过程中出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(get_text("update.error", error=str(e)))
 
 
 # ==================== 语言设置命令 ====================

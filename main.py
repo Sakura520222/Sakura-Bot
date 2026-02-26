@@ -69,6 +69,7 @@ from core.command_handlers.comment_welcome_commands import (
     handle_set_comment_welcome,
     handle_show_comment_welcome,
 )
+from core.command_handlers.other_commands import handle_update
 from core.command_handlers.qa_control_commands import (
     handle_qa_restart,
     handle_qa_start,
@@ -101,7 +102,7 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.6.4"
+__version__ = "1.6.5"
 
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,
@@ -174,6 +175,7 @@ async def send_startup_message(client):
 {get_text("cmd.stats")}
 {get_text("cmd.language")}
 {get_text("cmd.changelog")}
+{get_text("cmd.update")}
 
 **版本信息**
 当前版本: v{__version__}
@@ -476,6 +478,7 @@ async def main():
             handle_clear_cache, NewMessage(pattern="/clearcache|/clear_cache|/清除缓存")
         )
         client.add_event_handler(handle_changelog, NewMessage(pattern="/changelog|/更新日志"))
+        client.add_event_handler(handle_update, NewMessage(pattern="/update|/更新"))
 
         # 9. 历史记录命令
         client.add_event_handler(handle_history, NewMessage(pattern="/history|/历史"))
@@ -641,6 +644,7 @@ async def main():
             BotCommand(command="setloglevel", description="设置日志级别"),
             BotCommand(command="clearcache", description="清除讨论组ID缓存"),
             BotCommand(command="changelog", description="查看更新日志"),
+            BotCommand(command="update", description="一键更新机器人"),
             # 历史记录命令
             BotCommand(command="history", description="查看历史总结"),
             BotCommand(command="export", description="导出历史记录"),
