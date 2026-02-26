@@ -33,6 +33,38 @@ from .i18n import get_text
 
 logger = logging.getLogger(__name__)
 
+
+def is_channel_in_whitelist(channel_id: int | str, channels: list[str]) -> bool:
+    """
+    检查频道是否在白名单中
+
+    Args:
+        channel_id: 频道ID（数字或字符串）
+        channels: 频道白名单（URL格式）
+
+    Returns:
+        bool: 是否在白名单中
+    """
+    channel_id_str = str(channel_id)
+
+    for ch in channels:
+        # 标准化频道URL，提取标识符
+        # 支持格式：@username, https://t.me/username, username
+        normalized = ch.strip().lstrip("@")
+        if normalized.startswith("https://t.me/"):
+            normalized = normalized.replace("https://t.me/", "")
+        elif normalized.startswith("t.me/"):
+            normalized = normalized.replace("t.me/", "")
+
+        # 匹配逻辑：
+        # 1. 如果 channel_id 是 username，直接比较
+        # 2. 如果 channel_id 是数字ID字符串，直接比较（用于无username的频道）
+        if normalized == channel_id_str or normalized.endswith(f"/{channel_id_str}"):
+            return True
+
+    return False
+
+
 # 去重缓存：消息ID -> 时间戳
 # 使用deque + TTL机制，防止内存无限增长
 _message_cache: dict[str, datetime] = {}
@@ -173,23 +205,9 @@ class CommentWelcomeHandler:
         """
         try:
             # 获取频道配置
-            from .config import CHANNELS
-
-            # 尝试匹配频道URL（处理数字ID情况）
-            channel_url = None
-            for ch in CHANNELS:
-                if ch.endswith(channel_id) or str(channel_id) in ch:
-                    channel_url = ch
-                    break
-
-            # 获取配置
-            if channel_url:
-                config = await get_channel_comment_welcome_config(channel_url)
-            else:
-                # 使用默认配置
-                from .channel_comment_welcome_config import get_default_comment_welcome_config
-
-                config = get_default_comment_welcome_config()
+            # 频道已在前面通过白名单检查，这里直接获取配置
+            # 如果没有特定配置，将使用默认配置
+            config = await get_channel_comment_welcome_config(channel_id)
 
             # 检查是否启用
             if not config.get("enabled", True):
@@ -307,10 +325,25 @@ class CommentWelcomeHandler:
             if not channel_post_id:
                 return
 
-            # 检查是否在监控的频道列表中
-            # 注意：channel_id_num是数字ID，需要与CHANNELS中的URL匹配
-            # 这里我们简化处理：直接处理所有有讨论组的频道
-            # 如果需要限制特定频道，可以在config中添加配置
+            # 检查是否在监控的频道列表中（严格白名单模式）
+            from .config import CHANNELS
+
+            # 首先尝试通过频道实体获取 username 用于白名单匹配
+            try:
+                channel_entity = await self.client.get_entity(channel_id_num)
+                channel_identifier = (
+                    channel_entity.username
+                    if hasattr(channel_entity, "username") and channel_entity.username
+                    else str(channel_id_num)
+                )
+            except Exception as e:
+                logger.warning(f"获取频道实体失败: {e}")
+                channel_identifier = str(channel_id_num)
+
+            # 严格白名单检查：只处理 CHANNELS 中配置的频道
+            if not is_channel_in_whitelist(channel_identifier, CHANNELS):
+                logger.debug(f"频道 {channel_identifier} 不在白名单中，忽略")
+                return
 
             # 去重检查：使用消息ID和grouped_id
             cache_key = f"{msg.chat_id}_{channel_post_id}"
@@ -331,20 +364,6 @@ class CommentWelcomeHandler:
 
                 # 添加到缓存
                 _message_cache[cache_key] = datetime.now(UTC)
-
-            # 获取频道标识（用于按钮回调）
-            # 注意：移除@符号，避免与下划线分隔符冲突
-            try:
-                channel_entity = await self.client.get_entity(channel_id_num)
-                # 优先使用username（不带@），否则使用数字ID
-                channel_identifier = (
-                    channel_entity.username
-                    if hasattr(channel_entity, "username") and channel_entity.username
-                    else str(channel_id_num)
-                )
-            except Exception as e:
-                logger.warning(f"获取频道实体失败，使用ID作为标识: {e}")
-                channel_identifier = str(channel_id_num)
 
             # 添加到任务队列（异步处理，避免阻塞）
             await self.task_queue.put(
