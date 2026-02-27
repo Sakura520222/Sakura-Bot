@@ -179,7 +179,8 @@ jobs:
           esac
           
           # 确保 CHANGE_TYPE_LOWER 在 TYPE_MAP 中，否则默认为 chore
-          if [[ -z "${TYPE_MAP[$CHANGE_TYPE_LOWER]}" ]]; then
+          temp_value="${TYPE_MAP[$CHANGE_TYPE_LOWER]}"
+          if [[ -z "$temp_value" ]]; then
             CHANGE_TYPE_LOWER="chore"
           fi
           
@@ -201,7 +202,8 @@ jobs:
               if [[ "$commit" =~ ^([a-zA-Z]+)(\([^)]+\))?!: ]]; then
                 commit_type="${BASH_REMATCH[1],,}"  # 转换为小写
                 # 检查是否是已知类型
-                if [[ -n "${TYPE_MAP[$commit_type]}" ]]; then
+                temp_value="${TYPE_MAP[$commit_type]}"
+                if [[ -n "$temp_value" ]]; then
                   # 将提交添加到对应类型组
                   TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
                 else
@@ -211,7 +213,8 @@ jobs:
               elif [[ "$commit" =~ ^([a-zA-Z]+)(\([^)]+\))?: ]]; then
                 commit_type="${BASH_REMATCH[1],,}"  # 转换为小写
                 # 检查是否是已知类型
-                if [[ -n "${TYPE_MAP[$commit_type]}" ]]; then
+                temp_value="${TYPE_MAP[$commit_type]}"
+                if [[ -n "$temp_value" ]]; then
                   # 将提交添加到对应类型组
                   TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
                 else
@@ -228,14 +231,16 @@ jobs:
           # 添加 PR 标题到对应的类型组（支持重大变更标记 ! 和大小写混合）
           if [[ "$TITLE" =~ ^([a-zA-Z]+)(\([^)]+\))?!: ]]; then
             pr_type="${BASH_REMATCH[1],,}"  # 转换为小写
-            if [[ -n "${TYPE_MAP[$pr_type]}" ]]; then
+            temp_value="${TYPE_MAP[$pr_type]}"
+            if [[ -n "$temp_value" ]]; then
               TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
             else
               TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
             fi
           elif [[ "$TITLE" =~ ^([a-zA-Z]+)(\([^)]+\))?: ]]; then
             pr_type="${BASH_REMATCH[1],,}"  # 转换为小写
-            if [[ -n "${TYPE_MAP[$pr_type]}" ]]; then
+            temp_value="${TYPE_MAP[$pr_type]}"
+            if [[ -n "$temp_value" ]]; then
               TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
             else
               TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
