@@ -168,25 +168,46 @@ def split_message_smart(text, max_length, preserve_md=True):
         # 更新当前位置
         current_pos = best_split_pos
 
-    # 验证所有分段都不超过最大长度
+    # 验证所有分段都不超过最大长度且实体完整
     validated_parts = []
     for part in parts:
-        if len(part) > max_length:
+        # 首先验证实体完整性
+        is_valid, error_msg = validate_message_entities(part)
+
+        if not is_valid:
+            logger.warning(f"分段实体验证失败: {error_msg}，尝试修复")
+            # 尝试修复格式
+            sanitized_part = sanitize_markdown(part, aggressive=False)
+
+            # 检查修复后的长度
+            if len(sanitized_part) > max_length:
+                logger.warning(
+                    f"修复后的分段长度 {len(sanitized_part)} 仍超过最大长度 {max_length}，进行二次分割"
+                )
+                # 对超长的分段进行简单分割
+                for i in range(0, len(sanitized_part), max_length):
+                    sub_part = sanitized_part[i : i + max_length]
+                    # 再次验证子分段
+                    sub_valid, sub_error = validate_message_entities(sub_part)
+                    if not sub_valid:
+                        logger.warning(f"子分段验证失败: {sub_error}，使用激进模式")
+                        sub_part = sanitize_markdown(sub_part, aggressive=True)
+                    validated_parts.append(sub_part)
+            else:
+                validated_parts.append(sanitized_part)
+        elif len(part) > max_length:
             logger.warning(f"分段长度 {len(part)} 超过最大长度 {max_length}，进行二次分割")
             # 对超长的分段进行简单分割
             for i in range(0, len(part), max_length):
-                validated_parts.append(part[i : i + max_length])
+                sub_part = part[i : i + max_length]
+                # 验证子分段
+                sub_valid, sub_error = validate_message_entities(sub_part)
+                if not sub_valid:
+                    logger.warning(f"子分段验证失败: {sub_error}，尝试修复")
+                    sub_part = sanitize_markdown(sub_part, aggressive=False)
+                validated_parts.append(sub_part)
         else:
             validated_parts.append(part)
-
-    # 验证所有实体完整性
-    for part in validated_parts:
-        # 检查是否有未闭合的md实体
-        bold_count = part.count("**")
-        if bold_count % 2 != 0:
-            logger.warning(f"分段中粗体标记不匹配: {bold_count}个**标记")
-
-        # 可以添加其他实体完整性检查
 
     logger.debug(f"智能分割完成: {len(text)}字符 -> {len(validated_parts)}个分段")
     return validated_parts
@@ -203,6 +224,9 @@ def validate_message_entities(text):
         bool: 实体是否完整
         str: 错误信息（如果有）
     """
+    if not text:
+        return True, "空文本，无需验证"
+
     # 检查粗体标记 **
     bold_count = text.count("**")
     if bold_count % 2 != 0:
@@ -240,8 +264,131 @@ def validate_message_entities(text):
         link_text = link.group()
         if "](" not in link_text or not link_text.endswith(")"):
             return False, f"链接格式错误: {link_text}"
+        # 检查链接内容是否为空
+        link_content = link_text[1:-1]  # 去掉 []
+        if not link_content:
+            return False, f"链接文本为空: {link_text}"
+
+    # 检查代码块标记 ```
+    code_block_count = text.count("```")
+    if code_block_count % 2 != 0:
+        return False, f"代码块标记不匹配: 找到{code_block_count}个```标记"
+
+    # 检查实体是否超出字符串边界
+    all_entity_patterns = [
+        (r"\*\*.*?\*\*", "bold"),
+        (r"`.*?`", "inline_code"),
+        (r"\[.*?\]\(.*?\)", "link"),
+        (r"\*.*?\*", "italic"),
+        (r"_.*?_", "italic_underscore"),
+        (r"~~.*?~~", "strikethrough"),
+        (r"__.*?__", "bold_underscore"),
+        (r"```.*?```", "code_block"),
+    ]
+
+    for pattern, entity_type in all_entity_patterns:
+        matches = list(re.finditer(pattern, text, re.DOTALL))
+        for match in matches:
+            start, end = match.span()
+            entity_text = match.group()
+            # 检查实体长度是否为零
+            if len(entity_text) == 0:
+                return False, f"{entity_type}实体长度为零"
+            # 检查实体是否超出字符串边界
+            if start < 0 or end > len(text):
+                return False, f"{entity_type}实体超出字符串边界: 位置{start}-{end}"
 
     return True, "所有实体完整"
+
+
+def sanitize_markdown(text, aggressive=False):
+    """
+    清理和修复Markdown格式，确保所有实体完整有效
+
+    Args:
+        text: 要清理的文本
+        aggressive: 是否使用激进模式（移除所有格式，只保留纯文本）
+
+    Returns:
+        str: 清理后的文本
+    """
+    if not text:
+        return text
+
+    if aggressive:
+        # 激进模式：移除所有Markdown格式
+        result = text
+        # 移除各种格式标记，但保留内容
+        result = re.sub(r"\*\*(.+?)\*\*", r"\1", result)  # 粗体
+        result = re.sub(r"__(.+?)__", r"\1", result)  # 粗体
+        result = re.sub(r"\*(.+?)\*", r"\1", result)  # 斜体
+        result = re.sub(r"_(.+?)_", r"\1", result)  # 斜体
+        result = re.sub(r"~~(.+?)~~", r"\1", result)  # 删除线
+        result = re.sub(r"`(.+?)`", r"\1", result)  # 内联代码
+        result = re.sub(r"```(.+?)```", r"\1", result, flags=re.DOTALL)  # 代码块
+        result = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", result)  # 链接
+        return result
+
+    # 温和模式：修复不完整的格式
+    result = text
+
+    # 修复不配对的粗体标记 **
+    bold_count = result.count("**")
+    if bold_count % 2 != 0:
+        logger.warning(f"检测到不配对的**标记（{bold_count}个），移除所有**标记")
+        result = result.replace("**", "")
+
+    # 修复不配对的粗体标记 __
+    bold_underscore_count = result.count("__")
+    if bold_underscore_count % 2 != 0:
+        logger.warning(f"检测到不配对的__标记（{bold_underscore_count}个），移除所有__标记")
+        result = result.replace("__", "")
+
+    # 修复不配对的内联代码标记 `
+    backtick_count = result.count("`")
+    if backtick_count % 2 != 0:
+        logger.warning(f"检测到不配对的`标记（{backtick_count}个），移除所有`标记")
+        result = result.replace("`", "")
+
+    # 修复不配对的斜体标记 *（排除**中的*）
+    bold_count = result.count("**")
+    italic_count = result.count("*") - bold_count * 2
+    if italic_count % 2 != 0:
+        logger.warning(f"检测到不配对的*标记（{italic_count}个），移除所有*标记")
+        # 先移除所有**
+        result = result.replace("**", "")
+        # 再移除所有*
+        result = result.replace("*", "")
+
+    # 修复不配对的斜体标记 _（排除__中的_）
+    bold_underscore_count = result.count("__")
+    italic_underscore_count = result.count("_") - bold_underscore_count * 2
+    if italic_underscore_count % 2 != 0:
+        logger.warning(f"检测到不配对的_标记（{italic_underscore_count}个），移除所有_标记")
+        # 先移除所有__
+        result = result.replace("__", "")
+        # 再移除所有_
+        result = result.replace("_", "")
+
+    # 修复不配对的删除线标记 ~~
+    strikethrough_count = result.count("~~")
+    if strikethrough_count % 2 != 0:
+        logger.warning(f"检测到不配对的~~标记（{strikethrough_count}个），移除所有~~标记")
+        result = result.replace("~~", "")
+
+    # 修复不配对的代码块标记 ```
+    code_block_count = result.count("```")
+    if code_block_count % 2 != 0:
+        logger.warning(f"检测到不配对的```标记（{code_block_count}个），移除所有```标记")
+        result = result.replace("```", "")
+
+    # 验证修复后的结果
+    is_valid, error_msg = validate_message_entities(result)
+    if not is_valid:
+        logger.warning(f"自动修复后仍然存在格式问题: {error_msg}，使用激进模式")
+        return sanitize_markdown(result, aggressive=True)
+
+    return result
 
 
 def split_by_lines_smart(text, max_length):
