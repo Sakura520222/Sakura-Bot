@@ -111,14 +111,31 @@ class QABot:
             # 如果是MySQL数据库，需要初始化连接池
             if hasattr(db, "init_database") and hasattr(db, "pool") and db.pool is None:
                 logger.info("正在初始化MySQL数据库连接池...")
-                await db.init_database()
+                try:
+                    await db.init_database()
 
-                # 检查连接池是否成功创建
-                if db.pool is None:
-                    logger.error("数据库连接池初始化失败，pool 仍为 None")
-                    raise RuntimeError("MySQL连接池创建失败")
+                    # 检查连接池是否成功创建
+                    if db.pool is None:
+                        raise RuntimeError("MySQL连接池创建失败")
 
-                logger.info("MySQL数据库连接池初始化完成")
+                    logger.info("MySQL数据库连接池初始化完成")
+                except Exception as e:
+                    # MySQL初始化失败，回退到SQLite
+                    logger.warning(f"MySQL初始化失败: {e}")
+                    logger.info("回退到 SQLite...")
+
+                    # 强制重新创建
+                    import core.database as db_module
+
+                    db_module.db_manager = None
+
+                    # 更新配置
+                    os.environ["DATABASE_TYPE"] = "sqlite"
+
+                    db = get_db_manager()
+                    if hasattr(db, "init_database"):
+                        await db.init_database()
+                    logger.info("SQLite数据库初始化完成")
         except Exception as e:
             logger.error(f"初始化数据库失败: {type(e).__name__}: {e}", exc_info=True)
             raise
