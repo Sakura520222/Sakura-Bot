@@ -50,7 +50,7 @@ jobs:
           if echo "$LABELS" | grep -q "enhancement"; then
             CHANGE_TYPE="新增"
           elif echo "$LABELS" | grep -q "bug"; then
-            CHANGE_TYPE="修复"
+            CHANGE_TYPE="问题修复"
           elif echo "$LABELS" | grep -q "documentation"; then
             CHANGE_TYPE="文档"
           elif echo "$LABELS" | grep -q "refactor"; then
@@ -62,7 +62,7 @@ jobs:
             if echo "$TITLE" | grep -qiE "^(feat|add|new|新增|添加)"; then
               CHANGE_TYPE="新增"
             elif echo "$TITLE" | grep -qiE "^(fix|bug|修复)"; then
-              CHANGE_TYPE="修复"
+              CHANGE_TYPE="问题修复"
             elif echo "$TITLE" | grep -qiE "^(doc|docs|readme|更新文档)"; then
               CHANGE_TYPE="文档"
             elif echo "$TITLE" | grep -qiE "^(refactor|重构)"; then
@@ -122,14 +122,6 @@ jobs:
             # 获取现有 Release 描述
             gh release view "$TAG_NAME" --json body -q .body > current_body.txt
             echo "现有 Release 描述已读取"
-            
-            # 解析现有描述中的最新日期
-            LAST_DATE=$(grep -oP '\d{4}-\d{2}-\d{2}' current_body.txt | head -1)
-            if [ -z "$LAST_DATE" ]; then
-              LAST_DATE=""
-            fi
-            echo "last_date=$LAST_DATE" >> $GITHUB_OUTPUT
-            echo "最新条目日期: $LAST_DATE"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "ℹ️ Release $TAG_NAME 不存在，将创建新 Release"
@@ -163,191 +155,117 @@ jobs:
           # 定义输出顺序
           TYPE_ORDER=("feat" "fix" "docs" "style" "refactor" "perf" "test" "build" "ci" "chore" "i18n")
           
-          # 将 CHANGE_TYPE 转换为 lowercase 类型关键字
-          CHANGE_TYPE_LOWER="${CHANGE_TYPE}"
-          case "$CHANGE_TYPE" in
-            "新增") CHANGE_TYPE_LOWER="feat" ;;
-            "修复") CHANGE_TYPE_LOWER="fix" ;;
-            "文档") CHANGE_TYPE_LOWER="docs" ;;
-            "代码风格") CHANGE_TYPE_LOWER="style" ;;
-            "重构") CHANGE_TYPE_LOWER="refactor" ;;
-            "性能优化") CHANGE_TYPE_LOWER="perf" ;;
-            "测试相关") CHANGE_TYPE_LOWER="test" ;;
-            "构建系统") CHANGE_TYPE_LOWER="build" ;;
-            "持续集成") CHANGE_TYPE_LOWER="ci" ;;
-            "其他变更") CHANGE_TYPE_LOWER="chore" ;;
-            "国际化") CHANGE_TYPE_LOWER="i18n" ;;
-            "改进") CHANGE_TYPE_LOWER="chore" ;;
-          esac
-          
-          # 确保 CHANGE_TYPE_LOWER 在 TYPE_MAP 中，否则默认为 chore
-          temp_value="${TYPE_MAP[$CHANGE_TYPE_LOWER]}"
-          if [[ -z "$temp_value" ]]; then
-            CHANGE_TYPE_LOWER="chore"
+          # 解析现有 Release 内容（如果存在）
+          declare -A EXISTING_COMMITS
+          if [ "$EXISTS" = "true" ] && [ -f "current_body.txt" ]; then
+            CURRENT_TYPE=""
+            while IFS= read -r line; do
+              # 匹配分类标题：### 新增功能
+              if [[ "$line" =~ ^###[[:space:]]+(.+)$ ]]; then
+                CURRENT_TYPE="${BASH_REMATCH[1]}"
+                # 反向查找类型 key
+                for key in "${!TYPE_MAP[@]}"; do
+                  if [ "${TYPE_MAP[$key]}" = "$CURRENT_TYPE" ]; then
+                    CURRENT_TYPE="$key"
+                    break
+                  fi
+                done
+              # 匹配条目行：- fix(xxx): message (PR #123)
+              elif [[ "$line" =~ ^-[[:space:]] ]]; then
+                if [ -n "$CURRENT_TYPE" ]; then
+                  EXISTING_COMMITS[$CURRENT_TYPE]="${EXISTING_COMMITS[$CURRENT_TYPE]}$line"$'\n'
+                fi
+              fi
+            done < current_body.txt
+            echo "📋 已解析现有 Release 内容"
           fi
           
-          if [ "$EXISTS" = "false" ]; then
-            # 新 Release：生成初始描述
-            echo "## 🎉 Release v${VERSION} - ${TODAY}" > release_notes.txt
-            echo "" >> release_notes.txt
-          fi
+          # 解析新 PR 的所有提交（包括 PR 标题），按提交类型分类
+          declare -A NEW_COMMITS
           
-          # 解析提交信息并按类型分组
-          declare -A TYPE_COMMITS
-          
-          # 定义正则表达式模式（使用变量避免 Bash 解析问题）
-          # 格式：type(scope)!: subject 或 type(scope): subject 或 type: subject
+          # 定义正则表达式模式
           PATTERN_BREAKING='^[a-zA-Z]+\([^)]+\)!:'
           PATTERN_NORMAL='^[a-zA-Z]+\([^)]+\):'
           PATTERN_SIMPLE='^[a-zA-Z]+:'
           
+          # 添加 PR 标题作为一个"提交"
+          echo "$TITLE" > "${RUNNER_TEMP}/all_commits.txt"
+          
+          # 追加 PR 内的所有提交
           if [ -s "$COMMITS_FILE" ]; then
-            while IFS= read -r commit; do
-              [ -z "$commit" ] && continue
-              
-              # 提取提交类型（支持重大变更标记 ! 和大小写混合）
-              if [[ "$commit" =~ $PATTERN_BREAKING ]]; then
-                # 提取类型：取冒号前的字母部分
-                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-                # 检查是否是已知类型
-                temp_value="${TYPE_MAP[$commit_type]}"
-                if [[ -n "$temp_value" ]]; then
-                  # 将提交添加到对应类型组
-                  TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
-                else
-                  # 未知类型归入 chore
-                  TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
-                fi
-              elif [[ "$commit" =~ $PATTERN_NORMAL ]]; then
-                # 提取类型：取冒号前的字母部分
-                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-                # 检查是否是已知类型
-                temp_value="${TYPE_MAP[$commit_type]}"
-                if [[ -n "$temp_value" ]]; then
-                  # 将提交添加到对应类型组
-                  TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
-                else
-                  # 未知类型归入 chore
-                  TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
-                fi
-              elif [[ "$commit" =~ $PATTERN_SIMPLE ]]; then
-                # 简单格式：type: subject
-                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
-                # 检查是否是已知类型
-                temp_value="${TYPE_MAP[$commit_type]}"
-                if [[ -n "$temp_value" ]]; then
-                  # 将提交添加到对应类型组
-                  TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
-                else
-                  # 未知类型归入 chore
-                  TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
-                fi
-              else
-                # 无类型前缀的提交归入 chore
-                TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
+            cat "$COMMITS_FILE" >> "${RUNNER_TEMP}/all_commits.txt"
+          fi
+          
+          # 解析所有提交，按类型分组
+          while IFS= read -r commit; do
+            [ -z "$commit" ] && continue
+            
+            # 提取提交类型
+            commit_type=""
+            commit_msg="$commit"
+            
+            if [[ "$commit" =~ $PATTERN_BREAKING ]]; then
+              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
+            elif [[ "$commit" =~ $PATTERN_NORMAL ]]; then
+              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
+            elif [[ "$commit" =~ $PATTERN_SIMPLE ]]; then
+              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
+            fi
+            
+            # 检查是否是已知类型
+            if [[ -n "$commit_type" ]] && [[ -n "${TYPE_MAP[$commit_type]}" ]]; then
+              # 有效类型
+              :
+            else
+              commit_type="chore"
+            fi
+            
+            # 添加到对应类型（不加粗）
+            # 添加 PR 编号（如果还没有）
+            if [[ "$commit_msg" != *"(PR #"* ]]; then
+              commit_msg="$commit_msg (PR #${PR_NUM})"
+              # 如果有标签，添加标签信息
+              if [ -n "$LABELS" ]; then
+                commit_msg="$commit_msg [$LABELS]"
               fi
-            done < "$COMMITS_FILE"
-          fi
+            fi
+            
+            NEW_COMMITS[$commit_type]="${NEW_COMMITS[$commit_type]}- $commit_msg"$'\n'
+          done < "${RUNNER_TEMP}/all_commits.txt"
           
-          # 添加 PR 标题到对应的类型组（支持重大变更标记 ! 和大小写混合）
-          if [[ "$TITLE" =~ $PATTERN_BREAKING ]]; then
-            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-            temp_value="${TYPE_MAP[$pr_type]}"
-            if [[ -n "$temp_value" ]]; then
-              TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
-            else
-              TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
-            fi
-          elif [[ "$TITLE" =~ $PATTERN_NORMAL ]]; then
-            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-            temp_value="${TYPE_MAP[$pr_type]}"
-            if [[ -n "$temp_value" ]]; then
-              TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
-            else
-              TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
-            fi
-          elif [[ "$TITLE" =~ $PATTERN_SIMPLE ]]; then
-            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
-            temp_value="${TYPE_MAP[$pr_type]}"
-            if [[ -n "$temp_value" ]]; then
-              TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
-            else
-              TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
-            fi
-          else
-            # PR 标题无类型前缀，根据 PR 标签推断（已在前面确保 CHANGE_TYPE_LOWER 有效）
-            TYPE_COMMITS["$CHANGE_TYPE_LOWER"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$CHANGE_TYPE_LOWER]}"
-          fi
-          
-          # 生成分类描述
+          # 合并新旧条目
+          declare -A MERGED_COMMITS
           for type in "${TYPE_ORDER[@]}"; do
-            commits="${TYPE_COMMITS[$type]}"
+            # 先添加旧条目
+            if [ -n "${EXISTING_COMMITS[$type]}" ]; then
+              MERGED_COMMITS[$type]="${EXISTING_COMMITS[$type]}"
+            fi
+            # 再添加新条目
+            if [ -n "${NEW_COMMITS[$type]}" ]; then
+              MERGED_COMMITS[$type]="${MERGED_COMMITS[$type]}${NEW_COMMITS[$type]}"
+            fi
+          done
+          
+          # 生成 Release 描述
+          echo "## 🎉 Release v${VERSION} - ${TODAY}" > release_notes.txt
+          echo "" >> release_notes.txt
+          
+          # 按分类输出
+          for type in "${TYPE_ORDER[@]}"; do
+            commits="${MERGED_COMMITS[$type]}"
             if [ -n "$commits" ]; then
               echo "### ${TYPE_MAP[$type]}" >> release_notes.txt
               echo "" >> release_notes.txt
-              
-              # 输出该类型的所有提交，每行末尾添加 PR 编号
-              echo "$commits" | while IFS= read -r commit_line; do
-                [ -z "$commit_line" ] && continue
-                # 如果已经是 PR 标题行（带 **），直接输出
-                if [[ "$commit_line" == *"**"*"(PR #"* ]]; then
-                  echo "$commit_line" >> release_notes.txt
-                # 如果还没有 PR 编号，添加当前 PR 编号
-                elif [[ "$commit_line" != *"(PR #"* ]]; then
-                  echo "$commit_line (PR #${PR_NUM})" >> release_notes.txt
-                else
-                  echo "$commit_line" >> release_notes.txt
-                fi
-              done
+              echo "$commits" >> release_notes.txt
               echo "" >> release_notes.txt
             fi
           done
           
-          # 如果是更新现有 Release，在开头添加分隔线
-          if [ "$EXISTS" = "true" ]; then
-            if [ "$LAST_DATE" != "$TODAY" ]; then
-              # 创建新日期分组：将当前内容作为历史记录
-              mv release_notes.txt new_section.txt
-              {
-                echo "## 🎉 Release v${VERSION} - ${TODAY}"
-                echo ""
-                cat new_section.txt
-                echo "---"
-                echo ""
-                cat current_body.txt
-              } > release_notes.txt
-              rm -f new_section.txt
-              echo "已创建新的日期分组"
-            else
-              # 追加到今天条目末尾
-              mv release_notes.txt new_entry.txt
-              awk -v new_entry="new_entry.txt" '
-                BEGIN {
-                  inserted = 0
-                  while ((getline line < new_entry) > 0) {
-                    new_entries[++n] = line
-                  }
-                  close(new_entry)
-                }
-                /^---$/ && inserted == 0 {
-                  # 在分隔线之前插入新条目
-                  for (i = 1; i <= n; i++) {
-                    print new_entries[i]
-                  }
-                  print ""
-                  inserted = 1
-                }
-                { print }
-              ' current_body.txt > release_notes.txt
-              rm -f new_entry.txt
-              echo "已追加到今天的条目"
-            fi
-          else
-            echo "---" >> release_notes.txt
-            echo "" >> release_notes.txt
-          fi
+          # 添加分隔线
+          echo "---" >> release_notes.txt
+          echo "" >> release_notes.txt
           
-          echo "✅ Release 描述已生成（按提交类型分组）"
+          echo "✅ Release 描述已生成（按提交类型分组并合并到现有分类）"
           echo "---"
           cat release_notes.txt
           
@@ -361,7 +279,7 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
           PR_NUM: ${{ github.event.pull_request.number }}
           EXISTS: ${{ steps.check_release.outputs.exists }}
-          LAST_DATE: ${{ steps.check_release.outputs.last_date }}
+          LABELS: ${{ steps.extract_pr_info.outputs.labels }}
       
       - name: 创建或更新 Release
         id: create_or_update_release
