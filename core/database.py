@@ -2629,99 +2629,32 @@ def reload_db_manager():
 
 def get_db_manager():
     """
-    获取全局数据库管理器实例（支持自动降级）
+    获取全局数据库管理器实例
 
     根据环境变量 DATABASE_TYPE 选择数据库管理器:
     - 'sqlite': 使用 SQLiteManager
-    - 'mysql': 使用 MySQLManager（连接失败时自动降级到 SQLite）
+    - 'mysql': 使用 MySQLManager
+
+    注意：初始化由调用者在异步上下文中处理，以避免事件循环问题
     """
     global db_manager
     if db_manager is not None:
         return db_manager
 
-    from .i18n import get_text
     from .settings import get_settings
 
     settings = get_settings()
     db_type = settings.database.database_type
 
     if db_type == "mysql":
-        import os
-
         from .database_mysql import MySQLManager
 
         logger.info("使用 MySQL 数据库管理器")
-        mysql_manager = MySQLManager()
-
-        # 尝试初始化 MySQL，失败则自动降级到 SQLite
-        try:
-            import asyncio
-
-            # 尝试创建事件循环并初始化
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 事件循环正在运行，创建任务
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, mysql_manager.init_database())
-                        future.result(timeout=10)  # 10秒超时
-                else:
-                    # 事件循环未运行，直接运行
-                    asyncio.run(mysql_manager.init_database())
-            except RuntimeError:
-                # 没有事件循环，尝试创建新的
-                asyncio.run(mysql_manager.init_database())
-
-            logger.info("✅ MySQL 数据库初始化成功")
-            db_manager = mysql_manager
-            return db_manager
-
-        except Exception as e:
-            # MySQL 连接失败，自动降级到 SQLite
-            logger.warning(f"⚠️ MySQL 数据库初始化失败: {type(e).__name__}: {e}")
-            logger.info(get_text("database.fallback.auto_switching"))
-
-            # 尝试自动更新 .env 文件
-            env_path = os.path.join("data", ".env")
-            try:
-                # 读取 .env 文件内容
-                if os.path.exists(env_path):
-                    with open(env_path, encoding="utf-8") as f:
-                        lines = f.readlines()
-
-                    # 修改 DATABASE_TYPE
-                    new_lines = []
-                    for line in lines:
-                        if line.startswith("DATABASE_TYPE="):
-                            new_lines.append("DATABASE_TYPE=sqlite\n")
-                        else:
-                            new_lines.append(line)
-
-                    # 写回文件
-                    with open(env_path, "w", encoding="utf-8") as f:
-                        f.writelines(new_lines)
-
-                    logger.info(get_text("database.fallback.config_updated"))
-                else:
-                    logger.warning(get_text("database.fallback.config_error"))
-
-            except Exception as env_error:
-                logger.error(f"更新 .env 文件失败: {env_error}")
-                logger.warning(get_text("database.fallback.config_error"))
-
-            # 降级到 SQLite
-            from .database_sqlite import SQLiteManager
-
-            logger.info(get_text("database.fallback.success"))
-            db_manager = SQLiteManager()
-            logger.info(get_text("database.fallback.tip"))
-            return db_manager
-
+        db_manager = MySQLManager()
     else:
         from .database_sqlite import SQLiteManager
 
         logger.info("使用 SQLite 数据库管理器")
         db_manager = SQLiteManager()
-        return db_manager
+
+    return db_manager
