@@ -529,6 +529,8 @@ MESSAGE_ZH_CN = {
     "comment_welcome.button": "申请周报总结",
     "comment_welcome.already_requested": "正在努力总结中，请稍候",
     "comment_welcome.request_sent": "已收到您的请求，我们会尽快处理",
+    "comment_welcome.not_registered": "⚠️ 您还未注册问答Bot\n\n请先前往 QA Bot 注册，注册成功后返回此处重新点击申请按钮",
+    "comment_welcome.register_button": "🔗 前往 QA Bot 注册",
     # ========== Comment Welcome Config ==========
     "comment_welcome.config.title": "📢 评论区欢迎配置",
     "comment_welcome.config.channel": "频道 {channel}",
@@ -1075,6 +1077,8 @@ MESSAGE_EN_US = {
     "comment_welcome.button": "Request Weekly Summary",
     "comment_welcome.already_requested": "Working on the summary, please wait",
     "comment_welcome.request_sent": "Your request has been received, we will process it ASAP",
+    "comment_welcome.not_registered": "⚠️ You haven't registered with QA Bot yet\n\nPlease register with QA Bot first, then return here to click the request button again",
+    "comment_welcome.register_button": "🔗 Go to QA Bot to Register",
     # ========== Comment Welcome Config ==========
     "comment_welcome.config.title": "📢 Comment Welcome Configuration",
     "comment_welcome.config.channel": "Channel {channel}",

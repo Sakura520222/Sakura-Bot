@@ -152,6 +152,7 @@ LANGUAGE_FROM_ENV = os.getenv("LANGUAGE", "zh-CN")
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+QA_BOT_USERNAME = os.getenv("QA_BOT_USERNAME", "").lstrip("@")  # 移除@前缀（如果有）
 # AI 配置 - 从环境变量获取默认值
 LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("DEEPSEEK_API_KEY"))
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")

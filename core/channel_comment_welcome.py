@@ -27,7 +27,7 @@ from .channel_comment_welcome_config import (
     get_channel_comment_welcome_config,
     validate_callback_data_length,
 )
-from .config import normalize_channel_id
+from .config import QA_BOT_USERNAME, normalize_channel_id
 from .database import get_db_manager
 from .error_handler import record_error
 from .i18n import get_text
@@ -494,16 +494,73 @@ async def handle_summary_request_callback(event: events.CallbackQuery.Event):
 
         channel_id = parts[1]
         msg_id = int(parts[2])
+        user_id = event.sender_id
 
         # 标准化频道ID
         normalized_channel_id = normalize_channel_id(channel_id)
         if normalized_channel_id != channel_id:
             logger.info(f"频道ID已标准化: '{channel_id}' -> '{normalized_channel_id}'")
 
-        logger.info(f"收到周报申请请求: 频道={normalized_channel_id}, 消息ID={msg_id}")
+        logger.info(
+            f"收到周报申请请求: 频道={normalized_channel_id}, 消息ID={msg_id}, 用户={user_id}"
+        )
+
+        # 检查用户是否已注册 QA Bot
+        db = get_db_manager()
+        logger.debug(f"获取数据库管理器成功: {type(db).__name__}")
+
+        is_registered = False
+        try:
+            if hasattr(db, "is_user_registered"):
+                logger.debug(f"检查用户 {user_id} 注册状态...")
+                is_registered = await db.is_user_registered(user_id)
+                logger.debug(f"用户 {user_id} 注册状态: {is_registered}")
+            else:
+                logger.error(f"数据库管理器不支持 is_user_registered 方法: {type(db).__name__}")
+                await event.answer("系统错误：数据库不支持用户注册检查", alert=True)
+                return
+        except Exception as db_error:
+            logger.error(
+                f"检查用户注册状态时出错: {type(db_error).__name__}: {db_error}", exc_info=True
+            )
+            await event.answer("系统错误：无法检查用户状态", alert=True)
+            return
+
+        if not is_registered:
+            # 用户未注册，编辑消息显示注册引导按钮
+            logger.info(f"用户 {user_id} 未注册 QA Bot，编辑消息显示注册引导")
+
+            # 构建 QA Bot 链接
+            qa_bot_link = f"https://t.me/{QA_BOT_USERNAME}" if QA_BOT_USERNAME else None
+
+            if qa_bot_link:
+                # 有配置用户名，编辑消息显示注册按钮
+                register_button = Button.url(
+                    get_text("comment_welcome.register_button"), url=qa_bot_link
+                )
+
+                # 编辑消息，替换为注册按钮
+                await event.edit(
+                    get_text("comment_welcome.not_registered"), buttons=register_button
+                )
+
+                # 启动异步任务，30秒后恢复原始按钮
+                asyncio.create_task(
+                    _restore_original_button(
+                        event.client, event.chat_id, event.message_id, channel_id, msg_id, user_id
+                    )
+                )
+
+                await event.answer()
+            else:
+                # 未配置用户名，发送提示消息
+                await event.answer(get_text("comment_welcome.not_registered"), alert=True)
+            return
+
+        # 用户已注册，继续处理申请
+        logger.info(f"用户 {user_id} 已注册，继续处理周报申请")
 
         # 检查数据库中是否已有处理中的请求（使用标准化后的ID）
-        db = get_db_manager()
         if hasattr(db, "check_pending_summary_request"):
             has_pending = await db.check_pending_summary_request(normalized_channel_id)
             if has_pending:
@@ -519,7 +576,7 @@ async def handle_summary_request_callback(event: events.CallbackQuery.Event):
                 channel_id=normalized_channel_id,
                 message_id=msg_id,
                 request_type="manual",
-                requested_by=event.sender_id,
+                requested_by=user_id,
             )
             logger.info(f"已记录周报请求到数据库，等待轮询任务处理: 频道={normalized_channel_id}")
 
@@ -537,3 +594,80 @@ async def handle_summary_request_callback(event: events.CallbackQuery.Event):
             await event.answer("处理请求时出错", alert=True)
         except Exception:
             pass
+
+
+async def _restore_original_button(
+    client,
+    chat_id: int,
+    message_id: int,
+    channel_id: str,
+    channel_msg_id: int,
+    user_id: int,
+    timeout: int = 30,
+):
+    """
+    异步任务：智能恢复原始按钮
+    - 用户注册成功后立即恢复
+    - 超时后无条件恢复
+
+    Args:
+        client: Telegram客户端实例
+        chat_id: 聊天ID
+        message_id: 消息ID
+        channel_id: 频道ID
+        channel_msg_id: 频道消息ID
+        user_id: 用户ID
+        timeout: 超时时间（秒），默认30秒
+    """
+    try:
+        db = get_db_manager()
+        restore_immediately = False
+
+        # 智能等待：降低 DB 压力，使用较长间隔并限制检查次数
+        check_interval = 3  # 每 3 秒检查一次
+        max_checks = min(max(1, timeout // check_interval), 5)  # 最多检查 5 次，避免高频轮询
+
+        for i in range(max_checks):
+            await asyncio.sleep(check_interval)
+
+            # 检查用户是否已注册
+            if hasattr(db, "is_user_registered"):
+                try:
+                    is_registered = await db.is_user_registered(user_id)
+                    if is_registered:
+                        elapsed = (i + 1) * check_interval
+                        logger.info(f"✨ 用户 {user_id} 已注册，立即恢复按钮（等待 {elapsed} 秒）")
+                        restore_immediately = True
+                        break
+                except Exception as e:
+                    logger.warning(f"检查用户注册状态时出错: {type(e).__name__}: {e}")
+
+        # 如果已注册，立即恢复；否则等待超时后恢复
+        if not restore_immediately:
+            logger.debug(
+                f"超时恢复原始按钮: chat_id={chat_id}, msg_id={message_id}, user_id={user_id}"
+            )
+
+        # 获取按钮文本（使用 i18n）
+        button_text = get_text("comment_welcome.button")
+
+        # 恢复原始按钮
+        original_button = Button.inline(
+            button_text,
+            data=f"req_summary:{channel_id}:{channel_msg_id}".encode(),
+        )
+
+        # 获取原始欢迎消息文本
+        welcome_message = get_text("comment_welcome.message")
+
+        try:
+            # 编辑消息，恢复原始按钮
+            await client.edit_message(chat_id, message_id, welcome_message, buttons=original_button)
+            logger.info(f"✅ 已恢复原始按钮: chat_id={chat_id}, msg_id={message_id}")
+        except Exception as e:
+            logger.warning(f"恢复按钮失败: {type(e).__name__}: {e}")
+
+    except asyncio.CancelledError:
+        logger.debug("恢复按钮任务被取消")
+    except Exception as e:
+        logger.error(f"恢复按钮任务出错: {type(e).__name__}: {e}", exc_info=True)

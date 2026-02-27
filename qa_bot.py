@@ -125,6 +125,12 @@ class QABot:
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/start命令"""
+        # 自动注册用户
+        await self.user_system.register_user(
+            update.effective_user.id,
+            update.effective_user.username,
+            update.effective_user.first_name,
+        )
 
         welcome_message = """🤖 **你好！我是智能资讯助手。**
 
