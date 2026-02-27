@@ -150,10 +150,38 @@ async def send_long_message(
 
     if len(text) <= max_length:
         logger.info("消息长度未超过限制，直接发送")
+
         # 如果消息不超过限制但提供了标题，可以添加标题
         if channel_title and show_pagination:
             text = f"📋 **{channel_title}**\n\n{text}"
-        await client.send_message(chat_id, text, link_preview=False)
+
+        # ✅ 在发送前验证消息格式
+        is_valid, error_msg = validate_message_entities(text)
+        if not is_valid:
+            logger.warning(f"消息格式验证失败: {error_msg}，尝试修复")
+            text = sanitize_markdown(text, aggressive=False)
+            logger.info("已修复消息格式")
+
+        # ✅ 包装发送操作，捕获实体错误
+        try:
+            await client.send_message(chat_id, text, link_preview=False)
+            logger.debug("消息发送成功")
+        except Exception as e:
+            error_str = str(e)
+            # 检查是否是实体边界错误
+            if (
+                "invalid bounds" in error_str
+                or "EntityBoundsInvalidError" in error_str
+                or "entities" in error_str
+            ):
+                logger.error(f"直接发送失败（实体错误）: {e}，尝试移除格式")
+                # 移除所有格式后重试
+                text = sanitize_markdown(text, aggressive=True)
+                await client.send_message(chat_id, text, link_preview=False)
+                logger.info("已成功发送消息（移除所有格式后）")
+            else:
+                # 其他类型的错误，重新抛出
+                raise
         return
 
     # 如果没有指定标题，则不使用标题
