@@ -141,6 +141,8 @@ jobs:
         id: generate_release_notes
         shell: bash
         run: |
+          set -e  # 遇到错误立即退出
+          
           COMMITS_FILE="${RUNNER_TEMP}/commits_list.txt"
           
           # 定义类型映射表（按优先级排序）
@@ -193,14 +195,20 @@ jobs:
           # 解析提交信息并按类型分组
           declare -A TYPE_COMMITS
           
+          # 定义正则表达式模式（使用变量避免 Bash 解析问题）
+          # 格式：type(scope)!: subject 或 type(scope): subject 或 type: subject
+          PATTERN_BREAKING='^[a-zA-Z]+\([^)]+\)!:'
+          PATTERN_NORMAL='^[a-zA-Z]+\([^)]+\):'
+          PATTERN_SIMPLE='^[a-zA-Z]+:'
+          
           if [ -s "$COMMITS_FILE" ]; then
             while IFS= read -r commit; do
               [ -z "$commit" ] && continue
               
               # 提取提交类型（支持重大变更标记 ! 和大小写混合）
-              # 格式：type(scope)!: subject 或 type(scope): subject 或 type: subject
-              if [[ "$commit" =~ ^([a-zA-Z]+)(\([^)]+\))?!: ]]; then
-                commit_type="${BASH_REMATCH[1],,}"  # 转换为小写
+              if [[ "$commit" =~ $PATTERN_BREAKING ]]; then
+                # 提取类型：取冒号前的字母部分
+                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
                 # 检查是否是已知类型
                 temp_value="${TYPE_MAP[$commit_type]}"
                 if [[ -n "$temp_value" ]]; then
@@ -210,8 +218,21 @@ jobs:
                   # 未知类型归入 chore
                   TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
                 fi
-              elif [[ "$commit" =~ ^([a-zA-Z]+)(\([^)]+\))?: ]]; then
-                commit_type="${BASH_REMATCH[1],,}"  # 转换为小写
+              elif [[ "$commit" =~ $PATTERN_NORMAL ]]; then
+                # 提取类型：取冒号前的字母部分
+                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
+                # 检查是否是已知类型
+                temp_value="${TYPE_MAP[$commit_type]}"
+                if [[ -n "$temp_value" ]]; then
+                  # 将提交添加到对应类型组
+                  TYPE_COMMITS[$commit_type]="${TYPE_COMMITS[$commit_type]}$commit"$'\n'
+                else
+                  # 未知类型归入 chore
+                  TYPE_COMMITS["chore"]="${TYPE_COMMITS["chore"]}$commit"$'\n'
+                fi
+              elif [[ "$commit" =~ $PATTERN_SIMPLE ]]; then
+                # 简单格式：type: subject
+                commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
                 # 检查是否是已知类型
                 temp_value="${TYPE_MAP[$commit_type]}"
                 if [[ -n "$temp_value" ]]; then
@@ -229,16 +250,24 @@ jobs:
           fi
           
           # 添加 PR 标题到对应的类型组（支持重大变更标记 ! 和大小写混合）
-          if [[ "$TITLE" =~ ^([a-zA-Z]+)(\([^)]+\))?!: ]]; then
-            pr_type="${BASH_REMATCH[1],,}"  # 转换为小写
+          if [[ "$TITLE" =~ $PATTERN_BREAKING ]]; then
+            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
             temp_value="${TYPE_MAP[$pr_type]}"
             if [[ -n "$temp_value" ]]; then
               TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
             else
               TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
             fi
-          elif [[ "$TITLE" =~ ^([a-zA-Z]+)(\([^)]+\))?: ]]; then
-            pr_type="${BASH_REMATCH[1],,}"  # 转换为小写
+          elif [[ "$TITLE" =~ $PATTERN_NORMAL ]]; then
+            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
+            temp_value="${TYPE_MAP[$pr_type]}"
+            if [[ -n "$temp_value" ]]; then
+              TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
+            else
+              TYPE_COMMITS["chore"]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS["chore"]}"
+            fi
+          elif [[ "$TITLE" =~ $PATTERN_SIMPLE ]]; then
+            pr_type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
             temp_value="${TYPE_MAP[$pr_type]}"
             if [[ -n "$temp_value" ]]; then
               TYPE_COMMITS[$pr_type]="- **${TITLE}** (PR #${PR_NUM})"$'\n'"${TYPE_COMMITS[$pr_type]}"
