@@ -111,7 +111,10 @@ class MySQLManager(DatabaseManagerBase):
         except (aiomysql.OperationalError, OSError) as e:
             # MySQL 连接失败的特殊错误处理
             error_msg = str(e)
-            logger.error(f"❌ MySQL 连接失败: {type(e).__name__}: {error_msg}")
+            logger.error(
+                f"❌ MySQL 连接失败: {type(e).__name__}: {error_msg}",
+                exc_info=True,
+            )
             logger.error(f"   MySQL 主机: {self.host}:{self.port}")
             logger.error(f"   数据库: {self.database}")
             logger.error(f"   用户: {self.user}")
