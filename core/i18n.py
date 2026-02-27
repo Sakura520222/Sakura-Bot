@@ -64,6 +64,7 @@ MESSAGE_ZH_CN = {
     "help.section_system_ops": "**🔧 系统运维**",
     "help.section_database": "**💾 数据库管理（高危）**",
     "help.section_preferences": "**⚙️ 偏好设置**",
+    "help.section_prompt": "**📝 提示词管理**",
     "help.new_feature": " (新功能)",
     "help.tip": "---\n💡 **提示**\n• 大多数命令支持中英文别名\n• 配置类命令需要管理员权限\n• 使用 /start 查看快速入门指南",
     # ========== 命令描述 ==========
@@ -611,6 +612,7 @@ MESSAGE_EN_US = {
     "help.section_system_ops": "**🔧 System Operations**",
     "help.section_database": "**💾 Database Management (High Risk)**",
     "help.section_preferences": "**⚙️ Preferences**",
+    "help.section_prompt": "**📝 Prompt Management**",
     "help.new_feature": " (New Feature)",
     "help.tip": "---\n💡 **Tips**\n• Most commands support Chinese/English aliases\n• Configuration commands require admin permissions\n• Use /start for quick start guide",
     # ========== Command Descriptions ==========

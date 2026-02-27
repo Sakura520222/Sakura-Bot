@@ -904,11 +904,12 @@ async def handle_help(event):
     try:
         help_message = f"""{get_text("help.title")}
 
-{get_text("help.section_basic")}
+{get_text("help.section_basic_core")}
 {get_text("cmd.start")}
 {get_text("cmd.help")}
 {get_text("cmd.summary")}
 {get_text("cmd.changelog")}
+{get_text("cmd.update")}
 
 {get_text("help.section_prompt")}
 {get_text("cmd.showprompt")}
@@ -920,11 +921,9 @@ async def handle_help(event):
 {get_text("cmd.showaicfg")}
 {get_text("cmd.setaicfg")}
 
-{get_text("help.section_log")}
+{get_text("help.section_system_ops")}
 {get_text("cmd.showloglevel")}
 {get_text("cmd.setloglevel")}
-
-{get_text("help.section_control")}
 {get_text("cmd.restart")}
 {get_text("cmd.shutdown")}
 {get_text("cmd.pause")}
@@ -935,31 +934,25 @@ async def handle_help(event):
 {get_text("cmd.addchannel")}
 {get_text("cmd.deletechannel")}
 
-{get_text("help.section_schedule")}
+{get_text("help.section_schedule_push")}
 {get_text("cmd.showchannelschedule")}
 {get_text("cmd.setchannelschedule")}
 {get_text("cmd.deletechannelschedule")}
-
-{get_text("help.section_data")}
 {get_text("cmd.clearsummarytime")}
-
-{get_text("help.section_report")}
 {get_text("cmd.setsendtosource")}
 
-{get_text("help.section_poll")}
+{get_text("help.section_channel_interaction")}
 {get_text("cmd.channelpoll")}
 {get_text("cmd.setchannelpoll")}
 {get_text("cmd.deletechannelpoll")}
-
-{get_text("help.section_cache")}
 {get_text("cmd.clearcache")}
 
-{get_text("help.section_history")}
+{get_text("help.section_stats_history")}
 {get_text("cmd.history")}
 {get_text("cmd.export")}
 {get_text("cmd.stats")}
 
-{get_text("help.section_language")}
+{get_text("help.section_preferences")}
 {get_text("cmd.language")}
 
 {get_text("help.tip")}"""
