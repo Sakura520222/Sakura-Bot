@@ -102,7 +102,7 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.6.5"
+__version__ = "1.6.6"
 
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,

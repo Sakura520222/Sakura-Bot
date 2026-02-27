@@ -108,6 +108,18 @@ class MySQLManager(DatabaseManagerBase):
                     await conn.commit()
                     logger.info("MySQL数据库表结构初始化成功")
 
+        except (aiomysql.OperationalError, OSError) as e:
+            # MySQL 连接失败的特殊错误处理
+            error_msg = str(e)
+            logger.error(f"❌ MySQL 连接失败: {type(e).__name__}: {error_msg}")
+            logger.error(f"   MySQL 主机: {self.host}:{self.port}")
+            logger.error(f"   数据库: {self.database}")
+            logger.error(f"   用户: {self.user}")
+
+            # 重新抛出异常，供上层处理
+            raise ConnectionError(
+                f"MySQL 连接失败: {error_msg}\n请检查 MySQL 服务是否运行，或切换到 SQLite 数据库"
+            ) from e
         except Exception as e:
             logger.error(f"初始化MySQL数据库失败: {type(e).__name__}: {e}", exc_info=True)
             raise

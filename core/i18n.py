@@ -560,6 +560,20 @@ MESSAGE_ZH_CN = {
     "update.no_git": "❌ 当前目录不是 Git 仓库",
     "update.git_error": "❌ Git 操作失败: {error}",
     "update.deps_error": "❌ 依赖安装失败: {error}",
+    # ========== 数据库自动降级 ==========
+    "database.fallback.mysql_failed": "❌ MySQL 连接失败",
+    "database.fallback.error": "错误详情",
+    "database.fallback.host": "MySQL 主机",
+    "database.fallback.port": "端口",
+    "database.fallback.database": "数据库",
+    "database.fallback.user": "用户",
+    "database.fallback.auto_switching": "🔄 自动降级到 SQLite...",
+    "database.fallback.success": "✅ 已自动切换到 SQLite 数据库",
+    "database.fallback.config_updated": "✅ 配置文件已更新",
+    "database.fallback.config_error": "⚠️ 配置文件更新失败，请手动修改 data/.env 中的 DATABASE_TYPE=sqlite",
+    "database.fallback.tip": "💡 SQLite 数据库已就绪，机器人将继续运行",
+    "database.fallback.manual_required": "⚠️ 需要手动操作",
+    "database.fallback.manual_steps": "请执行以下步骤：\n1. 修改 data/.env 文件\n2. 将 DATABASE_TYPE=mysql 改为 DATABASE_TYPE=sqlite\n3. 重启机器人",
 }
 
 # 英文翻译
@@ -1086,8 +1100,8 @@ MESSAGE_EN_US = {
     "comment_welcome.config.usage": 'Usage: /setcommentwelcome <channel> <enabled> [welcome_message] [button_text]\n\nExamples:\n/setcommentwelcome channel1 true\n/setcommentwelcome channel1 true "Welcome to comments" "Request Summary"\n/setcommentwelcome channel1 false',
     # ========== Update Command ==========
     "update.checking": "🔄 Checking for updates...",
-    "update.latest": "✅ Already up to date {version}",
-    "update.new_found": "✅ New version {remote} found (current: {local}), updating...",
+    "update.latest": "✅ Already up to date (version {version})",
+    "update.new_found": "✅ New version found: {remote} (current: {local}), updating...",
     "update.updating": "🔄 Updating code...",
     "update.installing_deps": "📦 Installing dependencies...",
     "update.success": "✅ Update completed, restarting...",
@@ -1095,6 +1109,20 @@ MESSAGE_EN_US = {
     "update.no_git": "❌ Not a Git repository",
     "update.git_error": "❌ Git operation failed: {error}",
     "update.deps_error": "❌ Dependency installation failed: {error}",
+    # ========== Database Auto Fallback ==========
+    "database.fallback.mysql_failed": "❌ MySQL Connection Failed",
+    "database.fallback.error": "Error Details",
+    "database.fallback.host": "MySQL Host",
+    "database.fallback.port": "Port",
+    "database.fallback.database": "Database",
+    "database.fallback.user": "User",
+    "database.fallback.auto_switching": "🔄 Auto-fallback to SQLite...",
+    "database.fallback.success": "✅ Automatically switched to SQLite database",
+    "database.fallback.config_updated": "✅ Configuration file updated",
+    "database.fallback.config_error": "⚠️ Failed to update configuration file, please manually modify DATABASE_TYPE=sqlite in data/.env",
+    "database.fallback.tip": "💡 SQLite database is ready, bot will continue running",
+    "database.fallback.manual_required": "⚠️ Manual operation required",
+    "database.fallback.manual_steps": "Please follow these steps:\n1. Modify data/.env file\n2. Change DATABASE_TYPE=mysql to DATABASE_TYPE=sqlite\n3. Restart the bot",
 }
 
 

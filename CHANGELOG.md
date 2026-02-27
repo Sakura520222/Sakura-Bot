@@ -16,6 +16,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.6.6] - 2026-02-27
+
+### 新增
+- **数据库自动降级功能（异步实现）**：当 MySQL 连接失败时，系统自动降级到 SQLite 数据库
+  - MySQL 连接失败时自动捕获 `OperationalError` 和 `OSError` 异常
+  - 自动切换到 SQLite 并更新 `.env` 配置文件
+  - 提供友好的中英文提示信息和详细日志
+  - 降级后 Bot 继续正常运行，无需手动干预
+
+### 改进
+- **MySQL 连接错误处理**：改进 MySQL 数据库管理器的错误处理逻辑，区分连接失败和其他数据库错误，提供详细的连接信息和错误原因
+
+### 技术实现
+- **core/database_mysql.py**：添加连接失败检测和详细日志记录
+- **core/database.py**：重构 `get_db_manager()` 函数，实现自动降级逻辑和配置文件更新
+- **core/i18n.py**：新增 10 个数据库降级相关的翻译 key
+
+### 注意事项
+- 自动降级功能仅在首次初始化数据库时生效，降级后需要重启 Bot 才能使用 MySQL
+
 ## [1.6.5] - 2026-02-26
 
 ### 新增
