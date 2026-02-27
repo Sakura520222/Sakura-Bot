@@ -623,16 +623,20 @@ async def _restore_original_button(
         db = get_db_manager()
         restore_immediately = False
 
-        # 智能等待：每秒检查用户是否已注册
-        for i in range(timeout):
-            await asyncio.sleep(1)
+        # 智能等待：降低 DB 压力，使用较长间隔并限制检查次数
+        check_interval = 3  # 每 3 秒检查一次
+        max_checks = min(max(1, timeout // check_interval), 5)  # 最多检查 5 次，避免高频轮询
+
+        for i in range(max_checks):
+            await asyncio.sleep(check_interval)
 
             # 检查用户是否已注册
             if hasattr(db, "is_user_registered"):
                 try:
                     is_registered = await db.is_user_registered(user_id)
                     if is_registered:
-                        logger.info(f"✨ 用户 {user_id} 已注册，立即恢复按钮（等待 {i + 1} 秒）")
+                        elapsed = (i + 1) * check_interval
+                        logger.info(f"✨ 用户 {user_id} 已注册，立即恢复按钮（等待 {elapsed} 秒）")
                         restore_immediately = True
                         break
                 except Exception as e:
