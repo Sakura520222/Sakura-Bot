@@ -19,7 +19,11 @@ from ..config import (
 )
 from ..error_handler import record_error, retry_with_backoff
 from ..i18n import get_text
-from ..telegram_client_utils import split_message_smart, validate_message_entities
+from ..telegram_client_utils import (
+    sanitize_markdown,
+    split_message_smart,
+    validate_message_entities,
+)
 from .client_management import extract_date_range_from_summary, get_active_client
 from .poll_handlers import send_poll
 
@@ -218,6 +222,16 @@ async def send_long_message(
         full_message_length = len(full_message)
         logger.info(f"正在发送第 {i + 1}/{len(parts)} 段，长度: {full_message_length}字符")
 
+        # 在发送前再次验证消息格式
+        is_valid, error_msg = validate_message_entities(full_message)
+        if not is_valid:
+            logger.warning(f"第 {i + 1} 段消息格式验证失败: {error_msg}，尝试修复")
+            # 尝试修复格式
+            full_message = sanitize_markdown(full_message, aggressive=False)
+            logger.info(f"已修复第 {i + 1} 段消息格式")
+            # 重新计算长度
+            full_message_length = len(full_message)
+
         # 验证消息长度不超过限制
         if full_message_length > max_length:
             logger.error(
@@ -226,6 +240,10 @@ async def send_long_message(
             # 紧急分割：直接按字符分割
             for j in range(0, full_message_length, max_length):
                 emergency_part = full_message[j : j + max_length]
+                # 验证紧急分割后的格式
+                emergency_valid, emergency_error = validate_message_entities(emergency_part)
+                if not emergency_valid:
+                    emergency_part = sanitize_markdown(emergency_part, aggressive=True)
                 await client.send_message(chat_id, emergency_part, link_preview=False)
                 logger.warning(f"发送紧急分割段 {j // max_length + 1}")
         else:
@@ -233,14 +251,32 @@ async def send_long_message(
                 await client.send_message(chat_id, full_message, link_preview=False)
                 logger.debug(f"成功发送第 {i + 1}/{len(parts)} 段")
             except Exception as e:
-                logger.error(f"发送第 {i + 1} 段失败: {e}")
-                # 尝试移除格式后重试
-                try:
-                    plain_message = full_message.replace("**", "").replace("`", "")
-                    await client.send_message(chat_id, plain_message, link_preview=False)
-                    logger.info(f"已成功发送第 {i + 1} 段（移除格式后）")
-                except Exception as e2:
-                    logger.error(f"即使移除格式后发送第 {i + 1} 段仍然失败: {e2}")
+                error_str = str(e)
+                # 检查是否是实体边界错误
+                if "invalid bounds" in error_str or "entities" in error_str:
+                    logger.error(f"第 {i + 1} 段发送失败（实体错误）: {e}，尝试移除格式")
+                    # 移除所有格式后重试
+                    plain_message = sanitize_markdown(full_message, aggressive=True)
+                    try:
+                        await client.send_message(chat_id, plain_message, link_preview=False)
+                        logger.info(f"已成功发送第 {i + 1} 段（移除所有格式后）")
+                    except Exception as e2:
+                        logger.error(f"即使移除格式后发送第 {i + 1} 段仍然失败: {e2}")
+                else:
+                    # 其他类型的错误，尝试简单的格式移除
+                    logger.error(f"发送第 {i + 1} 段失败: {e}，尝试移除格式")
+                    try:
+                        plain_message = (
+                            full_message.replace("**", "")
+                            .replace("`", "")
+                            .replace("*", "")
+                            .replace("_", "")
+                            .replace("~~", "")
+                        )
+                        await client.send_message(chat_id, plain_message, link_preview=False)
+                        logger.info(f"已成功发送第 {i + 1} 段（移除格式后）")
+                    except Exception as e2:
+                        logger.error(f"即使移除格式后发送第 {i + 1} 段仍然失败: {e2}")
 
 
 async def send_report(
