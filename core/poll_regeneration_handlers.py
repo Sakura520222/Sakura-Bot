@@ -231,6 +231,8 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
     - 如果原投票在频道(send_to_channel=True),新投票也发到频道
     - 如果原投票在讨论组(send_to_channel=False),新投票也发到讨论组
 
+    改进: 删除失败时中止流程，避免新旧投票同时存在
+
     Args:
         client: Telegram客户端实例
         channel: 频道URL
@@ -240,60 +242,103 @@ async def regenerate_poll(client, channel, summary_msg_id, regen_data):
     Returns:
         bool: 是否成功
     """
+    from telethon.errors import (
+        ChatAdminRequiredError,
+        FloodWaitError,
+        MessageDeleteForbiddenError,
+        MessageIdInvalidError,
+    )
+
     try:
         # 1. 删除旧的投票和按钮消息
         old_poll_id = regen_data["poll_message_id"]
         old_button_id = regen_data.get("button_message_id")  # 使用 .get() 兼容 None 值
 
-        logger.info(f"删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
+        logger.info(f"准备删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}")
 
-        try:
-            if regen_data["send_to_channel"]:
-                # 频道模式：从频道删除
+        # 确定删除目标
+        delete_target = None
+        if regen_data["send_to_channel"]:
+            # 频道模式
+            delete_target = channel
+            logger.info("删除模式: 频道模式")
+        else:
+            # 讨论组模式：获取讨论组ID
+            from .config import get_discussion_group_id_cached
+
+            delete_target = await get_discussion_group_id_cached(client, channel)
+            if delete_target:
+                logger.info(f"删除模式: 讨论组模式 (ID: {delete_target})")
+            else:
+                # 回退到频道删除
+                logger.warning("无法获取讨论组ID，回退到频道删除")
+                delete_target = channel
+
+        # 尝试删除消息（带重试机制）
+        delete_success = False
+        delete_error = None
+
+        for attempt in range(1, 4):  # 最多重试 3 次
+            try:
+                logger.info(get_text("poll_regen.retry_delete", attempt=attempt))
+
                 if old_button_id:
-                    await client.delete_messages(channel, [old_poll_id, old_button_id])
+                    await client.delete_messages(delete_target, [old_poll_id, old_button_id])
                     logger.info(
-                        f"从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}"
+                        f"✅ 成功删除旧投票和按钮: target={delete_target}, poll_id={old_poll_id}, button_id={old_button_id}"
                     )
                 else:
-                    await client.delete_messages(channel, [old_poll_id])
-                    logger.info(f"从频道删除旧投票: poll_id={old_poll_id}")
-            else:
-                # 讨论组模式：需要先获取讨论组ID，然后从讨论组删除
-                # 使用缓存版本避免频繁调用GetFullChannelRequest
-                from .config import get_discussion_group_id_cached
+                    await client.delete_messages(delete_target, [old_poll_id])
+                    logger.info(f"✅ 成功删除旧投票: target={delete_target}, poll_id={old_poll_id}")
 
-                discussion_group_id = await get_discussion_group_id_cached(client, channel)
+                delete_success = True
+                break  # 删除成功，退出重试循环
 
-                if discussion_group_id:
-                    # 从讨论组删除消息
-                    if old_button_id:
-                        await client.delete_messages(
-                            discussion_group_id, [old_poll_id, old_button_id]
-                        )
-                        logger.info(
-                            f"从讨论组删除旧投票和按钮: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}, button_id={old_button_id}"
-                        )
-                    else:
-                        await client.delete_messages(discussion_group_id, [old_poll_id])
-                        logger.info(
-                            f"从讨论组删除旧投票: discussion_group_id={discussion_group_id}, poll_id={old_poll_id}"
-                        )
+            except MessageIdInvalidError:
+                # 消息不存在（可能已被手动删除）
+                logger.warning(get_text("poll_regen.message_not_exist"))
+                delete_success = True  # 视为成功，因为旧投票已经不存在了
+                break
+
+            except (ChatAdminRequiredError, MessageDeleteForbiddenError):
+                # 权限不足
+                error_msg = get_text("poll_regen.permission_denied")
+                logger.error(error_msg)
+                delete_error = error_msg
+                break  # 权限问题不会因为重试而解决，直接退出
+
+            except FloodWaitError as e:
+                # FloodWait 需要等待
+                wait_time = e.seconds
+                logger.warning(f"遇到 FloodWait，需要等待 {wait_time} 秒")
+                if attempt < 3:
+                    import asyncio
+
+                    await asyncio.sleep(wait_time)
                 else:
-                    # 回退到频道删除
-                    logger.warning("无法获取讨论组ID，回退到从频道删除")
-                    if old_button_id:
-                        await client.delete_messages(channel, [old_poll_id, old_button_id])
-                        logger.info(
-                            f"回退：从频道删除旧投票和按钮: poll_id={old_poll_id}, button_id={old_button_id}"
-                        )
-                    else:
-                        await client.delete_messages(channel, [old_poll_id])
-                        logger.info(f"回退：从频道删除旧投票: poll_id={old_poll_id}")
+                    delete_error = f"Telegram 限制：需要等待 {wait_time} 秒"
+                    logger.error(delete_error)
 
-            logger.info(get_text("poll_regen.poll_deleted"))
-        except Exception as e:
-            logger.warning(get_text("poll_regen.delete_warning") + f": {e}")
+            except Exception as e:
+                # 其他错误
+                error_type = type(e).__name__
+                error_msg = str(e)
+                logger.error(f"删除失败 (尝试 {attempt}/3): {error_type}: {error_msg}")
+                delete_error = f"{error_type}: {error_msg}"
+
+                # 如果是最后一次重试，不再继续
+                if attempt >= 3:
+                    break
+
+        # 检查删除结果
+        if not delete_success:
+            # 删除失败，中止重新生成流程
+            error_message = get_text("poll_regen.delete_failed", error=delete_error)
+            logger.error(error_message)
+            logger.error(get_text("poll_regen.abort_regen"))
+            return False  # 返回 False 表示失败
+
+        logger.info(get_text("poll_regen.poll_deleted"))
 
         # 2. 生成新的投票内容
         from .ai_client import generate_poll_from_summary

@@ -4,8 +4,6 @@
 
 本文件仅保留用于历史记录参考。完整的版本发布说明和功能变更记录请查看 GitHub Releases 页面。
 
----
-
 ## 历史变更记录
 
 # 更新日志
@@ -15,9 +13,53 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+---
 
+## [1.6.10] - 2026-02-28
 
-  ## [1.6.9] - 2026-02-27
+### 修复
+- **投票重新生成时旧投票未删除问题**：彻底修复了投票重新生成请求达标后，旧投票没有被删除导致出现多个投票的问题（异步实现）
+  - **问题根源**：`regenerate_poll()` 函数的删除逻辑存在多个缺陷
+    - 讨论组模式删除时使用了错误的 Telegram 客户端实例（硬编码的新实例）
+    - 讨论组 ID 获取失败时未回退到频道删除，导致删除流程直接失败
+    - 缺少重试机制处理网络临时错误和 FloodWait 限流
+    - 错误处理不完善，删除失败后仍继续生成新投票
+  
+  - **核心修复**：
+    - **统一客户端实例**：删除逻辑统一使用传入的 `client` 实例，不再创建新客户端
+    - **回退机制**：讨论组 ID 获取失败时自动回退到频道删除，确保删除操作能执行
+    - **重试机制**：实现指数退避重试策略，最多重试 3 次，处理 FloodWait 和网络错误
+    - **错误分类处理**：区分可恢复错误（重试）和不可恢复错误（中止流程）
+    - **完善日志记录**：添加详细的删除模式、重试次数、错误原因等日志
+  
+  - **新增翻译 key**（`core/i18n.py`）：
+    - `poll_regen.delete_mode` - 删除模式说明
+    - `poll_regen.retry_delete` - 重试删除日志
+    - `poll_regen.delete_success` - 删除成功日志
+    - `poll_regen.delete_failed` - 删除失败错误信息
+    - `poll_regen.message_not_exist` - 消息不存在警告
+    - `poll_regen.permission_denied` - 权限不足错误
+    - `poll_regen.delete_forbidden` - 删除禁止错误
+    - `poll_regen.flood_wait` - FloodWait 等待提示
+    - `poll_regen.general_error` - 通用网络错误
+    - `poll_regen.no_discussion_group` - 无法获取讨论组ID警告
+    - `poll_regen.abort_regen` - 中止重新生成提示
+  
+  - **影响文件**：
+    - `core/poll_regeneration_handlers.py` - 重构删除逻辑（约 120 行修改）
+    - `core/i18n.py` - 新增 11 个翻译 key（中英文）
+    - `tests/test_poll_regeneration_delete.py` - 新增 10 个单元测试（全部通过）
+  
+  - **修复效果**：
+    - ✅ 彻底解决旧投票未删除导致多个投票并存的问题
+    - ✅ 讨论组模式删除使用正确的客户端实例
+    - ✅ 讨论组 ID 获取失败时自动回退到频道删除
+    - ✅ 网络临时错误和 FloodWait 自动重试
+    - ✅ 删除失败时明确中止重新生成流程
+    - ✅ 详细的日志记录便于排查问题
+    - ✅ 测试覆盖率 100%（10/10 测试通过）
+
+## [1.6.9] - 2026-02-27
 
 ### 修复
 - **Telegram 消息实体边界错误**：彻底修复 `/history` 等命令执行时的 `EntityBoundsInvalidError` 错误
