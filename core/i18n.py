@@ -592,6 +592,16 @@ MESSAGE_ZH_CN = {
     "forwarding.error.disable_failed": "❌ 禁用转发功能失败：{error}",
     "forwarding.error.stats_failed": "❌ 查询转发统计失败：{error}",
     "forwarding.filter.forward_skipped": "⏭️ 消息是转发消息，已跳过",
+    # ========== 底栏管理 ==========
+    "forwarding.footer.updated": "✅ 已更新转发规则的自定义底栏\n\n源频道：{source}\n目标频道：{target}\n\n底栏内容：\n{footer}",
+    "forwarding.footer.cleared": "✅ 已清除转发规则的自定义底栏\n\n源频道：{source}\n目标频道：{target}\n\n将使用默认底栏格式",
+    "forwarding.footer.default_enabled": "✅ 已启用默认底栏\n\n未设置自定义底栏的转发规则将使用默认格式：[Source](链接) @频道",
+    "forwarding.footer.default_disabled": "❌ 已禁用默认底栏\n\n所有转发规则都不会添加底栏（包括自定义底栏）",
+    "forwarding.footer.usage": "用法：\n\n/forwarding_footer <源频道> <目标频道> <底栏内容>\n/forwarding_footer <源频道> <目标频道> clear\n\n示例：\n/forwarding_footer https://t.me/source https://t.me/target 📢 来源: {source_title}\\n🔗 {source_link}\n/forwarding_footer https://t.me/source https://t.me/target clear",
+    "forwarding.footer.invalid_params": "❌ 参数无效\n\n用法：/forwarding_footer <源频道> <目标频道> <底栏内容>\n\n或使用 clear 清除底栏",
+    "forwarding.footer.not_found": "❌ 转发规则不存在\n\n源频道：{source}\n目标频道：{target}",
+    "forwarding.footer.placeholders": "支持的占位符：\n\n{source_link} - 源消息链接\n{source_title} - 源频道名称\n{target_title} - 目标频道名称\n{source_channel} - 源频道ID\n{target_channel} - 目标频道ID\n{message_id} - 消息ID",
+    "forwarding.default_footer.usage": "用法：\n\n/forwarding_default_footer on - 启用默认底栏\n/forwarding_default_footer off - 禁用默认底栏",
 }
 
 # 英文翻译
@@ -1158,6 +1168,16 @@ MESSAGE_EN_US = {
     "forwarding.error.enable_failed": "❌ Failed to enable forwarding feature: {error}",
     "forwarding.error.disable_failed": "❌ Failed to disable forwarding feature: {error}",
     "forwarding.error.stats_failed": "❌ Failed to query forwarding statistics: {error}",
+    # ========== Footer Management ==========
+    "forwarding.footer.updated": "✅ Custom footer updated for forwarding rule\n\nSource: {source}\nTarget: {target}\n\nFooter content:\n{footer}",
+    "forwarding.footer.cleared": "✅ Custom footer cleared for forwarding rule\n\nSource: {source}\nTarget: {target}\n\nWill use default footer format",
+    "forwarding.footer.default_enabled": "✅ Default footer enabled\n\nForwarding rules without custom footer will use default format: [Source](link) @channel",
+    "forwarding.footer.default_disabled": "❌ Default footer disabled\n\nAll forwarding rules will not add footer (including custom footer)",
+    "forwarding.footer.usage": "Usage:\n\n/forwarding_footer <source> <target> <footer content>\n/forwarding_footer <source> <target> clear\n\nExample:\n/forwarding_footer https://t.me/source https://t.me/target Source: {source_title}\\n{source_link}\n/forwarding_footer https://t.me/source https://t.me/target clear",
+    "forwarding.footer.invalid_params": "❌ Invalid parameters\n\nUsage: /forwarding_footer <source> <target> <footer content>\n\nOr use clear to clear footer",
+    "forwarding.footer.not_found": "❌ Forwarding rule not found\n\nSource: {source}\nTarget: {target}",
+    "forwarding.footer.placeholders": "Supported placeholders:\n\n{source_link} - Source message link\n{source_title} - Source channel name\n{target_title} - Target channel name\n{source_channel} - Source channel ID\n{target_channel} - Target channel ID\n{message_id} - Message ID",
+    "forwarding.default_footer.usage": "Usage:\n\n/forwarding_default_footer on - Enable default footer\n/forwarding_default_footer off - Disable default footer",
 }
 
 

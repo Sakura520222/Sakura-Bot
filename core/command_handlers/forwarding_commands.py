@@ -162,3 +162,141 @@ async def cmd_forwarding_stats(
     except Exception as e:
         logger.error(f"查询转发统计失败: {type(e).__name__}: {e}", exc_info=True)
         await message.reply(t("forwarding.error.stats_failed", error=str(e)))
+
+
+async def cmd_forwarding_footer(
+    client: "TelegramClient", message: "Message", handler: "ForwardingHandler"
+):
+    """
+    设置或清除自定义底栏
+
+    用法:
+    /forwarding_footer <源频道> <目标频道> <底栏内容>
+    /forwarding_footer <源频道> <目标频道> clear
+
+    支持的占位符:
+    - {source_link}: 源消息链接
+    - {source_title}: 源频道名称
+    - {target_title}: 目标频道名称
+    - {source_channel}: 源频道ID
+    - {target_channel}: 目标频道ID
+    - {message_id}: 消息ID
+
+    示例:
+    /forwarding_footer https://t.me/source https://t.me/target 📢 来源: {source_title}\\n🔗 {source_link}
+    /forwarding_footer https://t.me/source https://t.me/target clear
+    """
+    try:
+        # 解析参数
+        args = message.message.split()[1:] if message.message else []
+
+        if len(args) < 2:
+            await message.reply(t("forwarding.footer.usage"))
+            return
+
+        source_channel = args[0]
+        target_channel = args[1]
+
+        # 查找匹配的转发规则
+        config = handler.config
+        rules = config.get("rules", [])
+        matched_rule = None
+
+        for rule in rules:
+            if (
+                rule.get("source_channel", "").rstrip("/").split("/")[-1]
+                == source_channel.rstrip("/").split("/")[-1]
+                and rule.get("target_channel", "").rstrip("/").split("/")[-1]
+                == target_channel.rstrip("/").split("/")[-1]
+            ):
+                matched_rule = rule
+                break
+
+        if not matched_rule:
+            await message.reply(
+                t("forwarding.footer.not_found", source=source_channel, target=target_channel)
+            )
+            return
+
+        # 检查是否要清除底栏
+        if len(args) >= 3 and args[2].lower() == "clear":
+            matched_rule["custom_footer"] = ""
+            await message.reply(
+                t(
+                    "forwarding.footer.cleared",
+                    source=source_channel,
+                    target=target_channel,
+                )
+            )
+            logger.info(f"用户 {message.sender_id} 清除了转发规则底栏")
+            return
+
+        # 设置自定义底栏
+        if len(args) < 3:
+            await message.reply(t("forwarding.footer.invalid_params"))
+            return
+
+        # 获取底栏内容（可能包含空格，所以需要特殊处理）
+        footer_text = " ".join(args[2:])
+
+        # 存储到配置中
+        matched_rule["custom_footer"] = footer_text
+
+        await message.reply(
+            t(
+                "forwarding.footer.updated",
+                source=source_channel,
+                target=target_channel,
+                footer=footer_text,
+            )
+        )
+        logger.info(
+            f"用户 {message.sender_id} 更新了转发规则底栏: {source_channel} -> {target_channel}"
+        )
+
+    except Exception as e:
+        logger.error(f"设置底栏失败: {type(e).__name__}: {e}", exc_info=True)
+        await message.reply(t("forwarding.error.query_failed", error=str(e)))
+
+
+async def cmd_forwarding_default_footer(
+    client: "TelegramClient", message: "Message", handler: "ForwardingHandler"
+):
+    """
+    启用或禁用默认底栏
+
+    用法:
+    /forwarding_default_footer on - 启用默认底栏
+    /forwarding_default_footer off - 禁用默认底栏
+
+    说明:
+    - 启用：未设置自定义底栏的转发规则将使用默认格式
+    - 禁用：所有转发规则都不会添加底栏（包括自定义底栏）
+    """
+    try:
+        # 解析参数
+        args = message.message.split()[1:] if message.message else []
+
+        if not args:
+            await message.reply(t("forwarding.default_footer.usage"))
+            return
+
+        action = args[0].lower()
+
+        # 更新全局配置
+        config = handler.config
+
+        if action in ["on", "true", "1", "yes"]:
+            config["show_default_footer"] = True
+            await message.reply(t("forwarding.footer.default_enabled"))
+            logger.info(f"用户 {message.sender_id} 启用了默认底栏")
+        elif action in ["off", "false", "0", "no"]:
+            config["show_default_footer"] = False
+            await message.reply(t("forwarding.footer.default_disabled"))
+            logger.info(f"用户 {message.sender_id} 禁用了默认底栏")
+        else:
+            await message.reply(t("forwarding.default_footer.usage"))
+
+    except Exception as e:
+        logger.error(f"设置默认底栏失败: {type(e).__name__}: {e}", exc_info=True)
+        await message.reply(t("forwarding.error.query_failed", error=str(e)))

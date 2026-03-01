@@ -70,8 +70,10 @@ from core.command_handlers.comment_welcome_commands import (
     handle_show_comment_welcome,
 )
 from core.command_handlers.forwarding_commands import (
+    cmd_forwarding_default_footer,
     cmd_forwarding_disable,
     cmd_forwarding_enable,
+    cmd_forwarding_footer,
     cmd_forwarding_stats,
     cmd_forwarding_status,
 )
@@ -598,6 +600,24 @@ async def main():
             else:
                 await event.message.reply("转发功能未初始化")
 
+        async def handle_forwarding_footer(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_footer(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_default_footer(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_default_footer(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
         client.add_event_handler(
             handle_forwarding_status, NewMessage(pattern="/forwarding|/转发状态")
         )
@@ -609,6 +629,13 @@ async def main():
         )
         client.add_event_handler(
             handle_forwarding_stats, NewMessage(pattern="/forwarding_stats|/转发统计")
+        )
+        client.add_event_handler(
+            handle_forwarding_footer, NewMessage(pattern="/forwarding_footer|/转发底栏")
+        )
+        client.add_event_handler(
+            handle_forwarding_default_footer,
+            NewMessage(pattern="/forwarding_default_footer|/默认底栏"),
         )
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(
@@ -904,6 +931,8 @@ async def main():
             BotCommand(command="forwarding_enable", description="启用转发功能"),
             BotCommand(command="forwarding_disable", description="禁用转发功能"),
             BotCommand(command="forwarding_stats", description="查看转发统计"),
+            BotCommand(command="forwarding_footer", description="设置转发底栏"),
+            BotCommand(command="forwarding_default_footer", description="启用/禁用默认底栏"),
         ]
 
         await client(

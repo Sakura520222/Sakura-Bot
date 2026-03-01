@@ -275,13 +275,21 @@ class ForwardingHandler:
                         message, target_channel, source_channel, rule
                     )
 
+            # 生成底栏
+            footer = await self._generate_footer(message, source_channel, target_channel, rule)
+
             # 内存转发（小文件或无媒体）
             if rule.get("copy_mode", False):
                 # 使用复制模式（不显示转发来源）
+                caption = message.message or ""
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
+
                 await self.client.send_message(
                     entity=target_channel,
-                    message=message.message,
+                    message=caption,
                     file=message.media if message.media else None,
+                    link_preview=False,  # 禁用链接预览
                 )
             else:
                 # 使用转发模式（显示转发来源）
@@ -352,19 +360,27 @@ class ForwardingHandler:
 
             logger.info(f"文件下载完成: {file_path}")
 
+            # 生成底栏
+            footer = await self._generate_footer(message, source_channel, target_channel, rule)
+
             # 转发文件（下载管理器已返回绝对路径）
             if rule.get("copy_mode", False):
                 # 复制模式：发送文件
+                caption = message.message or ""
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
+
                 await self.client.send_file(
                     entity=target_channel,
                     file=file_path,
-                    caption=message.message,
+                    caption=caption,
+                    link_preview=False,  # 禁用链接预览
                 )
             else:
                 # 转发模式：由于已经下载，使用 send_file 并说明来源
                 caption = message.message or ""
-                if caption:
-                    caption = f"📎 {source_channel}\n\n{caption}"
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
                 else:
                     caption = f"📎 来自: {source_channel}"
 
@@ -372,6 +388,7 @@ class ForwardingHandler:
                     entity=target_channel,
                     file=file_path,
                     caption=caption,
+                    link_preview=False,  # 禁用链接预览
                 )
 
             # 清理缓存
@@ -484,11 +501,22 @@ class ForwardingHandler:
                         else:
                             captions.append("")
 
+                # 生成底栏
+                footer = await self._generate_footer(
+                    media_group_messages[0], source_channel, target_channel, rule
+                )
+
+                # 组合 caption 和 footer
+                caption = captions[0] if captions else ""
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
+
                 # 批量发送媒体组
                 await self.client.send_file(
                     entity=target_channel,
                     file=files,
-                    caption=captions[0] if captions else None,
+                    caption=caption if caption else None,
+                    link_preview=False,  # 禁用链接预览
                 )
             else:
                 # 转发模式：使用forward_messages批量转发
@@ -562,20 +590,27 @@ class ForwardingHandler:
 
             logger.info(f"媒体组下载完成: {len(file_paths)} 个文件")
 
+            # 生成底栏
+            footer = await self._generate_footer(messages[0], source_channel, target_channel, rule)
+
             # 转发文件（下载管理器已返回绝对路径）
             if rule.get("copy_mode", False):
                 # 复制模式：发送文件
-                caption = messages[0].message if messages and messages[0].message else None
+                caption = messages[0].message if messages and messages[0].message else ""
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
+
                 await self.client.send_file(
                     entity=target_channel,
                     file=file_paths,
                     caption=caption,
+                    link_preview=False,  # 禁用链接预览
                 )
             else:
                 # 转发模式：由于已经下载，使用 send_file 并说明来源
-                caption = messages[0].message if messages and messages[0].message else None
-                if caption:
-                    caption = f"📎 {source_channel}\n\n{caption}"
+                caption = messages[0].message if messages and messages[0].message else ""
+                if footer:
+                    caption = f"{caption}\n\n{footer}" if caption else footer
                 else:
                     caption = f"📎 来自: {source_channel}"
 
@@ -583,6 +618,7 @@ class ForwardingHandler:
                     entity=target_channel,
                     file=file_paths,
                     caption=caption,
+                    link_preview=False,  # 禁用链接预览
                 )
 
             # 清理缓存
@@ -734,6 +770,94 @@ class ForwardingHandler:
         content = message.message or ""
         # 简单的哈希算法
         return hashlib.md5(content.encode("utf-8")).hexdigest()[:16]
+
+    async def _generate_footer(
+        self,
+        message: "Message",
+        source_channel: str,
+        target_channel: str,
+        rule: dict[str, Any],
+    ) -> str:
+        """
+        生成转发消息底栏
+
+        支持三种模式：
+        1. 自定义底栏模式：规则设置了 custom_footer 时，使用自定义模板
+        2. 默认底栏模式：未设置自定义底栏时，使用格式 [Source](链接) @频道
+        3. 隐藏底栏模式：全局配置 show_default_footer=False 时，不添加任何底栏
+
+        支持的占位符：
+        - {source_link}: 源消息链接
+        - {source_title}: 源频道名称
+        - {target_title}: 目标频道名称
+        - {source_channel}: 源频道ID
+        - {target_channel}: 目标频道ID
+        - {message_id}: 消息ID
+
+        Args:
+            message: Telegram消息对象
+            source_channel: 源频道ID
+            target_channel: 目标频道ID
+            rule: 转发规则
+
+        Returns:
+            格式化的底栏文本
+        """
+        try:
+            # 获取源频道信息
+            source_entity = await self.client.get_entity(message.chat_id)
+            source_username = getattr(source_entity, "username", None)
+            source_title = getattr(source_entity, "title", "Unknown")
+
+            # 生成源消息链接
+            if source_username:
+                source_link = f"https://t.me/{source_username}/{message.id}"
+            else:
+                # 私有频道使用数字ID（去掉负号）
+                source_link = f"https://t.me/c/{abs(message.chat_id)}/{message.id}"
+
+            # 获取目标频道信息
+            try:
+                target_entity = await self.client.get_entity(target_channel)
+                target_title = getattr(target_entity, "title", target_channel)
+                target_username = getattr(target_entity, "username", None)
+            except Exception as e:
+                logger.warning(f"获取目标频道信息失败: {e}")
+                target_title = target_channel
+                target_username = None
+
+            # 模式1：自定义底栏（优先级最高）
+            custom_footer = rule.get("custom_footer", "").strip()
+            if custom_footer:
+                # 安全替换占位符（使用 .replace() 避免 str.format() 的大括号冲突）
+                mapping = {
+                    "{source_link}": source_link,
+                    "{source_title}": source_title,
+                    "{target_title}": target_title,
+                    "{source_channel}": source_channel,
+                    "{target_channel}": target_username if target_username else target_channel,
+                    "{message_id}": str(message.id),
+                }
+
+                footer_text = custom_footer
+                for placeholder, value in mapping.items():
+                    footer_text = footer_text.replace(placeholder, str(value))
+
+                return footer_text
+
+            # 模式2：检查全局配置是否禁用默认底栏
+            if not self._config.get("show_default_footer", True):
+                return ""
+
+            # 模式3：使用默认格式
+            if target_username:
+                return f"[Source]({source_link}) @{target_username}"
+            else:
+                return f"[Source]({source_link}) {target_channel}"
+
+        except Exception as e:
+            logger.error(f"生成底栏失败: {type(e).__name__}: {e}", exc_info=True)
+            return ""
 
     async def get_statistics(self, channel_id: str = None) -> dict[str, Any]:
         """

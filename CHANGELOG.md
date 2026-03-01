@@ -59,26 +59,63 @@
     - `last_forwarded` - 最后转发时间
   - 支持 SQLite 和 MySQL 双数据库
 
+- **转发消息底栏功能**：完善转发消息的底栏显示，参考 TG-Forwarder 实现
+  - **自定义底栏支持**：每个转发规则可单独设置自定义底栏模板
+    - 在 config.json 中为每条规则添加 `custom_footer` 字段
+    - 支持丰富的占位符：`{source_link}`、`{source_title}`、`{target_title}`、`{source_channel}`、`{target_channel}`、`{message_id}`
+    - 自动替换占位符为实际值，生成个性化底栏
+  
+  - **默认底栏模式**：未设置自定义底栏时使用默认格式
+    - 默认格式：`[Source](链接) @频道`
+    - 自动生成源消息链接（支持公开和私有频道）
+    - 自动获取目标频道用户名
+  
+  - **全局底栏开关**：支持全局启用/禁用底栏功能
+    - 配置项：`show_default_footer`（默认 true）
+    - 禁用后所有转发消息都不添加底栏（包括自定义底栏）
+  
+  - **底栏管理命令**：
+    - `/forwarding_footer <源频道> <目标频道> <底栏内容>` - 设置自定义底栏
+    - `/forwarding_footer <源频道> <目标频道> clear` - 清除自定义底栏
+    - `/forwarding_default_footer on|off` - 启用/禁用默认底栏
+    - 支持中英文别名：`/转发底栏`、`/默认底栏`
+  
+  - **底栏生成逻辑**（core/forwarding/forwarding_handler.py）：
+    - `_generate_footer()` 方法：三种模式的底栏生成
+    - 优先级：自定义底栏 > 全局开关 > 默认底栏
+    - 使用 `.replace()` 安全替换占位符，避免格式冲突
+    - 自动处理公开频道和私有频道的链接差异
+  
+  - **集成到所有转发场景**：
+    - 单个消息转发：在复制模式下添加底栏
+    - 下载转发（大文件）：自动附加底栏到文件说明
+    - 媒体组转发：为整个媒体组添加统一底栏
+    - 转发模式（显示来源）：不添加底栏（避免重复）
+
 - **配置文件增强**（config.json）：
-  - 新增 `forwarding` 配置项：
-    ```json
-    {
-      "forwarding": {
-        "enabled": false,
-        "rules": [
-          {
-            "source_channel": "https://t.me/source",
-            "target_channel": "https://t.me/target",
-            "keywords": ["关键词1", "关键词2"],
-            "blacklist": ["广告", "垃圾"],
-            "patterns": [],
-            "blacklist_patterns": [],
-            "copy_mode": false
-          }
-        ]
-      }
+  - 新增 `forwarding.show_default_footer` 字段：全局底栏开关
+  - 新增 `forwarding.rules[].custom_footer` 字段：自定义底栏模板
+  ```json
+  {
+    "forwarding": {
+      "enabled": false,
+      "show_default_footer": true,
+      "rules": [
+        {
+          "source_channel": "https://t.me/source",
+          "target_channel": "https://t.me/target",
+          "keywords": ["关键词1", "关键词2"],
+          "blacklist": ["广告", "垃圾"],
+          "patterns": [],
+          "blacklist_patterns": [],
+          "copy_mode": false,
+          "forward_original_only": false,
+          "custom_footer": "📢 来源: {source_title}\\n🔗 {source_link}"
+        }
+      ]
     }
-    ```
+  }
+  ```
 
 ### 新增文件
 - **core/forwarding/__init__.py** - 转发功能模块导出
