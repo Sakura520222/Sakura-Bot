@@ -591,6 +591,7 @@ MESSAGE_ZH_CN = {
     "forwarding.error.enable_failed": "❌ 启用转发功能失败：{error}",
     "forwarding.error.disable_failed": "❌ 禁用转发功能失败：{error}",
     "forwarding.error.stats_failed": "❌ 查询转发统计失败：{error}",
+    "forwarding.filter.forward_skipped": "⏭️ 消息是转发消息，已跳过",
 }
 
 # 英文翻译

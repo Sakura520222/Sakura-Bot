@@ -13,7 +13,7 @@
 """
 消息过滤器模块
 
-提供基于关键词的消息过滤功能
+提供基于关键词和转发来源的消息过滤功能
 """
 
 import logging
@@ -63,6 +63,44 @@ def should_forward_by_keywords(
         return False
 
     # 如果没有设置白名单，则转发所有消息（除非被黑名单过滤）
+    return True
+
+
+def should_forward_original_only(message: "Message", forward_original_only: bool = False) -> bool:
+    """
+    判断是否应该转发消息（基于是否为转发消息）
+
+    如果 forward_original_only 为 True，则只转发频道原创消息，过滤掉转发消息
+    如果 forward_original_only 为 False，则转发所有消息
+
+    Args:
+        message: Telegram消息对象
+        forward_original_only: 是否只转发原创消息
+
+    Returns:
+        是否应该转发
+    """
+    # 如果未启用只转发原创消息，则转发所有消息
+    if not forward_original_only:
+        return True
+
+    # 检查消息是否为转发消息
+    # Telethon 的 Message 对象有以下属性可以判断：
+    # - message.forward: 转发信息（如果有）
+    # - message.fwd_from: 转发来源信息（旧版属性）
+
+    # 如果消息有转发信息，说明这是转发消息
+    is_forwarded = hasattr(message, "forward") and message.forward is not None
+
+    # 也检查旧的属性（兼容性）
+    if not is_forwarded:
+        is_forwarded = hasattr(message, "fwd_from") and message.fwd_from is not None
+
+    if is_forwarded:
+        logger.debug("消息是转发消息，根据配置跳过")
+        return False
+
+    # 这是原创消息，可以转发
     return True
 
 

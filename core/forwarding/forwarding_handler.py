@@ -23,7 +23,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .download_manager import DownloadManager
-from .filters import should_forward_by_keywords, should_forward_by_regex
+from .filters import (
+    should_forward_by_keywords,
+    should_forward_by_regex,
+    should_forward_original_only,
+)
 from .media_utils import ForwardStrategy, decide_forward_strategy
 
 if TYPE_CHECKING:
@@ -178,6 +182,14 @@ class ForwardingHandler:
         Returns:
             是否应该转发
         """
+        # 检查是否只转发原创消息
+        forward_original_only = rule.get("forward_original_only", False)
+        if not should_forward_original_only(message, forward_original_only):
+            from ..i18n import t
+
+            logger.debug(t("forwarding.filter.forward_skipped"))
+            return False
+
         # 检查关键词过滤
         keywords = rule.get("keywords")
         blacklist = rule.get("blacklist")

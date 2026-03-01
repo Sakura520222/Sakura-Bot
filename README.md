@@ -298,6 +298,7 @@ python main.py
 - `patterns`: 正则表达式白名单（匹配任一模式即转发）
 - `blacklist_patterns`: 正则表达式黑名单（匹配任一模式不转发）
 - `copy_mode`: 复制模式（true=不显示来源，false=显示来源）
+- `forward_original_only`: 只转发原创消息（true=只转发频道原创消息，不转发转发消息；false=转发所有消息，默认false）
 
 **迁移说明**：
 - 支持从SQLite一键迁移到MySQL数据库

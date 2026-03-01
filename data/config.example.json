@@ -54,7 +54,8 @@
         "blacklist": ["广告", "垃圾"],
         "patterns": [],
         "blacklist_patterns": [],
-        "copy_mode": false
+        "copy_mode": false,
+        "forward_original_only": false
       }
     ]
   }
