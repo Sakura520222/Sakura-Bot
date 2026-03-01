@@ -2562,13 +2562,16 @@ class DatabaseManagerLegacy:
 
     # ============ 频道消息转发功能方法 ============
 
-    def is_message_forwarded(self, message_id: str, target_channel: str) -> bool:
+    def is_message_forwarded(
+        self, message_id: str, target_channel: str, source_channel: str = None
+    ) -> bool:
         """
         检查消息是否已转发到指定频道
 
         Args:
             message_id: 消息ID
             target_channel: 目标频道URL
+            source_channel: 源频道URL（可选，用于精确匹配）
 
         Returns:
             是否已转发
@@ -2577,13 +2580,24 @@ class DatabaseManagerLegacy:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                SELECT 1 FROM forwarded_messages
-                WHERE message_id = ? AND target_channel = ?
-            """,
-                (str(message_id), target_channel),
-            )
+            if source_channel:
+                # 使用三字段主键精确匹配
+                cursor.execute(
+                    """
+                    SELECT 1 FROM forwarded_messages
+                    WHERE message_id = ? AND target_channel = ? AND source_channel = ?
+                """,
+                    (str(message_id), target_channel, source_channel),
+                )
+            else:
+                # 兼容旧版本：仅使用 message_id 和 target_channel
+                cursor.execute(
+                    """
+                    SELECT 1 FROM forwarded_messages
+                    WHERE message_id = ? AND target_channel = ?
+                """,
+                    (str(message_id), target_channel),
+                )
 
             result = cursor.fetchone()
             conn.close()
@@ -2718,7 +2732,7 @@ class DatabaseManagerLegacy:
 
     def update_forwarding_stats(self, channel_id: str, increment: int = 1) -> bool:
         """
-        更新频道转发统计
+        更新频道转发统计（使用原子操作，避免竞争条件）
 
         Args:
             channel_id: 频道URL
@@ -2731,8 +2745,12 @@ class DatabaseManagerLegacy:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
+            # 使用事务确保原子性
+            cursor.execute("BEGIN IMMEDIATE")  # 立即获取写锁，避免并发冲突
+
             now = int(datetime.now(UTC).timestamp())
 
+            # 使用原子操作：INSERT ... ON CONFLICT ... DO UPDATE
             cursor.execute(
                 """
                 INSERT INTO forwarding_stats (channel_id, total_forwarded, last_forwarded)

@@ -239,6 +239,15 @@ async def main():
         else:
             logger.info("数据库连接已存在或不需要初始化")
 
+        # 执行数据库迁移（转发功能表结构优化）
+        logger.info("检查并执行数据库迁移...")
+        try:
+            from core.migrations.migrate_forwarding_table_v1 import ensure_forwarding_table_updated
+
+            await ensure_forwarding_table_updated(db_manager)
+        except Exception as e:
+            logger.warning(f"数据库迁移执行失败（可忽略）: {type(e).__name__}: {e}")
+
         # 初始化调度器
         scheduler = AsyncIOScheduler()
 

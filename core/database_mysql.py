@@ -2112,18 +2112,31 @@ class MySQLManager(DatabaseManagerBase):
 
     # ============ 频道消息转发功能方法 ============
 
-    async def is_message_forwarded(self, message_id: str, target_channel: str) -> bool:
+    async def is_message_forwarded(
+        self, message_id: str, target_channel: str, source_channel: str = None
+    ) -> bool:
         """检查消息是否已转发到指定频道"""
         try:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        SELECT 1 FROM forwarded_messages
-                        WHERE message_id = %s AND target_channel = %s
-                    """,
-                        (str(message_id), target_channel),
-                    )
+                    if source_channel:
+                        # 使用三字段主键精确匹配
+                        await cursor.execute(
+                            """
+                            SELECT 1 FROM forwarded_messages
+                            WHERE message_id = %s AND target_channel = %s AND source_channel = %s
+                        """,
+                            (str(message_id), target_channel, source_channel),
+                        )
+                    else:
+                        # 兼容旧版本：仅使用 message_id 和 target_channel
+                        await cursor.execute(
+                            """
+                            SELECT 1 FROM forwarded_messages
+                            WHERE message_id = %s AND target_channel = %s
+                        """,
+                            (str(message_id), target_channel),
+                        )
 
                     result = await cursor.fetchone()
                     return result is not None

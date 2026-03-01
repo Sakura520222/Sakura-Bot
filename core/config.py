@@ -1238,7 +1238,19 @@ def get_forwarding_config():
     if "enabled" not in forwarding_config:
         forwarding_config["enabled"] = False
     if "rules" not in forwarding_config:
-        forwarding_config["rules"] = []
+        # 尝试从旧的 forwarding_rules 迁移
+        old_rules = config.get("forwarding_rules", [])
+        if old_rules:
+            logger.info("检测到旧的 forwarding_rules 配置，自动迁移到 forwarding.rules")
+            # 自动迁移配置
+            config["forwarding"] = {
+                "enabled": forwarding_config.get("enabled", False),
+                "rules": old_rules,
+            }
+            save_config(config)
+            forwarding_config["rules"] = old_rules
+        else:
+            forwarding_config["rules"] = []
 
     return forwarding_config
 

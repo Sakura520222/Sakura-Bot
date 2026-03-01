@@ -134,9 +134,9 @@ class ForwardingHandler:
                 if not target_channel:
                     continue
 
-                # 检查是否已转发
+                # 检查是否已转发（使用三字段主键）
                 message_id = str(message.id)
-                if await self.db.is_message_forwarded(message_id, target_channel):
+                if await self.db.is_message_forwarded(message_id, target_channel, channel_id):
                     logger.debug(f"消息 {message_id} 已转发到 {target_channel}，跳过")
                     continue
 
