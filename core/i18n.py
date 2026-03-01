@@ -573,6 +573,24 @@ MESSAGE_ZH_CN = {
     "database.fallback.tip": "💡 SQLite 数据库已就绪，机器人将继续运行",
     "database.fallback.manual_required": "⚠️ 需要手动操作",
     "database.fallback.manual_steps": "请执行以下步骤：\n1. 修改 data/.env 文件\n2. 将 DATABASE_TYPE=mysql 改为 DATABASE_TYPE=sqlite\n3. 重启机器人",
+    # ========== 频道消息转发 ==========
+    "forwarding.status_enabled": "✅ 已启用",
+    "forwarding.status_disabled": "❌ 已禁用",
+    "forwarding.status_message": "📊 **转发功能状态**\n\n状态：{status}\n转发规则数：{rule_count}",
+    "forwarding.rules_header": "**转发规则**：",
+    "forwarding.enabled": "✅ 转发功能已启用",
+    "forwarding.disabled": "❌ 转发功能已禁用",
+    "forwarding.already_enabled": "⚠️ 转发功能已经是启用状态",
+    "forwarding.already_disabled": "⚠️ 转发功能已经是禁用状态",
+    "forwarding.stats.total": "📊 **转发统计**\n\n总转发数：{total}",
+    "forwarding.stats.single_channel": "📊 **频道转发统计**\n\n频道：{channel}\n总转发数：{total}\n最后转发：{last}",
+    "forwarding.stats.never": "从未",
+    "forwarding.stats.no_data": "⚠️ 暂无转发统计数据",
+    "forwarding.stats.by_channel_header": "**各频道统计**：",
+    "forwarding.error.query_failed": "❌ 查询转发状态失败：{error}",
+    "forwarding.error.enable_failed": "❌ 启用转发功能失败：{error}",
+    "forwarding.error.disable_failed": "❌ 禁用转发功能失败：{error}",
+    "forwarding.error.stats_failed": "❌ 查询转发统计失败：{error}",
 }
 
 # 英文翻译
@@ -1121,6 +1139,24 @@ MESSAGE_EN_US = {
     "database.fallback.tip": "💡 SQLite database is ready, bot will continue running",
     "database.fallback.manual_required": "⚠️ Manual operation required",
     "database.fallback.manual_steps": "Please follow these steps:\n1. Modify data/.env file\n2. Change DATABASE_TYPE=mysql to DATABASE_TYPE=sqlite\n3. Restart the bot",
+    # ========== Channel Message Forwarding ==========
+    "forwarding.status_enabled": "✅ Enabled",
+    "forwarding.status_disabled": "❌ Disabled",
+    "forwarding.status_message": "📊 **Forwarding Feature Status**\n\nStatus: {status}\nNumber of rules: {rule_count}",
+    "forwarding.rules_header": "**Forwarding Rules**:",
+    "forwarding.enabled": "✅ Forwarding feature enabled",
+    "forwarding.disabled": "❌ Forwarding feature disabled",
+    "forwarding.already_enabled": "⚠️ Forwarding feature is already enabled",
+    "forwarding.already_disabled": "⚠️ Forwarding feature is already disabled",
+    "forwarding.stats.total": "📊 **Forwarding Statistics**\n\nTotal forwarded: {total}",
+    "forwarding.stats.single_channel": "📊 **Channel Forwarding Statistics**\n\nChannel: {channel}\nTotal forwarded: {total}\nLast forwarded: {last}",
+    "forwarding.stats.never": "Never",
+    "forwarding.stats.no_data": "⚠️ No forwarding statistics available",
+    "forwarding.stats.by_channel_header": "**Statistics by Channel**:",
+    "forwarding.error.query_failed": "❌ Failed to query forwarding status: {error}",
+    "forwarding.error.enable_failed": "❌ Failed to enable forwarding feature: {error}",
+    "forwarding.error.disable_failed": "❌ Failed to disable forwarding feature: {error}",
+    "forwarding.error.stats_failed": "❌ Failed to query forwarding statistics: {error}",
 }
 
 

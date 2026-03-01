@@ -43,5 +43,19 @@
     "https://t.me/example_channel1": {
       "enabled": true
     }
+  },
+  "forwarding": {
+    "enabled": false,
+    "rules": [
+      {
+        "source_channel": "https://t.me/example_channel1",
+        "target_channel": "https://t.me/my_channel",
+        "keywords": ["关键词1", "关键词2"],
+        "blacklist": ["广告", "垃圾"],
+        "patterns": [],
+        "blacklist_patterns": [],
+        "copy_mode": false
+      }
+    ]
   }
 }

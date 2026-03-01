@@ -128,6 +128,7 @@ python main.py
 | **📱 命令菜单** | QA Bot自动注册命令菜单，用户可直接查看所有可用命令 | ✅ |
 | **🗄️ MySQL数据库支持** | 新增MySQL数据库支持，提升性能和并发能力 | ✅ |
 | **🔄 数据库迁移** | 一键从SQLite迁移到MySQL，自动备份和数据验证 | ✅ |
+| **📤 频道消息转发** | 智能转发频道消息到目标频道，支持关键词和正则过滤 | ✅ |
 | **⚡ 启动时检查** | 自动检测旧数据库并通知管理员迁移建议 | ✅ |
 
 ---
@@ -248,6 +249,55 @@ python main.py
 | `/migrate_check` | `/迁移检查` | 检查迁移准备状态 | `/migrate_check` |
 | `/migrate_start` | `/开始迁移` | 开始数据库迁移 | `/migrate_start` |
 | `/migrate_status` | `/迁移状态` | 查看迁移进度 | `/migrate_status` |
+
+#### 频道消息转发
+
+| 命令 | 别名 | 功能 | 示例 |
+|------|------|------|------|
+| `/forwarding` | `/转发状态` | 查看转发功能状态和规则列表 | `/forwarding` |
+| `/forwarding_enable` | `/启用转发` | 启用转发功能 | `/forwarding_enable` |
+| `/forwarding_disable` | `/禁用转发` | 禁用转发功能 | `/forwarding_disable` |
+| `/forwarding_stats [频道]` | `/转发统计` | 查看转发统计信息 | `/forwarding_stats` / `/forwarding_stats channel1` |
+
+**功能说明**：
+- 智能转发频道消息到目标频道
+- 支持关键词白名单和黑名单过滤
+- 支持正则表达式模式匹配
+- 支持转发模式（显示来源）和复制模式（不显示来源）
+- 自动记录已转发消息，避免重复转发
+- 提供详细的转发统计信息
+
+**配置方式**：
+在 `data/config.json` 中配置转发规则：
+
+```json
+{
+  "forwarding": {
+    "enabled": true,
+    "rules": [
+      {
+        "source_channel": "https://t.me/source_channel",
+        "target_channel": "https://t.me/my_channel",
+        "keywords": ["重要", "新闻", "更新"],
+        "blacklist": ["广告", "垃圾"],
+        "patterns": [],
+        "blacklist_patterns": [],
+        "copy_mode": false
+      }
+    ]
+  }
+}
+```
+
+**配置说明**：
+- `enabled`: 是否启用转发功能（true/false）
+- `source_channel`: 源频道URL
+- `target_channel`: 目标频道URL
+- `keywords`: 白名单关键词列表（包含任一关键词即转发）
+- `blacklist`: 黑名单关键词列表（包含任一关键词不转发）
+- `patterns`: 正则表达式白名单（匹配任一模式即转发）
+- `blacklist_patterns`: 正则表达式黑名单（匹配任一模式不转发）
+- `copy_mode`: 复制模式（true=不显示来源，false=显示来源）
 
 **迁移说明**：
 - 支持从SQLite一键迁移到MySQL数据库

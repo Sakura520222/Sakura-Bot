@@ -15,9 +15,159 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.7.0] - 2026-03-01
 
+### 新增
+- **频道消息转发功能**：完整集成 TG-Forwarder 机器人到主Bot，实现智能消息转发
+  - **基于配置的转发规则**：在 config.json 中配置转发规则，支持多对多转发
+  - **关键词过滤**：支持白名单和黑名单关键词过滤，精确控制转发内容
+  - **正则表达式过滤**：支持复杂的正则表达式模式匹配，提供更灵活的过滤能力
+  - **双模式转发**：支持转发模式（显示来源）和复制模式（不显示来源）
+  - **消息去重**：自动记录已转发消息，避免重复转发
+  - **转发统计**：记录每个频道的转发次数和最后转发时间
+  - **命令控制**：提供完整的命令接口控制转发功能
+  
+- **转发功能命令**：
+  - `/forwarding` - 查看转发功能状态和规则列表
+  - `/forwarding_enable` - 启用转发功能
+  - `/forwarding_disable` - 禁用转发功能
+  - `/forwarding_stats [频道]` - 查看转发统计信息
+  - 支持中英文别名：`/转发状态`、`/启用转发`、`/禁用转发`、`/转发统计`
 
-  ## [1.6.9] - 2026-02-27
+- **数据库扩展**：
+  - 新增 `forwarded_messages` 表：记录所有已转发的消息
+    - `message_id` - 消息ID
+    - `source_channel` - 源频道
+    - `target_channel` - 目标频道
+    - `content_hash` - 内容哈希（用于去重）
+    - `timestamp` - 转发时间戳
+  - 新增 `forwarding_stats` 表：记录转发统计信息
+    - `channel_id` - 频道ID
+    - `total_forwarded` - 总转发数
+    - `last_forwarded` - 最后转发时间
+  - 支持 SQLite 和 MySQL 双数据库
+
+- **配置文件增强**（config.json）：
+  - 新增 `forwarding` 配置项：
+    ```json
+    {
+      "forwarding": {
+        "enabled": false,
+        "rules": [
+          {
+            "source_channel": "https://t.me/source",
+            "target_channel": "https://t.me/target",
+            "keywords": ["关键词1", "关键词2"],
+            "blacklist": ["广告", "垃圾"],
+            "patterns": [],
+            "blacklist_patterns": [],
+            "copy_mode": false
+          }
+        ]
+      }
+    }
+    ```
+
+### 新增文件
+- **core/forwarding/__init__.py** - 转发功能模块导出
+- **core/forwarding/filters.py** - 消息过滤器模块
+  - `should_forward_by_keywords()` - 关键词过滤
+  - `should_forward_by_regex()` - 正则表达式过滤
+- **core/forwarding/forwarding_handler.py** - 转发处理器核心模块
+  - `ForwardingHandler` 类：转发功能核心处理器
+  - `process_message()` - 处理单条消息
+  - `_should_forward()` - 判断是否应该转发
+  - `_forward_message()` - 执行消息转发
+  - `get_statistics()` - 获取转发统计
+  - `cleanup_old_records()` - 清理旧记录
+- **core/command_handlers/forwarding_commands.py** - 转发命令处理器
+  - `cmd_forwarding_status()` - 查看转发状态
+  - `cmd_forwarding_enable()` - 启用转发功能
+  - `cmd_forwarding_disable()` - 禁用转发功能
+  - `cmd_forwarding_stats()` - 查看转发统计
+
+### 技术实现
+- **main.py 集成**：
+  - 导入转发功能模块和命令处理器
+  - 初始化 ForwardingHandler 实例
+  - 从 config.json 读取转发配置
+  - 注册频道消息监听器（NewMessage 事件）
+  - 注册转发命令事件处理器
+  - 更新 BotCommand 菜单，添加转发命令
+
+- **异步架构**：
+  - 所有转发操作使用异步实现
+  - 使用 Telethon 的异步 API 进行消息转发
+  - 支持高并发场景，不阻塞事件循环
+
+- **国际化支持**：
+  - 新增 20+ 个翻译键（中英文）
+  - 所有转发功能消息支持多语言
+  - 翻译键前缀：`forwarding.*`
+
+### 改进
+- **配置管理**（core/config.py）：
+  - 新增 `get_forwarding_config()` 函数读取转发配置
+  - 支持 enabled 和 rules 配置项
+  - 提供默认配置和配置验证
+
+- **数据库扩展**（core/database.py）：
+  - 新增转发相关数据库方法
+  - 支持 SQLite 和 MySQL 双数据库
+  - 添加必要的数据库索引优化查询性能
+
+### 用户体验
+- **灵活配置**：通过 config.json 配置转发规则，无需重启即可修改（需重启生效）
+- **精确过滤**：支持关键词和正则表达式过滤，确保只转发需要的内容
+- **统计透明**：提供详细的转发统计，了解转发效果
+- **命令便捷**：提供完整的命令接口，随时控制转发功能
+- **去重保护**：自动记录已转发消息，避免重复转发
+
+### 配置示例
+```json
+{
+  "forwarding": {
+    "enabled": true,
+    "rules": [
+      {
+        "source_channel": "https://t.me/news_channel",
+        "target_channel": "https://t.me/my_channel",
+        "keywords": ["重要", "新闻", "更新"],
+        "blacklist": ["广告", "推广"],
+        "patterns": [],
+        "blacklist_patterns": [],
+        "copy_mode": false
+      }
+    ]
+  }
+}
+```
+
+### 向后兼容
+- **完全兼容现有功能**：
+  - 不影响任何现有的总结生成和发送流程
+  - 转发功能默认禁用，不影响现有行为
+  - 所有现有命令和配置保持不变
+
+- **可选功能**：
+  - 转发功能可通过配置开关控制
+  - 未配置时转发功能不启用
+  - 可以随时通过命令启用/禁用
+
+### 使用场景
+- **新闻聚合**：从多个新闻频道转发重要消息到自己的频道
+- **内容过滤**：通过关键词过滤，只转发符合主题的消息
+- **备份频道**：自动转发消息到备份频道
+- **跨频道同步**：实现频道间的消息同步
+
+### 注意事项
+- 转发功能需要机器人在源频道和目标频道都有相应权限
+- 机器人需要能读取源频道的消息
+- 机器人需要在目标频道有发送消息权限
+- 建议先测试转发规则，确认无误后再启用
+- 定期清理转发记录，避免数据库过大
+
+## [1.6.9] - 2026-02-27
 
 ### 修复
 - **Telegram 消息实体边界错误**：彻底修复 `/history` 等命令执行时的 `EntityBoundsInvalidError` 错误

@@ -202,6 +202,29 @@ class DatabaseManagerLegacy:
                 )
             """)
 
+            # 创建已转发消息记录表（频道转发功能）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS forwarded_messages (
+                    message_id TEXT NOT NULL,
+                    source_channel TEXT NOT NULL,
+                    target_channel TEXT NOT NULL,
+                    content_hash TEXT,
+                    timestamp INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (message_id, target_channel)
+                )
+            """)
+
+            # 创建转发统计表（频道转发功能）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS forwarding_stats (
+                    channel_id TEXT PRIMARY KEY,
+                    total_forwarded INTEGER DEFAULT 0,
+                    last_forwarded INTEGER,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # 为新表创建索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_quota_user_date
@@ -2536,6 +2559,236 @@ class DatabaseManagerLegacy:
         except Exception as e:
             logger.error(f"更新周报请求状态失败: {type(e).__name__}: {e}", exc_info=True)
             return False
+
+    # ============ 频道消息转发功能方法 ============
+
+    def is_message_forwarded(self, message_id: str, target_channel: str) -> bool:
+        """
+        检查消息是否已转发到指定频道
+
+        Args:
+            message_id: 消息ID
+            target_channel: 目标频道URL
+
+        Returns:
+            是否已转发
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT 1 FROM forwarded_messages
+                WHERE message_id = ? AND target_channel = ?
+            """,
+                (str(message_id), target_channel),
+            )
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result is not None
+
+        except Exception as e:
+            logger.error(f"检查消息转发状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def add_forwarded_message(
+        self,
+        message_id: str,
+        source_channel: str,
+        target_channel: str,
+        content_hash: str = None,
+        timestamp: int = None,
+    ) -> bool:
+        """
+        添加已转发消息记录
+
+        Args:
+            message_id: 消息ID
+            source_channel: 源频道URL
+            target_channel: 目标频道URL
+            content_hash: 内容哈希（用于去重）
+            timestamp: 消息时间戳
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            if timestamp is None:
+                timestamp = int(datetime.now(UTC).timestamp())
+
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO forwarded_messages
+                (message_id, source_channel, target_channel, content_hash, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (str(message_id), source_channel, target_channel, content_hash, timestamp),
+            )
+
+            conn.commit()
+            affected = cursor.rowcount
+            conn.close()
+
+            if affected > 0:
+                logger.debug(
+                    f"记录已转发消息: {message_id} from {source_channel} to {target_channel}"
+                )
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"添加转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_forwarding_stats(self, channel_id: str = None) -> dict[str, Any]:
+        """
+        获取转发统计信息
+
+        Args:
+            channel_id: 可选，频道URL，不指定则统计所有频道
+
+        Returns:
+            统计信息字典
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            if channel_id:
+                # 单个频道统计
+                cursor.execute(
+                    """
+                    SELECT total_forwarded, last_forwarded
+                    FROM forwarding_stats
+                    WHERE channel_id = ?
+                """,
+                    (channel_id,),
+                )
+                row = cursor.fetchone()
+                conn.close()
+
+                if row:
+                    return {
+                        "channel_id": channel_id,
+                        "total_forwarded": row[0] or 0,
+                        "last_forwarded": row[1],
+                    }
+                else:
+                    return {
+                        "channel_id": channel_id,
+                        "total_forwarded": 0,
+                        "last_forwarded": None,
+                    }
+            else:
+                # 所有频道统计
+                cursor.execute("""
+                    SELECT channel_id, total_forwarded, last_forwarded
+                    FROM forwarding_stats
+                    ORDER BY total_forwarded DESC
+                """)
+                rows = cursor.fetchall()
+                conn.close()
+
+                stats_list = []
+                total_all = 0
+                for row in rows:
+                    stats_list.append(
+                        {
+                            "channel_id": row[0],
+                            "total_forwarded": row[1] or 0,
+                            "last_forwarded": row[1],
+                        }
+                    )
+                    total_all += row[1] or 0
+
+                return {
+                    "total_all_channels": total_all,
+                    "by_channel": stats_list,
+                }
+
+        except Exception as e:
+            logger.error(f"获取转发统计失败: {type(e).__name__}: {e}", exc_info=True)
+            return {}
+
+    def update_forwarding_stats(self, channel_id: str, increment: int = 1) -> bool:
+        """
+        更新频道转发统计
+
+        Args:
+            channel_id: 频道URL
+            increment: 增量，默认为1
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = int(datetime.now(UTC).timestamp())
+
+            cursor.execute(
+                """
+                INSERT INTO forwarding_stats (channel_id, total_forwarded, last_forwarded)
+                VALUES (?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    total_forwarded = total_forwarded + ?,
+                    last_forwarded = ?,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+                (channel_id, increment, now, increment, now),
+            )
+
+            conn.commit()
+            conn.close()
+
+            logger.debug(f"更新转发统计: {channel_id} +{increment}")
+            return True
+
+        except Exception as e:
+            logger.error(f"更新转发统计失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def cleanup_old_forwarded_messages(self, days: int = 30) -> int:
+        """
+        清理旧的转发消息记录
+
+        Args:
+            days: 保留天数，默认30天
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cutoff_timestamp = int((datetime.now(UTC) - timedelta(days=days)).timestamp())
+
+            cursor.execute(
+                """
+                DELETE FROM forwarded_messages
+                WHERE timestamp < ?
+            """,
+                (cutoff_timestamp,),
+            )
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(f"清理旧转发消息记录: 删除 {deleted_count} 条")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"清理旧转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
 
 
 # 创建全局数据库管理器实例

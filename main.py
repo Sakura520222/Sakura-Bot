@@ -69,6 +69,12 @@ from core.command_handlers.comment_welcome_commands import (
     handle_set_comment_welcome,
     handle_show_comment_welcome,
 )
+from core.command_handlers.forwarding_commands import (
+    cmd_forwarding_disable,
+    cmd_forwarding_enable,
+    cmd_forwarding_stats,
+    cmd_forwarding_status,
+)
 from core.command_handlers.other_commands import handle_update
 from core.command_handlers.qa_control_commands import (
     handle_qa_restart,
@@ -545,6 +551,56 @@ async def main():
         client.add_event_handler(handle_qa_stop, NewMessage(pattern="/qa_stop|/qa_停止"))
         client.add_event_handler(handle_qa_restart, NewMessage(pattern="/qa_restart|/qa_重启"))
         client.add_event_handler(handle_qa_stats, NewMessage(pattern="/qa_stats|/qa_统计"))
+
+        # 15. 频道消息转发命令
+        async def handle_forwarding_status(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_status(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_enable(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_enable(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_disable(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_disable(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_stats(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_stats(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        client.add_event_handler(
+            handle_forwarding_status, NewMessage(pattern="/forwarding|/转发状态")
+        )
+        client.add_event_handler(
+            handle_forwarding_enable, NewMessage(pattern="/forwarding_enable|/启用转发")
+        )
+        client.add_event_handler(
+            handle_forwarding_disable, NewMessage(pattern="/forwarding_disable|/禁用转发")
+        )
+        client.add_event_handler(
+            handle_forwarding_stats, NewMessage(pattern="/forwarding_stats|/转发统计")
+        )
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(
             handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith("/"))
@@ -615,6 +671,77 @@ async def main():
         except Exception as e:
             logger.error(f"初始化频道评论区欢迎消息功能失败: {type(e).__name__}: {e}")
 
+        # 初始化频道消息转发功能
+        logger.info("初始化频道消息转发功能...")
+        try:
+            from core.config import get_forwarding_config
+            from core.forwarding import ForwardingHandler, set_forwarding_handler
+
+            # 创建转发处理器
+            forwarding_handler = ForwardingHandler(db_manager, client)
+            set_forwarding_handler(forwarding_handler)
+
+            # 从config.json读取转发配置
+            forwarding_config = get_forwarding_config()
+            if forwarding_config.get("enabled", False):
+                forwarding_handler.enabled = True
+                forwarding_handler.set_config(forwarding_config)
+                logger.info(f"转发功能已启用，共 {len(forwarding_config.get('rules', []))} 条规则")
+
+                # 提取所有源频道ID
+                source_channels = forwarding_config.get("rules", [])
+                source_channel_ids = set()
+                for rule in source_channels:
+                    source_url = rule.get("source_channel", "")
+                    # 从URL中提取频道ID
+                    if source_url:
+                        channel_id = source_url.rstrip("/").split("/")[-1]
+                        source_channel_ids.add(channel_id)
+
+                logger.info(f"转发功能监听的源频道: {source_channel_ids}")
+
+                # 添加频道消息监听器（只监听配置的源频道）
+                async def handle_channel_message(event):
+                    """处理频道消息，触发转发"""
+                    try:
+                        # 获取当前频道的用户名或ID
+                        chat_entity = await event.get_chat()
+                        chat_username = getattr(chat_entity, "username", None)
+                        chat_id = str(getattr(chat_entity, "id", ""))
+
+                        logger.debug(
+                            f"转发监听器被触发: chat_username={chat_username}, chat_id={chat_id}"
+                        )
+
+                        # 检查是否是配置的源频道
+                        is_source_channel = (
+                            chat_username and chat_username in source_channel_ids
+                        ) or (chat_id in source_channel_ids)
+
+                        if not is_source_channel:
+                            # 不是源频道，跳过处理
+                            logger.debug(f"频道 {chat_username or chat_id} 不是源频道，跳过")
+                            return
+
+                        logger.info(f"检测到源频道 {chat_username or chat_id} 的消息，开始处理转发")
+
+                        # 是源频道，处理转发
+                        await forwarding_handler.process_message(event.message)
+                    except Exception as e:
+                        logger.error(
+                            f"处理频道消息转发失败: {type(e).__name__}: {e}", exc_info=True
+                        )
+
+                client.add_event_handler(
+                    handle_channel_message,
+                    NewMessage(func=lambda e: e.is_channel and not e.out),
+                )
+                logger.info("频道消息转发监听器已注册（仅监听配置的源频道）")
+            else:
+                logger.info("转发功能未启用（在config.json中设置enabled=true启用）")
+        except Exception as e:
+            logger.error(f"初始化频道消息转发功能失败: {type(e).__name__}: {e}")
+
         logger.info("命令处理器添加完成")
 
         # 启动客户端
@@ -684,6 +811,11 @@ async def main():
             BotCommand(command="db_clear", description="清空MySQL数据库（危险操作）"),
             # ========== 9. 偏好设置 ==========
             BotCommand(command="language", description="切换界面语言"),
+            # ========== 10. 频道消息转发 ==========
+            BotCommand(command="forwarding", description="查看转发功能状态"),
+            BotCommand(command="forwarding_enable", description="启用转发功能"),
+            BotCommand(command="forwarding_disable", description="禁用转发功能"),
+            BotCommand(command="forwarding_stats", description="查看转发统计"),
         ]
 
         await client(
