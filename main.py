@@ -1,16 +1,15 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
 
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -69,6 +68,14 @@ from core.command_handlers.comment_welcome_commands import (
     handle_set_comment_welcome,
     handle_show_comment_welcome,
 )
+from core.command_handlers.forwarding_commands import (
+    cmd_forwarding_default_footer,
+    cmd_forwarding_disable,
+    cmd_forwarding_enable,
+    cmd_forwarding_footer,
+    cmd_forwarding_stats,
+    cmd_forwarding_status,
+)
 from core.command_handlers.other_commands import handle_update
 from core.command_handlers.qa_control_commands import (
     handle_qa_restart,
@@ -77,6 +84,7 @@ from core.command_handlers.qa_control_commands import (
     handle_qa_status,
     handle_qa_stop,
 )
+from core.command_handlers.userbot_commands import handle_userbot_status
 from core.config import (
     ADMIN_LIST,
     CHANNELS,
@@ -102,7 +110,7 @@ from core.settings import (
 )
 
 # 版本信息
-__version__ = "1.6.9"
+__version__ = "1.7.0"
 
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,
@@ -194,6 +202,10 @@ async def send_startup_message(client):
 
 
 async def main():
+    # 抑制第三方库的 INFO 日志输出
+    logging.getLogger("telethon").setLevel(logging.WARNING)
+    logging.getLogger("telethon.client.updates").setLevel(logging.WARNING)
+
     logger.info(f"开始初始化机器人服务 v{__version__}...")
 
     try:
@@ -232,6 +244,15 @@ async def main():
                 logger.info("SQLite数据库初始化完成")
         else:
             logger.info("数据库连接已存在或不需要初始化")
+
+        # 执行数据库迁移（转发功能表结构优化）
+        logger.info("检查并执行数据库迁移...")
+        try:
+            from core.migrations.migrate_forwarding_table_v1 import ensure_forwarding_table_updated
+
+            await ensure_forwarding_table_updated(db_manager)
+        except Exception as e:
+            logger.warning(f"数据库迁移执行失败（可忽略）: {type(e).__name__}: {e}")
 
         # 初始化调度器
         scheduler = AsyncIOScheduler()
@@ -545,6 +566,120 @@ async def main():
         client.add_event_handler(handle_qa_stop, NewMessage(pattern="/qa_stop|/qa_停止"))
         client.add_event_handler(handle_qa_restart, NewMessage(pattern="/qa_restart|/qa_重启"))
         client.add_event_handler(handle_qa_stats, NewMessage(pattern="/qa_stats|/qa_统计"))
+
+        # 15. 频道消息转发命令
+        async def handle_forwarding_status(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_status(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_enable(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_enable(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_disable(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_disable(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_stats(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_stats(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_footer(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_footer(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        async def handle_forwarding_default_footer(event):
+            from core.forwarding import get_forwarding_handler
+
+            handler = get_forwarding_handler()
+            if handler:
+                await cmd_forwarding_default_footer(client, event.message, handler)
+            else:
+                await event.message.reply("转发功能未初始化")
+
+        client.add_event_handler(
+            handle_forwarding_status, NewMessage(pattern="/forwarding|/转发状态")
+        )
+        client.add_event_handler(
+            handle_forwarding_enable, NewMessage(pattern="/forwarding_enable|/启用转发")
+        )
+        client.add_event_handler(
+            handle_forwarding_disable, NewMessage(pattern="/forwarding_disable|/禁用转发")
+        )
+        client.add_event_handler(
+            handle_forwarding_stats, NewMessage(pattern="/forwarding_stats|/转发统计")
+        )
+        client.add_event_handler(
+            handle_forwarding_footer, NewMessage(pattern="/forwarding_footer|/转发底栏")
+        )
+        client.add_event_handler(
+            handle_forwarding_default_footer,
+            NewMessage(pattern="/forwarding_default_footer|/默认底栏"),
+        )
+
+        # 16. UserBot 状态命令
+        async def handle_userbot_status_cmd(event):
+            """UserBot 状态查询命令"""
+            await handle_userbot_status(client, event.message)
+
+        client.add_event_handler(
+            handle_userbot_status_cmd, NewMessage(pattern="/userbot_status|/userbot_状态")
+        )
+
+        # 17. UserBot 频道管理命令
+        from core.command_handlers.userbot_commands import (
+            handle_userbot_join,
+            handle_userbot_leave,
+            handle_userbot_list,
+        )
+
+        async def handle_userbot_join_cmd(event):
+            """UserBot 加入频道命令"""
+            await handle_userbot_join(client, event.message)
+
+        async def handle_userbot_leave_cmd(event):
+            """UserBot 离开频道命令"""
+            await handle_userbot_leave(client, event.message)
+
+        async def handle_userbot_list_cmd(event):
+            """UserBot 列出已加入频道命令"""
+            await handle_userbot_list(client, event.message)
+
+        client.add_event_handler(
+            handle_userbot_join_cmd, NewMessage(pattern="/userbot_join|/userbot_加入")
+        )
+        client.add_event_handler(
+            handle_userbot_leave_cmd, NewMessage(pattern="/userbot_leave|/userbot_离开")
+        )
+        client.add_event_handler(
+            handle_userbot_list_cmd, NewMessage(pattern="/userbot_list|/userbot_列表")
+        )
+
         # 只处理非命令消息作为提示词或AI配置输入
         client.add_event_handler(
             handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith("/"))
@@ -593,6 +728,32 @@ async def main():
         )
         logger.info("请求处理回调处理器已注册")
 
+        logger.info("命令处理器添加完成")
+
+        # 启动客户端
+        logger.info("正在启动Telegram机器人客户端...")
+        await client.start(bot_token=bot_token)
+        logger.info("Telegram机器人客户端启动成功")
+
+        # 初始化 UserBot 客户端（必须在转发功能之前初始化）
+        logger.info("初始化 UserBot 客户端...")
+        userbot_client = None
+        try:
+            from core.userbot_client import init_userbot_client
+
+            userbot = await init_userbot_client()
+            if userbot:
+                success = await userbot.start()
+                if success:
+                    userbot_client = userbot.get_client()
+                    logger.info("UserBot 客户端启动成功")
+                else:
+                    logger.warning("UserBot 客户端启动失败")
+            else:
+                logger.info("UserBot 未启用或配置缺失")
+        except Exception as e:
+            logger.error(f"初始化 UserBot 客户端失败: {type(e).__name__}: {e}", exc_info=True)
+
         # 初始化频道评论区欢迎消息功能
         logger.info("初始化频道评论区欢迎消息功能...")
         try:
@@ -615,12 +776,269 @@ async def main():
         except Exception as e:
             logger.error(f"初始化频道评论区欢迎消息功能失败: {type(e).__name__}: {e}")
 
-        logger.info("命令处理器添加完成")
+        # 初始化频道消息转发功能（需要 userbot_client，所以在 UserBot 初始化之后）
+        logger.info("初始化频道消息转发功能...")
+        try:
+            from core.config import get_forwarding_config
+            from core.forwarding import ForwardingHandler, set_forwarding_handler
 
-        # 启动客户端
-        logger.info("正在启动Telegram机器人客户端...")
-        await client.start(bot_token=bot_token)
-        logger.info("Telegram机器人客户端启动成功")
+            # 创建转发处理器（传递两个客户端）
+            # - monitoring_client: 用于监听消息（优先 UserBot，否则 Bot）
+            # - sending_client: 总是使用 Bot 发送消息
+            if userbot_client:
+                # UserBot 可用，优先使用 UserBot 进行消息监听
+                monitoring_client = userbot_client
+                logger.info("转发功能监听使用 UserBot 客户端（更高权限）")
+            else:
+                # UserBot 不可用，使用 Bot 客户端监听
+                monitoring_client = client
+                logger.info("转发功能监听使用 Bot 客户端（UserBot 不可用）")
+
+            # 发送消息总是使用 Bot 客户端
+            sending_client = client
+            logger.info("转发功能发送使用 Bot 客户端")
+
+            # 创建转发处理器
+            forwarding_handler = ForwardingHandler(db_manager, monitoring_client, sending_client)
+            set_forwarding_handler(forwarding_handler)
+
+            # 从config.json读取转发配置
+            forwarding_config = get_forwarding_config()
+            if forwarding_config.get("enabled", False):
+                forwarding_handler.enabled = True
+                forwarding_handler.set_config(forwarding_config)
+                logger.info(f"转发功能已启用，共 {len(forwarding_config.get('rules', []))} 条规则")
+
+                # UserBot 自动加入源频道
+                if userbot:
+                    from core.i18n import get_text
+
+                    logger.info("UserBot 开始自动加入转发配置的源频道...")
+
+                    # 通知管理员开始自动加入
+                    for admin_id in ADMIN_LIST:
+                        if admin_id != "me":
+                            try:
+                                await client.send_message(
+                                    admin_id,
+                                    get_text("userbot.join_all_start"),
+                                    parse_mode="md",
+                                    link_preview=False,
+                                )
+                            except Exception as e:
+                                logger.error(f"通知管理员失败: {e}")
+
+                    # 执行自动加入
+                    result = await userbot.join_all_forwarding_channels(forwarding_config)
+
+                    # 构建结果消息
+                    if result.get("success"):
+                        success_count = result.get("success_count", 0)
+                        failed_count = result.get("failed_count", 0)
+                        failed_list = result.get("failed_list", [])
+
+                        # 如果有失败的频道，构建失败列表
+                        failed_list_text = ""
+                        if failed_list:
+                            failed_items = []
+                            for item in failed_list:
+                                channel = item.get("channel", "未知")
+                                reason = item.get("reason", "未知原因")
+                                failed_items.append(f"• {channel}: {reason}")
+                            failed_list_text = "\n".join(failed_items)
+
+                        # 构建总结消息
+                        summary_message = get_text(
+                            "userbot.join_all_summary",
+                            success_count=success_count,
+                            failed_count=failed_count,
+                        )
+
+                        if failed_list_text:
+                            summary_message += get_text(
+                                "userbot.join_all_failed_list",
+                                failed_list=failed_list_text,
+                            )
+
+                        # 发送结果给管理员
+                        for admin_id in ADMIN_LIST:
+                            if admin_id != "me":
+                                try:
+                                    await client.send_message(
+                                        admin_id,
+                                        summary_message,
+                                        parse_mode="md",
+                                        link_preview=False,
+                                    )
+                                except Exception as e:
+                                    logger.error(f"发送结果给管理员失败: {e}")
+
+                        # 如果有失败的频道，发送警告
+                        if failed_count > 0:
+                            warning_message = get_text(
+                                "userbot.auto_join_warning",
+                                failed_list=failed_list_text,
+                            )
+                            for admin_id in ADMIN_LIST:
+                                if admin_id != "me":
+                                    try:
+                                        await client.send_message(
+                                            admin_id,
+                                            warning_message,
+                                            parse_mode="md",
+                                            link_preview=False,
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"发送警告给管理员失败: {e}")
+                    else:
+                        # 自动加入失败
+                        error_message = result.get("message", "未知错误")
+                        logger.error(f"UserBot 自动加入源频道失败: {error_message}")
+                else:
+                    logger.info("UserBot 不可用，跳过自动加入源频道")
+
+                # 提取所有源频道ID
+                source_channels = forwarding_config.get("rules", [])
+                source_channel_ids = set()
+                for rule in source_channels:
+                    source_url = rule.get("source_channel", "")
+                    # 从URL中提取频道ID
+                    if source_url:
+                        channel_id = source_url.rstrip("/").split("/")[-1]
+                        source_channel_ids.add(channel_id)
+
+                logger.info(f"转发功能监听的源频道: {source_channel_ids}")
+
+                # 媒体组缓存字典（在闭包中共享）
+                media_group_cache: dict = {}
+
+                # 添加频道消息监听器（只监听配置的源频道）
+                async def handle_channel_message(event):
+                    """处理频道消息，触发转发"""
+                    try:
+                        # 获取当前频道的用户名或ID
+                        chat_entity = await event.get_chat()
+                        chat_username = getattr(chat_entity, "username", None)
+                        chat_id = str(getattr(chat_entity, "id", ""))
+
+                        logger.debug(
+                            f"转发监听器被触发: chat_username={chat_username}, chat_id={chat_id}"
+                        )
+
+                        # 检查是否是配置的源频道
+                        is_source_channel = (
+                            chat_username and chat_username in source_channel_ids
+                        ) or (chat_id in source_channel_ids)
+
+                        if not is_source_channel:
+                            # 不是源频道，跳过处理
+                            logger.debug(f"频道 {chat_username or chat_id} 不是源频道，跳过")
+                            return
+
+                        logger.info(f"检测到源频道 {chat_username or chat_id} 的消息，开始处理转发")
+
+                        # 检查是否是媒体组消息
+                        grouped_id = getattr(event.message, "grouped_id", None)
+
+                        if grouped_id:
+                            # 媒体组消息：检查第一条消息是否有文本说明
+                            # 通常媒体组的第一条消息会带有文本说明
+                            # 如果第一条消息没有文本，跳过收集以节省资源
+                            group_key = f"{chat_username or chat_id}_{grouped_id}"
+
+                            if group_key not in media_group_cache:
+                                # 这是媒体组的第一条消息
+                                if not event.message.message:
+                                    # 第一条消息没有文本，跳过整个媒体组
+                                    logger.debug(
+                                        f"媒体组 {grouped_id} 第一条消息没有文本说明，跳过收集"
+                                    )
+                                    return
+
+                                # 有文本，开始收集
+                                media_group_cache[group_key] = []
+                                # 设置延迟处理任务（只创建一次）
+                                asyncio.create_task(
+                                    _delayed_forward_media_group(
+                                        group_key,
+                                        grouped_id,
+                                        event.message,
+                                        chat_username or chat_id,
+                                    )
+                                )
+
+                            # 将当前消息添加到缓存
+                            if event.message.id not in [
+                                msg.id for msg in media_group_cache[group_key]
+                            ]:
+                                media_group_cache[group_key].append(event.message)
+                                logger.debug(
+                                    f"媒体组收集: grouped_id={grouped_id}, "
+                                    f"已收集 {len(media_group_cache[group_key])} 条消息"
+                                )
+                        else:
+                            # 普通消息：直接处理
+                            await forwarding_handler.process_message(event.message)
+
+                    except Exception as e:
+                        logger.error(
+                            f"处理频道消息转发失败: {type(e).__name__}: {e}", exc_info=True
+                        )
+
+                async def _delayed_forward_media_group(
+                    group_key: str, grouped_id: int, first_message, channel_id: str
+                ):
+                    """延迟处理媒体组消息，等待所有消息到达"""
+                    try:
+                        # 等待1秒，让同组的其他消息到达
+                        await asyncio.sleep(1)
+
+                        # 获取缓存的消息列表
+                        messages = media_group_cache.get(group_key, []).copy()
+
+                        # 清理缓存
+                        if group_key in media_group_cache:
+                            del media_group_cache[group_key]
+
+                        if not messages:
+                            logger.warning(f"媒体组 {grouped_id} 缓存为空")
+                            return
+
+                        logger.info(
+                            f"媒体组收集完成: grouped_id={grouped_id}, 共 {len(messages)} 条消息"
+                        )
+
+                        # 按消息ID排序，确保顺序正确
+                        messages.sort(key=lambda m: m.id)
+
+                        # 将收集的消息传递给转发处理器
+                        forwarding_handler.set_external_media_group(grouped_id, messages)
+
+                        # 只处理第一条消息（转发处理器会使用外部收集的消息）
+                        await forwarding_handler.process_message(messages[0])
+
+                    except Exception as e:
+                        logger.error(f"延迟处理媒体组失败: {type(e).__name__}: {e}", exc_info=True)
+
+                # 根据客户端类型选择注册监听器
+                if userbot_client:
+                    # 使用 UserBot 客户端注册监听器
+                    userbot_client.add_event_handler(
+                        handle_channel_message,
+                        NewMessage(func=lambda e: e.is_channel),
+                    )
+                    logger.info("频道消息转发监听器已注册到 UserBot 客户端（仅监听配置的源频道）")
+                else:
+                    # 使用 Bot 客户端注册监听器
+                    client.add_event_handler(
+                        handle_channel_message,
+                        NewMessage(func=lambda e: e.is_channel),
+                    )
+                    logger.info("频道消息转发监听器已注册到 Bot 客户端（仅监听配置的源频道）")
+            else:
+                logger.info("转发功能未启用（在config.json中设置enabled=true启用）")
+        except Exception as e:
+            logger.error(f"初始化频道消息转发功能失败: {type(e).__name__}: {e}")
 
         # 注册机器人命令
         logger.info("开始注册机器人命令...")
@@ -684,6 +1102,18 @@ async def main():
             BotCommand(command="db_clear", description="清空MySQL数据库（危险操作）"),
             # ========== 9. 偏好设置 ==========
             BotCommand(command="language", description="切换界面语言"),
+            # ========== 10. 频道消息转发 ==========
+            BotCommand(command="forwarding", description="查看转发功能状态"),
+            BotCommand(command="forwarding_enable", description="启用转发功能"),
+            BotCommand(command="forwarding_disable", description="禁用转发功能"),
+            BotCommand(command="forwarding_stats", description="查看转发统计"),
+            BotCommand(command="forwarding_footer", description="设置转发底栏"),
+            BotCommand(command="forwarding_default_footer", description="启用/禁用默认底栏"),
+            # ========== 11. UserBot 管理 ==========
+            BotCommand(command="userbot_status", description="查看 UserBot 状态"),
+            BotCommand(command="userbot_join", description="UserBot 加入频道"),
+            BotCommand(command="userbot_leave", description="UserBot 离开频道"),
+            BotCommand(command="userbot_list", description="列出已加入频道"),
         ]
 
         await client(
@@ -772,7 +1202,23 @@ async def main():
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
 
-        # 保持客户端运行
+        # 保持 Bot 客户端运行
+        # 如果有 UserBot 客户端，也需要让它持续运行
+        if userbot_client and userbot_client.is_connected():
+            # 创建一个任务来保持 UserBot 客户端运行
+            async def keep_userbot_alive():
+                """保持 UserBot 客户端运行，接收更新"""
+                try:
+                    logger.info("UserBot 客户端开始接收更新...")
+                    await userbot_client.run_until_disconnected()
+                except Exception as e:
+                    logger.error(f"UserBot 客户端运行出错: {type(e).__name__}: {e}", exc_info=True)
+
+            # 启动 UserBot 保持运行任务
+            asyncio.create_task(keep_userbot_alive())
+            logger.info("UserBot 客户端已启动后台任务")
+
+        # 保持 Bot 客户端运行
         await client.run_until_disconnected()
     except KeyboardInterrupt:
         logger.info("收到键盘中断，正在优雅关闭...")

@@ -1,49 +1,3 @@
-⚠️ 重要声明 / Important Notice
-本软件采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-并附加以下非商业使用限制条款。
-This software is licensed under the AGPL-3.0 with additional non-commercial restrictions.
-
----
-
-## 附加非商业限制条款 (Non-Commercial Clauses)
-
-为了保护原作者的劳动成果并防止非法牟利，在遵守 AGPL-3.0 标准协议的基础上，使用者必须同时遵守以下附加条款：
-
-### 禁止商业用途 (Prohibition of Commercial Use)
-
-- 禁止将本软件用于任何形式的商业服务、收费产品或盈利平台。
-- 禁止基于本软件提供有偿订阅服务（如：付费 Telegram 消息总结机器人）。
-- 禁止将本软件或其核心逻辑集成到任何付费 SaaS（软件即服务）产品中。
-
-### 禁止转售和商业化分发 (Prohibition of Resale)
-
-- 禁止以任何形式出售、租赁或变相授权本软件。
-- 禁止将本软件及其修改版本作为商业产品包的一部分进行分发。
-
-### API 密钥责任声明 (API Key Responsibility)
-
-本软件作为开源工具，不提供任何 AI 服务（如 DeepSeek, OpenAI）的内置密钥。
-
-使用者需自行申请并配置 API Key，并承担由此产生的所有费用、配额超限风险及相关法律责任。原作者不对使用者的 API 账户安全或费用损失负责。
-
-### 品牌保留与署名 (Branding and Attribution)
-
-所有基于本软件的衍生作品（包括修改版、汉化版或重构版）必须在显著位置（如机器人 /start 回复、报告底部或网页页脚）保留原作者的项目 GitHub 链接。
-
-不得删除或修改代码中核心的作者署名信息。
-
-### 例外情况与授权 (Exceptions)
-
-个人学习、非盈利性质的研究、以及完全免费的社区公益用途不受上述非商业条款限制。
-
-如需进行商业用途或获取豁免授权，请联系原作者：[Telegram：@TamakiSakura520 或 Email：Sakura520222@outlook.com]
-
-### 违反后果 (Consequences of Violation)
-
-一旦违反本附加条款，您的软件授权将自动终止。原作者保留采取法律手段维权、要求停止侵权并赔偿损失的权利。
-
----
-
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
@@ -161,7 +115,7 @@ Component, and (b) serves only to enable use of the work with that
 Major Component, or to implement a Standard Interface for which an
 implementation is available to the public in source code form.  A
 "Major Component", in this context, means a major essential component
-(kernel, window system, and so on) of the specific operating system
+(kernel, window system, 和 so on) of the specific operating system
 (if any) on which the executable work runs, or a compiler used to
 produce the work, or an object code interpreter used to run it.
 
@@ -525,8 +479,8 @@ propagate the contents of its contributor version.
 
   In the following three paragraphs, a "patent license" is any express
 agreement or commitment, however denominated, not to enforce a patent
-(such as an express permission to practice a patent or covenant not
-to sue for patent infringement).  To "grant" such a patent license to a
+(such as an express permission to practice a patent or covenant not to
+sue for patent infringement).  To "grant" such a patent license to a
 party means to make such an agreement or commitment not to enforce a
 patent against the party.
 
@@ -679,8 +633,8 @@ the "copyright" line and a pointer to where the full notice is found.
     Copyright (C) <year>  <name of author>
 
     This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU Affero General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -705,17 +659,3 @@ specific requirements.
 if any, to sign a "copyright disclaimer" for the program, if necessary.
 For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
-
----
-
-## 项目信息 (Project Information)
-
-**Project Name:** Sakura-Bot
-
-**Original Author:** Sakura520222
-
-**Repository:** https://github.com/Sakura520222/Sakura-Bot
-
-**License:** AGPL-3.0 with Non-Commercial Restrictions
-
-**Year:** 2026

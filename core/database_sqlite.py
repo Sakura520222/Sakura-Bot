@@ -1,10 +1,8 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
@@ -317,3 +315,39 @@ class SQLiteManager(DatabaseManagerLegacy):
         return await asyncio.to_thread(
             super().create_notification, user_id, notification_type, content
         )
+
+    # ============ 频道消息转发功能方法（异步包装） ============
+
+    async def is_message_forwarded(self, message_id: str, target_channel: str) -> bool:
+        """异步包装：检查消息是否已转发"""
+        return await asyncio.to_thread(super().is_message_forwarded, message_id, target_channel)
+
+    async def add_forwarded_message(
+        self,
+        message_id: str,
+        source_channel: str,
+        target_channel: str,
+        content_hash: str = None,
+        timestamp: int = None,
+    ) -> bool:
+        """异步包装：添加已转发消息记录"""
+        return await asyncio.to_thread(
+            super().add_forwarded_message,
+            message_id,
+            source_channel,
+            target_channel,
+            content_hash,
+            timestamp,
+        )
+
+    async def get_forwarding_stats(self, channel_id: str = None) -> dict[str, Any]:
+        """异步包装：获取转发统计信息"""
+        return await asyncio.to_thread(super().get_forwarding_stats, channel_id)
+
+    async def update_forwarding_stats(self, channel_id: str, increment: int = 1) -> bool:
+        """异步包装：更新频道转发统计"""
+        return await asyncio.to_thread(super().update_forwarding_stats, channel_id, increment)
+
+    async def cleanup_old_forwarded_messages(self, days: int = 30) -> int:
+        """异步包装：清理旧的转发消息记录"""
+        return await asyncio.to_thread(super().cleanup_old_forwarded_messages, days)

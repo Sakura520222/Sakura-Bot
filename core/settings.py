@@ -1,10 +1,8 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
@@ -178,6 +176,19 @@ class DatabaseSettings(BaseSettings):
     model_config = {"extra": "ignore"}
 
 
+class UserBotSettings(BaseSettings):
+    """UserBot 相关配置"""
+
+    userbot_enabled: bool = Field(default=False, alias="USERBOT_ENABLED")
+    userbot_phone_number: str | None = Field(default=None, alias="USERBOT_PHONE_NUMBER")
+    userbot_session_path: str = Field(
+        default="data/sessions/user_session", alias="USERBOT_SESSION_PATH"
+    )
+    userbot_fallback_to_bot: bool = Field(default=False, alias="USERBOT_FALLBACK_TO_BOT")
+
+    model_config = {"extra": "ignore"}
+
+
 class Settings:
     """主配置类，聚合所有子配置"""
 
@@ -190,6 +201,7 @@ class Settings:
         self.log = LogSettings()
         self.poll = PollSettings()
         self.database = DatabaseSettings()
+        self.userbot = UserBotSettings()
 
         # 其他配置
         self.send_report_to_source = True
@@ -304,6 +316,26 @@ def set_send_report_to_source(value: bool) -> None:
     logger.info(f"发送报告到源频道的配置已更新为: {value}")
 
 
+def get_userbot_enabled() -> bool:
+    """获取 UserBot 是否启用"""
+    return get_settings().userbot.userbot_enabled
+
+
+def get_userbot_phone_number() -> str | None:
+    """获取 UserBot 手机号"""
+    return get_settings().userbot.userbot_phone_number
+
+
+def get_userbot_session_path() -> str:
+    """获取 UserBot Session 路径"""
+    return get_settings().userbot.userbot_session_path
+
+
+def get_userbot_fallback_to_bot() -> bool:
+    """获取 UserBot 降级策略"""
+    return get_settings().userbot.userbot_fallback_to_bot
+
+
 # 验证必要配置
 def validate_required_settings() -> tuple[bool, list[str]]:
     """验证必要的配置项是否存在
@@ -322,5 +354,9 @@ def validate_required_settings() -> tuple[bool, list[str]]:
         missing.append("TELEGRAM_BOT_TOKEN")
     if not settings.ai.effective_api_key:
         missing.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
+
+    # 如果启用了 UserBot，检查 UserBot 相关配置
+    if settings.userbot.userbot_enabled and not settings.userbot.userbot_phone_number:
+        missing.append("USERBOT_PHONE_NUMBER（UserBot 已启用但未配置手机号）")
 
     return len(missing) == 0, missing

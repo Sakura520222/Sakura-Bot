@@ -24,6 +24,7 @@ from ..telegram_client_utils import (
     split_message_smart,
     validate_message_entities,
 )
+from ..userbot_client import get_userbot_client
 from .client_management import extract_date_range_from_summary, get_active_client
 from .poll_handlers import send_poll
 
@@ -50,35 +51,59 @@ async def fetch_last_week_messages(
     # 确保 API_ID 是整数
     logger.info("开始抓取指定时间范围的频道消息")
 
-    async with TelegramClient("data/sessions/user_session", int(API_ID), API_HASH) as client:
-        # 如果没有提供开始时间，则默认抓取过去一周的消息
-        if start_time is None:
-            start_time = datetime.now(UTC) - timedelta(days=7)
-            logger.info(
-                f"未提供开始时间，默认抓取过去一周的消息（从 {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今）"
-            )
+    # 优先使用 UserBot 客户端
+    userbot = get_userbot_client()
+    use_temp_session = False
+
+    if userbot and userbot.is_available():
+        logger.info("使用 UserBot 客户端抓取消息")
+        client = userbot.get_client()
+        # UserBot 已经是连接状态，不需要使用 async with
+    else:
+        # 降级方案：创建临时会话
+        if userbot:
+            logger.warning("UserBot 不可用，使用临时会话抓取消息")
         else:
-            logger.info(
-                f"抓取时间范围：{start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今"
-            )
+            logger.info("UserBot 未启用，使用临时会话抓取消息")
 
-        messages_by_channel = {}  # 按频道分组的消息字典
-        report_message_ids = report_message_ids or {}
+        client = TelegramClient("data/sessions/user_session", int(API_ID), API_HASH)
+        use_temp_session = True
 
-        # 确定要抓取的频道
-        if channels_to_fetch and isinstance(channels_to_fetch, list):
-            # 只抓取指定的频道
-            channels = channels_to_fetch
-            logger.info(f"正在抓取指定的 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
-        else:
-            # 抓取所有配置的频道
-            if not CHANNELS:
-                logger.warning("没有配置任何频道，无法抓取消息")
-                return messages_by_channel
-            channels = CHANNELS
-            logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
+    # 如果没有提供开始时间，则默认抓取过去一周的消息
+    if start_time is None:
+        start_time = datetime.now(UTC) - timedelta(days=7)
+        logger.info(
+            f"未提供开始时间，默认抓取过去一周的消息（从 {start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今）"
+        )
+    else:
+        logger.info(
+            f"抓取时间范围：{start_time.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 至今"
+        )
 
-        total_message_count = 0
+    messages_by_channel = {}  # 按频道分组的消息字典
+    report_message_ids = report_message_ids or {}
+
+    # 确定要抓取的频道
+    if channels_to_fetch and isinstance(channels_to_fetch, list):
+        # 只抓取指定的频道
+        channels = channels_to_fetch
+        logger.info(f"正在抓取指定的 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
+    else:
+        # 抓取所有配置的频道
+        if not CHANNELS:
+            logger.warning("没有配置任何频道，无法抓取消息")
+            if use_temp_session:
+                await client.disconnect()
+            return messages_by_channel
+        channels = CHANNELS
+        logger.info(f"正在抓取所有 {len(channels)} 个频道的消息，时间范围: {start_time} 至今")
+
+    total_message_count = 0
+
+    try:
+        # 如果使用临时会话，需要连接
+        if use_temp_session:
+            await client.connect()
 
         # 遍历所有要抓取的频道
         for channel in channels:
@@ -128,7 +153,13 @@ async def fetch_last_week_messages(
             )
 
         logger.info(f"所有指定频道消息抓取完成，共处理 {total_message_count} 条消息")
-        return messages_by_channel
+
+    finally:
+        # 如果使用临时会话，需要断开连接
+        if use_temp_session and client.is_connected():
+            await client.disconnect()
+
+    return messages_by_channel
 
 
 async def send_long_message(

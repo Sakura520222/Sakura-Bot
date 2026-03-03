@@ -1,7 +1,7 @@
 # 🌸 Sakura-Bot
 
 [![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
-[![License](https://img.shields.io/badge/License-AGPL--3.0%20%2B%20Non--Commercial-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000?style=flat-square)](https://github.com/psf/black)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
@@ -531,18 +531,17 @@ For detailed information, please refer to the [Contributing Guidelines](CONTRIBU
 
 ## 📄 License
 
-This project is licensed under **GNU Affero General Public License Version 3.0 (AGPL-3.0) with Non-Commercial restrictions**.
+This project is licensed under **GNU Affero General Public License Version 3.0 (AGPL-3.0)**.
 
 ### Key Points
 
 - **AGPL-3.0**: Requires source code disclosure for modifications and network services
-- **Non-Commercial**: Prohibits commercial use, paid subscriptions, or SaaS products
 - **Attribution**: All derivatives must retain original project links and author credits
 - **API Responsibility**: Users are responsible for API costs and legal compliance
 
 ### Important Notice
 
-- This project is for **personal learning only**, commercial use is prohibited
+- This project is for **personal learning** only; illegal use is prohibited.
 - When using code or derivatives, you must cite the original repository
 - Network service providers must provide source code per AGPL-3.0
 - Project source: https://github.com/Sakura520222/Sakura-Bot

@@ -1,10 +1,8 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
@@ -276,6 +274,36 @@ class MySQLManager(DatabaseManagerBase):
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     sent_at DATETIME,
                     INDEX idx_notification_queue_status (status, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+                # 10. 创建转发消息记录表
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS forwarded_messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    message_id VARCHAR(100) NOT NULL,
+                    source_channel VARCHAR(255) NOT NULL,
+                    target_channel VARCHAR(255) NOT NULL,
+                    content_hash VARCHAR(64),
+                    timestamp BIGINT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_message_target (message_id, target_channel),
+                    INDEX idx_forwarded_source (source_channel),
+                    INDEX idx_forwarded_target (target_channel),
+                    INDEX idx_forwarded_timestamp (timestamp)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+                # 11. 创建转发统计表
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS forwarding_stats (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    channel_id VARCHAR(255) NOT NULL UNIQUE,
+                    total_forwarded INT DEFAULT 0,
+                    last_forwarded BIGINT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_forwarding_stats_channel (channel_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
@@ -2079,3 +2107,188 @@ class MySQLManager(DatabaseManagerBase):
             self.pool.close()
             await self.pool.wait_closed()
             logger.info("MySQL连接池已关闭")
+
+    # ============ 频道消息转发功能方法 ============
+
+    async def is_message_forwarded(
+        self, message_id: str, target_channel: str, source_channel: str = None
+    ) -> bool:
+        """检查消息是否已转发到指定频道"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    if source_channel:
+                        # 使用三字段主键精确匹配
+                        await cursor.execute(
+                            """
+                            SELECT 1 FROM forwarded_messages
+                            WHERE message_id = %s AND target_channel = %s AND source_channel = %s
+                        """,
+                            (str(message_id), target_channel, source_channel),
+                        )
+                    else:
+                        # 兼容旧版本：仅使用 message_id 和 target_channel
+                        await cursor.execute(
+                            """
+                            SELECT 1 FROM forwarded_messages
+                            WHERE message_id = %s AND target_channel = %s
+                        """,
+                            (str(message_id), target_channel),
+                        )
+
+                    result = await cursor.fetchone()
+                    return result is not None
+
+        except Exception as e:
+            logger.error(f"检查消息转发状态失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def add_forwarded_message(
+        self,
+        message_id: str,
+        source_channel: str,
+        target_channel: str,
+        content_hash: str = None,
+        timestamp: int = None,
+    ) -> bool:
+        """添加已转发消息记录"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    if timestamp is None:
+                        timestamp = int(datetime.now(UTC).timestamp())
+
+                    await cursor.execute(
+                        """
+                        INSERT IGNORE INTO forwarded_messages
+                        (message_id, source_channel, target_channel, content_hash, timestamp)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """,
+                        (str(message_id), source_channel, target_channel, content_hash, timestamp),
+                    )
+
+                    await conn.commit()
+                    affected = cursor.rowcount
+
+                    if affected > 0:
+                        logger.debug(
+                            f"记录已转发消息: {message_id} from {source_channel} to {target_channel}"
+                        )
+                        return True
+                    return False
+
+        except Exception as e:
+            logger.error(f"添加转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def get_forwarding_stats(self, channel_id: str = None) -> dict[str, Any]:
+        """获取转发统计信息"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    if channel_id:
+                        # 单个频道统计
+                        await cursor.execute(
+                            """
+                            SELECT total_forwarded, last_forwarded
+                            FROM forwarding_stats
+                            WHERE channel_id = %s
+                        """,
+                            (channel_id,),
+                        )
+                        row = await cursor.fetchone()
+
+                        if row:
+                            return {
+                                "channel_id": channel_id,
+                                "total_forwarded": row["total_forwarded"] or 0,
+                                "last_forwarded": row["last_forwarded"],
+                            }
+                        else:
+                            return {
+                                "channel_id": channel_id,
+                                "total_forwarded": 0,
+                                "last_forwarded": None,
+                            }
+                    else:
+                        # 所有频道统计
+                        await cursor.execute("""
+                            SELECT channel_id, total_forwarded, last_forwarded
+                            FROM forwarding_stats
+                            ORDER BY total_forwarded DESC
+                        """)
+                        rows = await cursor.fetchall()
+
+                        stats_list = []
+                        total_all = 0
+                        for row in rows:
+                            stats_list.append(
+                                {
+                                    "channel_id": row["channel_id"],
+                                    "total_forwarded": row["total_forwarded"] or 0,
+                                    "last_forwarded": row["last_forwarded"],
+                                }
+                            )
+                            total_all += row["total_forwarded"] or 0
+
+                        return {
+                            "total_all_channels": total_all,
+                            "by_channel": stats_list,
+                        }
+
+        except Exception as e:
+            logger.error(f"获取转发统计失败: {type(e).__name__}: {e}", exc_info=True)
+            return {}
+
+    async def update_forwarding_stats(self, channel_id: str, increment: int = 1) -> bool:
+        """更新频道转发统计"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    now = int(datetime.now(UTC).timestamp())
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO forwarding_stats (channel_id, total_forwarded, last_forwarded)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            total_forwarded = total_forwarded + %s,
+                            last_forwarded = %s,
+                            updated_at = NOW()
+                    """,
+                        (channel_id, increment, now, increment, now),
+                    )
+
+                    await conn.commit()
+
+                    logger.debug(f"更新转发统计: {channel_id} +{increment}")
+                    return True
+
+        except Exception as e:
+            logger.error(f"更新转发统计失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def cleanup_old_forwarded_messages(self, days: int = 30) -> int:
+        """清理旧的转发消息记录"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    cutoff_timestamp = int((datetime.now(UTC) - timedelta(days=days)).timestamp())
+
+                    await cursor.execute(
+                        """
+                        DELETE FROM forwarded_messages
+                        WHERE timestamp < %s
+                    """,
+                        (cutoff_timestamp,),
+                    )
+
+                    deleted_count = cursor.rowcount
+                    await conn.commit()
+
+                    logger.info(f"清理旧转发消息记录: 删除 {deleted_count} 条")
+                    return deleted_count
+
+        except Exception as e:
+            logger.error(f"清理旧转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0

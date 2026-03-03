@@ -1,10 +1,8 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
@@ -1213,6 +1211,273 @@ async def get_discussion_group_id_cached(client, channel_url):
     except Exception as e:
         logger.error(f"获取频道 {channel_url} 的讨论组ID失败: {e}")
         return None
+
+
+# ==================== 频道消息转发配置管理 ====================
+
+
+def get_forwarding_config():
+    """获取转发功能配置
+
+    Returns:
+        dict: 转发配置字典，包含 enabled 和 rules
+            - enabled: 是否启用转发功能
+            - rules: 转发规则列表
+    """
+    config = load_config()
+    forwarding_config = config.get("forwarding", {})
+
+    # 确保返回完整的配置结构
+    if not isinstance(forwarding_config, dict):
+        logger.warning("转发配置格式不正确，使用默认配置")
+        return {"enabled": False, "rules": []}
+
+    # 确保必要字段存在
+    if "enabled" not in forwarding_config:
+        forwarding_config["enabled"] = False
+    if "rules" not in forwarding_config:
+        # 尝试从旧的 forwarding_rules 迁移
+        old_rules = config.get("forwarding_rules", [])
+        if old_rules:
+            logger.info("检测到旧的 forwarding_rules 配置，自动迁移到 forwarding.rules")
+            # 自动迁移配置
+            config["forwarding"] = {
+                "enabled": forwarding_config.get("enabled", False),
+                "rules": old_rules,
+            }
+            save_config(config)
+            forwarding_config["rules"] = old_rules
+        else:
+            forwarding_config["rules"] = []
+
+    return forwarding_config
+
+
+def get_forwarding_rules():
+    """获取所有转发规则配置
+
+    Returns:
+        list: 转发规则列表，每个规则为字典格式
+    """
+    config = load_config()
+    return config.get("forwarding_rules", [])
+
+
+def get_forwarding_rules_by_source(source_channel):
+    """获取指定源频道的转发规则
+
+    Args:
+        source_channel: 源频道URL或ID
+
+    Returns:
+        list: 匹配的转发规则列表
+    """
+    rules = get_forwarding_rules()
+    return [
+        rule
+        for rule in rules
+        if rule.get("source_channel") == source_channel and rule.get("enabled", True)
+    ]
+
+
+def add_forwarding_rule(
+    source_channel, target_channel, keywords=None, ai_prompt="", custom_footer=""
+):
+    """添加转发规则
+
+    Args:
+        source_channel: 源频道URL或ID
+        target_channel: 目标频道URL或ID
+        keywords: 关键词列表
+        ai_prompt: AI提示词
+        custom_footer: 自定义底栏
+
+    Returns:
+        bool: 是否成功添加
+    """
+    try:
+        # 加载当前配置
+        config = load_config()
+
+        # 标准化频道ID
+        source_channel = normalize_channel_id(source_channel)
+        target_channel = normalize_channel_id(target_channel)
+
+        # 检查规则是否已存在
+        existing_rules = config.get("forwarding_rules", [])
+        for rule in existing_rules:
+            if (
+                rule.get("source_channel") == source_channel
+                and rule.get("target_channel") == target_channel
+            ):
+                logger.warning(f"转发规则已存在: {source_channel} -> {target_channel}")
+                return False
+
+        # 添加新规则
+        new_rule = {
+            "source_channel": source_channel,
+            "target_channel": target_channel,
+            "keywords": keywords or [],
+            "ai_prompt": ai_prompt,
+            "custom_footer": custom_footer,
+            "enabled": True,
+        }
+
+        config.setdefault("forwarding_rules", []).append(new_rule)
+
+        # 保存配置
+        save_config(config)
+
+        logger.info(f"已添加转发规则: {source_channel} -> {target_channel}")
+        return True
+    except Exception as e:
+        logger.error(f"添加转发规则时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+def remove_forwarding_rule(source_channel, target_channel):
+    """移除转发规则
+
+    Args:
+        source_channel: 源频道URL或ID
+        target_channel: 目标频道URL或ID
+
+    Returns:
+        bool: 是否成功移除
+    """
+    try:
+        # 加载当前配置
+        config = load_config()
+
+        # 标准化频道ID
+        source_channel = normalize_channel_id(source_channel)
+        target_channel = normalize_channel_id(target_channel)
+
+        # 查找并删除规则
+        rules = config.get("forwarding_rules", [])
+        original_count = len(rules)
+
+        rules = [
+            rule
+            for rule in rules
+            if not (
+                rule.get("source_channel") == source_channel
+                and rule.get("target_channel") == target_channel
+            )
+        ]
+
+        if len(rules) == original_count:
+            logger.warning(f"转发规则不存在: {source_channel} -> {target_channel}")
+            return False
+
+        config["forwarding_rules"] = rules
+
+        # 保存配置
+        save_config(config)
+
+        logger.info(f"已移除转发规则: {source_channel} -> {target_channel}")
+        return True
+    except Exception as e:
+        logger.error(f"移除转发规则时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+def update_forwarding_rule(source_channel, target_channel, **kwargs):
+    """更新转发规则
+
+    Args:
+        source_channel: 源频道URL或ID
+        target_channel: 目标频道URL或ID
+        **kwargs: 要更新的字段（keywords, ai_prompt, custom_footer, enabled等）
+
+    Returns:
+        bool: 是否成功更新
+    """
+    try:
+        # 加载当前配置
+        config = load_config()
+
+        # 标准化频道ID
+        source_channel = normalize_channel_id(source_channel)
+        target_channel = normalize_channel_id(target_channel)
+
+        # 查找规则
+        rules = config.get("forwarding_rules", [])
+        for rule in rules:
+            if (
+                rule.get("source_channel") == source_channel
+                and rule.get("target_channel") == target_channel
+            ):
+                # 更新字段
+                for key, value in kwargs.items():
+                    if key in ["keywords", "ai_prompt", "custom_footer", "enabled"]:
+                        rule[key] = value
+                        logger.info(f"更新转发规则字段 {key}: {source_channel} -> {target_channel}")
+
+                # 保存配置
+                save_config(config)
+                return True
+
+        logger.warning(f"转发规则不存在: {source_channel} -> {target_channel}")
+        return False
+    except Exception as e:
+        logger.error(f"更新转发规则时出错: {type(e).__name__}: {e}", exc_info=True)
+        return False
+
+
+def toggle_forwarding_rule(source_channel, target_channel):
+    """切换转发规则的启用状态
+
+    Args:
+        source_channel: 源频道URL或ID
+        target_channel: 目标频道URL或ID
+
+    Returns:
+        bool: 新的启用状态，如果规则不存在返回None
+    """
+    try:
+        # 加载当前配置
+        config = load_config()
+
+        # 标准化频道ID
+        source_channel = normalize_channel_id(source_channel)
+        target_channel = normalize_channel_id(target_channel)
+
+        # 查找规则
+        rules = config.get("forwarding_rules", [])
+        for rule in rules:
+            if (
+                rule.get("source_channel") == source_channel
+                and rule.get("target_channel") == target_channel
+            ):
+                # 切换状态
+                current_state = rule.get("enabled", True)
+                new_state = not current_state
+                rule["enabled"] = new_state
+
+                # 保存配置
+                save_config(config)
+
+                logger.info(
+                    f"转发规则状态已切换: {source_channel} -> {target_channel}, enabled={new_state}"
+                )
+                return new_state
+
+        logger.warning(f"转发规则不存在: {source_channel} -> {target_channel}")
+        return None
+    except Exception as e:
+        logger.error(f"切换转发规则状态时出错: {type(e).__name__}: {e}", exc_info=True)
+        return None
+
+
+def get_forwarding_enabled_sources():
+    """获取所有已启用转发的源频道列表
+
+    Returns:
+        set: 源频道集合
+    """
+    rules = get_forwarding_rules()
+    return {rule.get("source_channel") for rule in rules if rule.get("enabled", True)}
 
 
 # ==================== 问答Bot人格配置管理 ====================
