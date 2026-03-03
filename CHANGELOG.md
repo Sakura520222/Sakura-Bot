@@ -4,10 +4,6 @@
 
 本文件仅保留用于历史记录参考。完整的版本发布说明和功能变更记录请查看 GitHub Releases 页面。
 
----
-
-## 历史变更记录
-
 # 更新日志
 
 所有对项目的显著更改都将记录在此文件中。
@@ -15,9 +11,107 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+---
 
+## 历史变更记录
 
-  ## [1.6.9] - 2026-02-27
+## [1.7.0] - 2026-03-02
+
+### 新增
+  - **UserBot 支持**：使用真实 Telegram 账号进行消息抓取和转发
+    - 可访问私有频道，不受 Bot API 限制
+    - 更高的消息抓取权限，完整获取频道内容
+    - 更稳定的连接，减少限流和封禁风险
+    - 支持自动登录和 Session 持久化
+    - 优雅的错误处理和降级策略
+    - 新增 `/userbot_status` 命令查看运行状态
+
+  - **UserBot 自动加入频道功能**：实现 UserBot 频道管理自动化
+    - UserBot 启动时自动加入转发配置的所有源频道
+    - 新增 `/userbot_join` 命令：手动加入频道（支持公开频道和私有频道邀请链接）
+    - 新增 `/userbot_leave` 命令：手动离开频道
+    - 新增 `/userbot_list` 命令：列出 UserBot 已加入的所有频道
+    - 支持多种频道链接格式：
+      - 公开频道：`https://t.me/channelname` 或 `@channelname`
+      - 私有频道：`https://t.me/+invitecode`（邀请链接）
+    - 智能错误提示：
+      - 私有频道无法自动加入时，提示需要手动邀请
+      - 频道不存在或无权限时，显示详细错误信息
+      - 无效链接格式时，提示正确用法
+
+  - **频道消息转发功能**：完整集成 TG-Forwarder 机器人到主Bot
+    - 支持媒体组（相册）完整转发，保持原始顺序
+    - 智能转发策略：根据文件大小自动选择内存转发或下载转发
+    - 基于配置的转发规则，支持多对多转发
+    - 关键词过滤（白名单/黑名单）
+    - 正则表达式过滤
+    - 原创消息过滤（只转发频道原创消息）
+    - 双模式转发：转发模式（显示来源）和复制模式（不显示来源）
+    - 消息去重机制
+    - 转发统计记录
+    - 自定义底栏支持，支持丰富的占位符
+    - 全局底栏开关控制
+
+  - **转发功能命令**：
+    - `/forwarding` - 查看转发状态和规则列表
+    - `/forwarding_enable` - 启用转发功能
+    - `/forwarding_disable` - 禁用转发功能
+    - `/forwarding_stats [频道]` - 查看转发统计
+    - `/forwarding_footer` - 设置/清除自定义底栏
+    - `/forwarding_default_footer` - 启用/禁用默认底栏
+    - 支持中英文别名
+
+  - **数据库扩展**：
+    - 新增 `forwarded_messages` 表：记录已转发消息（去重）
+    - 新增 `forwarding_stats` 表：记录转发统计信息
+    - 支持 SQLite 和 MySQL 双数据库
+
+### 新增文件
+  - `core/userbot_client.py` - UserBot 客户端管理模块
+  - `core/forwarding/` - 转发功能模块目录
+    - `filters.py` - 消息过滤器
+    - `forwarding_handler.py` - 转发处理器核心
+    - `download_manager.py` - 下载管理器
+    - `media_utils.py` - 媒体工具
+  - `core/command_handlers/forwarding_commands.py` - 转发命令处理器
+
+### 配置文件增强
+  - 新增 UserBot 配置项：
+    - `USERBOT_ENABLED` - 是否启用 UserBot
+    - `USERBOT_PHONE_NUMBER` - 手机号
+    - `USERBOT_SESSION_PATH` - Session 路径
+    - `USERBOT_FALLBACK_TO_BOT` - 降级策略
+
+  - 新增转发功能配置项（config.json）：
+    ```json
+    {
+      "forwarding": {
+        "enabled": false,
+        "show_default_footer": true,
+        "rules": [
+          {
+            "source_channel": "https://t.me/source",
+            "target_channel": "https://t.me/target",
+            "keywords": ["关键词1"],
+            "blacklist": ["广告"],
+            "patterns": [],
+            "blacklist_patterns": [],
+            "copy_mode": false,
+            "forward_original_only": false,
+            "custom_footer": "📢 来源: {source_title}\\n🔗 {source_link}"
+          }
+        ]
+      }
+    }
+    ```
+
+### 技术实现
+  - 所有转发操作使用异步实现
+  - 新增单元测试，覆盖率 100%
+  - 完善的国际化支持（20+ 翻译键）
+  - 向后兼容，不影响现有功能
+
+## [1.6.9] - 2026-02-27
 
 ### 修复
 - **Telegram 消息实体边界错误**：彻底修复 `/history` 等命令执行时的 `EntityBoundsInvalidError` 错误

@@ -1,7 +1,7 @@
 # 🌸 Sakura-Bot
 
 [![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
-[![License](https://img.shields.io/badge/License-AGPL--3.0%20%2B%20Non--Commercial-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000?style=flat-square)](https://github.com/psf/black)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
@@ -128,6 +128,7 @@ python main.py
 | **📱 命令菜单** | QA Bot自动注册命令菜单，用户可直接查看所有可用命令 | ✅ |
 | **🗄️ MySQL数据库支持** | 新增MySQL数据库支持，提升性能和并发能力 | ✅ |
 | **🔄 数据库迁移** | 一键从SQLite迁移到MySQL，自动备份和数据验证 | ✅ |
+| **📤 频道消息转发** | 智能转发频道消息到目标频道，支持关键词和正则过滤 | ✅ |
 | **⚡ 启动时检查** | 自动检测旧数据库并通知管理员迁移建议 | ✅ |
 
 ---
@@ -249,10 +250,89 @@ python main.py
 | `/migrate_start` | `/开始迁移` | 开始数据库迁移 | `/migrate_start` |
 | `/migrate_status` | `/迁移状态` | 查看迁移进度 | `/migrate_status` |
 
+#### 频道消息转发
+
+| 命令 | 别名 | 功能 | 示例 |
+|------|------|------|------|
+| `/forwarding` | `/转发状态` | 查看转发功能状态和规则列表 | `/forwarding` |
+| `/forwarding_enable` | `/启用转发` | 启用转发功能 | `/forwarding_enable` |
+| `/forwarding_disable` | `/禁用转发` | 禁用转发功能 | `/forwarding_disable` |
+| `/forwarding_stats [频道]` | `/转发统计` | 查看转发统计信息 | `/forwarding_stats` / `/forwarding_stats channel1` |
+
+**功能说明**：
+- 智能转发频道消息到目标频道
+- 支持关键词白名单和黑名单过滤
+- 支持正则表达式模式匹配
+- 支持转发模式（显示来源）和复制模式（不显示来源）
+- 自动记录已转发消息，避免重复转发
+- 提供详细的转发统计信息
+
+**配置方式**：
+在 `data/config.json` 中配置转发规则：
+
+```json
+{
+  "forwarding": {
+    "enabled": true,
+    "rules": [
+      {
+        "source_channel": "https://t.me/source_channel",
+        "target_channel": "https://t.me/my_channel",
+        "keywords": ["重要", "新闻", "更新"],
+        "blacklist": ["广告", "垃圾"],
+        "patterns": [],
+        "blacklist_patterns": [],
+        "copy_mode": false
+      }
+    ]
+  }
+}
+```
+
+**配置说明**：
+- `enabled`: 是否启用转发功能（true/false）
+- `source_channel`: 源频道URL
+- `target_channel`: 目标频道URL
+- `keywords`: 白名单关键词列表（包含任一关键词即转发）
+- `blacklist`: 黑名单关键词列表（包含任一关键词不转发）
+- `patterns`: 正则表达式白名单（匹配任一模式即转发）
+- `blacklist_patterns`: 正则表达式黑名单（匹配任一模式不转发）
+- `copy_mode`: 复制模式（true=不显示来源，false=显示来源）
+- `forward_original_only`: 只转发原创消息（true=只转发频道原创消息，不转发转发消息；false=转发所有消息，默认false）
+
 **迁移说明**：
 - 支持从SQLite一键迁移到MySQL数据库
 - 迁移前自动备份，安全可靠
 - 适合生产环境和高并发场景
+
+#### UserBot 管理
+
+| 命令 | 别名 | 功能 | 示例 |
+|------|------|------|------|
+| `/userbot_status` | `/userbot_状态` | 查看 UserBot 运行状态和用户信息 | `/userbot_status` |
+| `/userbot_join <频道链接>` | `/userbot_加入` | 手动加入频道（支持公开频道和私有频道邀请链接） | `/userbot_join https://t.me/channel` |
+| `/userbot_leave <频道链接>` | `/userbot_离开` | 手动离开频道 | `/userbot_leave https://t.me/channel` |
+| `/userbot_list` | `/userbot_列表` | 列出 UserBot 已加入的所有频道 | `/userbot_list` |
+
+**功能说明**：
+- **UserBot 自动加入**：转发功能启用时，UserBot 会自动加入所有转发配置的源频道
+- **支持的频道链接格式**：
+  - 公开频道：`https://t.me/channelname` 或 `@channelname`
+  - 私有频道：`https://t.me/+invitecode`（邀请链接）
+- **智能错误处理**：
+  - 私有频道无法自动加入时，提示需要手动邀请
+  - 频道不存在或无权限时，显示详细错误信息
+  - 无效链接格式时，提示正确用法
+- **自动化通知**：
+  - 自动加入开始时通知管理员
+  - 自动加入完成后发送结果汇总
+  - 失败的频道列表详细说明失败原因
+
+**注意事项**：
+- 私有频道无法自动加入，需要手动将 UserBot 添加为成员
+- UserBot 需要有加入频道的权限
+- 自动加入功能仅在转发功能启用时触发
+- 可通过命令手动管理 UserBot 加入的频道
 
 **MySQL配置示例**：
 ```env
@@ -546,18 +626,17 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 ## 📄 许可证
 
-本项目采用 **GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，并附加非商业使用限制条款**。
+本项目采用 **GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可**。
 
 ### 许可证要点
 
 - **AGPL-3.0**：要求修改后的代码必须开源，通过网络提供服务时也需提供源代码
-- **非商业限制**：禁止将本软件用于任何商业用途、有偿订阅服务或付费 SaaS 产品
 - **署名要求**：所有衍生作品必须保留原作者的项目链接和作者署名信息
 - **API 责任**：使用者需自行承担 API 费用及相关法律责任
 
 ### 重要说明
 
-- 本项目仅供**个人学习使用**，禁止任何商业用途
+- 本项目仅供**个人学习使用**，禁止任何非法用途
 - 使用本项目的代码或衍生作品时，必须标注本仓库的原始来源地址
 - 基于 AGPL-3.0 的网络交互条款，通过服务器提供服务的必须提供源代码
 - 本项目源代码：https://github.com/Sakura520222/Sakura-Bot

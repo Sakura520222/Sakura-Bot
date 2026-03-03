@@ -9,6 +9,50 @@ from ..i18n import get_text
 logger = logging.getLogger(__name__)
 
 
+def split_long_message(text: str, max_length: int = 4096) -> list:
+    """将长消息分割为多个部分
+
+    Args:
+        text: 要分割的文本
+        max_length: 每部分的最大长度（默认4096，Telegram消息限制）
+
+    Returns:
+        list: 分割后的文本列表
+    """
+    if len(text) <= max_length:
+        return [text]
+
+    parts = []
+    current_part = ""
+    lines = text.split("\n")
+
+    for line in lines:
+        # 如果单行就超过了最大长度，需要强制分割
+        if len(line) > max_length:
+            # 先保存当前部分
+            if current_part:
+                parts.append(current_part.rstrip())
+                current_part = ""
+
+            # 按字符强制分割超长行
+            for i in range(0, len(line), max_length):
+                chunk = line[i : i + max_length]
+                parts.append(chunk)
+        elif len(current_part) + len(line) + 1 <= max_length:
+            current_part += line + "\n"
+        else:
+            # 当前部分已满，保存并开始新部分
+            if current_part:
+                parts.append(current_part.rstrip())
+            current_part = line + "\n"
+
+    # 添加最后一部分
+    if current_part:
+        parts.append(current_part.rstrip())
+
+    return parts
+
+
 def format_schedule_info(channel, schedule, index=None):
     """格式化调度配置信息
 

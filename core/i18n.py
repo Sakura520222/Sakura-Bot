@@ -1,10 +1,8 @@
 # Copyright 2026 Sakura-Bot
 #
-# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，
-# 并附加非商业使用限制条款。
+# 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 #
 # - 署名：必须提供本项目的原始来源链接
-# - 非商业：禁止任何商业用途和分发
 # - 相同方式共享：衍生作品必须采用相同的许可证
 #
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
@@ -573,6 +571,55 @@ MESSAGE_ZH_CN = {
     "database.fallback.tip": "💡 SQLite 数据库已就绪，机器人将继续运行",
     "database.fallback.manual_required": "⚠️ 需要手动操作",
     "database.fallback.manual_steps": "请执行以下步骤：\n1. 修改 data/.env 文件\n2. 将 DATABASE_TYPE=mysql 改为 DATABASE_TYPE=sqlite\n3. 重启机器人",
+    # ========== 频道消息转发 ==========
+    "forwarding.status_enabled": "✅ 已启用",
+    "forwarding.status_disabled": "❌ 已禁用",
+    "forwarding.status_message": "📊 **转发功能状态**\n\n状态：{status}\n转发规则数：{rule_count}",
+    "forwarding.rules_header": "**转发规则**：",
+    "forwarding.enabled": "✅ 转发功能已启用",
+    "forwarding.disabled": "❌ 转发功能已禁用",
+    "forwarding.already_enabled": "⚠️ 转发功能已经是启用状态",
+    "forwarding.already_disabled": "⚠️ 转发功能已经是禁用状态",
+    "forwarding.stats.total": "📊 **转发统计**\n\n总转发数：{total}",
+    "forwarding.stats.single_channel": "📊 **频道转发统计**\n\n频道：{channel}\n总转发数：{total}\n最后转发：{last}",
+    "forwarding.stats.never": "从未",
+    "forwarding.stats.no_data": "⚠️ 暂无转发统计数据",
+    "forwarding.stats.by_channel_header": "**各频道统计**：",
+    "forwarding.error.query_failed": "❌ 查询转发状态失败：{error}",
+    "forwarding.error.enable_failed": "❌ 启用转发功能失败：{error}",
+    "forwarding.error.disable_failed": "❌ 禁用转发功能失败：{error}",
+    "forwarding.error.stats_failed": "❌ 查询转发统计失败：{error}",
+    "forwarding.filter.forward_skipped": "⏭️ 消息是转发消息，已跳过",
+    # ========== 底栏管理 ==========
+    "forwarding.footer.updated": "✅ 已更新转发规则的自定义底栏\n\n源频道：{source}\n目标频道：{target}\n\n底栏内容：\n{footer}",
+    "forwarding.footer.cleared": "✅ 已清除转发规则的自定义底栏\n\n源频道：{source}\n目标频道：{target}\n\n将使用默认底栏格式",
+    "forwarding.footer.default_enabled": "✅ 已启用默认底栏\n\n未设置自定义底栏的转发规则将使用默认格式：[Source](链接) @频道",
+    "forwarding.footer.default_disabled": "❌ 已禁用默认底栏\n\n所有转发规则都不会添加底栏（包括自定义底栏）",
+    "forwarding.footer.usage": "用法：\n\n/forwarding_footer <源频道> <目标频道> <底栏内容>\n/forwarding_footer <源频道> <目标频道> clear\n\n示例：\n/forwarding_footer https://t.me/source https://t.me/target 📢 来源: {source_title}\\n🔗 {source_link}\n/forwarding_footer https://t.me/source https://t.me/target clear",
+    "forwarding.footer.invalid_params": "❌ 参数无效\n\n用法：/forwarding_footer <源频道> <目标频道> <底栏内容>\n\n或使用 clear 清除底栏",
+    "forwarding.footer.not_found": "❌ 转发规则不存在\n\n源频道：{source}\n目标频道：{target}",
+    "forwarding.footer.placeholders": "支持的占位符：\n\n{source_link} - 源消息链接\n{source_title} - 源频道名称\n{target_title} - 目标频道名称\n{source_channel} - 源频道ID\n{target_channel} - 目标频道ID\n{message_id} - 消息ID",
+    "forwarding.default_footer.usage": "用法：\n\n/forwarding_default_footer on - 启用默认底栏\n/forwarding_default_footer off - 禁用默认底栏",
+    # ========== UserBot 频道管理 ==========
+    "userbot.join_success": "✅ UserBot 已成功加入频道：{channel}",
+    "userbot.join_failed_private": "❌ UserBot 无法加入频道 {channel}\n\n原因：该频道是私有频道，需要邀请链接或手动邀请",
+    "userbot.join_failed_not_found": "❌ UserBot 无法加入频道 {channel}\n\n原因：频道不存在或 UserBot 没有权限访问",
+    "userbot.join_failed_invalid": "❌ UserBot 无法加入频道 {channel}\n\n原因：无效的频道链接或格式",
+    "userbot.join_failed_error": "❌ UserBot 加入频道失败：{channel}\n\n错误：{error}",
+    "userbot.join_already_joined": "✅ UserBot 已经是频道 {channel} 的成员",
+    "userbot.leave_success": "✅ UserBot 已成功离开频道：{channel}",
+    "userbot.leave_failed": "❌ UserBot 离开频道失败：{channel}\n\n错误：{error}",
+    "userbot.leave_not_joined": "⚠️ UserBot 未加入频道 {channel}",
+    "userbot.list_title": "📋 **UserBot 已加入的频道列表**",
+    "userbot.list_empty": "UserBot 尚未加入任何频道",
+    "userbot.list_item": "{index}. {title} ({channel})\n   ID: {id}",
+    "userbot.not_available": "❌ UserBot 不可用\n\n请确保 UserBot 已启用并正常运行",
+    "userbot.join_all_start": "⏳ UserBot 开始加入转发配置的源频道...",
+    "userbot.join_all_summary": "📊 **UserBot 自动加入频道结果**\n\n成功加入：{success_count} 个\n失败：{failed_count} 个",
+    "userbot.join_all_failed_list": "\n\n**失败列表**：\n{failed_list}",
+    "userbot.join_usage": "用法：/userbot_join <频道链接>\n\n示例：\n/userbot_join https://t.me/channelname\n/userbot_join @channelname\n/userbot_join https://t.me/+invitecode",
+    "userbot.leave_usage": "用法：/userbot_leave <频道链接>\n\n示例：\n/userbot_leave https://t.me/channelname\n/userbot_leave @channelname",
+    "userbot.auto_join_warning": "⚠️ **UserBot 自动加入频道警告**\n\n以下频道无法自动加入：\n{failed_list}\n\n建议：对于私有频道，请手动邀请 UserBot 加入",
 }
 
 # 英文翻译
@@ -1121,6 +1168,54 @@ MESSAGE_EN_US = {
     "database.fallback.tip": "💡 SQLite database is ready, bot will continue running",
     "database.fallback.manual_required": "⚠️ Manual operation required",
     "database.fallback.manual_steps": "Please follow these steps:\n1. Modify data/.env file\n2. Change DATABASE_TYPE=mysql to DATABASE_TYPE=sqlite\n3. Restart the bot",
+    # ========== Channel Message Forwarding ==========
+    "forwarding.status_enabled": "✅ Enabled",
+    "forwarding.status_disabled": "❌ Disabled",
+    "forwarding.status_message": "📊 **Forwarding Feature Status**\n\nStatus: {status}\nNumber of rules: {rule_count}",
+    "forwarding.rules_header": "**Forwarding Rules**:",
+    "forwarding.enabled": "✅ Forwarding feature enabled",
+    "forwarding.disabled": "❌ Forwarding feature disabled",
+    "forwarding.already_enabled": "⚠️ Forwarding feature is already enabled",
+    "forwarding.already_disabled": "⚠️ Forwarding feature is already disabled",
+    "forwarding.stats.total": "📊 **Forwarding Statistics**\n\nTotal forwarded: {total}",
+    "forwarding.stats.single_channel": "📊 **Channel Forwarding Statistics**\n\nChannel: {channel}\nTotal forwarded: {total}\nLast forwarded: {last}",
+    "forwarding.stats.never": "Never",
+    "forwarding.stats.no_data": "⚠️ No forwarding statistics available",
+    "forwarding.stats.by_channel_header": "**Statistics by Channel**:",
+    "forwarding.error.query_failed": "❌ Failed to query forwarding status: {error}",
+    "forwarding.error.enable_failed": "❌ Failed to enable forwarding feature: {error}",
+    "forwarding.error.disable_failed": "❌ Failed to disable forwarding feature: {error}",
+    "forwarding.error.stats_failed": "❌ Failed to query forwarding statistics: {error}",
+    # ========== Footer Management ==========
+    "forwarding.footer.updated": "✅ Custom footer updated for forwarding rule\n\nSource: {source}\nTarget: {target}\n\nFooter content:\n{footer}",
+    "forwarding.footer.cleared": "✅ Custom footer cleared for forwarding rule\n\nSource: {source}\nTarget: {target}\n\nWill use default footer format",
+    "forwarding.footer.default_enabled": "✅ Default footer enabled\n\nForwarding rules without custom footer will use default format: [Source](link) @channel",
+    "forwarding.footer.default_disabled": "❌ Default footer disabled\n\nAll forwarding rules will not add footer (including custom footer)",
+    "forwarding.footer.usage": "Usage:\n\n/forwarding_footer <source> <target> <footer content>\n/forwarding_footer <source> <target> clear\n\nExample:\n/forwarding_footer https://t.me/source https://t.me/target Source: {source_title}\\n{source_link}\n/forwarding_footer https://t.me/source https://t.me/target clear",
+    "forwarding.footer.invalid_params": "❌ Invalid parameters\n\nUsage: /forwarding_footer <source> <target> <footer content>\n\nOr use clear to clear footer",
+    "forwarding.footer.not_found": "❌ Forwarding rule not found\n\nSource: {source}\nTarget: {target}",
+    "forwarding.footer.placeholders": "Supported placeholders:\n\n{source_link} - Source message link\n{source_title} - Source channel name\n{target_title} - Target channel name\n{source_channel} - Source channel ID\n{target_channel} - Target channel ID\n{message_id} - Message ID",
+    "forwarding.default_footer.usage": "Usage:\n\n/forwarding_default_footer on - Enable default footer\n/forwarding_default_footer off - Disable default footer",
+    # ========== UserBot Channel Management ==========
+    "userbot.join_success": "✅ UserBot has successfully joined channel: {channel}",
+    "userbot.join_failed_private": "❌ UserBot cannot join channel {channel}\n\nReason: This is a private channel, requires invite link or manual invitation",
+    "userbot.join_failed_not_found": "❌ UserBot cannot join channel {channel}\n\nReason: Channel does not exist or UserBot has no access",
+    "userbot.join_failed_invalid": "❌ UserBot cannot join channel {channel}\n\nReason: Invalid channel link or format",
+    "userbot.join_failed_error": "❌ UserBot failed to join channel: {channel}\n\nError: {error}",
+    "userbot.join_already_joined": "✅ UserBot is already a member of channel {channel}",
+    "userbot.leave_success": "✅ UserBot has successfully left channel: {channel}",
+    "userbot.leave_failed": "❌ UserBot failed to leave channel: {channel}\n\nError: {error}",
+    "userbot.leave_not_joined": "⚠️ UserBot has not joined channel {channel}",
+    "userbot.list_title": "📋 **UserBot Joined Channels List**",
+    "userbot.list_empty": "UserBot has not joined any channels yet",
+    "userbot.list_item": "{index}. {title} ({channel})\n   ID: {id}",
+    "userbot.not_available": "❌ UserBot is not available\n\nPlease ensure UserBot is enabled and running properly",
+    "userbot.join_all_start": "⏳ UserBot starting to join forwarding source channels...",
+    "userbot.join_all_summary": "📊 **UserBot Auto-Join Channel Results**\n\nSuccessfully joined: {success_count}\nFailed: {failed_count}",
+    "userbot.join_all_failed_list": "\n\n**Failed List**:\n{failed_list}",
+    "userbot.join_usage": "Usage: /userbot_join <channel_link>\n\nExamples:\n/userbot_join https://t.me/channelname\n/userbot_join @channelname\n/userbot_join https://t.me/+invitecode",
+    "userbot.leave_usage": "Usage: /userbot_leave <channel_link>\n\nExamples:\n/userbot_leave https://t.me/channelname\n/userbot_leave @channelname",
+    "userbot.auto_join_warning": "⚠️ **UserBot Auto-Join Channel Warning**\n\nThe following channels cannot be joined automatically:\n{failed_list}\n\nSuggestion: For private channels, please manually invite UserBot to join",
 }
 
 

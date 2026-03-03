@@ -180,25 +180,22 @@ class RuffRunner:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description="一键 Ruff 代码检查和格式化工具",
+        description="一键 Ruff 代码检查和格式化工具（默认执行完整模式）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python run_ruff.py              # 只检查，不修改文件
-  python run_ruff.py --fix        # 自动修复问题
-  python run_ruff.py --format     # 格式化代码
-  python run_ruff.py --all        # 完整模式（检查+修复+格式化）
+  python run_ruff.py              # 完整模式（检查+修复+格式化）
+  python run_ruff.py --check      # 只检查，不修改文件
   python run_ruff.py --check core/  # 检查指定目录
         """,
     )
 
-    parser.add_argument("--fix", action="store_true", help="自动修复可修复的问题")
-
-    parser.add_argument("--format", action="store_true", help="格式化代码")
-
-    parser.add_argument("--all", action="store_true", help="完整模式：检查 + 修复 + 格式化")
-
-    parser.add_argument("--check", nargs="*", metavar="PATH", help="检查指定的路径（文件或目录）")
+    parser.add_argument(
+        "--check",
+        nargs="*",
+        metavar="PATH",
+        help="检查指定的路径（文件或目录），不带参数时检查整个项目",
+    )
 
     args = parser.parse_args()
 
@@ -213,20 +210,17 @@ def main():
     print(f"日志目录: {runner.logs_dir}")
     print(f"{'=' * 60}\n")
 
-    success = True
-
     # 根据参数执行相应的操作
     if args.check is not None:
-        # 检查指定路径
+        # 检查模式
         if args.check:
             # 检查用户指定的路径
-            success = runner.check_paths(args.check)
+            runner.check_paths(args.check)
         else:
             # 没有指定路径，检查整个项目
-            success = runner.check()
-
-    elif args.all:
-        # 完整模式
+            runner.check()
+    else:
+        # 默认：完整模式（检查 → 修复 → 格式化）
         print("\n📋 执行完整模式：检查 → 修复 → 格式化\n")
 
         # 1. 检查
@@ -241,21 +235,6 @@ def main():
         print("\n" + "=" * 60)
         print("✅ 完整模式执行完成！")
         print("=" * 60)
-
-    elif args.fix:
-        # 修复模式
-        success = runner.fix()
-
-    elif args.format:
-        # 格式化模式
-        success = runner.format()
-
-    else:
-        # 默认：只检查
-        success = runner.check()
-
-    # 返回状态码
-    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
