@@ -1,7 +1,7 @@
 # 🌸 Sakura-Bot
 
 [![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
-[![License](https://img.shields.io/badge/License-AGPL--3.0%20%2B%20Non--Commercial-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000?style=flat-square)](https://github.com/psf/black)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
@@ -626,18 +626,17 @@ tar -czf backup-$(date +%Y%m%d).tar.gz data/
 
 ## 📄 许可证
 
-本项目采用 **GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可，并附加非商业使用限制条款**。
+本项目采用 **GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可**。
 
 ### 许可证要点
 
 - **AGPL-3.0**：要求修改后的代码必须开源，通过网络提供服务时也需提供源代码
-- **非商业限制**：禁止将本软件用于任何商业用途、有偿订阅服务或付费 SaaS 产品
 - **署名要求**：所有衍生作品必须保留原作者的项目链接和作者署名信息
 - **API 责任**：使用者需自行承担 API 费用及相关法律责任
 
 ### 重要说明
 
-- 本项目仅供**个人学习使用**，禁止任何商业用途
+- 本项目仅供**个人学习使用**，禁止任何非法用途
 - 使用本项目的代码或衍生作品时，必须标注本仓库的原始来源地址
 - 基于 AGPL-3.0 的网络交互条款，通过服务器提供服务的必须提供源代码
 - 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
