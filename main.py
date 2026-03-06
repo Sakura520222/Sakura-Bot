@@ -811,34 +811,18 @@ async def main():
 
                 # UserBot 自动加入源频道
                 if userbot:
-                    from core.i18n import get_text
-
                     logger.info("UserBot 开始自动加入转发配置的源频道...")
-
-                    # 通知管理员开始自动加入
-                    for admin_id in ADMIN_LIST:
-                        if admin_id != "me":
-                            try:
-                                await client.send_message(
-                                    admin_id,
-                                    get_text("userbot.join_all_start"),
-                                    parse_mode="md",
-                                    link_preview=False,
-                                )
-                            except Exception as e:
-                                logger.error(f"通知管理员失败: {e}")
 
                     # 执行自动加入
                     result = await userbot.join_all_forwarding_channels(forwarding_config)
 
-                    # 构建结果消息
+                    # 记录结果到控制台日志
                     if result.get("success"):
                         success_count = result.get("success_count", 0)
                         failed_count = result.get("failed_count", 0)
                         failed_list = result.get("failed_list", [])
 
                         # 如果有失败的频道，构建失败列表
-                        failed_list_text = ""
                         if failed_list:
                             failed_items = []
                             for item in failed_list:
@@ -846,50 +830,11 @@ async def main():
                                 reason = item.get("reason", "未知原因")
                                 failed_items.append(f"• {channel}: {reason}")
                             failed_list_text = "\n".join(failed_items)
+                            logger.warning(f"UserBot 自动加入频道失败列表:\n{failed_list_text}")
 
-                        # 构建总结消息
-                        summary_message = get_text(
-                            "userbot.join_all_summary",
-                            success_count=success_count,
-                            failed_count=failed_count,
+                        logger.info(
+                            f"UserBot 自动加入频道完成: 成功 {success_count} 个, 失败 {failed_count} 个"
                         )
-
-                        if failed_list_text:
-                            summary_message += get_text(
-                                "userbot.join_all_failed_list",
-                                failed_list=failed_list_text,
-                            )
-
-                        # 发送结果给管理员
-                        for admin_id in ADMIN_LIST:
-                            if admin_id != "me":
-                                try:
-                                    await client.send_message(
-                                        admin_id,
-                                        summary_message,
-                                        parse_mode="md",
-                                        link_preview=False,
-                                    )
-                                except Exception as e:
-                                    logger.error(f"发送结果给管理员失败: {e}")
-
-                        # 如果有失败的频道，发送警告
-                        if failed_count > 0:
-                            warning_message = get_text(
-                                "userbot.auto_join_warning",
-                                failed_list=failed_list_text,
-                            )
-                            for admin_id in ADMIN_LIST:
-                                if admin_id != "me":
-                                    try:
-                                        await client.send_message(
-                                            admin_id,
-                                            warning_message,
-                                            parse_mode="md",
-                                            link_preview=False,
-                                        )
-                                    except Exception as e:
-                                        logger.error(f"发送警告给管理员失败: {e}")
                     else:
                         # 自动加入失败
                         error_message = result.get("message", "未知错误")
