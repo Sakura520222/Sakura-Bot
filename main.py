@@ -18,8 +18,6 @@ import aiofiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telethon import TelegramClient
 from telethon.events import CallbackQuery, NewMessage
-from telethon.tl.functions.bots import SetBotCommandsRequest
-from telethon.tl.types import BotCommand, BotCommandScopeDefault
 
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -112,6 +110,7 @@ from core.settings import (
 # 版本信息
 __version__ = "1.7.1"
 
+from core.bot_commands import register_commands
 from core.command_handlers.database_migration_commands import (
     handle_db_clear,
     handle_db_clear_cancel,
@@ -987,83 +986,7 @@ async def main():
 
         # 注册机器人命令
         logger.info("开始注册机器人命令...")
-
-        commands = [
-            # ========== 1. 基础与核心 ==========
-            BotCommand(command="start", description="查看欢迎消息和帮助"),
-            BotCommand(command="help", description="查看完整命令列表"),
-            BotCommand(command="summary", description="立即生成本周频道消息汇总"),
-            # ========== 2. 频道管理 ==========
-            BotCommand(command="showchannels", description="查看当前频道列表"),
-            BotCommand(command="addchannel", description="添加频道"),
-            BotCommand(command="deletechannel", description="删除频道"),
-            # ========== 3. 定时与推送 ==========
-            BotCommand(command="showchannelschedule", description="查看频道自动总结时间配置"),
-            BotCommand(command="setchannelschedule", description="设置频道自动总结时间"),
-            BotCommand(command="deletechannelschedule", description="删除频道自动总结时间配置"),
-            BotCommand(command="clearsummarytime", description="清除上次总结时间记录"),
-            BotCommand(command="setsendtosource", description="设置是否将报告发送回源频道"),
-            # ========== 4. AI 配置 ==========
-            BotCommand(command="showprompt", description="查看当前提示词"),
-            BotCommand(command="setprompt", description="设置自定义提示词"),
-            BotCommand(command="showpollprompt", description="查看当前投票提示词"),
-            BotCommand(command="setpollprompt", description="设置投票提示词"),
-            BotCommand(command="showaicfg", description="查看AI配置"),
-            BotCommand(command="setaicfg", description="设置AI配置"),
-            # ========== 5. 频道互动 ==========
-            BotCommand(command="channelpoll", description="查看频道投票配置"),
-            BotCommand(command="setchannelpoll", description="设置频道投票配置"),
-            BotCommand(command="deletechannelpoll", description="删除频道投票配置"),
-            BotCommand(command="showcommentwelcome", description="查看频道评论区欢迎配置"),
-            BotCommand(command="setcommentwelcome", description="设置频道评论区欢迎配置"),
-            BotCommand(command="deletecommentwelcome", description="删除频道评论区欢迎配置"),
-            # ========== 6. 统计与历史 ==========
-            BotCommand(command="history", description="查看历史总结"),
-            BotCommand(command="export", description="导出历史记录"),
-            BotCommand(command="stats", description="查看统计数据"),
-            # ========== 7. 系统运维 ==========
-            # 系统控制
-            BotCommand(command="pause", description="暂停所有定时任务"),
-            BotCommand(command="resume", description="恢复所有定时任务"),
-            BotCommand(command="restart", description="重启机器人"),
-            BotCommand(command="shutdown", description="彻底停止机器人"),
-            # 日志与缓存
-            BotCommand(command="showloglevel", description="查看当前日志级别"),
-            BotCommand(command="setloglevel", description="设置日志级别"),
-            BotCommand(command="clearcache", description="清除讨论组ID缓存"),
-            # 更新维护
-            BotCommand(command="changelog", description="查看更新日志"),
-            BotCommand(command="update", description="一键更新机器人"),
-            # 问答Bot控制
-            BotCommand(command="qa_status", description="查看问答Bot运行状态"),
-            BotCommand(command="qa_start", description="启动问答Bot"),
-            BotCommand(command="qa_stop", description="停止问答Bot"),
-            BotCommand(command="qa_restart", description="重启问答Bot"),
-            BotCommand(command="qa_stats", description="查看问答Bot详细统计"),
-            # ========== 8. 数据库管理（高危） ==========
-            BotCommand(command="migrate_check", description="检查数据库迁移准备状态"),
-            BotCommand(command="migrate_start", description="开始数据库迁移"),
-            BotCommand(command="migrate_status", description="查看数据库迁移进度"),
-            BotCommand(command="db_clear", description="清空MySQL数据库（危险操作）"),
-            # ========== 9. 偏好设置 ==========
-            BotCommand(command="language", description="切换界面语言"),
-            # ========== 10. 频道消息转发 ==========
-            BotCommand(command="forwarding", description="查看转发功能状态"),
-            BotCommand(command="forwarding_enable", description="启用转发功能"),
-            BotCommand(command="forwarding_disable", description="禁用转发功能"),
-            BotCommand(command="forwarding_stats", description="查看转发统计"),
-            BotCommand(command="forwarding_footer", description="设置转发底栏"),
-            BotCommand(command="forwarding_default_footer", description="启用/禁用默认底栏"),
-            # ========== 11. UserBot 管理 ==========
-            BotCommand(command="userbot_status", description="查看 UserBot 状态"),
-            BotCommand(command="userbot_join", description="UserBot 加入频道"),
-            BotCommand(command="userbot_leave", description="UserBot 离开频道"),
-            BotCommand(command="userbot_list", description="列出已加入频道"),
-        ]
-
-        await client(
-            SetBotCommandsRequest(scope=BotCommandScopeDefault(), lang_code="zh", commands=commands)
-        )
+        await register_commands(client)
         logger.info("机器人命令注册完成")
 
         logger.info("定时监控已启动...")
