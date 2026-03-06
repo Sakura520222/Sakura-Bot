@@ -35,6 +35,17 @@ PRONOUN_PATTERNS = re.compile(
     r"它|他|她|这个|那个|这些|那些|此|彼|前者|后者|上面|上述|刚才|之前|继续|还有|那么|那|这"
 )
 
+
+# 改写策略枚举
+class RewriteStrategy:
+    """查询改写策略"""
+
+    PRONOUN_RESOLUTION = "pronoun"  # 代词解析
+    QUERY_EXPANSION = "expansion"  # 查询扩展
+    QUERY_SIMPLIFICATION = "simplify"  # 查询简化
+    HYBRID_ENHANCEMENT = "hybrid"  # 混合增强
+
+
 # 系统提示词模板（使用占位符，人格描述会动态注入）
 BASE_SYSTEM_TEMPLATE = """{persona_description}
 
@@ -61,7 +72,109 @@ BASE_SYSTEM_TEMPLATE = """{persona_description}
 {channel_context}{conversation_context}
 """
 
-# 查询改写专用系统提示
+
+# 查询改写缓存类
+class RewriteCache:
+    """查询改写缓存"""
+
+    def __init__(self, max_size: int = 1000):
+        self.cache = {}  # {(query, history_hash): rewritten_query}
+        self.max_size = max_size
+        self.hit_count = 0
+        self.miss_count = 0
+
+    def _hash_history(self, history: list[dict]) -> str:
+        """生成对话历史的哈希值"""
+        if not history:
+            return "empty"
+        # 只使用最后3条消息生成哈希
+        recent = history[-3:] if len(history) > 3 else history
+        text = "".join(f"{msg['role']}:{msg['content'][:50]}" for msg in recent)
+        return str(hash(text))
+
+    def get(self, query: str, history: list[dict]) -> str | None:
+        """获取缓存的改写"""
+        history_hash = self._hash_history(history)
+        key = (query.strip().lower(), history_hash)
+        result = self.cache.get(key)
+        if result:
+            self.hit_count += 1
+            logger.debug(f"改写缓存命中: {query[:30]}...")
+        else:
+            self.miss_count += 1
+        return result
+
+    def set(self, query: str, history: list[dict], rewritten: str):
+        """缓存改写结果"""
+        history_hash = self._hash_history(history)
+        key = (query.strip().lower(), history_hash)
+
+        # 简单的LRU策略：缓存满了就清空一半
+        if len(self.cache) >= self.max_size:
+            items = list(self.cache.items())
+            self.cache = dict(items[len(items) // 2 :])
+            logger.info("改写缓存已清理")
+
+        self.cache[key] = rewritten
+        logger.debug(f"改写已缓存: {query[:30]}... → {rewritten[:30]}...")
+
+    def get_stats(self) -> dict:
+        """获取缓存统计"""
+        total = self.hit_count + self.miss_count
+        hit_rate = self.hit_count / total if total > 0 else 0
+        return {
+            "size": len(self.cache),
+            "hit_count": self.hit_count,
+            "miss_count": self.miss_count,
+            "hit_rate": f"{hit_rate:.1%}",
+        }
+
+
+# 查询改写专用系统提示（增强版 - 使用Few-Shot Learning）
+ENHANCED_REWRITE_SYSTEM_PROMPT = """你是一个查询改写专家。给定对话历史和用户问题，将其改写为独立、完整的检索查询。
+
+## 改写原则
+1. **解析代词**：将"它/他/她/这个/那个"等替换为明确的实体名称
+2. **补充上下文**：根据对话历史补充缺失的关键信息
+3. **保留意图**：保持原始查询的核心意图不变
+4. **简洁明确**：去除冗余词汇（"我想知道"、"能否告诉我"等）
+5. **同义词扩展**（可选）：对关键词添加同义词，提高召回率
+
+## 改写示例
+
+示例1 - 代词解析：
+对话历史：
+用户: Vue 3.4有什么新特性？
+助手: Vue 3.4发布了新的响应式系统，提升了性能...
+用户: 它解决了什么问题？
+改写后: Vue 3.4的新响应式系统解决了什么问题？
+
+示例2 - 上下文补充：
+对话历史：
+用户: 最近有什么技术讨论？
+助手: 讨论了React Server Components和Next.js 14...
+用户: 具体讲了什么？
+改写后: React Server Components和Next.js 14的讨论内容具体讲了什么？
+
+示例3 - 查询简化：
+对话历史：
+用户: 你能不能帮我查一下最近有没有关于Python异步编程的讨论
+改写后: Python异步编程 讨论 最新
+
+示例4 - 无需改写：
+对话历史：
+用户: 最近AI领域有什么进展？
+改写后: 最近AI领域有什么进展？
+
+## 当前任务
+对话历史：
+{conversation_history}
+
+用户最新问题：{query}
+
+请直接输出改写后的查询，不要解释。如果原查询已经足够清晰，直接原样返回。"""
+
+# 原始简单提示词（作为备用）
 REWRITE_SYSTEM_PROMPT = """你是一个查询改写助手。
 给定多轮对话历史和用户的最新问题，将用户的最新问题改写为一个**独立、完整、不依赖上下文的搜索查询**。
 要求：
@@ -82,7 +195,8 @@ class QAEngineV3:
         self.vector_store = get_vector_store()
         self.reranker = get_reranker()
         self.conversation_mgr = get_conversation_manager()
-        logger.info("问答引擎v3.1.0初始化完成（支持多轮对话 + 查询改写）")
+        self.rewrite_cache = RewriteCache()
+        logger.info("问答引擎v3.1.0初始化完成（支持多轮对话 + 增强查询改写）")
 
     async def process_query(self, query: str, user_id: int) -> str:
         """
@@ -193,20 +307,24 @@ class QAEngineV3:
             )
             logger.debug(f"用户 {user_id} 的对话历史: {len(conversation_history)} 条")
 
-            # ── 步骤0: 查询改写（多轮对话 + 含代词时） ──────────────────────────
+            # ── 步骤0: 智能查询改写 ───────────────────────────────────────
             search_query = query  # 用于检索的查询（可能被改写）
             query_rewritten = False
+            rewrite_strategy = None
 
-            if (
-                not is_new_session
-                and len(conversation_history) >= 3  # 至少有1轮历史
-                and PRONOUN_PATTERNS.search(query)
-            ):
+            # 检查是否需要改写及使用何种策略
+            should_rewrite, strategy = self._should_rewrite(
+                query, conversation_history, is_new_session, keywords
+            )
+
+            if should_rewrite:
                 try:
-                    search_query = await self._rewrite_query(query, conversation_history)
+                    search_query, rewrite_strategy = await self._rewrite_query_enhanced(
+                        query, conversation_history, strategy
+                    )
                     if search_query != query:
                         query_rewritten = True
-                        logger.info(f"查询改写: '{query}' → '{search_query}'")
+                        logger.info(f"查询改写 [{rewrite_strategy}]: '{query}' → '{search_query}'")
                 except Exception as e:
                     logger.warning(f"查询改写失败，使用原始查询: {e}")
                     search_query = query
@@ -300,9 +418,182 @@ class QAEngineV3:
             logger.error(f"处理内容查询失败: {type(e).__name__}: {e}", exc_info=True)
             return "❌ 查询失败，请稍后重试。"
 
+    def _should_rewrite(
+        self,
+        query: str,
+        conversation_history: list[dict],
+        is_new_session: bool,
+        keywords: list[str] = None,
+    ) -> tuple[bool, str]:
+        """
+        判断是否需要改写及使用何种策略
+
+        Args:
+            query: 用户查询
+            conversation_history: 对话历史
+            is_new_session: 是否新会话
+            keywords: 关键词列表
+
+        Returns:
+            (是否改写, 策略名称)
+        """
+        # 条件1: 含代词 → 代词解析
+        if PRONOUN_PATTERNS.search(query):
+            return True, RewriteStrategy.PRONOUN_RESOLUTION
+
+        # 条件2: 非新会话，有历史 → 混合增强
+        if not is_new_session and len(conversation_history) >= 1:
+            return True, RewriteStrategy.HYBRID_ENHANCEMENT
+
+        # 条件3: 关键词稀缺（<2个实质词）→ 查询扩展
+        if keywords and len(keywords) < 2:
+            return True, RewriteStrategy.QUERY_EXPANSION
+
+        # 条件4: 查询过长（>20字）或冗余 → 查询简化
+        if len(query) > 20 or self._has_redundancy(query):
+            return True, RewriteStrategy.QUERY_SIMPLIFICATION
+
+        return False, None
+
+    def _has_redundancy(self, query: str) -> bool:
+        """检查查询是否包含冗余词汇"""
+        redundancy_patterns = [
+            r"你能不能帮我",
+            r"能否告诉我",
+            r"我想知道",
+            r"帮我查一下",
+            r"我想了解",
+            r"帮我找找",
+        ]
+        return any(re.search(pattern, query) for pattern in redundancy_patterns)
+
+    async def _rewrite_query_enhanced(
+        self, query: str, conversation_history: list[dict], strategy: str
+    ) -> tuple[str, str]:
+        """
+        增强的查询改写（支持多策略和缓存）
+
+        Args:
+            query: 原始查询
+            conversation_history: 对话历史
+            strategy: 改写策略
+
+        Returns:
+            (改写后查询, 实际使用的策略)
+        """
+        # 检查缓存
+        cached = self.rewrite_cache.get(query, conversation_history)
+        if cached:
+            logger.debug(f"使用缓存的改写: {cached}")
+            return cached, strategy
+
+        # 根据策略选择提示词
+        system_prompt = ENHANCED_REWRITE_SYSTEM_PROMPT
+
+        # 只取最近4条历史（避免token浪费）
+        recent_history = (
+            conversation_history[-4:] if len(conversation_history) > 4 else conversation_history
+        )
+        # 排除最后一条（就是当前的用户查询）
+        context_history = recent_history[:-1] if len(recent_history) > 1 else []
+
+        if not context_history and strategy == RewriteStrategy.PRONOUN_RESOLUTION:
+            # 代词解析但无历史，无法改写
+            return query, strategy
+
+        # 构建对话历史文本
+        history_text = ""
+        if context_history:
+            history_text = self.conversation_mgr.format_conversation_context(context_history)
+        else:
+            history_text = "（无对话历史）"
+
+        try:
+            response = client_llm.chat.completions.create(
+                model=get_llm_model(),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": f"对话历史：\n{history_text}\n\n用户最新问题：{query}\n\n改写后的独立查询：",
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=200,
+            )
+
+            rewritten = response.choices[0].message.content.strip()
+
+            # 质量验证
+            validation = await self._validate_rewrite(query, rewritten)
+
+            if validation["valid"]:
+                # 缓存成功的改写
+                self.rewrite_cache.set(query, conversation_history, rewritten)
+                logger.debug(f"改写验证通过: {validation.get('notes', '')}")
+                return rewritten, strategy
+            else:
+                logger.warning(f"改写验证失败: {validation.get('issues', [])}")
+                return query, strategy
+
+        except Exception as e:
+            logger.error(f"查询改写出错: {e}")
+            return query, strategy
+
+    async def _validate_rewrite(self, original: str, rewritten: str) -> dict:
+        """
+        验证改写质量
+
+        Args:
+            original: 原始查询
+            rewritten: 改写后查询
+
+        Returns:
+            {
+                "valid": bool,
+                "notes": str,
+                "issues": list[str]
+            }
+        """
+        issues = []
+
+        # 基本检查
+        if not rewritten or not rewritten.strip():
+            issues.append("改写结果为空")
+            return {"valid": False, "notes": "基本验证失败", "issues": issues}
+
+        # 长度检查
+        if len(rewritten) > 300:
+            issues.append("改写结果过长")
+
+        # 如果改写和原文相同，说明无需改写
+        if rewritten.strip().lower() == original.strip().lower():
+            return {"valid": True, "notes": "无需改写", "issues": []}
+
+        # 简单的意图保留检查（关键词重叠度）
+        original_words = set(re.findall(r"[\w]+", original.lower()))
+        rewritten_words = set(re.findall(r"[\w]+", rewritten.lower()))
+
+        if original_words:
+            overlap = len(original_words & rewritten_words) / len(original_words)
+            if overlap < 0.2:  # 关键词重叠度低于20%
+                issues.append(f"意图保留度过低 ({overlap:.0%})")
+
+        # 检查是否丢失了核心信息
+        if PRONOUN_PATTERNS.search(original) and not PRONOUN_PATTERNS.search(rewritten):
+            # 原文有代词但改写后没有，这是好的
+            pass
+        elif PRONOUN_PATTERNS.search(rewritten):
+            issues.append("改写后仍包含代词")
+
+        is_valid = len(issues) == 0
+        notes = "验证通过" if is_valid else f"发现问题: {', '.join(issues)}"
+
+        return {"valid": is_valid, "notes": notes, "issues": issues}
+
     async def _rewrite_query(self, query: str, conversation_history: list[dict]) -> str:
         """
-        利用LLM将含代词的查询改写为独立完整的检索查询
+        利用LLM将含代词的查询改写为独立完整的检索查询（旧版本，保留兼容）
 
         Args:
             query: 原始用户查询（可能含代词）
@@ -657,19 +948,26 @@ class QAEngineV3:
                 user_id, session_id
             )
 
-            # 查询改写
+            # 查询改写（使用增强版）
             search_query = original_query
             query_rewritten = False
-            if (
-                not is_new_session
-                and len(conversation_history) >= 3
-                and PRONOUN_PATTERNS.search(original_query)
-            ):
+            rewrite_strategy = None
+
+            # 检查是否需要改写及使用何种策略
+            should_rewrite, strategy = self._should_rewrite(
+                original_query, conversation_history, is_new_session, keywords
+            )
+
+            if should_rewrite:
                 try:
-                    search_query = await self._rewrite_query(original_query, conversation_history)
+                    search_query, rewrite_strategy = await self._rewrite_query_enhanced(
+                        original_query, conversation_history, strategy
+                    )
                     if search_query != original_query:
                         query_rewritten = True
-                        logger.info(f"[stream] 查询改写: '{original_query}' → '{search_query}'")
+                        logger.info(
+                            f"[stream] 查询改写 [{rewrite_strategy}]: '{original_query}' → '{search_query}'"
+                        )
                 except Exception as e:
                     logger.warning(f"[stream] 查询改写失败: {e}")
                     search_query = original_query
