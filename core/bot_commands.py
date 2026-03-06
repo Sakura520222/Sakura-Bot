@@ -20,12 +20,16 @@ from telethon.tl.types import BotCommand, BotCommandScopeDefault
 # ==================== 命令定义 ====================
 
 # 命令按功能分类定义
-# 每个分类包含：category（分类名称）和 commands（命令列表）
+# 每个分类包含：
+#   - category: 分类名称（中文显示）
+#   - i18n_key: 国际化键名后缀（用于生成 help.section_xxx）
+#   - commands: 命令列表
 # 每个命令是一个元组：(command, description)
 BOT_COMMANDS = [
     # ========== 1. 基础与核心 ==========
     {
         "category": "基础核心",
+        "i18n_key": "basic_core",
         "commands": [
             ("start", "查看欢迎消息和帮助"),
             ("help", "查看完整命令列表"),
@@ -35,6 +39,7 @@ BOT_COMMANDS = [
     # ========== 2. 频道管理 ==========
     {
         "category": "频道管理",
+        "i18n_key": "channel",
         "commands": [
             ("showchannels", "查看当前频道列表"),
             ("addchannel", "添加频道"),
@@ -44,6 +49,7 @@ BOT_COMMANDS = [
     # ========== 3. 定时与推送 ==========
     {
         "category": "定时推送",
+        "i18n_key": "schedule_push",
         "commands": [
             ("showchannelschedule", "查看频道自动总结时间配置"),
             ("setchannelschedule", "设置频道自动总结时间"),
@@ -55,6 +61,7 @@ BOT_COMMANDS = [
     # ========== 4. AI 配置 ==========
     {
         "category": "AI配置",
+        "i18n_key": "ai",
         "commands": [
             ("showprompt", "查看当前提示词"),
             ("setprompt", "设置自定义提示词"),
@@ -67,6 +74,7 @@ BOT_COMMANDS = [
     # ========== 5. 频道互动 ==========
     {
         "category": "频道互动",
+        "i18n_key": "channel_interaction",
         "commands": [
             ("channelpoll", "查看频道投票配置"),
             ("setchannelpoll", "设置频道投票配置"),
@@ -79,6 +87,7 @@ BOT_COMMANDS = [
     # ========== 6. 统计与历史 ==========
     {
         "category": "统计历史",
+        "i18n_key": "stats_history",
         "commands": [
             ("history", "查看历史总结"),
             ("export", "导出历史记录"),
@@ -88,6 +97,7 @@ BOT_COMMANDS = [
     # ========== 7. 系统运维 ==========
     {
         "category": "系统运维",
+        "i18n_key": "system_ops",
         "commands": [
             # 系统控制
             ("pause", "暂停所有定时任务"),
@@ -112,6 +122,7 @@ BOT_COMMANDS = [
     # ========== 8. 数据库管理（高危） ==========
     {
         "category": "数据库管理",
+        "i18n_key": "database",
         "commands": [
             ("migrate_check", "检查数据库迁移准备状态"),
             ("migrate_start", "开始数据库迁移"),
@@ -122,6 +133,7 @@ BOT_COMMANDS = [
     # ========== 9. 偏好设置 ==========
     {
         "category": "偏好设置",
+        "i18n_key": "preferences",
         "commands": [
             ("language", "切换界面语言"),
         ],
@@ -129,6 +141,7 @@ BOT_COMMANDS = [
     # ========== 10. 频道消息转发 ==========
     {
         "category": "频道转发",
+        "i18n_key": "forwarding",
         "commands": [
             ("forwarding", "查看转发功能状态"),
             ("forwarding_enable", "启用转发功能"),
@@ -141,6 +154,7 @@ BOT_COMMANDS = [
     # ========== 11. UserBot 管理 ==========
     {
         "category": "UserBot管理",
+        "i18n_key": "userbot",
         "commands": [
             ("userbot_status", "查看 UserBot 状态"),
             ("userbot_join", "UserBot 加入频道"),
@@ -187,10 +201,7 @@ def get_command_count() -> int:
     Returns:
         int: 命令总数
     """
-    count = 0
-    for category_group in BOT_COMMANDS:
-        count += len(category_group["commands"])
-    return count
+    return sum(len(category["commands"]) for category in BOT_COMMANDS)
 
 
 # ==================== 注册函数 ====================
@@ -229,12 +240,14 @@ def generate_help_text(get_text_func) -> str:
     help_text = f"{get_text_func('help.title')}\n\n"
 
     for category_group in BOT_COMMANDS:
+        # 使用 i18n_key 字段生成正确的国际化键
+        i18n_key = category_group.get("i18n_key", "")
         category = category_group["category"]
         commands = category_group["commands"]
 
-        # 根据分类生成对应的章节标题
-        section_key = f"help.section_{category.lower().replace(' ', '_')}"
-        section_title = get_text_func(section_key, default=category)
+        # 生成章节标题键名
+        section_key = f"help.section_{i18n_key}" if i18n_key else ""
+        section_title = get_text_func(section_key, default=category) if section_key else category
 
         help_text += f"{section_title}\n"
 
