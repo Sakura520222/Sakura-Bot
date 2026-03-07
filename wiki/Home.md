@@ -29,6 +29,7 @@
 - **[错误处理增强](Developer-Error-Handling-Improvements.md)** - 错误处理机制
 - **[问答 Bot 实施](Developer-QA-Bot-Implementation.md)** - AI 功能实施文档
 - **[RAG 技术文档](Developer-RAG-Feature-V3.md)** - RAG 技术实现
+- **[查询改写增强](Developer-Query-Rewrite-Enhancement.md)** - QA 引擎查询改写功能说明
 - **[Ruff 脚本指南](Developer-Ruff-Script-Guide.md)** - 代码质量工具
 - **[CI/CD 工作流](Developer-Workflow-Improvements.md)** - 持续集成配置
 

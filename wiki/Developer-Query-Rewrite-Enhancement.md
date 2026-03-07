@@ -161,9 +161,9 @@ print(stats)
 
 ## 📚 相关文档
 
-- [RAG架构说明](wiki/Developer-RAG-Feature-V3.md)
-- [问答Bot使用指南](wiki/User-QA-Bot-Guide.md)
-- [多轮对话功能](wiki/User-Multi-Turn-Conversation.md)
+- [RAG架构说明](Developer-RAG-Feature-V3.md)
+- [问答Bot使用指南](User-QA-Bot-Guide.md)
+- [多轮对话功能](User-Multi-Turn-Conversation.md)
 
 ## 🔮 未来计划
 
