@@ -22,16 +22,18 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 if TYPE_CHECKING:
     from telethon import TelegramClient
 
-from core.config import CHANNELS, build_cron_trigger, get_channel_schedule, set_scheduler_instance
+from core.config import build_cron_trigger, get_channel_schedule, set_scheduler_instance
+from core.infrastructure.config.system_config import SystemConfigManager
 from core.system.scheduler import cleanup_old_poll_regenerations, main_job
 
 
 class SchedulerInitializer:
     """调度器初始化器"""
 
-    def __init__(self):
+    def __init__(self, system_config_manager: SystemConfigManager = None):
         self.logger = logging.getLogger(__name__)
         self.scheduler: AsyncIOScheduler | None = None
+        self.system_config_manager = system_config_manager
 
     async def initialize(self, client: "TelegramClient") -> AsyncIOScheduler:
         """初始化调度器
@@ -75,9 +77,11 @@ class SchedulerInitializer:
         Args:
             client: Telegram客户端实例
         """
-        self.logger.info(f"开始为 {len(CHANNELS)} 个频道配置定时任务...")
+        # 从SystemConfigManager获取频道列表，如果没有则使用空列表
+        channels = self.system_config_manager.channels if self.system_config_manager else []
+        self.logger.info(f"开始为 {len(channels)} 个频道配置定时任务...")
 
-        for channel in CHANNELS:
+        for channel in channels:
             # 获取频道的自动总结时间配置
             schedule = get_channel_schedule(channel)
 
@@ -117,7 +121,8 @@ class SchedulerInitializer:
                 f"频道 {channel} 的定时任务已配置：{frequency_text} {schedule['hour']:02d}:{schedule['minute']:02d}"
             )
 
-        self.logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
+        channels = self.system_config_manager.channels if self.system_config_manager else []
+        self.logger.info(f"定时任务配置完成：共 {len(channels)} 个频道")
 
     def _add_cleanup_jobs(self) -> None:
         """添加定期清理任务"""

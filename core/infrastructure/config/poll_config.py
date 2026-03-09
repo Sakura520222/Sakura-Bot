@@ -13,11 +13,13 @@
 此模块管理频道级的投票配置，包括启用状态和发送位置。
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 from typing import Literal
 
+from core.config import AsyncIOEventBus, ConfigChangedEvent
 from core.i18n.i18n import get_text
 from core.infrastructure.utils.constants import CONFIG_FILE
 from core.infrastructure.utils.exceptions import ConfigurationError
@@ -42,14 +44,28 @@ class ChannelPollConfigManager:
     管理频道级的投票配置，包括启用状态和发送位置。
     """
 
-    def __init__(self, config_file: str | None = None):
+    def __init__(self, config_file: str | None = None, event_bus: AsyncIOEventBus = None):
         """初始化配置管理器
 
         Args:
             config_file: 配置文件路径，默认为 config.json
+            event_bus: 事件总线，用于配置热重载（可选）
         """
         self._config_file = Path(config_file or CONFIG_FILE)
+        self._event_bus = event_bus
         self._poll_settings: dict[str, ChannelPollConfig] = {}
+
+        # 订阅配置变更事件
+        if event_bus:
+            asyncio.create_task(
+                event_bus.subscribe(
+                    ConfigChangedEvent,
+                    self.on_config_updated,
+                    priority=AsyncIOEventBus.PRIORITY_HIGH,
+                )
+            )
+            logger.info("✅ 投票配置管理器已订阅配置变更事件")
+
         self._load_settings()
 
     def _load_settings(self) -> None:
@@ -97,6 +113,38 @@ class ChannelPollConfigManager:
             logger.info(f"已保存 {len(self._poll_settings)} 个频道的投票配置")
         except Exception as e:
             raise ConfigurationError(f"保存配置文件失败: {e}") from e
+
+    async def on_config_updated(self, event: ConfigChangedEvent):
+        """配置更新处理
+
+        当config.json发生变化时，自动更新投票配置
+
+        Args:
+            event: 配置变更事件，包含完整的配置字典
+        """
+        try:
+            # 从完整配置中提取投票配置
+            poll_settings = event.config.get("channel_poll_settings", {})
+
+            # 记录配置更新详情
+            old_count = len(self._poll_settings)
+            self._poll_settings = poll_settings
+            new_count = len(self._poll_settings)
+
+            logger.info(
+                f"✅ 投票配置已热重载: "
+                f"版本={event.version}, "
+                f"频道数量: {old_count} → {new_count}, "
+                f"变更字段: {event.changed_fields if event.changed_fields else '全部'}"
+            )
+
+            # 如果有投票配置变更，记录详细信息
+            if event.changed_fields and "channel_poll_settings" in str(event.changed_fields):
+                logger.info("🔄 投票配置已更新并生效")
+
+        except Exception as e:
+            logger.error(f"❌ 处理投票配置更新失败: {type(e).__name__}: {e}", exc_info=True)
+            # 保持现有配置不变
 
     def get_config(self, channel: str) -> ChannelPollConfig:
         """获取指定频道的投票配置
@@ -220,15 +268,18 @@ class ChannelPollConfigManager:
 _poll_config_manager: ChannelPollConfigManager | None = None
 
 
-def get_poll_config_manager() -> ChannelPollConfigManager:
+def get_poll_config_manager(event_bus: AsyncIOEventBus = None) -> ChannelPollConfigManager:
     """获取全局频道投票配置管理器（单例模式）
+
+    Args:
+        event_bus: 事件总线，用于配置热重载（可选）
 
     Returns:
         ChannelPollConfigManager 实例
     """
     global _poll_config_manager
     if _poll_config_manager is None:
-        _poll_config_manager = ChannelPollConfigManager()
+        _poll_config_manager = ChannelPollConfigManager(event_bus=event_bus)
         logger.info("频道投票配置管理器已初始化")
     return _poll_config_manager
 
