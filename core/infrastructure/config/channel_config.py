@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from typing import Literal
 
+from core.config import AsyncIOEventBus, ConfigChangedEvent
 from core.infrastructure.utils.constants import (
     CONFIG_FILE,
     DAY_NAMES_CN,
@@ -46,15 +47,30 @@ class ChannelScheduleManager:
     管理频道级的时间配置，支持每天和每周两种模式。
     """
 
-    def __init__(self, config_file: str | None = None):
+    def __init__(
+        self, config_manager=None, event_bus: AsyncIOEventBus = None, config_file: str | None = None
+    ):
         """初始化配置管理器
 
         Args:
+            config_manager: 配置管理器实例
+            event_bus: 事件总线实例
             config_file: 配置文件路径，默认为 config.json
         """
         self._config_file = Path(config_file or CONFIG_FILE)
         self._schedules: dict[str, ScheduleConfig] = {}
-        self._load_schedules()
+        self._config_manager = config_manager
+        self._event_bus = event_bus
+
+        # 订阅配置变更事件
+        if event_bus:
+            event_bus.subscribe(
+                ConfigChangedEvent, self.on_config_updated, priority=AsyncIOEventBus.PRIORITY_HIGH
+            )
+
+        # 如果没有传入config_manager，使用传统的文件加载方式
+        if not config_manager:
+            self._load_schedules()
 
     def _load_schedules(self) -> None:
         """从配置文件加载时间配置"""
@@ -315,20 +331,71 @@ class ChannelScheduleManager:
         else:
             return "未知配置"
 
+    async def initialize(self):
+        """初始化（从config_manager加载配置）"""
+        if self._config_manager:
+            config = await self._config_manager.get_config()
+            self._load_schedules_from_config(config)
+        else:
+            self._load_schedules()
+
+    async def on_config_updated(self, event: ConfigChangedEvent):
+        """配置更新处理
+
+        Args:
+            event: 配置变更事件
+        """
+        logger.info("收到配置更新事件，重新加载频道配置")
+        config = event.config
+        self._load_schedules_from_config(config)
+
+    def _load_schedules_from_config(self, config: dict):
+        """从配置字典加载时间配置
+
+        Args:
+            config: 配置字典
+        """
+        if not config:
+            logger.info("配置为空，使用空配置")
+            self._schedules = {}
+            return
+
+        try:
+            schedules = config.get("summary_schedules", {})
+            if isinstance(schedules, dict):
+                # 标准化所有配置
+                self._schedules = {
+                    channel: self._normalize_schedule(schedule)
+                    for channel, schedule in schedules.items()
+                }
+                logger.info(f"已加载 {len(self._schedules)} 个频道的时间配置")
+            else:
+                logger.warning("配置中的 summary_schedules 格式不正确")
+                self._schedules = {}
+        except Exception as e:
+            logger.error(f"加载时间配置失败: {e}")
+            self._schedules = {}
+
 
 # 全局配置管理器实例
 _schedule_manager: ChannelScheduleManager | None = None
 
 
-def get_schedule_manager() -> ChannelScheduleManager:
+def get_schedule_manager(
+    config_manager=None, event_bus: AsyncIOEventBus = None
+) -> ChannelScheduleManager:
     """获取全局频道时间配置管理器（单例模式）
+
+    Args:
+        config_manager: 配置管理器实例
+        event_bus: 事件总线实例
 
     Returns:
         ChannelScheduleManager 实例
     """
     global _schedule_manager
     if _schedule_manager is None:
-        _schedule_manager = ChannelScheduleManager()
+        _schedule_manager = ChannelScheduleManager(config_manager, event_bus)
         logger.info("频道时间配置管理器已初始化")
     return _schedule_manager
 

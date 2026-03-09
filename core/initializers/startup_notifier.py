@@ -26,14 +26,16 @@ if TYPE_CHECKING:
 
 from core.config import ADMIN_LIST, RESTART_FLAG_FILE
 from core.i18n.i18n import get_text
+from core.infrastructure.config.system_config import SystemConfigManager
 
 
 class StartupNotifier:
     """启动通知器"""
 
-    def __init__(self, version: str = "1.7.2"):
+    def __init__(self, version: str = "1.7.3", system_config_manager: SystemConfigManager = None):
         self.logger = logging.getLogger(__name__)
         self.version = version
+        self.system_config_manager = system_config_manager
 
     async def send_startup_message(self, client: "TelegramClient") -> None:
         """向所有管理员发送启动消息

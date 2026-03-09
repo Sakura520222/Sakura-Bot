@@ -19,17 +19,25 @@ import logging
 import os
 import signal
 import sys
+from pathlib import Path
 
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.bootstrap.app_bootstrap import AppBootstrap
-from core.config import logger, set_shutdown_event
-from core.settings import validate_required_settings
+from core.config import (
+    AsyncIOEventBus,
+    ConfigErrorNotifier,
+    ConfigManager,
+    FileWatcher,
+    logger,
+    set_shutdown_event,
+)
+from core.settings import get_admin_list, get_bot_token, validate_required_settings
 from core.system.process_manager import start_qa_bot, stop_qa_bot
 
 # 版本信息
-__version__ = "1.7.2"
+__version__ = "1.7.3"
 
 
 async def graceful_shutdown_resources():
@@ -45,17 +53,20 @@ async def graceful_shutdown_resources():
     await shutdown_manager.graceful_shutdown(client=client)
 
 
-async def main():
+async def main(config_manager: ConfigManager = None):
     """主函数 - 使用应用引导程序启动所有组件
 
     重构后的main函数非常简洁，所有初始化逻辑都委托给AppBootstrap。
+
+    Args:
+        config_manager: 可选的配置管理器实例，用于配置热重载支持
     """
     # 抑制第三方库的 INFO 日志输出
     logging.getLogger("telethon").setLevel(logging.WARNING)
     logging.getLogger("telethon.client.updates").setLevel(logging.WARNING)
 
     # 使用应用引导程序启动应用
-    bootstrap = AppBootstrap(version=__version__)
+    bootstrap = AppBootstrap(version=__version__, config_manager=config_manager)
     await bootstrap.run()
 
 
@@ -73,9 +84,24 @@ if __name__ == "__main__":
     else:
         logger.info("所有必要的 API 凭证已配置完成")
 
+        # 初始化配置管理器（同步）
+        config_manager = ConfigManager(loop=None)
+        success, error = config_manager.initialize_sync(Path("data/config.json"))
+
+        if not success:
+            logger.warning(f"配置初始化失败: {error}")
+            logger.info("将在没有配置热重载支持的情况下继续运行")
+            config_manager = None
+        else:
+            logger.info("✅ 配置已同步加载，热重载已启用")
+
         # 创建一个事件循环和用于优雅关闭的 asyncio.Event
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        # 如果配置管理器初始化成功，设置事件循环
+        if config_manager:
+            config_manager._loop = loop
 
         shutdown_event = asyncio.Event()
 
@@ -114,7 +140,33 @@ if __name__ == "__main__":
             # 创建主任务和等待关闭信号的任务
             async def run_with_shutdown():
                 """运行主任务，同时监听关闭信号"""
-                main_task = asyncio.create_task(main())
+                # 初始化事件总线和文件监控（如果配置管理器可用）
+                if config_manager:
+                    event_bus = AsyncIOEventBus(sequential_mode=True)
+                    config_manager.event_bus = event_bus
+
+                    # 订阅配置错误通知器
+                    bot_token = get_bot_token()
+                    admin_list = get_admin_list()
+                    # 获取第一个管理员ID作为通知接收者
+                    admin_chat_id = str(admin_list[0]) if admin_list else ""
+                    config_error_notifier = ConfigErrorNotifier(bot_token, admin_chat_id)
+
+                    # 订阅配置验证失败事件
+                    from core.config.events import ConfigValidationErrorEvent
+
+                    await event_bus.subscribe(
+                        ConfigValidationErrorEvent,
+                        config_error_notifier.on_config_validation_error,
+                        priority=event_bus.PRIORITY_HIGH,
+                    )
+                    logger.info("✅ 配置错误通知器已订阅")
+
+                    file_watcher = FileWatcher(config_manager, loop)
+                    file_watcher.start(str(Path("data")))
+                    logger.info("✅ 文件监控已启动")
+
+                main_task = asyncio.create_task(main(config_manager))
 
                 # 等待关闭信号或主任务完成
                 await shutdown_event.wait()
@@ -134,6 +186,15 @@ if __name__ == "__main__":
                 # 执行优雅关闭
                 logger.info("执行优雅关闭...")
                 await graceful_shutdown_resources()
+
+                # 停止文件监控和事件总线
+                if config_manager:
+                    logger.info("正在关闭配置热重载系统...")
+                    if "file_watcher" in locals():
+                        file_watcher.stop()
+                    if "event_bus" in locals():
+                        await event_bus.shutdown()
+                    logger.info("配置热重载系统已关闭")
 
                 # 退出程序（使用 os._exit 确保立即退出并关闭控制台）
                 from core.system.shutdown_manager import get_shutdown_manager
