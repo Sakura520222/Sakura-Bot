@@ -22,6 +22,7 @@ class ConfigValidationErrorEvent(BaseModel):
     error_line: int | None = None
     error_column: int | None = None
     timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
+    rolled_back: bool = False  # 是否已自动回滚
 
     def format_error_message(self) -> str:
         """格式化Telegram错误消息"""
@@ -36,5 +37,5 @@ class ConfigValidationErrorEvent(BaseModel):
             f"📍 位置: {location}\n"
             f"❌ 错误: {self.error}\n"
             f"🕐 时间: {datetime.fromtimestamp(self.timestamp).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"请修复配置文件后点击下方按钮重试"
+            f"📝 修复后保存文件，系统将自动重新加载"
         )
