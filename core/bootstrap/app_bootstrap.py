@@ -44,7 +44,7 @@ from core.telegram.client import set_active_client
 class AppBootstrap:
     """应用引导程序 - 协调所有初始化器的工作"""
 
-    def __init__(self, version: str = "1.7.2", config_manager=None):
+    def __init__(self, version: str = "1.7.3", config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.version = version
         self.client: TelegramClient | None = None

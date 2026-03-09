@@ -32,7 +32,7 @@ from core.infrastructure.config.system_config import SystemConfigManager
 class StartupNotifier:
     """启动通知器"""
 
-    def __init__(self, version: str = "1.7.2", system_config_manager: SystemConfigManager = None):
+    def __init__(self, version: str = "1.7.3", system_config_manager: SystemConfigManager = None):
         self.logger = logging.getLogger(__name__)
         self.version = version
         self.system_config_manager = system_config_manager

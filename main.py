@@ -37,7 +37,7 @@ from core.settings import get_admin_list, get_bot_token, validate_required_setti
 from core.system.process_manager import start_qa_bot, stop_qa_bot
 
 # 版本信息
-__version__ = "1.7.2"
+__version__ = "1.7.3"
 
 
 async def graceful_shutdown_resources():
