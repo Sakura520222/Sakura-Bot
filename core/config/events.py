@@ -1,19 +1,15 @@
 # core/config/events.py
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
 
 from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    from .config import BusinessConfig
 
 
 class ConfigChangedEvent(BaseModel):
     """配置变更成功事件"""
 
-    config: "BusinessConfig"  # 前向引用
+    config: dict  # 配置字典
     version: int
-    old_config: Optional["BusinessConfig"] = None
+    old_config: dict | None = None
     changed_fields: set[str] = Field(default_factory=set)
     timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
 
