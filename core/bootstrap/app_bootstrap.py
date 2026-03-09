@@ -24,6 +24,7 @@ from telethon import TelegramClient
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from core.infrastructure.config.system_config import SystemConfigManager
 from core.infrastructure.database.manager import get_db_manager
 from core.initializers import (
     CommandRegistrar,
@@ -54,15 +55,22 @@ class AppBootstrap:
         # 从config_manager提取event_bus
         self._event_bus = config_manager.event_bus if config_manager else None
 
+        # 创建系统配置管理器
+        self.system_config_manager = SystemConfigManager(event_bus=self._event_bus)
+
         # 初始化各个初始化器
         self.database_initializer = DatabaseInitializer()
-        self.scheduler_initializer = SchedulerInitializer()
+        self.scheduler_initializer = SchedulerInitializer(
+            system_config_manager=self.system_config_manager
+        )
         self.userbot_initializer = UserBotInitializer()
         self.forwarding_initializer = ForwardingInitializer(event_bus=self._event_bus)
         self.comment_welcome_initializer = CommentWelcomeInitializer()
         self.communication_initializer = CommunicationInitializer()
         self.command_registrar = CommandRegistrar()
-        self.startup_notifier = StartupNotifier(version=version)
+        self.startup_notifier = StartupNotifier(
+            version=version, system_config_manager=self.system_config_manager
+        )
 
     async def run(self) -> None:
         """运行应用引导流程
