@@ -10,6 +10,7 @@ from core.config.event_bus import AsyncIOEventBus
 from core.config.events import ConfigChangedEvent, ConfigValidationErrorEvent
 from core.config.file_watcher import FileWatcher
 from core.config.manager import ConfigManager
+from core.config.telegram_notifier import ConfigErrorNotifier
 from core.config.validator import ConfigValidator
 
 # Load the old config.py file directly to avoid circular import
@@ -113,6 +114,7 @@ __all__ = [
     "ConfigValidator",
     "FileWatcher",
     "ConfigManager",
+    "ConfigErrorNotifier",
     # Backward compatibility exports (from old config.py)
     "ADMIN_LIST",
     "API_HASH",

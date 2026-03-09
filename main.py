@@ -25,8 +25,15 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.bootstrap.app_bootstrap import AppBootstrap
-from core.config import AsyncIOEventBus, ConfigManager, FileWatcher, logger, set_shutdown_event
-from core.settings import validate_required_settings
+from core.config import (
+    AsyncIOEventBus,
+    ConfigErrorNotifier,
+    ConfigManager,
+    FileWatcher,
+    logger,
+    set_shutdown_event,
+)
+from core.settings import get_admin_list, get_bot_token, validate_required_settings
 from core.system.process_manager import start_qa_bot, stop_qa_bot
 
 # 版本信息
@@ -137,6 +144,23 @@ if __name__ == "__main__":
                 if config_manager:
                     event_bus = AsyncIOEventBus(sequential_mode=True)
                     config_manager.event_bus = event_bus
+
+                    # 订阅配置错误通知器
+                    bot_token = get_bot_token()
+                    admin_list = get_admin_list()
+                    # 获取第一个管理员ID作为通知接收者
+                    admin_chat_id = str(admin_list[0]) if admin_list else ""
+                    config_error_notifier = ConfigErrorNotifier(bot_token, admin_chat_id)
+
+                    # 订阅配置验证失败事件
+                    from core.config.events import ConfigValidationErrorEvent
+
+                    await event_bus.subscribe(
+                        ConfigValidationErrorEvent,
+                        config_error_notifier.on_config_validation_error,
+                        priority=event_bus.PRIORITY_HIGH,
+                    )
+                    logger.info("✅ 配置错误通知器已订阅")
 
                     file_watcher = FileWatcher(config_manager, loop)
                     file_watcher.start(str(Path("data")))
