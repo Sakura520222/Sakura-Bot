@@ -51,11 +51,14 @@ class AppBootstrap:
         self.userbot_client: TelegramClient | None = None
         self.config_manager = config_manager
 
+        # 从config_manager提取event_bus
+        self._event_bus = config_manager.event_bus if config_manager else None
+
         # 初始化各个初始化器
         self.database_initializer = DatabaseInitializer()
         self.scheduler_initializer = SchedulerInitializer()
         self.userbot_initializer = UserBotInitializer()
-        self.forwarding_initializer = ForwardingInitializer()
+        self.forwarding_initializer = ForwardingInitializer(event_bus=self._event_bus)
         self.comment_welcome_initializer = CommentWelcomeInitializer()
         self.communication_initializer = CommunicationInitializer()
         self.command_registrar = CommandRegistrar()

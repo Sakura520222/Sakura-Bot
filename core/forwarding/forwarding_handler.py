@@ -20,6 +20,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+# Import event system for config hot-reload
+from ..config import AsyncIOEventBus, ConfigChangedEvent
 from .download_manager import DownloadManager
 from .filters import (
     should_forward_by_keywords,
@@ -53,6 +55,7 @@ class ForwardingHandler:
         db: "DatabaseManagerBase",
         monitoring_client: "TelegramClient",
         sending_client: "TelegramClient",
+        event_bus: "AsyncIOEventBus" = None,
     ):
         """
         初始化转发处理器
@@ -61,10 +64,12 @@ class ForwardingHandler:
             db: 数据库管理器（异步）
             monitoring_client: 用于监听消息的客户端（UserBot 或 Bot）
             sending_client: 用于发送消息的客户端（总是 Bot）
+            event_bus: 事件总线，用于配置热重载（可选）
         """
         self.db = db
         self.monitoring_client = monitoring_client
         self.sending_client = sending_client
+        self._event_bus = event_bus
         self._enabled = False
         self._config = {}
         # 媒体组缓存：{grouped_id: [messages]}
@@ -76,6 +81,17 @@ class ForwardingHandler:
         self._external_media_group: dict[int, list[Message]] = {}
         # 下载管理器
         self._download_manager = DownloadManager()
+
+        # 订阅配置变更事件
+        if event_bus:
+            asyncio.create_task(
+                event_bus.subscribe(
+                    ConfigChangedEvent,
+                    self.on_config_updated,
+                    priority=AsyncIOEventBus.PRIORITY_HIGH,
+                )
+            )
+            logger.info("✅ 转发处理器已订阅配置变更事件")
 
     @property
     def enabled(self) -> bool:
@@ -102,6 +118,44 @@ class ForwardingHandler:
         """
         self._config = config
         logger.info(f"转发配置已更新: {len(config.get('rules', []))} 条规则")
+
+    async def on_config_updated(self, event: ConfigChangedEvent):
+        """配置更新处理
+
+        当config.json发生变化时，自动更新转发配置
+
+        Args:
+            event: 配置变更事件，包含完整的配置字典
+        """
+        try:
+            # 从完整配置中提取转发配置
+            forwarding_config = event.config.get("forwarding", {})
+
+            if not forwarding_config:
+                logger.warning("⚠️ 配置更新事件中未找到forwarding配置，保持现有配置")
+                return
+
+            # 记录配置更新详情
+            old_rules_count = len(self._config.get("rules", [])) if self._config else 0
+            new_rules_count = len(forwarding_config.get("rules", []))
+
+            # 使用现有的配置更新机制
+            self._config = forwarding_config
+
+            logger.info(
+                f"✅ 转发配置已热重载: "
+                f"版本={event.version}, "
+                f"规则数量: {old_rules_count} → {new_rules_count}, "
+                f"变更字段: {event.changed_fields if event.changed_fields else '全部'}"
+            )
+
+            # 如果有关键词变更，记录详细信息
+            if event.changed_fields and "forwarding" in str(event.changed_fields):
+                logger.info("🔄 转发规则（关键词）已更新并生效")
+
+        except Exception as e:
+            logger.error(f"❌ 处理配置更新失败: {type(e).__name__}: {e}", exc_info=True)
+            # 保持现有配置不变
 
     async def process_message(self, message: "Message") -> bool:
         """

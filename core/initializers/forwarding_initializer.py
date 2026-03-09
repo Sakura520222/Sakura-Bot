@@ -23,7 +23,7 @@ from telethon.events import NewMessage
 if TYPE_CHECKING:
     from telethon import TelegramClient
 
-from core.config import get_forwarding_config
+from core.config import AsyncIOEventBus, get_forwarding_config
 from core.forwarding import ForwardingHandler, set_forwarding_handler
 from core.handlers.userbot_client import UserBotClient
 
@@ -31,8 +31,9 @@ from core.handlers.userbot_client import UserBotClient
 class ForwardingInitializer:
     """转发功能初始化器"""
 
-    def __init__(self):
+    def __init__(self, event_bus: "AsyncIOEventBus" = None):
         self.logger = logging.getLogger(__name__)
+        self._event_bus = event_bus
         self.forwarding_handler: ForwardingHandler | None = None
         self.media_group_cache: dict[str, list] = {}
 
@@ -78,7 +79,7 @@ class ForwardingInitializer:
 
             # 创建转发处理器
             self.forwarding_handler = ForwardingHandler(
-                db_manager, monitoring_client, sending_client
+                db_manager, monitoring_client, sending_client, event_bus=self._event_bus
             )
             set_forwarding_handler(self.forwarding_handler)
 
