@@ -308,6 +308,37 @@ class MySQLManager(DatabaseManagerBase):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+                # 12. 创建评论区会话表
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS comment_sessions (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    channel_id VARCHAR(255) NOT NULL,
+                    channel_msg_id BIGINT NOT NULL,
+                    session_id VARCHAR(255) NOT NULL UNIQUE,
+                    discussion_id BIGINT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_active DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    message_count INT DEFAULT 0,
+                    INDEX idx_comment_session (channel_id, channel_msg_id),
+                    INDEX idx_comment_session_last_active (last_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+                # 13. 创建评论区消息历史表
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS comment_messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    session_id VARCHAR(255) NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    username VARCHAR(255),
+                    role VARCHAR(20) NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_comment_messages (session_id, created_at),
+                    FOREIGN KEY (session_id) REFERENCES comment_sessions(session_id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
                 # 插入或更新版本号
                 await cursor.execute("""
                     INSERT INTO db_version (version, upgraded_at)
@@ -2292,4 +2323,201 @@ class MySQLManager(DatabaseManagerBase):
 
         except Exception as e:
             logger.error(f"清理旧转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    # ============ 评论区会话管理方法 ============
+
+    async def save_comment_session(
+        self,
+        channel_id: str,
+        channel_msg_id: int,
+        session_id: str,
+        discussion_id: int,
+    ) -> bool:
+        """保存或更新评论区会话"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    now = datetime.now(UTC)
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO comment_sessions
+                        (channel_id, channel_msg_id, session_id, discussion_id, created_at, last_active)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        last_active = VALUES(last_active)
+                    """,
+                        (channel_id, channel_msg_id, session_id, discussion_id, now, now),
+                    )
+
+                    await conn.commit()
+                    logger.debug(f"保存评论区会话: {session_id}")
+                    return True
+
+        except Exception as e:
+            logger.error(f"保存评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def get_comment_session(
+        self, channel_id: str, channel_msg_id: int
+    ) -> dict[str, Any] | None:
+        """获取评论区会话"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT id, channel_id, channel_msg_id, session_id, discussion_id,
+                               created_at, last_active, message_count
+                        FROM comment_sessions
+                        WHERE channel_id = %s AND channel_msg_id = %s
+                    """,
+                        (channel_id, channel_msg_id),
+                    )
+
+                    row = await cursor.fetchone()
+
+                    if row:
+                        return {
+                            "id": row[0],
+                            "channel_id": row[1],
+                            "channel_msg_id": row[2],
+                            "session_id": row[3],
+                            "discussion_id": row[4],
+                            "created_at": row[5].isoformat() if row[5] else None,
+                            "last_active": row[6].isoformat() if row[6] else None,
+                            "message_count": row[7],
+                        }
+                    return None
+
+        except Exception as e:
+            logger.error(f"获取评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    async def update_comment_session_activity(self, session_id: str) -> bool:
+        """更新评论区会话活动时间"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        UPDATE comment_sessions
+                        SET last_active = NOW(), message_count = message_count + 1
+                        WHERE session_id = %s
+                    """,
+                        (session_id,),
+                    )
+
+                    await conn.commit()
+                    return True
+
+        except Exception as e:
+            logger.error(f"更新评论区会话活动时间失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def save_comment_message(
+        self,
+        session_id: str,
+        user_id: int,
+        username: str,
+        role: str,
+        content: str,
+    ) -> bool:
+        """保存评论区消息"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO comment_messages
+                        (session_id, user_id, username, role, content)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """,
+                        (session_id, user_id, username, role, content),
+                    )
+
+                    await conn.commit()
+                    return True
+
+        except Exception as e:
+            logger.error(f"保存评论区消息失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    async def get_comment_messages(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """获取评论区消息历史"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT id, session_id, user_id, username, role, content, created_at
+                        FROM comment_messages
+                        WHERE session_id = %s
+                        ORDER BY created_at ASC
+                        LIMIT %s
+                    """,
+                        (session_id, limit),
+                    )
+
+                    rows = await cursor.fetchall()
+
+                    messages = []
+                    for row in rows:
+                        messages.append(
+                            {
+                                "id": row[0],
+                                "session_id": row[1],
+                                "user_id": row[2],
+                                "username": row[3],
+                                "role": row[4],
+                                "content": row[5],
+                                "created_at": row[6].isoformat() if row[6] else None,
+                            }
+                        )
+
+                    return messages
+
+        except Exception as e:
+            logger.error(f"获取评论区消息历史失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    async def delete_old_comment_sessions(self, days: int = 7) -> int:
+        """删除旧的评论区会话"""
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    cutoff_time = datetime.now(UTC) - timedelta(days=days)
+
+                    await cursor.execute(
+                        """
+                        DELETE FROM comment_messages
+                        WHERE session_id IN (
+                            SELECT session_id FROM comment_sessions
+                            WHERE last_active < %s
+                        )
+                    """,
+                        (cutoff_time,),
+                    )
+
+                    deleted_messages = cursor.rowcount
+
+                    await cursor.execute(
+                        """
+                        DELETE FROM comment_sessions
+                        WHERE last_active < %s
+                    """,
+                        (cutoff_time,),
+                    )
+
+                    deleted_sessions = cursor.rowcount
+                    await conn.commit()
+
+                    logger.info(
+                        f"清理旧评论区会话: 删除 {deleted_sessions} 个会话, {deleted_messages} 条消息"
+                    )
+                    return deleted_sessions
+
+        except Exception as e:
+            logger.error(f"清理旧评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
             return 0

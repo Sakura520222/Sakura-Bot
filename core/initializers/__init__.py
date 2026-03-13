@@ -15,6 +15,7 @@
 """
 
 from .command_registrar import CommandRegistrar
+from .comment_chat_initializer import CommentChatInitializer
 from .comment_welcome_initializer import CommentWelcomeInitializer
 from .communication_initializer import CommunicationInitializer
 from .database_initializer import DatabaseInitializer
@@ -30,6 +31,7 @@ __all__ = [
     "UserBotInitializer",
     "ForwardingInitializer",
     "CommentWelcomeInitializer",
+    "CommentChatInitializer",
     "CommunicationInitializer",
     "StartupNotifier",
 ]

@@ -351,3 +351,48 @@ class SQLiteManager(DatabaseManagerLegacy):
     async def cleanup_old_forwarded_messages(self, days: int = 30) -> int:
         """异步包装：清理旧的转发消息记录"""
         return await asyncio.to_thread(super().cleanup_old_forwarded_messages, days)
+
+    # ============ 评论区会话管理方法（异步包装） ============
+
+    async def save_comment_session(
+        self,
+        channel_id: str,
+        channel_msg_id: int,
+        session_id: str,
+        discussion_id: int,
+    ) -> bool:
+        """异步包装：保存或更新评论区会话"""
+        return await asyncio.to_thread(
+            super().save_comment_session, channel_id, channel_msg_id, session_id, discussion_id
+        )
+
+    async def get_comment_session(
+        self, channel_id: str, channel_msg_id: int
+    ) -> dict[str, Any] | None:
+        """异步包装：获取评论区会话"""
+        return await asyncio.to_thread(super().get_comment_session, channel_id, channel_msg_id)
+
+    async def update_comment_session_activity(self, session_id: str) -> bool:
+        """异步包装：更新评论区会话活动时间"""
+        return await asyncio.to_thread(super().update_comment_session_activity, session_id)
+
+    async def save_comment_message(
+        self,
+        session_id: str,
+        user_id: int,
+        username: str,
+        role: str,
+        content: str,
+    ) -> bool:
+        """异步包装：保存评论区消息"""
+        return await asyncio.to_thread(
+            super().save_comment_message, session_id, user_id, username, role, content
+        )
+
+    async def get_comment_messages(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """异步包装：获取评论区消息历史"""
+        return await asyncio.to_thread(super().get_comment_messages, session_id, limit)
+
+    async def delete_old_comment_sessions(self, days: int = 7) -> int:
+        """异步包装：删除旧的评论区会话"""
+        return await asyncio.to_thread(super().delete_old_comment_sessions, days)

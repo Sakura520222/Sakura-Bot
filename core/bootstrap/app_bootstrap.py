@@ -28,6 +28,7 @@ from core.infrastructure.config.system_config import SystemConfigManager
 from core.infrastructure.database.manager import get_db_manager
 from core.initializers import (
     CommandRegistrar,
+    CommentChatInitializer,
     CommentWelcomeInitializer,
     CommunicationInitializer,
     DatabaseInitializer,
@@ -44,7 +45,7 @@ from core.telegram.client import set_active_client
 class AppBootstrap:
     """应用引导程序 - 协调所有初始化器的工作"""
 
-    def __init__(self, version: str = "1.7.3", config_manager=None):
+    def __init__(self, version: str = "1.7.4", config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.version = version
         self.client: TelegramClient | None = None
@@ -66,6 +67,7 @@ class AppBootstrap:
         self.userbot_initializer = UserBotInitializer()
         self.forwarding_initializer = ForwardingInitializer(event_bus=self._event_bus)
         self.comment_welcome_initializer = CommentWelcomeInitializer()
+        self.comment_chat_initializer = CommentChatInitializer()
         self.communication_initializer = CommunicationInitializer()
         self.command_registrar = CommandRegistrar()
         self.startup_notifier = StartupNotifier(
@@ -110,7 +112,10 @@ class AppBootstrap:
             # 第10步：初始化评论区欢迎功能
             await self._initialize_comment_welcome()
 
-            # 第11步：初始化转发功能
+            # 第11步：初始化评论区AI聊天功能
+            await self._initialize_comment_chat()
+
+            # 第12步：初始化转发功能
             await self._initialize_forwarding()
 
             # 第12步：发送启动通知
@@ -186,6 +191,10 @@ class AppBootstrap:
 
         db_manager = get_db_manager()
         await self.comment_welcome_initializer.initialize(self.client, db_manager)
+
+    async def _initialize_comment_chat(self) -> None:
+        """初始化评论区AI聊天功能"""
+        await self.comment_chat_initializer.initialize(self.client)
 
     async def _initialize_forwarding(self) -> None:
         """初始化转发功能"""

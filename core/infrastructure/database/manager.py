@@ -223,6 +223,34 @@ class DatabaseManagerLegacy:
                 )
             """)
 
+            # 创建评论区会话表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS comment_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id TEXT NOT NULL,
+                    channel_msg_id INTEGER NOT NULL,
+                    session_id TEXT NOT NULL UNIQUE,
+                    discussion_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    message_count INTEGER DEFAULT 0
+                )
+            """)
+
+            # 创建评论区消息历史表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS comment_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    username TEXT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES comment_sessions(session_id)
+                )
+            """)
+
             # 为新表创建索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_quota_user_date
@@ -260,6 +288,22 @@ class DatabaseManagerLegacy:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_request_queue_user
                 ON request_queue(requested_by)
+            """)
+
+            # 评论区会话索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_comment_session
+                ON comment_sessions(channel_id, channel_msg_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_comment_session_last_active
+                ON comment_sessions(last_active)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_comment_messages
+                ON comment_messages(session_id, created_at)
             """)
 
             # 插入或更新版本号
@@ -2804,6 +2848,273 @@ class DatabaseManagerLegacy:
 
         except Exception as e:
             logger.error(f"清理旧转发消息记录失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+
+    # ============ 评论区会话管理方法 ============
+
+    def save_comment_session(
+        self,
+        channel_id: str,
+        channel_msg_id: int,
+        session_id: str,
+        discussion_id: int,
+    ) -> bool:
+        """
+        保存或更新评论区会话
+
+        Args:
+            channel_id: 频道ID
+            channel_msg_id: 频道消息ID
+            session_id: 会话ID
+            discussion_id: 讨论组ID
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(UTC).isoformat()
+
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO comment_sessions
+                (channel_id, channel_msg_id, session_id, discussion_id, created_at, last_active)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (channel_id, channel_msg_id, session_id, discussion_id, now, now),
+            )
+
+            conn.commit()
+            conn.close()
+
+            logger.debug(f"保存评论区会话: {session_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"保存评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_comment_session(self, channel_id: str, channel_msg_id: int) -> dict[str, Any] | None:
+        """
+        获取评论区会话
+
+        Args:
+            channel_id: 频道ID
+            channel_msg_id: 频道消息ID
+
+        Returns:
+            会话信息字典，不存在返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT id, channel_id, channel_msg_id, session_id, discussion_id,
+                       created_at, last_active, message_count
+                FROM comment_sessions
+                WHERE channel_id = ? AND channel_msg_id = ?
+            """,
+                (channel_id, channel_msg_id),
+            )
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "channel_id": row[1],
+                    "channel_msg_id": row[2],
+                    "session_id": row[3],
+                    "discussion_id": row[4],
+                    "created_at": row[5],
+                    "last_active": row[6],
+                    "message_count": row[7],
+                }
+            return None
+
+        except Exception as e:
+            logger.error(f"获取评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
+            return None
+
+    def update_comment_session_activity(self, session_id: str) -> bool:
+        """
+        更新评论区会话活动时间
+
+        Args:
+            session_id: 会话ID
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            now = datetime.now(UTC).isoformat()
+
+            cursor.execute(
+                """
+                UPDATE comment_sessions
+                SET last_active = ?, message_count = message_count + 1
+                WHERE session_id = ?
+            """,
+                (now, session_id),
+            )
+
+            conn.commit()
+            conn.close()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"更新评论区会话活动时间失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def save_comment_message(
+        self,
+        session_id: str,
+        user_id: int,
+        username: str,
+        role: str,
+        content: str,
+    ) -> bool:
+        """
+        保存评论区消息
+
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+            username: 用户名
+            role: 角色 ('user' 或 'assistant')
+            content: 消息内容
+
+        Returns:
+            是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO comment_messages
+                (session_id, user_id, username, role, content)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (session_id, user_id, username, role, content),
+            )
+
+            conn.commit()
+            conn.close()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"保存评论区消息失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
+    def get_comment_messages(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        获取评论区消息历史
+
+        Args:
+            session_id: 会话ID
+            limit: 最大返回条数
+
+        Returns:
+            消息列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT id, session_id, user_id, username, role, content, created_at
+                FROM comment_messages
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """,
+                (session_id, limit),
+            )
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            messages = []
+            for row in rows:
+                messages.append(
+                    {
+                        "id": row[0],
+                        "session_id": row[1],
+                        "user_id": row[2],
+                        "username": row[3],
+                        "role": row[4],
+                        "content": row[5],
+                        "created_at": row[6],
+                    }
+                )
+
+            return messages
+
+        except Exception as e:
+            logger.error(f"获取评论区消息历史失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+
+    def delete_old_comment_sessions(self, days: int = 7) -> int:
+        """
+        删除旧的评论区会话
+
+        Args:
+            days: 保留天数，默认7天
+
+        Returns:
+            删除的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cutoff_time = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+            cursor.execute(
+                """
+                DELETE FROM comment_messages
+                WHERE session_id IN (
+                    SELECT session_id FROM comment_sessions
+                    WHERE last_active < ?
+                )
+            """,
+                (cutoff_time,),
+            )
+
+            deleted_messages = cursor.rowcount
+
+            cursor.execute(
+                """
+                DELETE FROM comment_sessions
+                WHERE last_active < ?
+            """,
+                (cutoff_time,),
+            )
+
+            deleted_sessions = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            logger.info(
+                f"清理旧评论区会话: 删除 {deleted_sessions} 个会话, {deleted_messages} 条消息"
+            )
+            return deleted_sessions
+
+        except Exception as e:
+            logger.error(f"清理旧评论区会话失败: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
 

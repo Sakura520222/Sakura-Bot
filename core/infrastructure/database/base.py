@@ -367,3 +367,48 @@ class DatabaseManagerBase(ABC):
     def update_summary_request_status(self, request_id: int, status: str) -> bool:
         """更新周报请求状态"""
         pass
+
+    # ============ 评论区会话管理方法 ============
+
+    @abstractmethod
+    def save_comment_session(
+        self,
+        channel_id: str,
+        channel_msg_id: int,
+        session_id: str,
+        discussion_id: int,
+    ) -> bool:
+        """保存或更新评论区会话"""
+        pass
+
+    @abstractmethod
+    def get_comment_session(self, channel_id: str, channel_msg_id: int) -> dict[str, Any] | None:
+        """获取评论区会话"""
+        pass
+
+    @abstractmethod
+    def update_comment_session_activity(self, session_id: str) -> bool:
+        """更新评论区会话活动时间"""
+        pass
+
+    @abstractmethod
+    def save_comment_message(
+        self,
+        session_id: str,
+        user_id: int,
+        username: str,
+        role: str,
+        content: str,
+    ) -> bool:
+        """保存评论区消息"""
+        pass
+
+    @abstractmethod
+    def get_comment_messages(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """获取评论区消息历史"""
+        pass
+
+    @abstractmethod
+    def delete_old_comment_sessions(self, days: int = 7) -> int:
+        """删除旧的评论区会话"""
+        pass
