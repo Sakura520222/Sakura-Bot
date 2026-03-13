@@ -25,7 +25,6 @@ from core.infrastructure.utils.constants import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
     DEFAULT_LOG_LEVEL,
-    POLL_REGEN_THRESHOLD_DEFAULT,
     VALID_BOT_STATES,
 )
 
@@ -127,20 +126,9 @@ class LogSettings(BaseSettings):
 
 
 class PollSettings(BaseSettings):
-    """投票相关配置"""
+    """投票相关配置（全局默认值）"""
 
     enable_poll: bool = Field(default=True, alias="ENABLE_POLL")
-    poll_regen_threshold: int = Field(
-        default=POLL_REGEN_THRESHOLD_DEFAULT, alias="POLL_REGEN_THRESHOLD"
-    )
-    enable_vote_regen_request: bool = Field(default=True, alias="ENABLE_VOTE_REGEN_REQUEST")
-
-    @field_validator("poll_regen_threshold")
-    @classmethod
-    def validate_threshold(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("投票重新生成阈值必须 >= 1")
-        return v
 
     model_config = {"extra": "ignore"}
 
@@ -280,16 +268,6 @@ def is_poll_enabled() -> bool:
     return get_settings().poll.enable_poll
 
 
-def get_poll_regen_threshold() -> int:
-    """获取投票重新生成阈值"""
-    return get_settings().poll.poll_regen_threshold
-
-
-def is_vote_regen_request_enabled() -> bool:
-    """检查是否启用投票重新生成请求功能"""
-    return get_settings().poll.enable_vote_regen_request
-
-
 def get_bot_state() -> str:
     """获取机器人状态"""
     return get_settings().bot_state
@@ -302,18 +280,6 @@ def set_bot_state(state: str) -> None:
     settings = get_settings()
     settings.bot_state = state
     logger.info(f"机器人状态已更新为: {state}")
-
-
-def get_send_report_to_source() -> bool:
-    """获取是否将报告发送回源频道"""
-    return get_settings().send_report_to_source
-
-
-def set_send_report_to_source(value: bool) -> None:
-    """设置是否将报告发送回源频道"""
-    settings = get_settings()
-    settings.send_report_to_source = value
-    logger.info(f"发送报告到源频道的配置已更新为: {value}")
 
 
 def get_userbot_enabled() -> bool:
@@ -334,6 +300,18 @@ def get_userbot_session_path() -> str:
 def get_userbot_fallback_to_bot() -> bool:
     """获取 UserBot 降级策略"""
     return get_settings().userbot.userbot_fallback_to_bot
+
+
+def get_send_report_to_source() -> bool:
+    """获取是否将报告发送回源频道"""
+    return get_settings().send_report_to_source
+
+
+def set_send_report_to_source(value: bool) -> None:
+    """设置是否将报告发送回源频道"""
+    settings = get_settings()
+    settings.send_report_to_source = value
+    logger.info(f"发送报告到源频道的配置已更新为: {value}")
 
 
 # 验证必要配置

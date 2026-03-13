@@ -17,7 +17,7 @@ from typing import Any
 
 from core.config import load_config, logger, save_config
 
-# 默认配置
+# 默认配置（用于新创建的频道）
 DEFAULT_COMMENT_WELCOME_CONFIG = {
     "enabled": True,
     "welcome_message": "comment_welcome.message",  # i18n key
@@ -41,13 +41,15 @@ async def get_channel_comment_welcome_config(channel_url: str) -> dict[str, Any]
         dict: 频道配置，如果未配置则返回默认配置
     """
     config = await asyncio.to_thread(load_config)
-    settings = config.get("channel_comment_welcome_settings", {})
+    channels = config.get("channels", {})
 
-    if channel_url in settings:
-        # 合并配置和默认值（优先使用频道配置）
-        channel_config = DEFAULT_COMMENT_WELCOME_CONFIG.copy()
-        channel_config.update(settings[channel_url])
-        return channel_config
+    if channel_url in channels:
+        channel_config = channels[channel_url]
+        if isinstance(channel_config, dict) and "comment_welcome" in channel_config:
+            # 合并配置和默认值（优先使用频道配置）
+            result = DEFAULT_COMMENT_WELCOME_CONFIG.copy()
+            result.update(channel_config["comment_welcome"])
+            return result
 
     # 返回默认配置
     return DEFAULT_COMMENT_WELCOME_CONFIG.copy()
@@ -61,7 +63,14 @@ async def get_all_comment_welcome_configs() -> dict[str, dict[str, Any]]:
         dict: 所有频道配置的字典
     """
     config = await asyncio.to_thread(load_config)
-    return config.get("channel_comment_welcome_settings", {})
+    channels = config.get("channels", {})
+
+    result = {}
+    for channel_url, channel_config in channels.items():
+        if isinstance(channel_config, dict) and "comment_welcome" in channel_config:
+            result[channel_url] = channel_config["comment_welcome"]
+
+    return result
 
 
 async def set_channel_comment_welcome_config(
@@ -89,24 +98,29 @@ async def set_channel_comment_welcome_config(
     """
     config = await asyncio.to_thread(load_config)
 
-    # 确保 channel_comment_welcome_settings 存在
-    if "channel_comment_welcome_settings" not in config:
-        config["channel_comment_welcome_settings"] = {}
+    # 确保 channels 存在
+    if "channels" not in config:
+        config["channels"] = {}
 
-    settings = config["channel_comment_welcome_settings"]
+    channels = config["channels"]
 
     # 获取现有配置或使用默认值
-    if channel_url in settings:
-        channel_config = settings[channel_url]
+    if channel_url in channels and isinstance(channels[channel_url], dict):
+        channel_config = channels[channel_url]
+        if "comment_welcome" in channel_config:
+            current_config = channel_config["comment_welcome"].copy()
+        else:
+            current_config = DEFAULT_COMMENT_WELCOME_CONFIG.copy()
     else:
-        channel_config = DEFAULT_COMMENT_WELCOME_CONFIG.copy()
+        channels[channel_url] = {}
+        current_config = DEFAULT_COMMENT_WELCOME_CONFIG.copy()
 
     # 更新配置
     if enabled is not None:
-        channel_config["enabled"] = enabled
+        current_config["enabled"] = enabled
 
     if welcome_message is not None:
-        channel_config["welcome_message"] = welcome_message
+        current_config["welcome_message"] = welcome_message
 
     if button_text is not None:
         # 验证按钮文本长度
@@ -114,21 +128,21 @@ async def set_channel_comment_welcome_config(
             raise ValueError(
                 f"按钮文本过长（{len(button_text)}字符），最大允许{MAX_BUTTON_TEXT_LENGTH}字符"
             )
-        channel_config["button_text"] = button_text
+        current_config["button_text"] = button_text
 
     if button_action is not None:
         # 验证按钮行为
         valid_actions = ["request_summary"]  # 预留扩展
         if button_action not in valid_actions:
             raise ValueError(f"无效的按钮行为：{button_action}，支持的行为：{valid_actions}")
-        channel_config["button_action"] = button_action
+        current_config["button_action"] = button_action
 
     # 保存配置
-    settings[channel_url] = channel_config
+    channels[channel_url]["comment_welcome"] = current_config
     await asyncio.to_thread(save_config, config)
 
     logger.info(f"已更新频道 {channel_url} 的评论区欢迎配置")
-    return channel_config
+    return current_config
 
 
 async def delete_channel_comment_welcome_config(channel_url: str) -> bool:
@@ -142,14 +156,14 @@ async def delete_channel_comment_welcome_config(channel_url: str) -> bool:
         bool: 是否成功删除
     """
     config = await asyncio.to_thread(load_config)
-    settings = config.get("channel_comment_welcome_settings", {})
+    channels = config.get("channels", {})
 
-    if channel_url in settings:
-        del settings[channel_url]
-        config["channel_comment_welcome_settings"] = settings
-        await asyncio.to_thread(save_config, config)
-        logger.info(f"已删除频道 {channel_url} 的评论区欢迎配置")
-        return True
+    if channel_url in channels and isinstance(channels[channel_url], dict):
+        if "comment_welcome" in channels[channel_url]:
+            del channels[channel_url]["comment_welcome"]
+            await asyncio.to_thread(save_config, config)
+            logger.info(f"已删除频道 {channel_url} 的评论区欢迎配置")
+            return True
 
     return False
 

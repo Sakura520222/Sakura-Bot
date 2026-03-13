@@ -170,13 +170,6 @@ SEND_REPORT_TO_SOURCE = True
 # 是否启用投票功能，默认为True
 ENABLE_POLL = True
 
-# 投票重新生成请求配置
-# 触发重新生成的投票数阈值，默认为5
-POLL_REGEN_THRESHOLD = 5
-
-# 是否启用投票重新生成请求功能，默认为True
-ENABLE_VOTE_REGEN_REQUEST = True
-
 # 投票重新生成数据文件锁，用于并发控制
 _poll_regenerations_lock = asyncio.Lock()
 
@@ -255,19 +248,18 @@ def update_module_variables(config):
         CHANNELS, \
         SEND_REPORT_TO_SOURCE, \
         SUMMARY_SCHEDULES, \
-        CHANNEL_POLL_SETTINGS, \
-        POLL_REGEN_THRESHOLD, \
-        ENABLE_VOTE_REGEN_REQUEST
+        CHANNEL_POLL_SETTINGS
 
     # 更新AI配置
     LLM_API_KEY = config.get("api_key", LLM_API_KEY)
     LLM_BASE_URL = config.get("base_url", LLM_BASE_URL)
     LLM_MODEL = config.get("model", LLM_MODEL)
 
-    # 更新频道列表
+    # 更新频道配置（现在是字典格式）
     config_channels = config.get("channels")
-    if config_channels and isinstance(config_channels, list):
-        CHANNELS = config_channels
+    if config_channels and isinstance(config_channels, dict):
+        # 从字典中提取频道URL列表
+        CHANNELS = list(config_channels.keys())
         logger.info(f"已更新内存中的频道列表: {CHANNELS}")
 
     # 更新是否将报告发送回源频道的配置
@@ -275,31 +267,10 @@ def update_module_variables(config):
         SEND_REPORT_TO_SOURCE = config["send_report_to_source"]
         logger.info(f"已更新内存中的发送报告到源频道的配置: {SEND_REPORT_TO_SOURCE}")
 
-    # 更新是否启用投票功能的配置
+    # 更新是否启用投票功能的配置（全局开关）
     if "enable_poll" in config:
         ENABLE_POLL = config["enable_poll"]
         logger.info(f"已更新内存中的投票功能配置: {ENABLE_POLL}")
-
-    # 更新频道级时间配置
-    summary_schedules_config = config.get("summary_schedules", {})
-    if isinstance(summary_schedules_config, dict):
-        SUMMARY_SCHEDULES = summary_schedules_config
-        logger.info(f"已更新内存中的频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
-
-    # 更新频道级投票配置
-    channel_poll_config = config.get("channel_poll_settings", {})
-    if isinstance(channel_poll_config, dict):
-        CHANNEL_POLL_SETTINGS = channel_poll_config
-        logger.info(f"已更新内存中的频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
-
-    # 更新投票重新生成请求配置
-    if "poll_regen_threshold" in config:
-        POLL_REGEN_THRESHOLD = config["poll_regen_threshold"]
-        logger.info(f"已更新内存中的投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
-
-    if "enable_vote_regen_request" in config:
-        ENABLE_VOTE_REGEN_REQUEST = config["enable_vote_regen_request"]
-        logger.info(f"已更新内存中的投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
 
 
 # 加载配置文件，覆盖环境变量默认值
@@ -344,10 +315,11 @@ if config:
     else:
         logger.debug("使用环境变量中的 LLM_MODEL")
 
-    # 从配置文件读取频道列表
+    # 从配置文件读取频道配置
     config_channels = config.get("channels")
-    if config_channels and isinstance(config_channels, list):
-        CHANNELS = config_channels
+    if config_channels and isinstance(config_channels, dict):
+        # 从字典中提取频道URL列表
+        CHANNELS = list(config_channels.keys())
         logger.info(f"已从配置文件加载频道列表: {CHANNELS}")
 
     # 从配置文件读取是否将报告发送回源频道的配置
@@ -357,13 +329,6 @@ if config:
     # 从配置文件读取是否启用投票功能的配置
     ENABLE_POLL = config.get("enable_poll", ENABLE_POLL)
     logger.info(f"已从配置文件加载投票功能配置: {ENABLE_POLL}")
-
-    # 从配置文件读取投票重新生成请求配置
-    POLL_REGEN_THRESHOLD = config.get("poll_regen_threshold", POLL_REGEN_THRESHOLD)
-    logger.info(f"已从配置文件加载投票重新生成阈值: {POLL_REGEN_THRESHOLD}")
-
-    ENABLE_VOTE_REGEN_REQUEST = config.get("enable_vote_regen_request", ENABLE_VOTE_REGEN_REQUEST)
-    logger.info(f"已从配置文件加载投票重新生成请求功能配置: {ENABLE_VOTE_REGEN_REQUEST}")
 
     # 从配置文件读取日志级别
     LOG_LEVEL_FROM_CONFIG = config.get("log_level")
@@ -459,25 +424,27 @@ DEFAULT_SUMMARY_DAY = "mon"  # 星期几：mon, tue, wed, thu, fri, sat, sun
 DEFAULT_SUMMARY_HOUR = 9  # 小时：0-23
 DEFAULT_SUMMARY_MINUTE = 0  # 分钟：0-59
 
-# 从配置文件读取频道级时间配置
+# 从配置文件读取频道级时间配置（已移至 channels.{url}.summary.schedule）
 SUMMARY_SCHEDULES = {}
 if config:
-    summary_schedules_config = config.get("summary_schedules", {})
-    if isinstance(summary_schedules_config, dict):
-        SUMMARY_SCHEDULES = summary_schedules_config
+    channels_config = config.get("channels", {})
+    if isinstance(channels_config, dict):
+        for channel_url, channel_config in channels_config.items():
+            if isinstance(channel_config, dict) and "summary" in channel_config:
+                schedule = channel_config["summary"].get("schedule")
+                if schedule:
+                    SUMMARY_SCHEDULES[channel_url] = schedule
         logger.info(f"已从配置文件加载频道级时间配置: {len(SUMMARY_SCHEDULES)} 个频道")
-    else:
-        logger.warning("配置文件中的summary_schedules格式不正确，使用默认配置")
 
-# 频道级投票配置
+# 频道级投票配置（已移至 channels.{url}.poll）
 CHANNEL_POLL_SETTINGS = {}
 if config:
-    channel_poll_config = config.get("channel_poll_settings", {})
-    if isinstance(channel_poll_config, dict):
-        CHANNEL_POLL_SETTINGS = channel_poll_config
+    channels_config = config.get("channels", {})
+    if isinstance(channels_config, dict):
+        for channel_url, channel_config in channels_config.items():
+            if isinstance(channel_config, dict) and "poll" in channel_config:
+                CHANNEL_POLL_SETTINGS[channel_url] = channel_config["poll"]
         logger.info(f"已从配置文件加载频道级投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道")
-    else:
-        logger.warning("配置文件中的channel_poll_settings格式不正确，使用默认配置")
 
 
 # 获取频道的时间配置
@@ -544,9 +511,21 @@ def delete_channel_schedule(channel):
         current_config = load_config()
 
         # 检查是否存在配置
-        if "summary_schedules" in current_config and channel in current_config["summary_schedules"]:
-            # 删除频道配置
-            del current_config["summary_schedules"][channel]
+        if (
+            "channels" in current_config
+            and channel in current_config["channels"]
+            and isinstance(current_config["channels"][channel], dict)
+        ):
+            channel_config = current_config["channels"][channel]
+            if "summary" in channel_config and isinstance(channel_config["summary"], dict):
+                if "schedule" in channel_config["summary"]:
+                    del channel_config["summary"]["schedule"]
+                    # 如果 summary 为空，也删除它
+                    if not channel_config["summary"]:
+                        del channel_config["summary"]
+                    # 如果 channel_config 为空，也删除它
+                    if not channel_config:
+                        del current_config["channels"][channel]
 
             # 保存配置（save_config会自动更新模块变量）
             save_config(current_config)
@@ -704,12 +683,20 @@ def set_channel_schedule_v2(channel, frequency, days=None, hour=None, minute=Non
         # 加载当前配置
         current_config = load_config()
 
-        # 确保summary_schedules字段存在
-        if "summary_schedules" not in current_config:
-            current_config["summary_schedules"] = {}
+        # 确保 channels 字段存在
+        if "channels" not in current_config:
+            current_config["channels"] = {}
+
+        # 确保频道配置存在
+        if channel not in current_config["channels"]:
+            current_config["channels"][channel] = {}
+
+        # 确保 summary 字段存在
+        if "summary" not in current_config["channels"][channel]:
+            current_config["channels"][channel]["summary"] = {}
 
         # 更新配置
-        current_config["summary_schedules"][channel] = config_dict
+        current_config["channels"][channel]["summary"]["schedule"] = config_dict
 
         # 保存配置
         save_config(current_config)
@@ -801,15 +788,20 @@ def set_channel_poll_config(channel, enabled=None, send_to_channel=None):
         # 加载当前配置
         current_config = load_config()
 
-        # 确保channel_poll_settings字段存在
-        if "channel_poll_settings" not in current_config:
-            current_config["channel_poll_settings"] = {}
+        # 确保 channels 字段存在
+        if "channels" not in current_config:
+            current_config["channels"] = {}
+
+        # 确保频道配置存在
+        if channel not in current_config["channels"]:
+            current_config["channels"][channel] = {}
+
+        # 确保 poll 字段存在
+        if "poll" not in current_config["channels"][channel]:
+            current_config["channels"][channel]["poll"] = {}
 
         # 获取频道当前配置
-        if channel not in current_config["channel_poll_settings"]:
-            current_config["channel_poll_settings"][channel] = {}
-
-        channel_config = current_config["channel_poll_settings"][channel]
+        channel_config = current_config["channels"][channel]["poll"]
 
         # 更新配置（只更新提供的参数）
         if enabled is not None:
@@ -849,11 +841,16 @@ def delete_channel_poll_config(channel):
 
         # 检查是否存在配置
         if (
-            "channel_poll_settings" in current_config
-            and channel in current_config["channel_poll_settings"]
+            "channels" in current_config
+            and channel in current_config["channels"]
+            and isinstance(current_config["channels"][channel], dict)
         ):
-            # 删除频道配置
-            del current_config["channel_poll_settings"][channel]
+            channel_config = current_config["channels"][channel]
+            if "poll" in channel_config:
+                del channel_config["poll"]
+                # 如果 channel_config 为空，也删除它
+                if not channel_config:
+                    del current_config["channels"][channel]
 
             # 保存配置
             save_config(current_config)

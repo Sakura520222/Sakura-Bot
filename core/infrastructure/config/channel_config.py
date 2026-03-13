@@ -83,17 +83,21 @@ class ChannelScheduleManager:
             with open(self._config_file, encoding="utf-8") as f:
                 config = json.load(f)
 
-            schedules = config.get("summary_schedules", {})
-            if isinstance(schedules, dict):
-                # 标准化所有配置
-                self._schedules = {
-                    channel: self._normalize_schedule(schedule)
-                    for channel, schedule in schedules.items()
-                }
-                logger.info(f"已加载 {len(self._schedules)} 个频道的时间配置")
-            else:
-                logger.warning("配置文件中的 summary_schedules 格式不正确")
-                self._schedules = {}
+            # 从新的频道中心化配置中提取总结时间设置
+            channels = config.get("channels", {})
+            schedules = {}
+            for channel_url, channel_config in channels.items():
+                if isinstance(channel_config, dict):
+                    summary_config = channel_config.get("summary", {})
+                    if "schedule" in summary_config:
+                        schedules[channel_url] = summary_config["schedule"]
+
+            # 标准化所有配置
+            self._schedules = {
+                channel: self._normalize_schedule(schedule)
+                for channel, schedule in schedules.items()
+            }
+            logger.info(f"已加载 {len(self._schedules)} 个频道的时间配置")
         except json.JSONDecodeError as e:
             raise ConfigurationError(f"配置文件格式错误: {e}") from e
         except Exception as e:
@@ -108,8 +112,17 @@ class ChannelScheduleManager:
                 with open(self._config_file, encoding="utf-8") as f:
                     full_config = json.load(f)
 
-            # 更新时间配置部分
-            full_config["summary_schedules"] = self._schedules
+            # 确保 channels 存在
+            if "channels" not in full_config:
+                full_config["channels"] = {}
+
+            # 更新每个频道的时间配置
+            for channel_url, schedule in self._schedules.items():
+                if channel_url not in full_config["channels"]:
+                    full_config["channels"][channel_url] = {}
+                if "summary" not in full_config["channels"][channel_url]:
+                    full_config["channels"][channel_url]["summary"] = {}
+                full_config["channels"][channel_url]["summary"]["schedule"] = schedule
 
             # 确保目录存在
             self._config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -361,17 +374,21 @@ class ChannelScheduleManager:
             return
 
         try:
-            schedules = config.get("summary_schedules", {})
-            if isinstance(schedules, dict):
-                # 标准化所有配置
-                self._schedules = {
-                    channel: self._normalize_schedule(schedule)
-                    for channel, schedule in schedules.items()
-                }
-                logger.info(f"已加载 {len(self._schedules)} 个频道的时间配置")
-            else:
-                logger.warning("配置中的 summary_schedules 格式不正确")
-                self._schedules = {}
+            # 从新的频道中心化配置中提取总结时间设置
+            channels = config.get("channels", {})
+            schedules = {}
+            for channel_url, channel_config in channels.items():
+                if isinstance(channel_config, dict):
+                    summary_config = channel_config.get("summary", {})
+                    if "schedule" in summary_config:
+                        schedules[channel_url] = summary_config["schedule"]
+
+            # 标准化所有配置
+            self._schedules = {
+                channel: self._normalize_schedule(schedule)
+                for channel, schedule in schedules.items()
+            }
+            logger.info(f"已加载 {len(self._schedules)} 个频道的时间配置")
         except Exception as e:
             logger.error(f"加载时间配置失败: {e}")
             self._schedules = {}

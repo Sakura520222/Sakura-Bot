@@ -33,8 +33,8 @@ PollSendLocation = Literal["channel", "discussion"]
 
 # 投票配置类型定义
 ChannelPollConfig = dict[
-    str,  # 'enabled', 'send_to_channel'
-    bool | None,
+    str,  # 'enabled', 'send_to_channel', 'regen_threshold', 'enable_vote_regen_request'
+    bool | int | None,
 ]
 
 
@@ -79,13 +79,15 @@ class ChannelPollConfigManager:
             with open(self._config_file, encoding="utf-8") as f:
                 config = json.load(f)
 
-            settings = config.get("channel_poll_settings", {})
-            if isinstance(settings, dict):
-                self._poll_settings = settings
-                logger.info(f"已加载 {len(self._poll_settings)} 个频道的投票配置")
-            else:
-                logger.warning("配置文件中的 channel_poll_settings 格式不正确")
-                self._poll_settings = {}
+            # 从新的频道中心化配置中提取投票设置
+            channels = config.get("channels", {})
+            poll_settings = {}
+            for channel_url, channel_config in channels.items():
+                if isinstance(channel_config, dict) and "poll" in channel_config:
+                    poll_settings[channel_url] = channel_config["poll"]
+
+            self._poll_settings = poll_settings
+            logger.info(f"已加载 {len(self._poll_settings)} 个频道的投票配置")
         except json.JSONDecodeError as e:
             raise ConfigurationError(f"配置文件格式错误: {e}") from e
         except Exception as e:
@@ -100,8 +102,15 @@ class ChannelPollConfigManager:
                 with open(self._config_file, encoding="utf-8") as f:
                     full_config = json.load(f)
 
-            # 更新投票配置部分
-            full_config["channel_poll_settings"] = self._poll_settings
+            # 确保 channels 存在
+            if "channels" not in full_config:
+                full_config["channels"] = {}
+
+            # 更新每个频道的投票配置
+            for channel_url, poll_config in self._poll_settings.items():
+                if channel_url not in full_config["channels"]:
+                    full_config["channels"][channel_url] = {}
+                full_config["channels"][channel_url]["poll"] = poll_config
 
             # 确保目录存在
             self._config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -123,8 +132,12 @@ class ChannelPollConfigManager:
             event: 配置变更事件，包含完整的配置字典
         """
         try:
-            # 从完整配置中提取投票配置
-            poll_settings = event.config.get("channel_poll_settings", {})
+            # 从新的频道中心化配置中提取投票设置
+            channels = event.config.get("channels", {})
+            poll_settings = {}
+            for channel_url, channel_config in channels.items():
+                if isinstance(channel_config, dict) and "poll" in channel_config:
+                    poll_settings[channel_url] = channel_config["poll"]
 
             # 记录配置更新详情
             old_count = len(self._poll_settings)
@@ -139,7 +152,7 @@ class ChannelPollConfigManager:
             )
 
             # 如果有投票配置变更，记录详细信息
-            if event.changed_fields and "channel_poll_settings" in str(event.changed_fields):
+            if event.changed_fields and "channels" in str(event.changed_fields):
                 logger.info("🔄 投票配置已更新并生效")
 
         except Exception as e:
@@ -156,18 +169,24 @@ class ChannelPollConfigManager:
             包含以下键的字典：
             - enabled (bool | None): 是否启用投票（None 表示使用全局配置）
             - send_to_channel (bool): true=频道模式, false=讨论组模式
+            - regen_threshold (int): 重新生成阈值
+            - enable_vote_regen_request (bool): 是否启用投票重新生成请求
         """
         if channel in self._poll_settings:
             config = self._poll_settings[channel]
             return {
                 "enabled": config.get("enabled", None),
                 "send_to_channel": config.get("send_to_channel", False),
+                "regen_threshold": config.get("regen_threshold", 5),
+                "enable_vote_regen_request": config.get("enable_vote_regen_request", True),
             }
 
         # 没有独立配置，返回默认配置
         return {
             "enabled": None,  # 使用全局配置
             "send_to_channel": False,  # 默认讨论组模式
+            "regen_threshold": 5,  # 默认阈值
+            "enable_vote_regen_request": True,  # 默认启用
         }
 
     def set_config(

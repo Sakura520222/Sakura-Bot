@@ -43,12 +43,10 @@ class SystemConfigManager:
         self._config = {}
 
         # 系统配置项
-        self._channels = []
+        self._channels: dict[str, dict] = {}
         self._log_level = "INFO"
         self._language = "zh-CN"
         self._send_report_to_source = True
-        self._poll_regen_threshold = 2
-        self._enable_vote_regen_request = True
 
         # 订阅配置变更事件
         if event_bus:
@@ -78,12 +76,10 @@ class SystemConfigManager:
                     self._config = json.load(f)
 
             # 提取系统配置项
-            self._channels = self._config.get("channels", [])
+            self._channels = self._config.get("channels", {})
             self._log_level = self._config.get("log_level", "INFO")
             self._language = self._config.get("language", "zh-CN")
             self._send_report_to_source = self._config.get("send_report_to_source", True)
-            self._poll_regen_threshold = self._config.get("poll_regen_threshold", 2)
-            self._enable_vote_regen_request = self._config.get("enable_vote_regen_request", True)
 
             # 应用初始配置
             self._apply_log_level()
@@ -115,17 +111,13 @@ class SystemConfigManager:
             old_log_level = self._log_level
             old_language = self._language
             old_send_report = self._send_report_to_source
-            old_poll_threshold = self._poll_regen_threshold
-            old_vote_regen = self._enable_vote_regen_request
 
             # 更新配置
             self._config = event.config
-            self._channels = self._config.get("channels", [])
+            self._channels = self._config.get("channels", {})
             self._log_level = self._config.get("log_level", "INFO")
             self._language = self._config.get("language", "zh-CN")
             self._send_report_to_source = self._config.get("send_report_to_source", True)
-            self._poll_regen_threshold = self._config.get("poll_regen_threshold", 2)
-            self._enable_vote_regen_request = self._config.get("enable_vote_regen_request", True)
 
             # 检测具体变更
             changes = []
@@ -138,14 +130,6 @@ class SystemConfigManager:
                 changes.append(f"语言: {old_language} → {self._language}")
             if old_send_report != self._send_report_to_source:
                 changes.append(f"报告来源: {old_send_report} → {self._send_report_to_source}")
-            if old_poll_threshold != self._poll_regen_threshold:
-                changes.append(
-                    f"投票重生成阈值: {old_poll_threshold} → {self._poll_regen_threshold}"
-                )
-            if old_vote_regen != self._enable_vote_regen_request:
-                changes.append(
-                    f"投票重生成请求: {old_vote_regen} → {self._enable_vote_regen_request}"
-                )
 
             if changes:
                 logger.info(
@@ -173,8 +157,8 @@ class SystemConfigManager:
             logger.error(f"设置日志级别失败: {e}")
 
     @property
-    def channels(self) -> list:
-        """获取频道列表"""
+    def channels(self) -> dict[str, dict]:
+        """获取频道配置字典"""
         return self._channels
 
     @property
@@ -189,18 +173,8 @@ class SystemConfigManager:
 
     @property
     def send_report_to_source(self) -> bool:
-        """是否发送报告到来源频道"""
+        """是否发送报告到源频道"""
         return self._send_report_to_source
-
-    @property
-    def poll_regen_threshold(self) -> int:
-        """获取投票重生成阈值"""
-        return self._poll_regen_threshold
-
-    @property
-    def enable_vote_regen_request(self) -> bool:
-        """是否启用投票重生成请求"""
-        return self._enable_vote_regen_request
 
     @property
     def config(self) -> dict:

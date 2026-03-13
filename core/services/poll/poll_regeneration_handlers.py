@@ -18,8 +18,6 @@ from telethon import Button
 
 from core.config import (
     ADMIN_LIST,
-    ENABLE_VOTE_REGEN_REQUEST,
-    POLL_REGEN_THRESHOLD,
     get_poll_regeneration,
     increment_vote_count,
     load_poll_regenerations,
@@ -27,6 +25,7 @@ from core.config import (
     update_poll_regeneration,
 )
 from core.i18n.i18n import get_text
+from core.infrastructure.config.poll_config import get_channel_poll_config
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +40,7 @@ async def handle_vote_regen_request_callback(event):
 
     logger.info(f"收到投票重新生成请求: {callback_data}, 来自用户: {sender_id}")
 
-    # 检查是否启用该功能
-    if not ENABLE_VOTE_REGEN_REQUEST:
-        logger.info("投票重新生成请求功能已禁用")
-        await event.answer(get_text("poll_regen.feature_disabled"), alert=True)
-        return
-
-    # 解析callback_data
+    # 解析callback数据
     # 格式: request_regen_{summary_message_id}
     parts = callback_data.split("_")
     if len(parts) < 3 or parts[0] != "request" or parts[1] != "regen":
@@ -71,6 +64,17 @@ async def handle_vote_regen_request_callback(event):
         await event.answer(get_text("poll_regen.data_not_found"), alert=True)
         return
 
+    # 获取频道投票配置
+    poll_config = get_channel_poll_config(target_channel)
+    regen_threshold = poll_config.get("regen_threshold", 5)
+    enable_vote_regen = poll_config.get("enable_vote_regen_request", True)
+
+    # 检查是否启用该功能
+    if not enable_vote_regen:
+        logger.info("投票重新生成请求功能已禁用")
+        await event.answer(get_text("poll_regen.feature_disabled"), alert=True)
+        return
+
     # 增加投票计数（传入正确的频道）
     success, count, already_voted = await increment_vote_count(
         target_channel, summary_msg_id, sender_id
@@ -84,7 +88,7 @@ async def handle_vote_regen_request_callback(event):
     if already_voted:
         # 用户已经投过票了
         await event.answer(
-            get_text("poll_regen.already_voted", count=count, threshold=POLL_REGEN_THRESHOLD),
+            get_text("poll_regen.already_voted", count=count, threshold=regen_threshold),
             alert=True,
         )
         return
@@ -92,12 +96,12 @@ async def handle_vote_regen_request_callback(event):
     # 更新按钮文本显示进度
     try:
         new_button_text = get_text(
-            "poll_regen.request_button", count=count, threshold=POLL_REGEN_THRESHOLD
+            "poll_regen.request_button", count=count, threshold=regen_threshold
         )
 
         button_markup = []
         # 如果启用投票重新生成请求功能，添加请求按钮
-        if ENABLE_VOTE_REGEN_REQUEST:
+        if enable_vote_regen:
             button_markup.append(
                 [Button.inline(new_button_text, data=f"request_regen_{summary_msg_id}".encode())]
             )
@@ -121,13 +125,11 @@ async def handle_vote_regen_request_callback(event):
         # 继续执行，按钮更新失败不影响投票逻辑
 
     # 用户个人提示
-    await event.answer(
-        get_text("poll_regen.vote_success", count=count, threshold=POLL_REGEN_THRESHOLD)
-    )
+    await event.answer(get_text("poll_regen.vote_success", count=count, threshold=regen_threshold))
 
     # 检查是否达到阈值
-    if count >= POLL_REGEN_THRESHOLD:
-        logger.info(f"🎉 投票数达到阈值: {count}/{POLL_REGEN_THRESHOLD}, 开始自动重新生成投票")
+    if count >= regen_threshold:
+        logger.info(f"🎉 投票数达到阈值: {count}/{regen_threshold}, 开始自动重新生成投票")
 
         # 自动触发投票重新生成
         regen_data = get_poll_regeneration(target_channel, summary_msg_id)
@@ -152,9 +154,7 @@ async def handle_vote_regen_request_callback(event):
         else:
             logger.error("❌ 未找到投票重新生成数据")
     else:
-        logger.info(
-            get_text("poll_regen.current_progress", count=count, threshold=POLL_REGEN_THRESHOLD)
-        )
+        logger.info(get_text("poll_regen.current_progress", count=count, threshold=regen_threshold))
 
 
 async def handle_poll_regeneration_callback(event):
@@ -337,7 +337,10 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
     try:
         from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
 
-        from core.config import ENABLE_VOTE_REGEN_REQUEST, POLL_REGEN_THRESHOLD
+        # 获取频道投票配置
+        poll_config = get_channel_poll_config(channel)
+        regen_threshold = poll_config.get("regen_threshold", 5)
+        enable_vote_regen = poll_config.get("enable_vote_regen_request", True)
 
         # 1. 构造投票对象
         question_text = str(
@@ -364,13 +367,11 @@ async def send_new_poll_to_channel(client, channel, summary_msg_id, poll_data):
         # 2. 构造内联按钮
         button_markup = []
         # 如果启用投票重新生成请求功能，添加请求按钮
-        if ENABLE_VOTE_REGEN_REQUEST:
+        if enable_vote_regen:
             button_markup.append(
                 [
                     Button.inline(
-                        get_text(
-                            "poll_regen.request_button", count=0, threshold=POLL_REGEN_THRESHOLD
-                        ),
+                        get_text("poll_regen.request_button", count=0, threshold=regen_threshold),
                         data=f"request_regen_{summary_msg_id}".encode(),
                     )
                 ]
@@ -448,7 +449,10 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
     try:
         from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
 
-        from core.config import ENABLE_VOTE_REGEN_REQUEST, POLL_REGEN_THRESHOLD
+        # 获取频道投票配置
+        poll_config = get_channel_poll_config(channel)
+        regen_threshold = poll_config.get("regen_threshold", 5)
+        enable_vote_regen = poll_config.get("enable_vote_regen_request", True)
 
         logger.info("开始处理投票发送到讨论组(重新生成模式)")
 
@@ -500,13 +504,11 @@ async def send_new_poll_to_discussion_group(client, channel, summary_msg_id, pol
         # 4. 构造内联按钮
         button_markup = []
         # 如果启用投票重新生成请求功能，添加请求按钮
-        if ENABLE_VOTE_REGEN_REQUEST:
+        if enable_vote_regen:
             button_markup.append(
                 [
                     Button.inline(
-                        get_text(
-                            "poll_regen.request_button", count=0, threshold=POLL_REGEN_THRESHOLD
-                        ),
+                        get_text("poll_regen.request_button", count=0, threshold=regen_threshold),
                         data=f"request_regen_{summary_msg_id}".encode(),
                     )
                 ]

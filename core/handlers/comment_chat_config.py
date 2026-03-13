@@ -27,23 +27,33 @@ DEFAULT_COMMENT_CHAT_CONFIG = {
 }
 
 
-async def get_comment_chat_config() -> dict[str, Any]:
+async def get_comment_chat_config(channel_url: str) -> dict[str, Any]:
     """
-    获取评论区聊天全局配置（异步）
+    获取指定频道的评论区聊天配置（异步）
+
+    Args:
+        channel_url: 频道URL
 
     Returns:
         dict: 评论区聊天配置，如果未配置则返回默认配置
     """
     config = await asyncio.to_thread(load_config)
-    settings = config.get("comment_chat_settings", {})
+    channels = config.get("channels", {})
 
-    # 合并配置和默认值（优先使用配置文件）
-    result = DEFAULT_COMMENT_CHAT_CONFIG.copy()
-    result.update(settings)
-    return result
+    if channel_url in channels:
+        channel_config = channels[channel_url]
+        if isinstance(channel_config, dict) and "comment_chat" in channel_config:
+            # 合并配置和默认值（优先使用配置文件）
+            result = DEFAULT_COMMENT_CHAT_CONFIG.copy()
+            result.update(channel_config["comment_chat"])
+            return result
+
+    # 返回默认配置
+    return DEFAULT_COMMENT_CHAT_CONFIG.copy()
 
 
 async def set_comment_chat_config(
+    channel_url: str,
     enabled: bool | None = None,
     wake_keyword: str | None = None,
     debounce_seconds: int | None = None,
@@ -51,9 +61,10 @@ async def set_comment_chat_config(
     max_context_messages: int | None = None,
 ) -> dict[str, Any]:
     """
-    设置评论区聊天全局配置（异步）
+    设置指定频道的评论区聊天配置（异步）
 
     Args:
+        channel_url: 频道URL
         enabled: 是否启用（可选）
         wake_keyword: 唤醒关键词（可选）
         debounce_seconds: 防抖时间（秒）（可选）
@@ -68,16 +79,21 @@ async def set_comment_chat_config(
     """
     config = await asyncio.to_thread(load_config)
 
-    # 确保 comment_chat_settings 存在
-    if "comment_chat_settings" not in config:
-        config["comment_chat_settings"] = {}
+    # 确保 channels 存在
+    if "channels" not in config:
+        config["channels"] = {}
 
-    settings = config["comment_chat_settings"]
+    channels = config["channels"]
 
     # 获取现有配置或使用默认值
-    if settings:
-        current_config = settings.copy()
+    if channel_url in channels and isinstance(channels[channel_url], dict):
+        channel_config = channels[channel_url]
+        if "comment_chat" in channel_config:
+            current_config = channel_config["comment_chat"].copy()
+        else:
+            current_config = DEFAULT_COMMENT_CHAT_CONFIG.copy()
     else:
+        channels[channel_url] = {}
         current_config = DEFAULT_COMMENT_CHAT_CONFIG.copy()
 
     # 更新配置
@@ -105,11 +121,52 @@ async def set_comment_chat_config(
         current_config["max_context_messages"] = max_context_messages
 
     # 保存配置
-    config["comment_chat_settings"] = current_config
+    channels[channel_url]["comment_chat"] = current_config
     await asyncio.to_thread(save_config, config)
 
-    logger.info("已更新评论区聊天配置")
+    logger.info(f"已更新频道 {channel_url} 的评论区聊天配置")
     return current_config
+
+
+async def get_all_comment_chat_configs() -> dict[str, dict[str, Any]]:
+    """
+    获取所有频道的评论区聊天配置（异步）
+
+    Returns:
+        dict: 所有频道配置的字典
+    """
+    config = await asyncio.to_thread(load_config)
+    channels = config.get("channels", {})
+
+    result = {}
+    for channel_url, channel_config in channels.items():
+        if isinstance(channel_config, dict) and "comment_chat" in channel_config:
+            result[channel_url] = channel_config["comment_chat"]
+
+    return result
+
+
+async def delete_comment_chat_config(channel_url: str) -> bool:
+    """
+    删除指定频道的评论区聊天配置（异步）
+
+    Args:
+        channel_url: 频道URL
+
+    Returns:
+        bool: 是否成功删除
+    """
+    config = await asyncio.to_thread(load_config)
+    channels = config.get("channels", {})
+
+    if channel_url in channels and isinstance(channels[channel_url], dict):
+        if "comment_chat" in channels[channel_url]:
+            del channels[channel_url]["comment_chat"]
+            await asyncio.to_thread(save_config, config)
+            logger.info(f"已删除频道 {channel_url} 的评论区聊天配置")
+            return True
+
+    return False
 
 
 def get_default_comment_chat_config() -> dict[str, Any]:

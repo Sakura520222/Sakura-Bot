@@ -415,8 +415,13 @@ async def handle_db_clear_confirm(event: NewMessage.Event):
         # 初始化数据库连接
         await db_manager.init_database()
 
-        # 清空所有表
+        # 清空所有表（注意：由于外键约束，需按依赖顺序删除）
         tables = [
+            "comment_messages",  # 依赖 comment_sessions
+            "comment_sessions",  # 被依赖
+            "comment_cache",  # 评论区缓存表
+            "forwarded_messages",
+            "forwarding_stats",
             "summaries",
             "conversation_history",
             "users",

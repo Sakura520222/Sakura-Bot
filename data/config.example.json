@@ -1,56 +1,66 @@
 {
-  "channels": [
-    "https://t.me/example_channel1",
-    "https://t.me/example_channel2"
-  ],
-  "send_report_to_source": true,
-  "enable_poll": true,
-  "poll_regen_threshold": 5,
-  "enable_vote_regen_request": true,
   "log_level": "INFO",
-  "comment_chat_settings": {
-    "enabled": true,
-    "wake_keyword": "小樱",
-    "debounce_seconds": 3,
-    "session_timeout": 30,
-    "max_context_messages": 50
-  },
-  "summary_schedules": {
+  "language": "zh-CN",
+  "send_report_to_source": true,
+
+  "channels": {
     "https://t.me/example_channel1": {
-      "frequency": "weekly",
-      "days": ["mon"],
-      "hour": 9,
-      "minute": 0
+      "summary": {
+        "schedule": {
+          "frequency": "weekly",
+          "days": ["mon"],
+          "hour": 9,
+          "minute": 0
+        }
+      },
+      "poll": {
+        "enabled": true,
+        "regen_threshold": 5,
+        "enable_vote_regen_request": true,
+        "send_to_channel": true
+      },
+      "comment_chat": {
+        "enabled": true,
+        "wake_keyword": "小樱",
+        "debounce_seconds": 3,
+        "session_timeout": 30,
+        "max_context_messages": 50
+      },
+      "comment_welcome": {
+        "enabled": true,
+        "welcome_message": "comment_welcome.message",
+        "button_text": "comment_welcome.button",
+        "button_action": "request_summary"
+      }
     },
+
     "https://t.me/example_channel2": {
-      "frequency": "daily",
-      "hour": 23,
-      "minute": 0
+      "summary": {
+        "schedule": {
+          "frequency": "daily",
+          "hour": 23,
+          "minute": 0
+        }
+      },
+      "poll": {
+        "enabled": true,
+        "regen_threshold": 5,
+        "enable_vote_regen_request": true,
+        "send_to_channel": false
+      },
+      "comment_chat": {
+        "enabled": true,
+        "wake_keyword": "小樱",
+        "debounce_seconds": 3,
+        "session_timeout": 30,
+        "max_context_messages": 50
+      },
+      "comment_welcome": {
+        "enabled": false
+      }
     }
   },
-  "channel_poll_settings": {
-    "https://t.me/example_channel1": {
-      "enabled": true,
-      "send_to_channel": true
-    },
-    "https://t.me/example_channel2": {
-      "enabled": true,
-      "send_to_channel": false
-    }
-  },
-  "comment_welcome": {
-    "default": {
-      "enabled": true,
-      "welcome_message": "comment_welcome.message",
-      "button_text": "comment_welcome.button",
-      "button_action": "request_summary"
-    }
-  },
-  "channel_comment_welcome": {
-    "https://t.me/example_channel1": {
-      "enabled": true
-    }
-  },
+
   "forwarding": {
     "enabled": false,
     "show_default_footer": true,

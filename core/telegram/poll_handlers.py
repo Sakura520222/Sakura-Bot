@@ -10,12 +10,7 @@ from telethon import Button, events
 from telethon.tl.types import InputMediaPoll, Poll, PollAnswer, TextWithEntities
 
 from core.ai.ai_client import generate_poll_from_summary
-from core.config import (
-    ENABLE_POLL,
-    ENABLE_VOTE_REGEN_REQUEST,
-    POLL_REGEN_THRESHOLD,
-    get_channel_poll_config,
-)
+from core.config import ENABLE_POLL, get_channel_poll_config
 from core.i18n.i18n import get_text
 from core.system.error_handler import record_error
 
@@ -93,15 +88,20 @@ async def send_poll_to_channel(client, channel, summary_message_id, summary_text
                 quiz=False,
             )
 
+            # 获取频道投票配置
+            poll_config = get_channel_poll_config(channel)
+            regen_threshold = poll_config.get("regen_threshold", 5)
+            enable_vote_regen = poll_config.get("enable_vote_regen_request", True)
+
             # 构造内联按钮
             button_markup = []
             # 如果启用投票重新生成请求功能，添加请求按钮
-            if ENABLE_VOTE_REGEN_REQUEST:
+            if enable_vote_regen:
                 button_markup.append(
                     [
                         Button.inline(
                             get_text(
-                                "poll_regen.request_button", count=0, threshold=POLL_REGEN_THRESHOLD
+                                "poll_regen.request_button", count=0, threshold=regen_threshold
                             ),
                             data=f"request_regen_{summary_message_id}".encode(),
                         )
@@ -294,17 +294,22 @@ async def send_poll_to_discussion_group(client, channel, summary_message_id, sum
                     quiz=False,
                 )
 
+                # 获取频道投票配置
+                poll_config = get_channel_poll_config(channel)
+                regen_threshold = poll_config.get("regen_threshold", 5)
+                enable_vote_regen = poll_config.get("enable_vote_regen_request", True)
+
                 # 4. 构造内联按钮
                 button_markup = []
                 # 如果启用投票重新生成请求功能，添加请求按钮
-                if ENABLE_VOTE_REGEN_REQUEST:
+                if enable_vote_regen:
                     button_markup.append(
                         [
                             Button.inline(
                                 get_text(
                                     "poll_regen.request_button",
                                     count=0,
-                                    threshold=POLL_REGEN_THRESHOLD,
+                                    threshold=regen_threshold,
                                 ),
                                 data=f"request_regen_{summary_message_id}".encode(),
                             )
