@@ -22,6 +22,7 @@ def handler():
     return review_handler
 
 
+@pytest.mark.unit
 def test_build_review_buttons_anonymous_contains_signed_approve(handler):
     """测试匿名投稿审核按钮包含署名通过。"""
     buttons = handler._build_review_buttons(12, can_force_signature=True)
@@ -33,6 +34,7 @@ def test_build_review_buttons_anonymous_contains_signed_approve(handler):
     assert "submission_signapprove_12" in button_data
 
 
+@pytest.mark.unit
 def test_build_review_buttons_non_anonymous_without_signed_approve(handler):
     """测试非匿名投稿审核按钮不包含署名通过。"""
     buttons = handler._build_review_buttons(12, can_force_signature=False)
@@ -44,6 +46,7 @@ def test_build_review_buttons_non_anonymous_without_signed_approve(handler):
     assert "submission_signapprove_12" not in button_data
 
 
+@pytest.mark.unit
 def test_build_review_buttons_restore_keeps_signed_approve(handler):
     """测试恢复原文阶段仍保留署名通过按钮。"""
     buttons = handler._build_review_buttons(12, show_restore=True, can_force_signature=True)
@@ -56,6 +59,7 @@ def test_build_review_buttons_restore_keeps_signed_approve(handler):
     assert "submission_signapprove_12" in button_data
 
 
+@pytest.mark.unit
 def test_can_force_signature_requires_anonymous_and_submitter(handler):
     """测试仅匿名且有投稿者名称时允许强制署名。"""
     assert handler._can_force_signature({"is_anonymous": True, "submitter_name": "alice"})
@@ -64,6 +68,7 @@ def test_can_force_signature_requires_anonymous_and_submitter(handler):
     assert not handler._can_force_signature(None)
 
 
+@pytest.mark.unit
 def test_build_publish_caption_forced_signature_uses_submitter(handler):
     """测试强制署名会覆盖匿名状态。"""
     caption = handler._build_publish_caption(
@@ -83,6 +88,7 @@ def test_build_publish_caption_forced_signature_uses_submitter(handler):
     assert "投稿者: 匿名" not in caption
 
 
+@pytest.mark.unit
 def test_build_publish_caption_anonymous_without_force_keeps_anonymous(handler):
     """测试普通匿名通过仍显示匿名。"""
     caption = handler._build_publish_caption(
@@ -100,6 +106,7 @@ def test_build_publish_caption_anonymous_without_force_keeps_anonymous(handler):
     assert "@alice" not in caption
 
 
+@pytest.mark.unit
 def test_build_publish_caption_forced_signature_without_name_falls_back_anonymous(handler):
     """测试强制署名但投稿者名称为空时回退匿名。"""
     caption = handler._build_publish_caption(
@@ -117,6 +124,7 @@ def test_build_publish_caption_forced_signature_without_name_falls_back_anonymou
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_handle_callback_signed_approve_dispatches_forced_signature(handler):
     """测试署名通过回调会按强制署名审核。"""
     event = MagicMock()
@@ -138,6 +146,7 @@ async def test_handle_callback_signed_approve_dispatches_forced_signature(handle
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_handle_approve_passes_forced_signature_and_notifies(handler):
     """测试署名通过会传递强制署名并通知投稿者。"""
     event = MagicMock()
@@ -175,6 +184,7 @@ async def test_handle_approve_passes_forced_signature_and_notifies(handler):
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_notify_submitter_forced_signature_adds_notice(handler):
     """测试强制署名通知包含说明。"""
     db = MagicMock()
@@ -198,3 +208,48 @@ async def test_notify_submitter_forced_signature_adds_notice(handler):
     assert kwargs["notification_type"] == "submission_approved"
     assert "管理员已将匿名投稿调整为署名发布" in kwargs["content"]["message"]
     assert "https://t.me/test/1" in kwargs["content"]["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_handle_ai_optimize_success_reuses_submission_lookup(handler):
+    """测试 AI 优化成功时复用投稿查询结果构建按钮。"""
+    event = MagicMock()
+    event.edit = AsyncMock()
+    handler.repo.get_submission = AsyncMock(
+        return_value={"id": 123, "is_anonymous": True, "submitter_name": "alice"}
+    )
+    handler.service.ai_optimize = AsyncMock(
+        return_value={
+            "success": True,
+            "optimized_title": "优化标题",
+            "optimized_content": "优化正文",
+        }
+    )
+
+    await handler._handle_ai_optimize(event, 123)
+
+    handler.repo.get_submission.assert_awaited_once_with(123)
+    assert event.edit.await_count == 2
+    _, kwargs = event.edit.await_args
+    button_data = [button.data.decode() for row in kwargs["buttons"] for button in row]
+    assert "submission_signapprove_123" in button_data
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_handle_ai_optimize_failure_reuses_submission_lookup(handler):
+    """测试 AI 优化失败时复用投稿查询结果构建按钮。"""
+    event = MagicMock()
+    event.edit = AsyncMock()
+    handler.repo.get_submission = AsyncMock(
+        return_value={"id": 123, "is_anonymous": True, "submitter_name": "alice"}
+    )
+    handler.service.ai_optimize = AsyncMock(return_value={"success": False, "message": "模型错误"})
+
+    await handler._handle_ai_optimize(event, 123)
+
+    handler.repo.get_submission.assert_awaited_once_with(123)
+    _, kwargs = event.edit.await_args
+    button_data = [button.data.decode() for row in kwargs["buttons"] for button in row]
+    assert "submission_signapprove_123" in button_data

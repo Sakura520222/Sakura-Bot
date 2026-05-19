@@ -22,11 +22,12 @@ def service():
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_approve_submission_forced_signature_updates_repo(service):
     """测试署名通过会写入强制署名标记。"""
     service.repo.update_submission_status = AsyncMock(return_value=True)
     service.repo.get_submission = AsyncMock(
-        return_value={"id": 123, "title": "测试标题", "signature_forced": False}
+        return_value={"id": 123, "title": "测试标题", "signature_forced": True}
     )
 
     result = await service.approve_submission(123, reviewed_by=456, signature_forced=True)
@@ -37,11 +38,13 @@ async def test_approve_submission_forced_signature_updates_repo(service):
         reviewed_by=456,
         signature_forced=True,
     )
+    service.repo.get_submission.assert_awaited_once_with(123)
     assert result["success"] is True
     assert result["submission"]["signature_forced"] is True
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_approve_submission_normal_does_not_reset_signature(service):
     """测试普通通过不改写强制署名标记。"""
     service.repo.update_submission_status = AsyncMock(return_value=True)

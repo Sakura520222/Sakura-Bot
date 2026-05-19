@@ -82,7 +82,7 @@ async def test_cancel_submission_outside_conversation_clears_state(bot, mocker):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_start_submission_resets_existing_state(mocker):
-    """测试重复开始投稿会重置旧状态并进入标题阶段。"""
+    """测试重复开始投稿会提示旧状态已取消并进入标题阶段。"""
     mocker.patch(
         "core.handlers.submission_handler.get_submission_service", return_value=MagicMock()
     )
@@ -100,23 +100,23 @@ async def test_start_submission_resets_existing_state(mocker):
         "is_anonymous": False,
         "media_files": [],
     }
-    update.message.reply_text.assert_awaited_once()
+    assert update.message.reply_text.await_count == 2
+    first_message = update.message.reply_text.await_args_list[0].args[0]
+    assert "旧的投稿（旧标题）已取消" in first_message
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_receive_title_expired_state_clears_user_state(mocker):
-    """测试标题阶段状态丢失时会清理用户投稿状态。"""
+async def test_receive_title_expired_state_replies_without_cleanup(mocker):
+    """测试标题阶段状态丢失时会提示会话过期。"""
     mocker.patch(
         "core.handlers.submission_handler.get_submission_service", return_value=MagicMock()
     )
     mocker.patch("core.handlers.submission_handler.get_submission_repo", return_value=MagicMock())
     handler = SubmissionHandler()
-    clear_user_state = mocker.patch.object(handler, "clear_user_state")
     update = make_update(user_id=789, text="标题")
 
     result = await handler.receive_title(update, MagicMock())
 
     assert result == -1
-    clear_user_state.assert_called_once_with(789)
     update.message.reply_text.assert_awaited_once()

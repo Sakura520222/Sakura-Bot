@@ -363,13 +363,15 @@ class SubmissionReviewHandler:
 
     async def _handle_ai_optimize(self, event, submission_id: int) -> None:
         """处理 AI 优化按钮"""
+        can_force_signature = False
         try:
+            submission = await self.repo.get_submission(submission_id)
+            can_force_signature = self._can_force_signature(submission)
             await event.edit("🤖 正在使用 AI 优化投稿内容，请稍候...")
 
             result = await self.service.ai_optimize(submission_id)
 
             if result["success"]:
-                submission = await self.repo.get_submission(submission_id)
                 optimized_title = result.get("optimized_title", "")
                 optimized = result["optimized_content"]
                 title_preview = f"标题：{optimized_title}\n\n" if optimized_title else ""
@@ -377,26 +379,24 @@ class SubmissionReviewHandler:
                 buttons = self._build_review_buttons(
                     submission_id,
                     show_restore=True,
-                    can_force_signature=self._can_force_signature(submission),
+                    can_force_signature=can_force_signature,
                 )
                 await event.edit(
                     f"🤖 AI 优化完成\n\n{title_preview}正文：\n{content_preview}\n\n请使用同意或拒绝按钮继续审核。",
                     buttons=buttons,
                 )
             else:
-                submission = await self.repo.get_submission(submission_id)
                 buttons = self._build_review_buttons(
                     submission_id,
-                    can_force_signature=self._can_force_signature(submission),
+                    can_force_signature=can_force_signature,
                 )
                 await event.edit(f"❌ AI 优化失败: {result['message']}", buttons=buttons)
         except Exception as e:
             logger.error(f"AI 优化投稿失败: {type(e).__name__}: {e}", exc_info=True)
             try:
-                submission = await self.repo.get_submission(submission_id)
                 buttons = self._build_review_buttons(
                     submission_id,
-                    can_force_signature=self._can_force_signature(submission),
+                    can_force_signature=can_force_signature,
                 )
                 await event.edit(f"❌ AI 优化失败: {str(e)}", buttons=buttons)
             except Exception:

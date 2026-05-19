@@ -205,8 +205,6 @@ class SubmissionService:
                 signature_forced=signature_forced if signature_forced else None,
             )
             submission = await self.repo.get_submission(submission_id)
-            if success and submission is not None and signature_forced:
-                submission["signature_forced"] = True
             return {
                 "success": success,
                 "submission": submission,

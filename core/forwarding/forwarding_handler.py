@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from telethon import TelegramClient
     from telethon.tl.types import Message
 
-    from ..database import DatabaseManagerBase
+    from ..infrastructure.database.base import DatabaseManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -381,12 +381,22 @@ class ForwardingHandler:
                 if footer:
                     caption = f"{caption}\n\n{footer}" if caption else footer
 
-                await self.sending_client.send_message(
-                    entity=target_channel,
-                    message=caption,
-                    file=message.media if message.media else None,
-                    link_preview=False,  # 禁用链接预览
-                )
+                try:
+                    await self.sending_client.send_message(
+                        entity=target_channel,
+                        message=caption,
+                        file=message.media if message.media else None,
+                        link_preview=False,  # 禁用链接预览
+                    )
+                except Exception as send_err:
+                    logger.warning(
+                        f"单消息复制模式发送失败 "
+                        f"({type(send_err).__name__}: {send_err})，"
+                        f"回退到下载转发模式"
+                    )
+                    return await self._forward_single_with_download(
+                        message, target_channel, source_channel, rule
+                    )
             else:
                 # 使用转发模式（显示转发来源）
                 try:
@@ -404,12 +414,22 @@ class ForwardingHandler:
                     caption = message.message or ""
                     if footer:
                         caption = f"{caption}\n\n{footer}" if caption else footer
-                    await self.sending_client.send_message(
-                        entity=target_channel,
-                        message=caption,
-                        file=message.media if message.media else None,
-                        link_preview=False,
-                    )
+                    try:
+                        await self.sending_client.send_message(
+                            entity=target_channel,
+                            message=caption,
+                            file=message.media if message.media else None,
+                            link_preview=False,
+                        )
+                    except Exception as send_err:
+                        logger.warning(
+                            f"单消息回退复制模式发送失败 "
+                            f"({type(send_err).__name__}: {send_err})，"
+                            f"回退到下载转发模式"
+                        )
+                        return await self._forward_single_with_download(
+                            message, target_channel, source_channel, rule
+                        )
 
             # 记录已转发
             message_id = str(message.id)

@@ -8,9 +8,12 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from core.initializers.command_registrar import _is_submission_review_callback
 
 
+@pytest.mark.unit
 def test_submission_review_callback_accepts_signed_approve():
     """测试投稿审核过滤器放行署名通过回调。"""
     event = SimpleNamespace(data=b"submission_signapprove_123")
@@ -18,6 +21,7 @@ def test_submission_review_callback_accepts_signed_approve():
     assert _is_submission_review_callback(event) is True
 
 
+@pytest.mark.unit
 def test_submission_review_callback_accepts_existing_actions():
     """测试投稿审核过滤器放行既有审核回调。"""
     accepted_payloads = (
@@ -32,6 +36,7 @@ def test_submission_review_callback_accepts_existing_actions():
         assert _is_submission_review_callback(event) is True
 
 
+@pytest.mark.unit
 def test_submission_review_callback_rejects_unrelated_data():
     """测试投稿审核过滤器拒绝无关回调。"""
     rejected_payloads = (

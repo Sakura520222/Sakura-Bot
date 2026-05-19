@@ -558,6 +558,7 @@ class QABot:
             return
 
         try:
+            # 延迟导入：避免与 submission_handler 的循环依赖
             from core.handlers.submission_handler import get_submission_handler
 
             get_submission_handler().clear_user_state(update.effective_user.id)
