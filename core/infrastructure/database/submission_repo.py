@@ -193,6 +193,7 @@ class SubmissionRepository:
         ai_optimized_content: str | None = None,
         ai_optimized_title: str | None = None,
         review_message_id: int | None = None,
+        signature_forced: bool | None = None,
         clear_ai_content: bool = False,
     ) -> bool:
         """更新投稿状态
@@ -204,6 +205,7 @@ class SubmissionRepository:
             ai_optimized_content: AI优化后的内容
             ai_optimized_title: AI优化后的标题
             review_message_id: 审核消息ID
+            signature_forced: 是否由管理员强制署名
             clear_ai_content: 是否清除AI优化内容（恢复原文时使用）
 
         Returns:
@@ -236,6 +238,10 @@ class SubmissionRepository:
                     if review_message_id is not None:
                         update_fields.append("review_message_id = %s")
                         params.append(review_message_id)
+
+                    if signature_forced is not None:
+                        update_fields.append("signature_forced = %s")
+                        params.append(signature_forced)
 
                     params.append(submission_id)
                     await cursor.execute(
