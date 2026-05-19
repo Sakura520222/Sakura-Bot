@@ -184,12 +184,15 @@ class SubmissionService:
                 "message": f"AI 优化时发生错误: {e}",
             }
 
-    async def approve_submission(self, submission_id: int, reviewed_by: int) -> dict[str, Any]:
+    async def approve_submission(
+        self, submission_id: int, reviewed_by: int, signature_forced: bool = False
+    ) -> dict[str, Any]:
         """通过投稿
 
         Args:
             submission_id: 投稿ID
             reviewed_by: 审核人ID
+            signature_forced: 是否由管理员强制署名
 
         Returns:
             {"success": bool, "submission": dict|None, "message": str}
@@ -199,6 +202,7 @@ class SubmissionService:
                 submission_id=submission_id,
                 status="approved",
                 reviewed_by=reviewed_by,
+                signature_forced=signature_forced if signature_forced else None,
             )
             submission = await self.repo.get_submission(submission_id)
             return {

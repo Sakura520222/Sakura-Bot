@@ -70,6 +70,16 @@ class SubmissionHandler:
         """清除用户的投稿会话状态"""
         self._user_states.pop(user_id, None)
 
+    @staticmethod
+    def _build_discarded_notice(state: dict[str, Any]) -> str:
+        """构建旧投稿已取消提示。"""
+        old_title = str(state.get("title") or "").strip()
+        if not old_title:
+            return get_text("submission.previous_discarded_no_title")
+
+        display_title = old_title[:20] + ("..." if len(old_title) > 20 else "")
+        return get_text("submission.previous_discarded", title=display_title)
+
     async def start_submission(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, from_deep_link: bool = False
     ) -> int:
@@ -79,14 +89,11 @@ class SubmissionHandler:
             update.effective_user.username or update.effective_user.first_name or str(user_id)
         )
 
-        # 检查是否有进行中的投稿
-        if user_id in self._user_states:
-            target = update.callback_query or update.message
-            await target.reply_text(
-                "⚠️ 您已有一个进行中的投稿。请先完成或取消当前投稿 (/cancel_submit)。",
-                reply_markup=build_submission_title_keyboard(),
-            )
-            return ConversationHandler.END
+        old_state = self._user_states.get(user_id)
+        if old_state is not None:
+            await update.message.reply_text(self._build_discarded_notice(old_state))
+            self.clear_user_state(user_id)
+            logger.info(f"用户 {user_name} 重新开始投稿流程，已清理旧状态")
 
         # 初始化投稿会话
         self._user_states[user_id] = {
@@ -323,6 +330,7 @@ class SubmissionHandler:
                 # 进入确认
                 return await self._show_confirm_text(query)
             else:
+                self.clear_user_state(user_id)
                 await query.edit_message_text("❌ 频道选择无效，请重新发送 /submit。")
                 return ConversationHandler.END
 

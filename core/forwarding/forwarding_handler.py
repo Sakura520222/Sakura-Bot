@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from telethon import TelegramClient
     from telethon.tl.types import Message
 
-    from ..database import DatabaseManagerBase
+    from ..infrastructure.database.base import DatabaseManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -381,19 +381,55 @@ class ForwardingHandler:
                 if footer:
                     caption = f"{caption}\n\n{footer}" if caption else footer
 
-                await self.sending_client.send_message(
-                    entity=target_channel,
-                    message=caption,
-                    file=message.media if message.media else None,
-                    link_preview=False,  # 禁用链接预览
-                )
+                try:
+                    await self.sending_client.send_message(
+                        entity=target_channel,
+                        message=caption,
+                        file=message.media if message.media else None,
+                        link_preview=False,  # 禁用链接预览
+                    )
+                except Exception as send_err:
+                    logger.warning(
+                        f"单消息复制模式发送失败 "
+                        f"({type(send_err).__name__}: {send_err})，"
+                        f"回退到下载转发模式"
+                    )
+                    return await self._forward_single_with_download(
+                        message, target_channel, source_channel, rule
+                    )
             else:
                 # 使用转发模式（显示转发来源）
-                await self._forward_messages_with_fallback(
-                    target_channel=target_channel,
-                    messages=message,
-                    from_peer=message.chat_id,
-                )
+                try:
+                    await self._forward_messages_with_fallback(
+                        target_channel=target_channel,
+                        messages=message,
+                        from_peer=message.chat_id,
+                    )
+                except Exception as forward_err:
+                    # 来源型转发失败，回退到复制模式使用 Bot 转发
+                    logger.warning(
+                        f"来源型转发失败 ({type(forward_err).__name__}: {forward_err})，"
+                        f"回退到复制模式使用 Bot 转发"
+                    )
+                    caption = message.message or ""
+                    if footer:
+                        caption = f"{caption}\n\n{footer}" if caption else footer
+                    try:
+                        await self.sending_client.send_message(
+                            entity=target_channel,
+                            message=caption,
+                            file=message.media if message.media else None,
+                            link_preview=False,
+                        )
+                    except Exception as send_err:
+                        logger.warning(
+                            f"单消息回退复制模式发送失败 "
+                            f"({type(send_err).__name__}: {send_err})，"
+                            f"回退到下载转发模式"
+                        )
+                        return await self._forward_single_with_download(
+                            message, target_channel, source_channel, rule
+                        )
 
             # 记录已转发
             message_id = str(message.id)
@@ -633,11 +669,57 @@ class ForwardingHandler:
                     )
             else:
                 # 转发模式：使用forward_messages批量转发
-                await self._forward_messages_with_fallback(
-                    target_channel=target_channel,
-                    messages=media_group_messages,
-                    from_peer=message.chat_id,
-                )
+                try:
+                    await self._forward_messages_with_fallback(
+                        target_channel=target_channel,
+                        messages=media_group_messages,
+                        from_peer=message.chat_id,
+                    )
+                except Exception as forward_err:
+                    # 来源型转发失败，回退到复制模式
+                    logger.warning(
+                        f"媒体组来源型转发失败 "
+                        f"({type(forward_err).__name__}: {forward_err})，"
+                        f"回退到复制模式"
+                    )
+                    # 回退：内存发送媒体组
+                    mg_files = []
+                    mg_first_caption = ""
+                    for msg in media_group_messages:
+                        if msg.media:
+                            mg_files.append(msg.media)
+                            if not mg_first_caption and msg.message:
+                                mg_first_caption = msg.message
+
+                    if not mg_files:
+                        logger.error(f"媒体组 {group_key} 无有效媒体文件，来源型回退复制模式跳过")
+                        return False
+
+                    mg_caption = mg_first_caption
+                    if footer:
+                        mg_caption = f"{mg_caption}\n\n{footer}" if mg_caption else footer
+
+                    try:
+                        await self.sending_client.send_file(
+                            entity=target_channel,
+                            file=mg_files,
+                            caption=mg_caption if mg_caption else None,
+                            link_preview=False,
+                        )
+                    except Exception as send_err:
+                        # 内存发送也失败，回退到下载转发
+                        logger.warning(
+                            f"媒体组复制模式内存发送失败 "
+                            f"({type(send_err).__name__}: {send_err})，"
+                            f"回退到下载转发模式"
+                        )
+                        return await self._forward_media_group_with_download(
+                            media_group_messages,
+                            group_key,
+                            target_channel,
+                            source_channel,
+                            rule,
+                        )
 
             # 记录已转发（使用grouped_id作为消息ID）
             content_hash = self._generate_group_hash(media_group_messages)

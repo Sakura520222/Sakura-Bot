@@ -35,6 +35,7 @@ from core.ai.conversation_manager import get_conversation_manager
 from core.ai.qa_engine_v3 import get_qa_engine_v3
 from core.ai.quota_manager import get_quota_manager
 from core.config import get_qa_bot_persona
+from core.i18n.i18n import get_text
 from core.infrastructure.exceptions import DatabaseError
 from core.infrastructure.logging import setup_component_logging
 from core.qa_user_system import get_qa_user_system
@@ -46,6 +47,13 @@ from core.telegram.keyboards import (
     QA_MENU_HELP,
     QA_MENU_STATUS,
     QA_MENU_SUBSCRIPTIONS,
+    SUBMIT_MENU_ANONYMOUS_NO,
+    SUBMIT_MENU_ANONYMOUS_YES,
+    SUBMIT_MENU_CANCEL,
+    SUBMIT_MENU_CONFIRM,
+    SUBMIT_MENU_DONE_MEDIA,
+    SUBMIT_MENU_SKIP_CONTENT,
+    SUBMIT_MENU_SKIP_MEDIA,
     build_qa_main_menu_keyboard,
 )
 
@@ -524,6 +532,45 @@ class QABot:
                 reply_markup=build_qa_main_menu_keyboard(),
             )
 
+    async def handle_stray_submission_button(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """处理会话外残留的投稿键盘按钮。"""
+        if not update.effective_user or not update.message:
+            return
+
+        text = update.message.text.strip() if update.message.text else ""
+        logger.info(
+            "拦截会话外投稿按钮: user_id=%s, text=%s",
+            update.effective_user.id,
+            text,
+        )
+        await update.message.reply_text(
+            get_text("submission.no_active_submission_restart"),
+            reply_markup=build_qa_main_menu_keyboard(),
+        )
+
+    async def cancel_submission_outside_conversation(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """处理会话外的 /cancel_submit 命令。"""
+        if not update.effective_user or not update.message:
+            return
+
+        try:
+            # 延迟导入：避免与 submission_handler 的循环依赖
+            from core.handlers.submission_handler import get_submission_handler
+
+            get_submission_handler().clear_user_state(update.effective_user.id)
+        except Exception as e:
+            logger.error(f"清理投稿状态失败: {type(e).__name__}: {e}", exc_info=True)
+
+        logger.info("处理会话外取消投稿命令: user_id=%s", update.effective_user.id)
+        await update.message.reply_text(
+            get_text("submission.no_active_submission"),
+            reply_markup=build_qa_main_menu_keyboard(),
+        )
+
     async def ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/ask命令 - 限定指定频道查询"""
         user_id = update.effective_user.id
@@ -927,6 +974,18 @@ class QABot:
             f"{QA_MENU_STATUS}|{QA_MENU_CLEAR}|{QA_MENU_HELP})$"
         )
         self.application.add_handler(MessageHandler(menu_button_filter, self.handle_menu_button))
+
+        submission_menu_filter = filters.Regex(
+            f"^({SUBMIT_MENU_CANCEL}|{SUBMIT_MENU_SKIP_CONTENT}|{SUBMIT_MENU_SKIP_MEDIA}|"
+            f"{SUBMIT_MENU_DONE_MEDIA}|{SUBMIT_MENU_CONFIRM}|{SUBMIT_MENU_ANONYMOUS_YES}|"
+            f"{SUBMIT_MENU_ANONYMOUS_NO})$"
+        )
+        self.application.add_handler(
+            MessageHandler(submission_menu_filter, self.handle_stray_submission_button)
+        )
+        self.application.add_handler(
+            CommandHandler("cancel_submit", self.cancel_submission_outside_conversation)
+        )
 
         # 消息处理器
         self.application.add_handler(

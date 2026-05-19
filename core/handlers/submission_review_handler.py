@@ -16,6 +16,7 @@ from typing import Any
 from telethon import Button
 
 from core.config import ADMIN_LIST
+from core.i18n.i18n import get_text
 from core.infrastructure.database.submission_repo import get_submission_repo
 from core.services.submission_service import get_submission_service
 
@@ -113,7 +114,10 @@ class SubmissionReviewHandler:
             review_text = self._build_review_text(submission)
 
             # 构建审核按钮
-            buttons = self._build_review_buttons(submission_id)
+            buttons = self._build_review_buttons(
+                submission_id,
+                can_force_signature=self._can_force_signature(submission),
+            )
 
             # 通知所有管理员
             sent_msg_ids = []
@@ -196,13 +200,15 @@ class SubmissionReviewHandler:
             if len(parts) < 3:
                 return
 
-            action = parts[1]  # aiopt / approve / reject
+            action = parts[1]  # aiopt / approve / signapprove / reject
             submission_id = int(parts[2])
 
             if action == "aiopt":
                 await self._handle_ai_optimize(event, submission_id)
             elif action == "approve":
                 await self._handle_approve(event, submission_id, client)
+            elif action == "signapprove":
+                await self._handle_approve(event, submission_id, client, signature_forced=True)
             elif action == "reject":
                 await self._handle_reject(event, submission_id)
             elif action == "restore":
@@ -311,30 +317,56 @@ class SubmissionReviewHandler:
 
         return first_msg_id
 
-    def _build_review_buttons(self, submission_id: int, show_restore: bool = False) -> list:
+    @staticmethod
+    def _can_force_signature(submission: dict[str, Any] | None) -> bool:
+        """判断审核按钮是否允许强制署名。"""
+        if not submission:
+            return False
+        return bool(submission.get("is_anonymous") and submission.get("submitter_name"))
+
+    def _build_review_buttons(
+        self,
+        submission_id: int,
+        show_restore: bool = False,
+        can_force_signature: bool = False,
+    ) -> list:
         """构建审核按钮
 
         Args:
             submission_id: 投稿ID
             show_restore: 是否显示恢复原文按钮（AI优化后显示）
+            can_force_signature: 是否显示署名通过按钮
         """
-        buttons = [
+        decision_buttons = [
             Button.inline("✅ 同意", data=f"submission_approve_{submission_id}".encode()),
-            Button.inline("❌ 拒绝", data=f"submission_reject_{submission_id}".encode()),
         ]
+        if can_force_signature:
+            decision_buttons.append(
+                Button.inline(
+                    get_text("submission.review_approve_signed"),
+                    data=f"submission_signapprove_{submission_id}".encode(),
+                )
+            )
+        decision_buttons.append(
+            Button.inline("❌ 拒绝", data=f"submission_reject_{submission_id}".encode())
+        )
+
         if show_restore:
-            buttons.append(
+            action_buttons = [
                 Button.inline("🔄 恢复原文", data=f"submission_restore_{submission_id}".encode())
-            )
+            ]
         else:
-            buttons.append(
+            action_buttons = [
                 Button.inline("🤖 AI 优化", data=f"submission_aiopt_{submission_id}".encode())
-            )
-        return [buttons]
+            ]
+        return [decision_buttons, action_buttons]
 
     async def _handle_ai_optimize(self, event, submission_id: int) -> None:
         """处理 AI 优化按钮"""
+        can_force_signature = False
         try:
+            submission = await self.repo.get_submission(submission_id)
+            can_force_signature = self._can_force_signature(submission)
             await event.edit("🤖 正在使用 AI 优化投稿内容，请稍候...")
 
             result = await self.service.ai_optimize(submission_id)
@@ -344,18 +376,28 @@ class SubmissionReviewHandler:
                 optimized = result["optimized_content"]
                 title_preview = f"标题：{optimized_title}\n\n" if optimized_title else ""
                 content_preview = optimized[:500] + "..." if len(optimized) > 500 else optimized
-                buttons = self._build_review_buttons(submission_id, show_restore=True)
+                buttons = self._build_review_buttons(
+                    submission_id,
+                    show_restore=True,
+                    can_force_signature=can_force_signature,
+                )
                 await event.edit(
                     f"🤖 AI 优化完成\n\n{title_preview}正文：\n{content_preview}\n\n请使用同意或拒绝按钮继续审核。",
                     buttons=buttons,
                 )
             else:
-                buttons = self._build_review_buttons(submission_id)
+                buttons = self._build_review_buttons(
+                    submission_id,
+                    can_force_signature=can_force_signature,
+                )
                 await event.edit(f"❌ AI 优化失败: {result['message']}", buttons=buttons)
         except Exception as e:
             logger.error(f"AI 优化投稿失败: {type(e).__name__}: {e}", exc_info=True)
             try:
-                buttons = self._build_review_buttons(submission_id)
+                buttons = self._build_review_buttons(
+                    submission_id,
+                    can_force_signature=can_force_signature,
+                )
                 await event.edit(f"❌ AI 优化失败: {str(e)}", buttons=buttons)
             except Exception:
                 await event.edit(f"❌ AI 优化失败: {str(e)}")
@@ -381,7 +423,11 @@ class SubmissionReviewHandler:
                 clear_ai_content=True,
             )
 
-            buttons = self._build_review_buttons(submission_id, show_restore=False)
+            buttons = self._build_review_buttons(
+                submission_id,
+                show_restore=False,
+                can_force_signature=self._can_force_signature(submission),
+            )
             await event.edit(
                 f"🔄 已恢复原文\n\n{submission['title']}\n\n{preview}\n\n请使用同意或拒绝按钮继续审核。",
                 buttons=buttons,
@@ -390,19 +436,32 @@ class SubmissionReviewHandler:
             logger.error(f"恢复原文失败: {type(e).__name__}: {e}", exc_info=True)
             await event.edit(f"❌ 恢复失败: {str(e)}")
 
-    async def _handle_approve(self, event, submission_id: int, client) -> None:
+    async def _handle_approve(
+        self, event, submission_id: int, client, signature_forced: bool = False
+    ) -> None:
         """处理同意按钮"""
         try:
             admin_id = event.sender_id
-            result = await self.service.approve_submission(submission_id, reviewed_by=admin_id)
+            result = await self.service.approve_submission(
+                submission_id,
+                reviewed_by=admin_id,
+                signature_forced=signature_forced,
+            )
 
             if result["success"]:
                 submission = result["submission"]
                 # 发布到目标频道
                 publish_result = await self._publish_to_channel(submission, client)
                 # 通知投稿者
-                await self._notify_submitter(submission, "approved", publish_result)
+                await self._notify_submitter(
+                    submission,
+                    "approved",
+                    publish_result,
+                    signature_forced=bool(submission.get("signature_forced")),
+                )
                 status_msg = f"✅ 投稿已通过\n\n投稿ID: {submission_id}\n审核人: {admin_id}"
+                if submission.get("signature_forced"):
+                    status_msg += f"\n{get_text('submission.review_signature_forced')}"
                 if publish_result.get("success"):
                     status_msg += f"\n\n📢 已发布到频道: {publish_result.get('channel_name', '')}"
                 else:
@@ -449,18 +508,7 @@ class SubmissionReviewHandler:
                 return {"success": False, "error": "未指定目标频道"}
 
             # 构建发布消息（优先使用 AI 优化后的标题和内容）
-            title = submission.get("ai_optimized_title") or submission["title"]
-            content = submission.get("ai_optimized_content") or submission.get("content") or ""
-            is_anonymous = bool(submission.get("is_anonymous"))
-            submitter_name = submission.get("submitter_name")
-
-            caption = f"**{title}**\n"
-            if content:
-                caption += f"\n{content}\n"
-            if is_anonymous or not submitter_name:
-                caption += "\n—— 投稿者: 匿名"
-            else:
-                caption += f"\n—— 投稿者: @{submitter_name}"
+            caption = self._build_publish_caption(submission)
 
             media_files = submission.get("media_files") or []
             first_message_id = None
@@ -516,8 +564,37 @@ class SubmissionReviewHandler:
             logger.error(f"发布投稿到频道失败: {type(e).__name__}: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
+    def _build_publish_caption(self, submission: dict[str, Any]) -> str:
+        """构建投稿发布文本。"""
+        title = submission.get("ai_optimized_title") or submission["title"]
+        content = submission.get("ai_optimized_content") or submission.get("content") or ""
+
+        caption = f"**{title}**\n"
+        if content:
+            caption += f"\n{content}\n"
+        caption += f"\n{self._format_submitter_signature(submission)}"
+        return caption
+
+    @staticmethod
+    def _format_submitter_signature(submission: dict[str, Any]) -> str:
+        """格式化投稿者署名。"""
+        is_anonymous = bool(submission.get("is_anonymous"))
+        signature_forced = bool(submission.get("signature_forced"))
+        submitter_name = submission.get("submitter_name")
+
+        if signature_forced and not submitter_name:
+            logger.warning(f"投稿 {submission.get('id')} 已强制署名但投稿者名称为空")
+
+        if (is_anonymous and not signature_forced) or not submitter_name:
+            return "—— 投稿者: 匿名"
+        return f"—— 投稿者: @{submitter_name}"
+
     async def _notify_submitter(
-        self, submission: dict[str, Any], status: str, publish_result=None
+        self,
+        submission: dict[str, Any],
+        status: str,
+        publish_result=None,
+        signature_forced: bool = False,
     ) -> None:
         """通过 notification_queue 通知投稿者审核结果
 
@@ -530,6 +607,9 @@ class SubmissionReviewHandler:
             db = get_db_manager()
             status_text = "通过" if status == "approved" else "拒绝"
             extra_msg = ""
+            signature_notice = ""
+            if status == "approved" and signature_forced:
+                signature_notice = get_text("submission.signature_forced_notice")
             if status == "approved" and publish_result and publish_result.get("success"):
                 channel_name = publish_result.get("channel_name", "")
                 message_url = publish_result.get("message_url")
@@ -543,7 +623,10 @@ class SubmissionReviewHandler:
                 content={
                     "submission_id": submission["id"],
                     "title": submission["title"],
-                    "message": f"您的投稿「{submission['title']}」已被管理员{status_text}。{extra_msg}",
+                    "message": (
+                        f"您的投稿「{submission['title']}」已被管理员{status_text}。"
+                        f"{signature_notice}{extra_msg}"
+                    ),
                 },
             )
             logger.info(f"已通知投稿者 {submission['submitter_id']} 审核结果: {status}")

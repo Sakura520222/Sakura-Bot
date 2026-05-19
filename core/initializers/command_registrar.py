@@ -117,6 +117,20 @@ from core.services.poll.poll_regeneration_handlers import (
 )
 
 
+def _is_submission_review_callback(event) -> bool:
+    """判断是否为投稿审核回调。"""
+    data = getattr(event, "data", None)
+    return isinstance(data, bytes) and data.startswith(
+        (
+            b"submission_aiopt_",
+            b"submission_approve_",
+            b"submission_signapprove_",
+            b"submission_reject_",
+            b"submission_restore_",
+        )
+    )
+
+
 class CommandRegistrar:
     """命令注册器 - 统一管理所有命令和回调的注册"""
 
@@ -624,16 +638,6 @@ class CommandRegistrar:
 
         client.add_event_handler(
             handle_submission_callback,
-            CallbackQuery(
-                func=lambda e: (
-                    e.data
-                    and (
-                        e.data.startswith(b"submission_aiopt_")
-                        or e.data.startswith(b"submission_approve_")
-                        or e.data.startswith(b"submission_reject_")
-                        or e.data.startswith(b"submission_restore_")
-                    )
-                )
-            ),
+            CallbackQuery(func=_is_submission_review_callback),
         )
         self.logger.info("投稿审核回调处理器已注册")
