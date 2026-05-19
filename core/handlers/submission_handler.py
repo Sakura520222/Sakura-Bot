@@ -81,12 +81,8 @@ class SubmissionHandler:
 
         # 检查是否有进行中的投稿
         if user_id in self._user_states:
-            target = update.callback_query or update.message
-            await target.reply_text(
-                "⚠️ 您已有一个进行中的投稿。请先完成或取消当前投稿 (/cancel_submit)。",
-                reply_markup=build_submission_title_keyboard(),
-            )
-            return ConversationHandler.END
+            self.clear_user_state(user_id)
+            logger.info(f"用户 {user_name} 重新开始投稿流程，已清理旧状态")
 
         # 初始化投稿会话
         self._user_states[user_id] = {
@@ -112,6 +108,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -141,6 +138,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -156,6 +154,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -183,6 +182,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -207,6 +207,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -279,6 +280,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -309,6 +311,7 @@ class SubmissionHandler:
         user_id = query.from_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await query.edit_message_text(get_text("submission.session_expired"))
             return ConversationHandler.END
 
@@ -323,6 +326,7 @@ class SubmissionHandler:
                 # 进入确认
                 return await self._show_confirm_text(query)
             else:
+                self.clear_user_state(user_id)
                 await query.edit_message_text("❌ 频道选择无效，请重新发送 /submit。")
                 return ConversationHandler.END
 
@@ -333,6 +337,7 @@ class SubmissionHandler:
         user_id = query.from_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await query.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -365,6 +370,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
@@ -397,6 +403,7 @@ class SubmissionHandler:
         user_id = update.effective_user.id
         state = self._user_states.get(user_id)
         if not state:
+            self.clear_user_state(user_id)
             await update.message.reply_text(
                 get_text("submission.session_expired"),
                 reply_markup=build_qa_main_menu_keyboard(),
