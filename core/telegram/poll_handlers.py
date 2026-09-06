@@ -47,6 +47,8 @@ def _build_poll_and_buttons(poll_data, channel, summary_message_id):
         id=0,
         question=TextWithEntities(question_text, entities=[]),
         answers=poll_answers,
+        # 新版 Telethon 的 TL Layer 把 hash 变为必填参数，构造时传 0 即可
+        hash=0,
         closed=False,
         public_voters=is_public,
         multiple_choice=False,
