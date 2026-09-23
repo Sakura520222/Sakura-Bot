@@ -280,3 +280,4 @@ query
 TG-Forwarder/
 data/config.json.last_valid
 .codex
+.codegraph/

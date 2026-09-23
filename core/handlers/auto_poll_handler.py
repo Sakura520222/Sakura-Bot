@@ -271,6 +271,7 @@ class AutoPollHandler:
                 id=0,
                 question=TextWithEntities(question_text, entities=[]),
                 answers=poll_answers,
+                hash=0,
                 closed=False,
                 public_voters=config_module.POLL_PUBLIC_VOTERS,
                 multiple_choice=False,
