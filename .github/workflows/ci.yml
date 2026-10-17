@@ -102,6 +102,25 @@ jobs:
   tests:
     name: 单元测试
     runs-on: ubuntu-latest
+    env:
+      # 收集测试模块时就会创建 Settings，必须在 pytest 启动前提供合法配置。
+      # 以下均为测试占位值，单元测试通过 mock 隔离外部服务。
+      TELEGRAM_API_ID: "123456"
+      TELEGRAM_API_HASH: test_ci_hash_12345
+      TELEGRAM_BOT_TOKEN: 123456:ABCDEF_test_ci_token
+      LLM_API_KEY: test_ci_api_key_for_testing_only
+      LLM_BASE_URL: https://api.test.com
+      LLM_MODEL: test-model
+      REPORT_ADMIN_IDS: 123456,789012
+      LANGUAGE: zh-CN
+      LOG_LEVEL: DEBUG
+      ENABLE_POLL: "true"
+      DATABASE_TYPE: mysql
+      MYSQL_HOST: localhost
+      MYSQL_PORT: "3306"
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_password
+      MYSQL_DATABASE: sakura_bot_test
     
     steps:
       - name: 检出代码
@@ -120,57 +139,29 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
       - name: 运行单元测试并收集覆盖率
-        env:
-          # 测试用环境变量（仅用于 CI 测试，不使用真实 API）
-          TELEGRAM_API_ID: 123456
-          TELEGRAM_API_HASH: test_ci_hash_12345
-          TELEGRAM_BOT_TOKEN: 123456:ABCDEF_test_ci_token
-          LLM_API_KEY: test_ci_api_key_for_testing_only
-          LLM_BASE_URL: https://api.test.com
-          LLM_MODEL: test-model
-          REPORT_ADMIN_IDS: 123456,789012
-          LANGUAGE: zh-CN
-          LOG_LEVEL: DEBUG
-          ENABLE_POLL: "true"
-          DATABASE_TYPE: sqlite
+        id: unit_tests
         run: |
-          if [ -d tests ]; then
-            pytest tests/ -v -m "not slow and not integration" \
-              --cov=core \
-              --cov-report=xml:coverage.xml \
-              --cov-report=html:htmlcov \
-              --cov-report=term-missing \
-              --tb=short \
-              --strict-markers || true
-            echo "✅ 覆盖率报告生成完成"
-          else
-            echo "未找到测试目录，跳过测试"
-          fi
+          python -m pytest tests/ -v -m "not slow and not integration" \
+            --cov=core \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-report=term-missing \
+            --junitxml=test-results/unit.xml \
+            --tb=short \
+            --strict-markers
+          echo "✅ 单元测试通过，覆盖率报告生成完成"
       
       - name: 运行集成测试（如果单元测试通过）
+        id: integration_tests
         if: success()
-        env:
-          # 集成测试环境变量（与单元测试保持一致）
-          TELEGRAM_API_ID: 123456
-          TELEGRAM_API_HASH: test_ci_hash_12345
-          TELEGRAM_BOT_TOKEN: 123456:ABCDEF_test_ci_token
-          LLM_API_KEY: test_ci_api_key_for_testing_only
-          LLM_BASE_URL: https://api.test.com
-          LLM_MODEL: test-model
-          REPORT_ADMIN_IDS: 123456,789012
-          LANGUAGE: zh-CN
-          LOG_LEVEL: DEBUG
-          ENABLE_POLL: "true"
-          DATABASE_TYPE: sqlite
         run: |
-          if [ -d tests ]; then
-            pytest tests/ -v -m "integration" \
-              --cov=core \
-              --cov-append \
-              --cov-report=term-missing \
-              --tb=short \
-              --strict-markers || true
-          fi
+          python -m pytest tests/ -v -m "integration" \
+            --cov=core \
+            --cov-append \
+            --cov-report=term-missing \
+            --junitxml=test-results/integration.xml \
+            --tb=short \
+            --strict-markers
       
       - name: 验证 coverage 数据文件
         if: always()
@@ -189,11 +180,16 @@ jobs:
         run: |
           echo "## 📊 测试结果摘要" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f coverage.xml ]; then
+          echo "- 单元测试: ${{ steps.unit_tests.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 集成测试: ${{ steps.integration_tests.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f .coverage ]; then
             echo "### 覆盖率报告" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            pytest --cov=core --cov-report=term >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            python -m coverage report >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "未生成覆盖率数据，请查看测试步骤日志。" >> $GITHUB_STEP_SUMMARY
           fi
       
       - name: 上传覆盖率报告到 Codecov
@@ -205,12 +201,14 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
       
-      - name: 上传覆盖率 HTML 报告
+      - name: 上传测试与覆盖率报告
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
-          path: htmlcov/
+          path: |
+            htmlcov/
+            test-results/
           retention-days: 30
 
   summary:
@@ -233,7 +231,8 @@ jobs:
         run: |
           if [ "${{ needs.code-quality.result }}" != "success" ] || \
              [ "${{ needs.security-scan.result }}" != "success" ] || \
-             [ "${{ needs.docker-build-test.result }}" != "success" ]; then
+             [ "${{ needs.docker-build-test.result }}" != "success" ] || \
+             [ "${{ needs.tests.result }}" != "success" ]; then
             echo "CI 检查未全部通过"
             exit 1
           fi
