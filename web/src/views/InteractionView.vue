@@ -76,22 +76,38 @@
             <!-- 频道投票配置 -->
             <n-card title="频道投票配置">
               <template #header-extra>
-                <n-tag type="info" size="small">
-                  {{ Object.keys(pollSettings.settings || {}).length }} 个频道
-                </n-tag>
+                <n-space align="center">
+                  <n-tag type="info" size="small">
+                    {{ Object.keys(pollSettings.settings).length }} 个频道
+                  </n-tag>
+                  <n-button
+                    type="primary"
+                    size="small"
+                    :disabled="!availablePollChannels.length"
+                    @click="openChannelPoll()"
+                  >
+                    添加频道配置
+                  </n-button>
+                </n-space>
               </template>
               <n-empty
-                v-if="!Object.keys(pollSettings.settings || {}).length"
-                description="暂无频道投票配置"
-              />
+                v-if="!Object.keys(pollSettings.settings).length"
+                :description="channels.length ? '暂无频道投票配置，点击右上角添加' : '暂无频道，请先在频道管理中添加频道'"
+              >
+                <template v-if="!channels.length" #extra>
+                  <router-link to="/channels">
+                    <n-button size="small">前往频道管理</n-button>
+                  </router-link>
+                </template>
+              </n-empty>
               <n-table v-else :bordered="false" :single-line="false" size="small" striped>
                 <thead>
                   <tr>
                     <th>频道</th>
-                    <th style="width: 100px">投票</th>
+                    <th style="width: 120px">投票</th>
                     <th style="width: 120px">发送到频道</th>
-                    <th style="width: 100px">公开投票</th>
-                    <th style="width: 80px">操作</th>
+                    <th style="width: 120px">公开投票</th>
+                    <th style="width: 120px">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -102,33 +118,53 @@
                     <td>
                       <n-switch
                         size="small"
-                        :value="(setting as any).enabled"
+                        :value="setting.enabled ?? globalPoll.enable_poll"
+                        :disabled="savingPollChannels.has(String(channel))"
                         @update:value="(v: boolean) => saveChannelPoll(String(channel), { enabled: v })"
                       />
+                      <n-text v-if="setting.enabled == null" depth="3" style="margin-left: 8px">
+                        继承全局
+                      </n-text>
                     </td>
                     <td>
                       <n-switch
                         size="small"
-                        :value="(setting as any).send_to_channel"
+                        :value="setting.send_to_channel ?? false"
+                        :disabled="savingPollChannels.has(String(channel))"
                         @update:value="(v: boolean) => saveChannelPoll(String(channel), { send_to_channel: v })"
                       />
                     </td>
                     <td>
                       <n-switch
                         size="small"
-                        :value="(setting as any).public_voters"
+                        :value="setting.public_voters ?? globalPoll.public_voters"
+                        :disabled="savingPollChannels.has(String(channel))"
                         @update:value="(v: boolean) => saveChannelPoll(String(channel), { public_voters: v })"
                       />
+                      <n-text v-if="setting.public_voters == null" depth="3" style="margin-left: 8px">
+                        继承全局
+                      </n-text>
                     </td>
                     <td>
-                      <n-button
-                        size="tiny"
-                        quaternary
-                        type="error"
-                        @click="deleteChannelPoll(String(channel))"
-                      >
-                        删除
-                      </n-button>
+                      <n-space :wrap="false">
+                        <n-button
+                          size="tiny"
+                          quaternary
+                          :disabled="savingPollChannels.has(String(channel))"
+                          @click="openChannelPoll(String(channel))"
+                        >
+                          编辑
+                        </n-button>
+                        <n-button
+                          size="tiny"
+                          quaternary
+                          type="error"
+                          :disabled="savingPollChannels.has(String(channel))"
+                          @click="deleteChannelPoll(String(channel))"
+                        >
+                          删除
+                        </n-button>
+                      </n-space>
                     </td>
                   </tr>
                 </tbody>
@@ -296,6 +332,54 @@
       </n-tabs>
     </div>
   </n-spin>
+
+  <n-modal
+    v-model:show="showChannelPollModal"
+    preset="card"
+    :title="editingPollChannel ? '编辑频道投票配置' : '添加频道投票配置'"
+    style="width: 560px; max-width: calc(100vw - 32px)"
+    :mask-closable="!savingChannelPoll"
+    :close-on-esc="!savingChannelPoll"
+    :closable="!savingChannelPoll"
+  >
+    <n-form label-placement="top" :disabled="savingChannelPoll">
+      <n-form-item label="频道">
+        <n-select
+          v-model:value="channelPollForm.channel"
+          :options="pollChannelOptions"
+          :disabled="!!editingPollChannel || savingChannelPoll"
+          filterable
+          placeholder="选择要单独配置投票的频道"
+        />
+      </n-form-item>
+      <n-form-item label="投票功能">
+        <n-select v-model:value="channelPollForm.enabled" :options="pollEnabledOptions" />
+      </n-form-item>
+      <n-form-item label="发送位置">
+        <n-switch v-model:value="channelPollForm.send_to_channel">
+          <template #checked>频道</template>
+          <template #unchecked>讨论组</template>
+        </n-switch>
+      </n-form-item>
+      <n-form-item label="公开投票者">
+        <n-select v-model:value="channelPollForm.public_voters" :options="pollVoterOptions" />
+      </n-form-item>
+    </n-form>
+    <n-text depth="3">选择“继承全局”可取消该项覆盖；删除频道配置后恢复全局默认设置。</n-text>
+    <template #footer>
+      <n-space justify="end">
+        <n-button :disabled="savingChannelPoll" @click="showChannelPollModal = false">取消</n-button>
+        <n-button
+          type="primary"
+          :loading="savingChannelPoll"
+          :disabled="!channelPollForm.channel"
+          @click="saveChannelPollForm"
+        >
+          保存配置
+        </n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -317,6 +401,7 @@ import {
   updatePrompt,
   resetPrompt,
 } from "@/api/modules";
+import type { ChannelPollSettings } from "@/api/modules";
 import { getChannelName } from "@/utils/formatters";
 
 const message = useMessage();
@@ -324,7 +409,18 @@ const dialog = useDialog();
 const loading = ref(true);
 
 // ===== 投票设置 =====
-const pollSettings = ref<Record<string, any>>({});
+const pollSettings = ref<{ settings: Record<string, ChannelPollSettings> }>({ settings: {} });
+type PollOverride = "inherit" | "on" | "off";
+const showChannelPollModal = ref(false);
+const editingPollChannel = ref<string | null>(null);
+const savingChannelPoll = ref(false);
+const savingPollChannels = reactive(new Set<string>());
+const channelPollForm = reactive({
+  channel: null as string | null,
+  enabled: "inherit" as PollOverride,
+  send_to_channel: false,
+  public_voters: "inherit" as PollOverride,
+});
 const pollPrompt = ref("");
 const savingPrompt = ref(false);
 const globalPoll = reactive({
@@ -338,6 +434,24 @@ const globalPoll = reactive({
 const autoPollEnabled = ref(false);
 const autoPollChannelSettings = ref<Record<string, any>>({});
 const channels = ref<string[]>([]);
+const availablePollChannels = computed(() =>
+  [...new Set(channels.value)].filter((channel) => !(channel in pollSettings.value.settings)),
+);
+const pollChannelOptions = computed(() =>
+  (editingPollChannel.value ? [editingPollChannel.value] : availablePollChannels.value).map(
+    (channel) => ({ label: getChannelName(channel), value: channel }),
+  ),
+);
+const pollEnabledOptions = computed(() => [
+  { label: `继承全局（${globalPoll.enable_poll ? "已启用" : "已禁用"}）`, value: "inherit" },
+  { label: "启用", value: "on" },
+  { label: "禁用", value: "off" },
+]);
+const pollVoterOptions = computed(() => [
+  { label: `继承全局（${globalPoll.public_voters ? "公开" : "匿名"}）`, value: "inherit" },
+  { label: "公开", value: "on" },
+  { label: "匿名", value: "off" },
+]);
 const autoPollConfiguredCount = computed(
   () => Object.keys(autoPollChannelSettings.value || {}).length,
 );
@@ -364,7 +478,7 @@ async function loadData() {
     ]);
 
     if (pollRes.success) {
-      pollSettings.value = pollRes.data;
+      pollSettings.value = { settings: pollRes.data.settings || {} };
       globalPoll.enable_poll = pollRes.data.enable_poll ?? true;
       globalPoll.poll_regen_threshold = pollRes.data.poll_regen_threshold ?? 5;
       globalPoll.public_voters = pollRes.data.public_voters ?? true;
@@ -414,7 +528,40 @@ function saveGlobalPoll() {
   }, 500);
 }
 
-async function saveChannelPoll(channel: string, data: Record<string, unknown>) {
+function openChannelPoll(channel?: string) {
+  const setting = channel ? pollSettings.value.settings[channel] : undefined;
+  editingPollChannel.value = channel ?? null;
+  channelPollForm.channel = channel ?? null;
+  channelPollForm.enabled = setting?.enabled == null ? "inherit" : setting.enabled ? "on" : "off";
+  channelPollForm.send_to_channel = setting?.send_to_channel ?? false;
+  channelPollForm.public_voters =
+    setting?.public_voters == null ? "inherit" : setting.public_voters ? "on" : "off";
+  showChannelPollModal.value = true;
+}
+
+async function saveChannelPollForm() {
+  const channel = channelPollForm.channel;
+  if (!channel || savingChannelPoll.value) return;
+  savingChannelPoll.value = true;
+  try {
+    const saved = await saveChannelPoll(channel, {
+      enabled: channelPollForm.enabled === "inherit" ? null : channelPollForm.enabled === "on",
+      send_to_channel: channelPollForm.send_to_channel,
+      public_voters:
+        channelPollForm.public_voters === "inherit" ? null : channelPollForm.public_voters === "on",
+    });
+    if (saved) {
+      showChannelPollModal.value = false;
+      message.success("频道投票配置已保存");
+    }
+  } finally {
+    savingChannelPoll.value = false;
+  }
+}
+
+async function saveChannelPoll(channel: string, data: ChannelPollSettings): Promise<boolean> {
+  if (savingPollChannels.has(channel)) return false;
+  savingPollChannels.add(channel);
   try {
     const res = await updatePollSettings(channel, data);
     if (res.success) {
@@ -423,12 +570,16 @@ async function saveChannelPoll(channel: string, data: Record<string, unknown>) {
       Object.assign(current, data);
       settings[channel] = current;
       pollSettings.value = { ...pollSettings.value, settings };
+      return true;
     } else {
       message.error(res.message);
     }
   } catch {
     message.error("保存失败");
+  } finally {
+    savingPollChannels.delete(channel);
   }
+  return false;
 }
 
 function deleteChannelPoll(channel: string) {

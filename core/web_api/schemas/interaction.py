@@ -18,9 +18,13 @@ from pydantic import BaseModel, Field
 class PollSettingsUpdate(BaseModel):
     """投票设置更新请求（频道级）"""
 
-    enabled: bool | None = Field(default=None, description="是否启用投票")
-    send_to_channel: bool | None = Field(default=None, description="是否发送到频道")
-    public_voters: bool | None = Field(default=None, description="是否公开投票者")
+    enabled: bool | None = Field(default=None, description="是否启用投票，null 恢复全局配置")
+    send_to_channel: bool | None = Field(
+        default=None, description="是否发送到频道，null 恢复讨论组"
+    )
+    public_voters: bool | None = Field(
+        default=None, description="是否公开投票者，null 恢复全局配置"
+    )
 
 
 class GlobalPollSettingsUpdate(BaseModel):

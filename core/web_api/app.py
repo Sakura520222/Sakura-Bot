@@ -22,6 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from core import __version__
+
 from .middleware import AccessLogMiddleware, AuthMiddleware
 from .routes import (
     ai_config,
@@ -49,7 +51,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Sakura-Bot WebUI API",
         description="Sakura-Bot Telegram 频道管理助手 Web 管理界面 API",
-        version="1.0.0",
+        version=__version__,
         docs_url="/api/docs",
         redoc_url="/api/redoc",
     )

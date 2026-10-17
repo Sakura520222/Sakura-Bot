@@ -365,7 +365,13 @@ export async function updateGlobalPollSettings(data: Record<string, unknown>) {
   return res.data;
 }
 
-export async function updatePollSettings(channel: string, data: Record<string, unknown>) {
+export interface ChannelPollSettings {
+  enabled?: boolean | null;
+  send_to_channel?: boolean | null;
+  public_voters?: boolean | null;
+}
+
+export async function updatePollSettings(channel: string, data: ChannelPollSettings) {
   const res = await apiClient.put(`/interaction/poll-settings/${encodeURIComponent(channel)}`, data);
   return res.data;
 }
