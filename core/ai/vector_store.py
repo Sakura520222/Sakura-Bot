@@ -12,9 +12,9 @@
 向量存储管理器 - 使用ChromaDB存储和检索向量
 """
 
-import hashlib
 import logging
 import os
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -480,17 +480,40 @@ class VectorStore:
         if results and results["ids"] and len(results["ids"]) > 0:
             for i in range(len(results["ids"][0])):
                 doc_id = results["ids"][0][i]
-                # summaries collection 使用数字 ID，messages collection 使用字符串 ID
+                # 区分两种文档 ID：
+                # - summaries collection：数字 ID，即真实的数据库总结ID
+                # - messages collection：字符串 "channel_id:message_id"，
+                #   其中 message_id 是真实的 Telegram 频道消息 ID。
+                # 历史 Bug：曾把字符串 ID 的 md5 哈希当作 summary_id 返回，
+                # 模型会把这个内部哈希当成消息 ID 拼进链接。现在：
+                # - summary_id 仅在数字 ID（真实总结）时填充
+                # - 消息文档解析出真实 message_id，供链接构造使用
+                summary_id = None
+                message_id = None
                 try:
-                    numeric_id = int(doc_id)
+                    summary_id = int(doc_id)
                 except (ValueError, TypeError):
-                    # 字符串 ID 用确定性哈希生成数值标识（跨进程稳定）
-                    numeric_id = int(hashlib.md5(doc_id.encode()).hexdigest()[:8], 16)
+                    match = re.search(r":(\d+)$", str(doc_id))
+                    if match:
+                        try:
+                            message_id = int(match.group(1))
+                        except ValueError:
+                            message_id = None
+
+                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+                # 元数据中的 message_id 优先（入库时显式保存的真实消息ID）
+                if message_id is None and metadata.get("message_id"):
+                    try:
+                        message_id = int(metadata["message_id"])
+                    except (TypeError, ValueError):
+                        message_id = None
+
                 formatted.append(
                     {
-                        "summary_id": numeric_id,
+                        "summary_id": summary_id,
+                        "message_id": message_id,
                         "summary_text": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                        "metadata": metadata,
                         "distance": results["distances"][0][i] if results["distances"] else 0,
                         "similarity": (
                             1 - results["distances"][0][i] if results["distances"] else 0

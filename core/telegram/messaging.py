@@ -442,10 +442,11 @@ async def send_report(
                             exc_info=True,
                         )
 
-                # 如果成功发送给管理员，使用这些消息ID作为 report_message_ids
-                if admin_message_ids and not report_message_ids:
-                    report_message_ids = admin_message_ids
-                    logger.info(f"使用管理员消息ID作为报告消息ID: {report_message_ids}")
+                # 注意：管理员私聊中的消息 ID 不作为 report_message_ids 使用。
+                # 历史 Bug 曾在此处回退使用管理员消息 ID，导致这些私聊消息 ID
+                # 被保存为 summary_message_ids，再被拼接成"源频道帖子链接"——
+                # 链接指向频道中根本不存在的消息。summary_message_ids 必须只
+                # 包含真实发布在源频道中的报告消息 ID。
             else:
                 logger.info("跳过向管理员发送报告")
 

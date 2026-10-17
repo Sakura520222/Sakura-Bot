@@ -82,16 +82,18 @@ class RealtimeRAGHandler:
         message_id: int,
         text: str,
         sender_id: int | None = None,
+        channel_username: str | None = None,
     ) -> bool:
         """
         将频道消息加入处理队列
 
         Args:
-            channel_id: 频道ID
+            channel_id: 频道ID（数字内部 ID）
             channel_name: 频道名称
             message_id: 消息ID
             text: 消息文本内容
             sender_id: 发送者ID（可选）
+            channel_username: 频道公开 username（可选，用于生成公开帖子链接）
 
         Returns:
             是否成功入队
@@ -115,6 +117,7 @@ class RealtimeRAGHandler:
                     "channel_name": channel_name,
                     "text": text.strip(),
                     "sender_id": sender_id,
+                    "channel_username": channel_username,
                     "created_at": datetime.now(UTC).isoformat(),
                 }
             )
@@ -135,16 +138,18 @@ class RealtimeRAGHandler:
         message_id: int,
         text: str,
         sender_id: int | None = None,
+        channel_username: str | None = None,
     ) -> bool:
         """
         将消息更新加入处理队列（编辑消息时调用）
 
         Args:
-            channel_id: 频道ID
+            channel_id: 频道ID（数字内部 ID）
             channel_name: 频道名称
             message_id: 消息ID
             text: 新的文本内容
             sender_id: 发送者ID（可选）
+            channel_username: 频道公开 username（可选，用于生成公开帖子链接）
 
         Returns:
             是否成功入队
@@ -167,6 +172,7 @@ class RealtimeRAGHandler:
                     "channel_name": channel_name,
                     "text": text.strip(),
                     "sender_id": sender_id,
+                    "channel_username": channel_username,
                     "created_at": datetime.now(UTC).isoformat(),
                     "is_update": True,
                 }
@@ -321,6 +327,9 @@ class RealtimeRAGHandler:
                     "created_at": item["created_at"],
                     "sender_id": str(item["sender_id"]) if item.get("sender_id") else "",
                 }
+                # 公开频道 username：生成帖子链接时优先于数字 ID（更友好可读）
+                if item.get("channel_username"):
+                    metadata["channel_username"] = str(item["channel_username"])
 
                 entry = {
                     "id": item["vector_id"],

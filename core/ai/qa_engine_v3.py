@@ -92,7 +92,10 @@ AGENT_TOOL_INSTRUCTIONS = """
    先调用 resolve_channel，再把 channel_id 传给搜索工具
 3. 可以同时调用多个搜索工具（如语义+关键词并行检索）
 4. 检索结果充足则回答，不足则调整参数再次检索
-5. 工具结果包含 post_links 时，最终回答在相关要点后保留链接作为证据
+5. 引用规则：只有消息类结果（source_type=message）带有后端验证过的
+   post_url 帖子链接，在相关要点后引用该链接作为证据；总结类结果
+   （source_type=summary）没有帖子链接。严禁根据 channel_id、message_id
+   或其他 ID 自行拼接 t.me 链接
 6. 最多进行{max_iterations}轮工具调用，之后必须基于已收集的信息给出最终回答
 """
 
