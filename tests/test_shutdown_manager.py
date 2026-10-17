@@ -12,7 +12,10 @@
 关机管理器单元测试
 """
 
+import json
 import os
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,10 +30,10 @@ class TestShutdownManager:
     def shutdown_manager(self):
         """创建关机管理器实例"""
         # 每次测试前重置单例
-        import core.shutdown_manager
+        import core.system.shutdown_manager
 
-        core.shutdown_manager._shutdown_manager = ShutdownManager()
-        return core.shutdown_manager._shutdown_manager
+        core.system.shutdown_manager._shutdown_manager = ShutdownManager()
+        return core.system.shutdown_manager._shutdown_manager
 
     def test_get_shutdown_manager_singleton(self, shutdown_manager):
         """测试关机管理器单例模式"""
@@ -59,9 +62,15 @@ class TestShutdownManager:
         """测试基本关机流程"""
         # Mock各个组件
         with (
-            patch("core.shutdown_manager.stop_qa_bot") as mock_stop_qa,
-            patch("core.shutdown_manager.get_scheduler_instance") as mock_get_scheduler,
-            patch("core.shutdown_manager.get_db_manager") as mock_get_db,
+            patch("core.system.process_manager.stop_qa_bot") as mock_stop_qa,
+            patch("core.config.get_scheduler_instance") as mock_get_scheduler,
+            patch("core.infrastructure.database.manager.get_db_manager") as mock_get_db,
+            patch(
+                "core.handlers.channel_comment_welcome.shutdown_comment_welcome",
+                new_callable=AsyncMock,
+            ),
+            patch("core.handlers.auto_poll_handler.shutdown_auto_poll", new_callable=AsyncMock),
+            patch.object(shutdown_manager, "_wait_for_tasks", new_callable=AsyncMock),
         ):
             # 设置Mock返回值
             mock_stop_qa.return_value = {"success": True, "message": "stopped"}
@@ -79,7 +88,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_stop_qa_bot_with_timeout(self, shutdown_manager):
         """测试停止问答Bot（带超时）"""
-        with patch("core.shutdown_manager.stop_qa_bot") as mock_stop_qa:
+        with patch("core.system.process_manager.stop_qa_bot") as mock_stop_qa:
             mock_stop_qa.return_value = {"success": True, "message": "stopped"}
 
             await shutdown_manager._stop_qa_bot_with_timeout(timeout=2)
@@ -89,7 +98,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_stop_scheduler_with_timeout(self, shutdown_manager):
         """测试停止调度器（带超时）"""
-        with patch("core.shutdown_manager.get_scheduler_instance") as mock_get_scheduler:
+        with patch("core.config.get_scheduler_instance") as mock_get_scheduler:
             mock_scheduler = MagicMock()
             mock_scheduler.running = True
             mock_get_scheduler.return_value = mock_scheduler
@@ -105,11 +114,7 @@ class TestShutdownManager:
         mock_close = AsyncMock()
         mock_db.close = mock_close
 
-        with (
-            patch("core.shutdown_manager.get_db_manager") as mock_get_db,
-            patch("core.shutdown_manager.asyncio.iscoroutinefunction") as mock_is_coro,
-        ):
-            mock_is_coro.return_value = True
+        with patch("core.infrastructure.database.manager.get_db_manager") as mock_get_db:
             mock_get_db.return_value = mock_db
 
             await shutdown_manager._close_database_with_timeout(timeout=2)
@@ -124,17 +129,15 @@ class TestShutdownManager:
         mock_disconnect = AsyncMock()
         mock_client.disconnect = mock_disconnect
 
-        with patch("core.shutdown_manager.asyncio.wait_for"):
-            await shutdown_manager._disconnect_client_with_timeout(mock_client, timeout=3)
-
-            mock_disconnect.assert_called_once()
+        await shutdown_manager._disconnect_client_with_timeout(mock_client, timeout=3)
+        mock_disconnect.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_wait_for_tasks(self, shutdown_manager):
         """测试等待任务完成"""
         with (
-            patch("core.shutdown_manager.asyncio.all_tasks") as mock_all_tasks,
-            patch("core.shutdown_manager.asyncio.wait_for") as mock_wait,
+            patch("core.system.shutdown_manager.asyncio.all_tasks") as mock_all_tasks,
+            patch("core.system.shutdown_manager.asyncio.wait_for") as mock_wait,
         ):
             # 模拟没有其他任务
             mock_all_tasks.return_value = []
@@ -146,10 +149,10 @@ class TestShutdownManager:
 
     def test_perform_exit_normal(self, shutdown_manager, caplog):
         """测试正常退出"""
-        with patch("core.shutdown_manager.sys.exit") as mock_exit:
+        with patch("core.system.shutdown_manager.os._exit") as mock_exit:
             shutdown_manager.perform_exit(0)
 
-            # 验证sys.exit被调用
+            # 验证真实的进程退出边界被调用
             mock_exit.assert_called_once_with(0)
 
     def test_perform_exit_pm2_mode(self, shutdown_manager, monkeypatch, caplog):
@@ -157,10 +160,10 @@ class TestShutdownManager:
         # 设置PM2环境
         monkeypatch.setenv("PM2_HOME", "/home/user/.pm2")
 
-        with patch("core.shutdown_manager.sys.exit") as mock_exit:
+        with patch("core.system.shutdown_manager.os._exit") as mock_exit:
             shutdown_manager.perform_exit(0)
 
-            # 验证sys.exit被调用
+            # 验证真实的进程退出边界被调用
             mock_exit.assert_called_once_with(0)
 
     @pytest.mark.asyncio
@@ -182,9 +185,15 @@ class TestShutdownManager:
         mock_client.is_connected.return_value = False
 
         with (
-            patch("core.shutdown_manager.stop_qa_bot"),
-            patch("core.shutdown_manager.get_scheduler_instance") as mock_get_scheduler,
-            patch("core.shutdown_manager.get_db_manager"),
+            patch("core.system.process_manager.stop_qa_bot"),
+            patch("core.config.get_scheduler_instance") as mock_get_scheduler,
+            patch("core.infrastructure.database.manager.get_db_manager"),
+            patch(
+                "core.handlers.channel_comment_welcome.shutdown_comment_welcome",
+                new_callable=AsyncMock,
+            ),
+            patch("core.handlers.auto_poll_handler.shutdown_auto_poll", new_callable=AsyncMock),
+            patch.object(shutdown_manager, "_wait_for_tasks", new_callable=AsyncMock),
         ):
             mock_scheduler = MagicMock()
             mock_scheduler.running = False
@@ -202,11 +211,10 @@ class TestShutdownManager:
         monkeypatch.setenv("SHUTDOWN_TIMEOUT_QA_BOT", "3")
         monkeypatch.setenv("SHUTDOWN_TIMEOUT_SCHEDULER", "4")
 
-        # 创建新实例以读取环境变量
-        manager = ShutdownManager()
-
-        assert manager.TIMEOUT_QA_BOT == 3
-        assert manager.TIMEOUT_SCHEDULER == 4
+        # 超时常量在进程导入时读取；在新进程中验证启动配置，避免重载模块污染单例。
+        command = "from core.system.shutdown_manager import ShutdownManager; import json; print(json.dumps([ShutdownManager.TIMEOUT_QA_BOT, ShutdownManager.TIMEOUT_SCHEDULER]))"
+        values = subprocess.check_output([sys.executable, "-c", command], text=True)
+        assert json.loads(values) == [3, 4]
 
     def test_timeout_config_defaults(self):
         """测试默认超时配置"""

@@ -63,10 +63,12 @@
 ```python
 from error_handler import retry_with_backoff
 
+
 @retry_with_backoff(max_retries=3, base_delay=2.0)
 async def fetch_data():
     # 可能会失败的网络请求
     return await make_request()
+
 
 @retry_with_backoff(max_retries=2, base_delay=1.0)
 def process_file(file_path):
@@ -127,7 +129,7 @@ DEFAULT_RETRY_CONFIG = {
     "max_delay": 30.0,
     "exponential_backoff": True,
     "retry_on_exceptions": (Exception,),
-    "skip_retry_on_exceptions": (KeyboardInterrupt, SystemExit)
+    "skip_retry_on_exceptions": (KeyboardInterrupt, SystemExit),
 }
 ```
 

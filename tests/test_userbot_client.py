@@ -24,7 +24,7 @@ from core.handlers.userbot_client import (
 @pytest.fixture
 def mock_settings():
     """模拟配置"""
-    with patch("core.userbot_client.get_settings") as mock:
+    with patch("core.handlers.userbot_client.get_settings") as mock:
         settings = MagicMock()
         settings.userbot_enabled = True
         settings.userbot_phone_number = "+1234567890"
@@ -81,7 +81,7 @@ async def test_userbot_client_start_success(mock_telethon_client):
     mock_user.phone = "+1234567890"
     mock_telethon_client.get_me.return_value = mock_user
 
-    with patch("core.userbot_client.TelegramClient", return_value=mock_telethon_client):
+    with patch("core.handlers.userbot_client.TelegramClient", return_value=mock_telethon_client):
         success = await client.start()
 
         assert success
@@ -100,7 +100,7 @@ async def test_userbot_client_start_not_authorized(mock_telethon_client):
     # 模拟未授权的用户
     mock_telethon_client.is_user_authorized.return_value = False
 
-    with patch("core.userbot_client.TelegramClient", return_value=mock_telethon_client):
+    with patch("core.handlers.userbot_client.TelegramClient", return_value=mock_telethon_client):
         # 由于需要交互式输入验证码，在测试环境中会失败
         success = await client.start()
 
@@ -118,7 +118,7 @@ async def test_userbot_client_start_connection_error(mock_telethon_client):
     # 模拟连接失败
     mock_telethon_client.connect.side_effect = Exception("Connection failed")
 
-    with patch("core.userbot_client.TelegramClient", return_value=mock_telethon_client):
+    with patch("core.handlers.userbot_client.TelegramClient", return_value=mock_telethon_client):
         success = await client.start()
 
         assert not success
@@ -143,7 +143,7 @@ async def test_userbot_client_get_status(mock_telethon_client):
     mock_telethon_client.get_me.return_value = mock_user
     mock_telethon_client.is_connected.return_value = True
 
-    with patch("core.userbot_client.TelegramClient", return_value=mock_telethon_client):
+    with patch("core.handlers.userbot_client.TelegramClient", return_value=mock_telethon_client):
         await client.start()
         status = await client.get_status()
 
@@ -204,7 +204,7 @@ async def test_userbot_client_get_client():
 @pytest.mark.asyncio
 async def test_init_userbot_client_disabled():
     """测试 UserBot 未启用时的初始化"""
-    with patch("core.userbot_client.get_settings") as mock:
+    with patch("core.handlers.userbot_client.get_settings") as mock:
         settings = MagicMock()
         settings.userbot.userbot_enabled = False
         mock.return_value = settings
@@ -216,7 +216,7 @@ async def test_init_userbot_client_disabled():
 @pytest.mark.asyncio
 async def test_init_userbot_client_success():
     """测试成功初始化 UserBot 客户端"""
-    with patch("core.userbot_client.get_settings") as mock:
+    with patch("core.handlers.userbot_client.get_settings") as mock:
         settings = MagicMock()
         settings.userbot.userbot_enabled = True
         settings.userbot.userbot_phone_number = "+1234567890"

@@ -477,10 +477,12 @@ pytest --cov=core --cov-report=html
 # tests/test_example.py
 import pytest
 
+
 def test_example():
     """测试示例"""
     result = function_to_test()
     assert result == expected_value
+
 
 @pytest.mark.asyncio
 async def test_async_example():

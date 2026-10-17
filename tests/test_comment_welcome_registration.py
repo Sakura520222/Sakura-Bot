@@ -33,7 +33,7 @@ def mock_event():
 
 
 @pytest.mark.asyncio
-async def test_handle_summary_request_user_not_registered(mock_db, mock_event):
+async def test_handle_summary_request_user_not_registered(mock_db, mock_event, monkeypatch):
     """测试用户未注册时的处理"""
     # 设置回调数据
     channel_id = "test_channel"
@@ -43,9 +43,13 @@ async def test_handle_summary_request_user_not_registered(mock_db, mock_event):
     # 模拟数据库返回用户未注册
     mock_db.is_user_registered = AsyncMock(return_value=False)
     mock_db.check_pending_summary_request = AsyncMock(return_value=False)
+    monkeypatch.setattr("core.handlers.channel_comment_welcome.QA_BOT_USERNAME", "test_qa_bot")
+    monkeypatch.setattr(
+        "core.handlers.channel_comment_welcome._restore_original_button", AsyncMock()
+    )
 
     # 使用 patch 替换 get_db_manager
-    with patch("core.channel_comment_welcome.get_db_manager", return_value=mock_db):
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
         # 执行处理
         await handle_summary_request_callback(mock_event)
 
@@ -58,8 +62,8 @@ async def test_handle_summary_request_user_not_registered(mock_db, mock_event):
     buttons = kwargs.get("buttons")
     assert buttons is not None
 
-    # 验证没有调用 answer (因为用了 edit)
-    mock_event.answer.assert_called_once()
+    # 编辑消息后仍需确认回调，结束客户端的加载状态
+    mock_event.answer.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -76,7 +80,7 @@ async def test_handle_summary_request_user_registered(mock_db, mock_event):
     mock_db.add_summary_request = AsyncMock(return_value=1)
 
     # 使用 patch 替换 get_db_manager
-    with patch("core.channel_comment_welcome.get_db_manager", return_value=mock_db):
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
         # 执行处理
         await handle_summary_request_callback(mock_event)
 
@@ -85,7 +89,7 @@ async def test_handle_summary_request_user_registered(mock_db, mock_event):
 
     # 验证调用参数
     call_args = mock_db.add_summary_request.call_args
-    assert call_args[1]["channel_id"] == channel_id
+    assert call_args[1]["channel_id"] == f"https://t.me/{channel_id}"
     assert call_args[1]["message_id"] == msg_id
     assert call_args[1]["requested_by"] == mock_event.sender_id
 
@@ -100,7 +104,7 @@ async def test_handle_summary_request_invalid_callback_data(mock_db, mock_event)
     mock_event.data = b"invalid_data"
 
     # 使用 patch 替换 get_db_manager
-    with patch("core.channel_comment_welcome.get_db_manager", return_value=mock_db):
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
         # 执行处理
         await handle_summary_request_callback(mock_event)
 
@@ -124,7 +128,7 @@ async def test_handle_summary_request_pending_request_exists(mock_db, mock_event
     mock_db.check_pending_summary_request = AsyncMock(return_value=True)
 
     # 使用 patch 替换 get_db_manager
-    with patch("core.channel_comment_welcome.get_db_manager", return_value=mock_db):
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
         # 执行处理
         await handle_summary_request_callback(mock_event)
 

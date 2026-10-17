@@ -429,7 +429,8 @@ class TestHealthCheckFunctions:
 class TestInitializeErrorHandling:
     """错误处理初始化测试"""
 
-    def test_initialize_error_handling(self):
+    @pytest.mark.asyncio
+    async def test_initialize_error_handling(self):
         """测试初始化错误处理系统"""
         reset_error_stats()  # 先重置状态
 

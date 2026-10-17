@@ -234,9 +234,9 @@ class TestGetIntentParser:
 
     def test_singleton(self):
         """测试单例模式"""
-        import core.intent_parser
+        import core.ai.intent_parser
 
-        core.intent_parser.intent_parser = None
+        core.ai.intent_parser.intent_parser = None
 
         parser1 = get_intent_parser()
         parser2 = get_intent_parser()
@@ -245,9 +245,9 @@ class TestGetIntentParser:
 
     def test_returns_intent_parser_instance(self):
         """测试返回IntentParser实例"""
-        import core.intent_parser
+        import core.ai.intent_parser
 
-        core.intent_parser.intent_parser = None
+        core.ai.intent_parser.intent_parser = None
 
         parser = get_intent_parser()
 

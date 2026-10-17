@@ -175,15 +175,16 @@ pytest tests/ -m "telegram" -v
 import pytest
 from core.module import function_to_test
 
+
 @pytest.mark.unit
 class TestModuleName:
     """模块名称测试"""
-    
+
     def test_function_success(self):
         """测试成功场景"""
         result = function_to_test(input_data)
         assert result == expected_output
-    
+
     def test_function_failure(self):
         """测试失败场景"""
         with pytest.raises(ValueError):
@@ -203,20 +204,30 @@ def test_with_fixture(mock_telegram_client):
 ### 3. Mock 外部依赖
 
 ```python
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-def test_with_mock():
+import pytest
+
+from core.ai.ai_client import analyze_with_ai
+
+
+@pytest.mark.asyncio
+async def test_with_mock():
     """Mock 外部 API 调用"""
-    with patch('core.ai_client.client_llm.chat.completions.create') as mock_create:
+    with patch(
+        "core.ai.ai_client.async_client_llm.chat.completions.create", new_callable=AsyncMock
+    ) as mock_create:
         mock_create.return_value = mock_response
-        result = analyze_with_ai(messages, prompt)
+        result = await analyze_with_ai(messages, prompt)
         assert result == expected_output
+        mock_create.assert_awaited_once()
 ```
 
 ### 4. 测试异步代码
 
 ```python
 import pytest
+
 
 @pytest.mark.asyncio
 async def test_async_function():
@@ -362,6 +373,7 @@ A: 使用 `@pytest.mark.skip` 或 `@pytest.mark.skipif`：
 def test_not_implemented():
     pass
 
+
 @pytest.mark.skipif(os.getenv("API_KEY") is None, reason="需要 API_KEY")
 def test_with_api():
     pass
@@ -372,10 +384,13 @@ def test_with_api():
 A: 使用 `@pytest.mark.parametrize`：
 
 ```python
-@pytest.mark.parametrize("input,expected", [
-    ("test", "TEST"),
-    ("hello", "HELLO"),
-])
+@pytest.mark.parametrize(
+    "input,expected",
+    [
+        ("test", "TEST"),
+        ("hello", "HELLO"),
+    ],
+)
 def test_uppercase(input, expected):
     assert input.upper() == expected
 ```

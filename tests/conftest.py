@@ -447,6 +447,31 @@ def mock_poll_response():
 # ==================== 测试辅助函数 ====================
 
 
+@pytest.fixture(autouse=True)
+def isolated_language():
+    """每个测试独立选择语言，避免 i18n 测试污染后续中文界面断言。"""
+    from core import i18n
+
+    original = i18n.get_language()
+    i18n.set_language("zh-CN")
+    yield
+    i18n.set_language(original)
+
+
+@pytest.fixture
+def inline_button_payload():
+    """兼容旧版按钮及新版 type.data 包装，保持长度和内容断言。"""
+
+    def payload(button):
+        value = getattr(button, "data", None)
+        if value is None:
+            value = getattr(getattr(button, "type", None), "data", None)
+        assert isinstance(value, bytes)
+        return value
+
+    return payload
+
+
 def create_mock_message(content: str, message_id: int = 1, sender_id: int = 123456):
     """创建 Mock 消息对象的辅助函数"""
     message = MagicMock()

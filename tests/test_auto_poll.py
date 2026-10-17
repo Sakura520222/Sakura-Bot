@@ -386,9 +386,14 @@ class TestLifecycle:
         await handler.stop()
 
     @pytest.mark.asyncio
-    async def test_stop_waits_for_queue(self, mock_client):
+    async def test_stop_waits_for_queue(self, mock_client, monkeypatch):
         """测试 stop 等待队列清空"""
+        monkeypatch.setattr(
+            "core.handlers.auto_poll_handler.is_auto_poll_enabled_for_channel",
+            lambda _channel: True,
+        )
         h = AutoPollHandler(mock_client)
+        h._process_poll_task = AsyncMock()
         await h.start()
 
         # 入队一个任务
@@ -396,8 +401,45 @@ class TestLifecycle:
         assert h._queue.qsize() == 1
 
         # stop 应等待队列处理完成
-        await h.stop()
+        await asyncio.wait_for(h.stop(), timeout=1)
         assert h._running is False
+        assert h._queue.empty()
+        h._process_poll_task.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_waits_for_in_flight_task(self, mock_client, monkeypatch):
+        """队列已取空时，stop 仍应等待正在处理的任务完成。"""
+        monkeypatch.setattr(
+            "core.handlers.auto_poll_handler.is_auto_poll_enabled_for_channel",
+            lambda _channel: True,
+        )
+        started = asyncio.Event()
+        finish = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def process(_task):
+            started.set()
+            await finish.wait()
+            completed.set()
+
+        h = AutoPollHandler(mock_client)
+        h._process_poll_task = AsyncMock(side_effect=process)
+        await h.start()
+        h.enqueue_poll_task("@ch", 123, 456, "测试消息")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert h._queue.empty()
+
+        stopping = asyncio.create_task(h.stop())
+        try:
+            await asyncio.sleep(0)
+            assert not stopping.done()
+        finally:
+            finish.set()
+            await asyncio.wait_for(stopping, timeout=1)
+
+        h._process_poll_task.assert_awaited_once()
+        assert completed.is_set()
+        await asyncio.wait_for(h._queue.join(), timeout=1)
 
     @pytest.mark.asyncio
     async def test_double_start_warning(self, handler):

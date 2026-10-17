@@ -21,7 +21,7 @@ class TestPromptManager:
         test_prompt = "这是一个测试提示词"
 
         # 模拟 core.config 中的 PROMPT_FILE
-        with patch("core.prompt_manager.PROMPT_FILE", str(prompt_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(prompt_file)):
             # 保存提示词
             save_prompt(test_prompt)
             assert prompt_file.exists()
@@ -35,7 +35,7 @@ class TestPromptManager:
         """测试加载不存在的提示词文件"""
         nonexistent_file = temp_dir / "nonexistent_prompt.txt"
 
-        with patch("core.prompt_manager.PROMPT_FILE", str(nonexistent_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(nonexistent_file)):
             from core.config import DEFAULT_PROMPT
 
             prompt = load_prompt()
@@ -50,7 +50,7 @@ class TestPromptManager:
 
         prompt_file.write_text(test_prompt, encoding="utf-8")
 
-        with patch("core.prompt_manager.PROMPT_FILE", str(prompt_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(prompt_file)):
             loaded_prompt = load_prompt()
             assert loaded_prompt == test_prompt
 
@@ -58,7 +58,7 @@ class TestPromptManager:
         """测试覆盖已存在的提示词文件"""
         prompt_file = temp_dir / "test_prompt.txt"
 
-        with patch("core.prompt_manager.PROMPT_FILE", str(prompt_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(prompt_file)):
             # 保存第一个提示词
             save_prompt("第一个提示词")
             assert prompt_file.read_text(encoding="utf-8") == "第一个提示词"
@@ -71,7 +71,7 @@ class TestPromptManager:
         """测试保存空字符串"""
         prompt_file = temp_dir / "test_prompt.txt"
 
-        with patch("core.prompt_manager.PROMPT_FILE", str(prompt_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(prompt_file)):
             save_prompt("")
             assert prompt_file.read_text(encoding="utf-8") == ""
 
@@ -82,7 +82,7 @@ class TestPromptManager:
 
         prompt_file.write_text(test_prompt, encoding="utf-8")
 
-        with patch("core.prompt_manager.PROMPT_FILE", str(prompt_file)):
+        with patch("core.infrastructure.config.prompt_manager.PROMPT_FILE", str(prompt_file)):
             loaded_prompt = load_prompt()
             assert loaded_prompt == "测试提示词"
 

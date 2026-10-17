@@ -229,8 +229,7 @@ class TestSplitByLinesSmart:
             assert len(line) <= 50
         # 验证内容没有被丢失
         combined = "".join(lines)
-        assert "短行" in combined
-        assert "长行" in combined
+        assert combined == text.replace("\n", "")
 
 
 class TestEdgeCases:

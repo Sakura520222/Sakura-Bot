@@ -129,8 +129,8 @@ vector_store.add_summary(
         "channel_name": channel_name,
         "created_at": datetime.now().isoformat(),
         "summary_type": "manual",
-        "message_count": message_count
-    }
+        "message_count": message_count,
+    },
 )
 ```
 
@@ -143,7 +143,7 @@ vector_store.add_summary(
 results = self.collection.query(
     query_embeddings=[query_embedding],
     n_results=20,
-    include=["metadatas", "documents", "distances"]
+    include=["metadatas", "documents", "distances"],
 )
 ```
 
@@ -153,11 +153,7 @@ results = self.collection.query(
 
 ```python
 # core/memory_manager.py
-results = self.search_summaries(
-    keywords=["AI", "GPT"],
-    time_range_days=7,
-    limit=10
-)
+results = self.search_summaries(keywords=["AI", "GPT"], time_range_days=7, limit=10)
 ```
 
 ### 4. RRF融合
@@ -178,12 +174,7 @@ score = 1 / (k + rank)
 # core/reranker.py
 response = client.requests.post(
     api_base,
-    json={
-        "model": "BAAI/bge-reranker-v2-m3",
-        "query": query,
-        "documents": documents,
-        "top_n": 5
-    }
+    json={"model": "BAAI/bge-reranker-v2-m3", "query": query, "documents": documents, "top_n": 5},
 )
 ```
 

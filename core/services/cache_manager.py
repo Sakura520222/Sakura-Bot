@@ -223,7 +223,7 @@ class DiscussionCache:
         Returns:
             所有缓存的字典
         """
-        return self._memory_cache.copy()
+        return {key: value for key, (value, _) in self._memory_cache.items()}
 
     def size(self) -> int:
         """获取缓存条目数量
