@@ -178,11 +178,11 @@ async def update_log_level(request: LogLevelUpdate):
             handler.setLevel(level)
 
         # 更新配置
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
         config["log_level"] = request.level
-        save_config(config)
+        save_config_changes(config)
 
         logger.info(f"已通过 WebUI 修改日志级别: {request.level}")
         return {"success": True, "message": f"日志级别已修改为: {request.level}"}

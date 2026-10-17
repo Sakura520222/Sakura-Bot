@@ -66,23 +66,35 @@ class FileWatcher(FileSystemEventHandler):
 
     def on_modified(self, event):
         """文件修改回调（在独立线程中运行）"""
+        self._on_path_changed(event.src_path, event.is_directory)
+
+    def on_created(self, event):
+        """部分平台将原子替换报告为新建事件。"""
+        self._on_path_changed(event.src_path, event.is_directory)
+
+    def on_moved(self, event):
+        """同目录临时文件的 os.replace 必须以目标路径触发重载。"""
+        self._on_path_changed(event.dest_path, event.is_directory)
+
+    def _on_path_changed(self, path, is_directory):
+        """统一过滤文件事件，忽略锁、历史备份和临时文件。"""
         # Early exit if stopped (thread-safe check)
         if self._stopped:
             return
 
-        if event.is_directory:
+        if is_directory:
             return
 
         # 只监控配置文件和提示词文件
-        if not event.src_path.endswith(
+        if not path.endswith(
             ("config.json", ".env", "qa_persona.txt", "poll_prompt.txt", "prompt.txt")
         ):
             return
 
-        logger.debug(f"检测到文件变更: {event.src_path}")
+        logger.debug(f"检测到文件变更: {path}")
 
         # 使用 call_soon_threadsafe 确保跨线程安全，传递文件路径
-        self._loop.call_soon_threadsafe(lambda: self._handle_debounce_with_path(event.src_path))
+        self._loop.call_soon_threadsafe(lambda: self._handle_debounce_with_path(path))
 
     def _handle_debounce(self):
         """处理防抖逻辑（在事件循环线程中执行）"""

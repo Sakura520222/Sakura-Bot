@@ -37,7 +37,7 @@ from core.config import (
     get_scheduler_instance,
     load_config,
     logger,
-    save_config,
+    save_config_changes,
     set_bot_state,
     set_channel_poll_config,
     set_channel_schedule,
@@ -107,7 +107,7 @@ async def handle_set_log_level(event):
 
         config = load_config()
         config["log_level"] = level_str
-        save_config(config)
+        save_config_changes(config)
 
         logger.info(
             f"日志级别已从 {logging.getLevelName(old_level)} 更改为 {logging.getLevelName(new_level)}"
@@ -812,7 +812,7 @@ async def handle_set_send_to_source(event):
 
         config = load_config()
         config["send_report_to_source"] = new_value
-        save_config(config)
+        save_config_changes(config)
 
         logger.info(f"已将send_report_to_source设置为: {new_value}")
         status = get_text("status.enabled") if new_value else get_text("status.disabled")
@@ -1230,7 +1230,7 @@ async def handle_language(event):
             # 保存到配置文件
             config = load_config()
             config["language"] = new_language
-            save_config(config)
+            save_config_changes(config)
 
             logger.info(f"用户 {sender_id} 将语言更改为: {new_language}")
 

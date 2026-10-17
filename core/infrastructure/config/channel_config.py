@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.config import AsyncIOEventBus, ConfigChangedEvent
+from core.config.persistence import ConfigStore
 from core.infrastructure.utils.constants import (
     CONFIG_FILE,
     DAY_NAMES_CN,
@@ -99,25 +100,18 @@ class ChannelScheduleManager:
         except Exception as e:
             raise ConfigurationError(f"加载配置文件失败: {e}") from e
 
-    def _save_schedules(self) -> None:
-        """保存时间配置到文件"""
+    def _save_schedules(self, channel: str, schedule: ScheduleConfig | None) -> None:
+        """只提交指定频道的修改或删除，成功后更新内存。"""
         try:
-            # 读取完整配置
-            full_config = {}
-            if self._config_file.exists():
-                with open(self._config_file, encoding="utf-8") as f:
-                    full_config = json.load(f)
-
-            # 更新时间配置部分
-            full_config["summary_schedules"] = self._schedules
-
-            # 确保目录存在
-            self._config_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # 保存配置
-            with open(self._config_file, "w", encoding="utf-8") as f:
-                json.dump(full_config, f, ensure_ascii=False, indent=2)
-
+            store = ConfigStore(self._config_file)
+            full_config = store.read()
+            schedules = full_config.setdefault("summary_schedules", {})
+            if schedule is None:
+                schedules.pop(channel, None)
+            else:
+                schedules[channel] = schedule
+            saved = store.save_changes(full_config)
+            self._load_schedules_from_config(saved)
             logger.info(f"已保存 {len(self._schedules)} 个频道的时间配置")
         except Exception as e:
             raise ConfigurationError(f"保存配置文件失败: {e}") from e
@@ -254,8 +248,7 @@ class ChannelScheduleManager:
         self._validate_schedule(config)
 
         # 更新配置
-        self._schedules[channel] = config
-        self._save_schedules()
+        self._save_schedules(channel, config)
 
         logger.info(f"已更新频道 {channel} 的时间配置: {config}")
 
@@ -269,8 +262,7 @@ class ChannelScheduleManager:
             是否成功删除配置
         """
         if channel in self._schedules:
-            del self._schedules[channel]
-            self._save_schedules()
+            self._save_schedules(channel, None)
             logger.info(f"已删除频道 {channel} 的时间配置")
             return True
 

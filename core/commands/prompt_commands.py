@@ -65,14 +65,16 @@ async def handle_prompt_input(event):
 
     # 使用状态管理器检查
     user_context = get_user_context()
-    if not user_context.is_waiting_for_prompt(sender_id):
+    if user_context.is_setting_ai_config(sender_id) or not user_context.is_waiting_for_prompt(
+        sender_id
+    ):
         return
 
     logger.info(f"收到用户 {sender_id} 的提示词输入")
 
     # 检查是否是命令消息，如果是则不处理
     if input_text.startswith("/"):
-        logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
+        logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容")
         await event.reply(get_text("prompt.error_command"))
         return
 
@@ -142,14 +144,16 @@ async def handle_poll_prompt_input(event):
 
     # 使用状态管理器检查
     user_context = get_user_context()
-    if not user_context.is_waiting_for_poll_prompt(sender_id):
+    if user_context.is_setting_ai_config(sender_id) or not user_context.is_waiting_for_poll_prompt(
+        sender_id
+    ):
         return
 
     logger.info(f"收到用户 {sender_id} 的投票提示词输入")
 
     # 检查是否是命令消息，如果是则不处理
     if input_text.startswith("/"):
-        logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容: {input_text}")
+        logger.warning(f"用户 {sender_id} 发送了命令而非提示词内容")
         await event.reply(get_text("prompt.error_command"))
         return
 

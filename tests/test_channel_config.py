@@ -19,6 +19,17 @@ from core.infrastructure.config.channel_config import (
 from core.infrastructure.utils.exceptions import ConfigurationError, InvalidScheduleError
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    """默认路径和单例同样隔离，防止便捷函数写入实际 data/config.json。"""
+    from core.infrastructure.config import channel_config
+
+    path = tmp_path / "default-config.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(channel_config, "CONFIG_FILE", str(path))
+    monkeypatch.setattr(channel_config, "_schedule_manager", None)
+
+
 @pytest.mark.unit
 class TestChannelScheduleManagerInit:
     """配置管理器初始化测试"""
@@ -27,7 +38,7 @@ class TestChannelScheduleManagerInit:
         """测试使用默认配置初始化"""
         config_file = tmp_path / "config.json"
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
 
         assert manager._schedules == {}
 
@@ -41,7 +52,7 @@ class TestChannelScheduleManagerInit:
         }
         config_file.write_text(json.dumps(schedules), encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
 
         assert len(manager._schedules) == 1
         assert "https://t.me/channel1" in manager._schedules
@@ -52,7 +63,7 @@ class TestChannelScheduleManagerInit:
         config_file.write_text("invalid json", encoding="utf-8")
 
         with pytest.raises(ConfigurationError):
-            ChannelScheduleManager(str(config_file))
+            ChannelScheduleManager(config_file=str(config_file))
 
 
 @pytest.mark.unit
@@ -69,7 +80,7 @@ class TestGetSchedule:
         }
         config_file.write_text(json.dumps(schedules), encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
         schedule = manager.get_schedule("https://t.me/channel1")
 
         assert schedule["frequency"] == "daily"
@@ -95,7 +106,7 @@ class TestSetSchedule:
         config_file = tmp_path / "config.json"
         config_file.write_text('{"summary_schedules": {}}', encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
         manager.set_schedule("https://t.me/channel1", "daily", hour=9, minute=30)
 
         schedule = manager.get_schedule("https://t.me/channel1")
@@ -107,7 +118,7 @@ class TestSetSchedule:
         config_file = tmp_path / "config.json"
         config_file.write_text('{"summary_schedules": {}}', encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
         manager.set_schedule(
             "https://t.me/channel1", "weekly", days=["mon", "wed"], hour=10, minute=0
         )
@@ -121,7 +132,7 @@ class TestSetSchedule:
         config_file = tmp_path / "config.json"
         config_file.write_text('{"summary_schedules": {}}', encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
 
         with pytest.raises(InvalidScheduleError):
             manager.set_schedule("https://t.me/channel1", "invalid", hour=9)
@@ -131,7 +142,7 @@ class TestSetSchedule:
         config_file = tmp_path / "config.json"
         config_file.write_text('{"summary_schedules": {}}', encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
 
         with pytest.raises(InvalidScheduleError):
             manager.set_schedule("https://t.me/channel1", "daily", hour=25)
@@ -141,7 +152,7 @@ class TestSetSchedule:
         config_file = tmp_path / "config.json"
         config_file.write_text('{"summary_schedules": {}}', encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
 
         with pytest.raises(InvalidScheduleError):
             manager.set_schedule("https://t.me/channel1", "daily", minute=60)
@@ -161,7 +172,7 @@ class TestDeleteSchedule:
         }
         config_file.write_text(json.dumps(schedules), encoding="utf-8")
 
-        manager = ChannelScheduleManager(str(config_file))
+        manager = ChannelScheduleManager(config_file=str(config_file))
         result = manager.delete_schedule("https://t.me/channel1")
 
         assert result is True
@@ -250,9 +261,9 @@ class TestGetScheduleManager:
 
     def test_singleton(self):
         """测试单例模式"""
-        import core.channel_config
+        import core.infrastructure.config.channel_config
 
-        core.channel_config._schedule_manager = None
+        core.infrastructure.config.channel_config._schedule_manager = None
 
         manager1 = get_schedule_manager()
         manager2 = get_schedule_manager()
@@ -266,39 +277,47 @@ class TestConvenienceFunctions:
 
     def test_get_channel_schedule(self):
         """测试获取频道配置便捷函数"""
-        import core.channel_config
+        import core.infrastructure.config.channel_config
 
-        core.channel_config._schedule_manager = None
+        core.infrastructure.config.channel_config._schedule_manager = None
 
         schedule = get_channel_schedule("https://t.me/channel1")
 
         assert isinstance(schedule, dict)
 
-    def test_set_channel_schedule(self, tmp_path):
+    def test_set_channel_schedule(self, tmp_path, monkeypatch):
         """测试设置频道配置便捷函数"""
-        import core.channel_config
+        import core.infrastructure.config.channel_config
 
-        core.channel_config._schedule_manager = None
+        core.infrastructure.config.channel_config._schedule_manager = None
 
         config_file = tmp_path / "config.json"
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump({"summary_schedules": {}}, f)
+
+        monkeypatch.setattr(
+            core.infrastructure.config.channel_config, "CONFIG_FILE", str(config_file)
+        )
 
         set_channel_schedule("https://t.me/channel1", "daily", hour=9)
 
         schedule = get_channel_schedule("https://t.me/channel1")
         assert schedule["frequency"] == "daily"
 
-    def test_delete_channel_schedule(self, tmp_path):
+    def test_delete_channel_schedule(self, tmp_path, monkeypatch):
         """测试删除频道配置便捷函数"""
-        import core.channel_config
+        import core.infrastructure.config.channel_config
 
-        core.channel_config._schedule_manager = None
+        core.infrastructure.config.channel_config._schedule_manager = None
 
         config_file = tmp_path / "config.json"
         schedules = {"summary_schedules": {"https://t.me/channel1": {"frequency": "daily"}}}
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(schedules, f)
+
+        monkeypatch.setattr(
+            core.infrastructure.config.channel_config, "CONFIG_FILE", str(config_file)
+        )
 
         result = delete_channel_schedule("https://t.me/channel1")
 
@@ -306,9 +325,9 @@ class TestConvenienceFunctions:
 
     def test_build_cron_trigger_function(self):
         """测试构建cron触发器便捷函数"""
-        import core.channel_config
+        import core.infrastructure.config.channel_config
 
-        core.channel_config._schedule_manager = None
+        core.infrastructure.config.channel_config._schedule_manager = None
 
         trigger = build_cron_trigger("https://t.me/channel1")
 

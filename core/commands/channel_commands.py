@@ -13,7 +13,7 @@
 """
 
 import core.config as config_module
-from core.config import ADMIN_LIST, load_config, logger, save_config
+from core.config import ADMIN_LIST, load_config, logger, save_config_changes
 from core.i18n.i18n import get_text
 
 
@@ -68,13 +68,13 @@ async def handle_add_channel(event):
             await event.reply(get_text("error.channel_exists", channel=channel_url))
             return
 
-        # 添加频道到列表
-        config_module.CHANNELS.append(channel_url)
-
         # 更新配置文件
         config = load_config()
-        config["channels"] = config_module.CHANNELS
-        save_config(config)
+        channels = list(config.get("channels", config_module.CHANNELS))
+        if channel_url not in channels:
+            channels.append(channel_url)
+        config["channels"] = channels
+        save_config_changes(config)
 
         logger.info(f"已添加频道 {channel_url} 到列表")
         await event.reply(
@@ -114,13 +114,13 @@ async def handle_delete_channel(event):
             await event.reply(get_text("error.channel_not_in_list", channel=channel_url))
             return
 
-        # 从列表中删除频道
-        config_module.CHANNELS.remove(channel_url)
-
         # 更新配置文件
         config = load_config()
-        config["channels"] = config_module.CHANNELS
-        save_config(config)
+        channels = list(config.get("channels", config_module.CHANNELS))
+        if channel_url in channels:
+            channels.remove(channel_url)
+        config["channels"] = channels
+        save_config_changes(config)
 
         logger.info(f"已从列表中删除频道 {channel_url}")
         await event.reply(

@@ -23,11 +23,11 @@ async def test_webui_write_config_schedules_config_reload():
     config_manager = SimpleNamespace(reload_config=AsyncMock(return_value=(True, "")))
     deps.configure_config_manager(config_manager)
 
-    with patch.object(deps, "save_config") as save_config:
+    with patch.object(deps, "save_config_changes") as save_config_changes:
         deps.write_config({"forwarding": {"enabled": True, "rules": []}})
         await asyncio.sleep(0)
 
-    save_config.assert_called_once()
+    save_config_changes.assert_called_once()
     config_manager.reload_config.assert_awaited_once()
     deps.configure_config_manager(None)
 
@@ -39,7 +39,7 @@ async def test_webui_reload_task_uses_bound_config_manager():
     second_manager = SimpleNamespace(reload_config=AsyncMock(return_value=(True, "")))
     deps.configure_config_manager(first_manager)
 
-    with patch.object(deps, "save_config"):
+    with patch.object(deps, "save_config_changes"):
         deps.write_config({"forwarding": {"enabled": True, "rules": []}})
         deps.configure_config_manager(second_manager)
         await asyncio.sleep(0)

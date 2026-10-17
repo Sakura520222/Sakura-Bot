@@ -25,7 +25,7 @@ from typing import Any, TypeVar
 
 from fastapi import HTTPException, Query, status
 
-from core.config import ADMIN_LIST, load_config, save_config
+from core.config import ADMIN_LIST, read_config, save_config_changes
 from core.infrastructure.database.manager import get_db_manager
 from core.settings import get_settings
 
@@ -50,12 +50,12 @@ def configure_config_manager(config_manager: Any | None) -> None:
 
 def get_config() -> dict:
     """获取当前配置（同步读取 config.json）"""
-    return load_config()
+    return read_config()
 
 
 def write_config(config: dict) -> None:
-    """保存配置（写入 config.json 并触发热更新）"""
-    save_config(config)
+    """提交 get_config 基线后的修改和删除，成功后触发热更新。"""
+    save_config_changes(config)
     _schedule_config_reload()
 
 

@@ -78,6 +78,7 @@ get_qa_bot_persona = _old_config.get_qa_bot_persona
 get_scheduler_instance = _old_config.get_scheduler_instance
 is_auto_poll_enabled_for_channel = _old_config.is_auto_poll_enabled_for_channel
 load_config = _old_config.load_config
+read_config = _old_config.read_config
 load_poll_regenerations = _old_config.load_poll_regenerations
 logger = _old_config.logger
 normalize_channel_id = _old_config.normalize_channel_id
@@ -85,6 +86,8 @@ normalize_schedule_config = _old_config.normalize_schedule_config
 remove_forwarding_rule = _old_config.remove_forwarding_rule
 reset_vote_count = _old_config.reset_vote_count
 save_config = _old_config.save_config
+save_config_changes = _old_config.save_config_changes
+update_config_fields = _old_config.update_config_fields
 save_poll_regenerations = _old_config.save_poll_regenerations
 set_bot_state = _old_config.set_bot_state
 set_channel_poll_config = _old_config.set_channel_poll_config
@@ -220,6 +223,9 @@ __all__ = [
     "remove_forwarding_rule",
     "reset_vote_count",
     "save_config",
+    "save_config_changes",
+    "update_config_fields",
+    "read_config",
     "save_poll_regenerations",
     "set_bot_state",
     "set_channel_poll_config",

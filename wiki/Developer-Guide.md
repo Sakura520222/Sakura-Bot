@@ -41,6 +41,7 @@
 | 文档 | 说明 | 难度 |
 |------|------|------|
 | **[CI/CD 工作流](Developer-Workflow-Improvements.md)** | 持续集成配置 | ⭐⭐ |
+| **[配置持久化与恢复](Developer-Configuration-Persistence.md)** | 配置写入接口、并发保护、备份与事故恢复 | ⭐⭐ |
 
 ---
 

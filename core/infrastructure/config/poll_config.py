@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.config import AsyncIOEventBus, ConfigChangedEvent
+from core.config.persistence import ConfigStore
 from core.i18n.i18n import get_text
 from core.infrastructure.utils.constants import CONFIG_FILE
 from core.infrastructure.utils.exceptions import ConfigurationError
@@ -91,25 +92,18 @@ class ChannelPollConfigManager:
         except Exception as e:
             raise ConfigurationError(f"加载配置文件失败: {e}") from e
 
-    def _save_settings(self) -> None:
-        """保存投票配置到文件"""
+    def _save_settings(self, channel: str, updates: dict | None) -> None:
+        """提交指定频道的字段补丁或删除，成功后更新内存。"""
         try:
-            # 读取完整配置
-            full_config = {}
-            if self._config_file.exists():
-                with open(self._config_file, encoding="utf-8") as f:
-                    full_config = json.load(f)
-
-            # 更新投票配置部分
-            full_config["channel_poll_settings"] = self._poll_settings
-
-            # 确保目录存在
-            self._config_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # 保存配置
-            with open(self._config_file, "w", encoding="utf-8") as f:
-                json.dump(full_config, f, ensure_ascii=False, indent=2)
-
+            store = ConfigStore(self._config_file)
+            full_config = store.read()
+            settings = full_config.setdefault("channel_poll_settings", {})
+            if updates is None:
+                settings.pop(channel, None)
+            else:
+                settings.setdefault(channel, {}).update(updates)
+            saved = store.save_changes(full_config)
+            self._poll_settings = saved.get("channel_poll_settings", {})
             logger.info(f"已保存 {len(self._poll_settings)} 个频道的投票配置")
         except Exception as e:
             raise ConfigurationError(f"保存配置文件失败: {e}") from e
@@ -195,10 +189,7 @@ class ChannelPollConfigManager:
             ConfigurationError: 保存配置失败时
         """
         # 获取频道当前配置
-        if channel not in self._poll_settings:
-            self._poll_settings[channel] = {}
-
-        channel_config = self._poll_settings[channel]
+        channel_config = {}
 
         # 更新配置（只更新提供的参数）
         if enabled is not None:
@@ -216,7 +207,7 @@ class ChannelPollConfigManager:
             logger.info(f"设置频道 {channel} 的投票模式: {mode}")
 
         # 保存配置
-        self._save_settings()
+        self._save_settings(channel, channel_config)
         logger.info(f"已更新频道 {channel} 的投票配置")
 
     def delete_config(self, channel: str) -> bool:
@@ -231,8 +222,7 @@ class ChannelPollConfigManager:
             是否成功删除配置
         """
         if channel in self._poll_settings:
-            del self._poll_settings[channel]
-            self._save_settings()
+            self._save_settings(channel, None)
             logger.info(f"已删除频道 {channel} 的投票配置，将使用全局配置")
             return True
 

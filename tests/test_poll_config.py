@@ -19,6 +19,17 @@ from core.infrastructure.config.poll_config import (
 from core.infrastructure.utils.exceptions import ConfigurationError
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    """默认路径和单例同样隔离，禁止便捷函数依赖真实配置。"""
+    from core.infrastructure.config import poll_config
+
+    path = tmp_path / "default-config.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(poll_config, "CONFIG_FILE", str(path))
+    monkeypatch.setattr(poll_config, "_poll_config_manager", None)
+
+
 @pytest.mark.unit
 class TestChannelPollConfigManagerInit:
     """配置管理器初始化测试"""
@@ -27,7 +38,7 @@ class TestChannelPollConfigManagerInit:
         """测试使用默认配置文件初始化"""
         config_file = tmp_path / "config.json"
 
-        with patch("core.poll_config.CONFIG_FILE", str(config_file)):
+        with patch("core.infrastructure.config.poll_config.CONFIG_FILE", str(config_file)):
             manager = ChannelPollConfigManager()
 
             assert manager._poll_settings == {}
@@ -310,9 +321,9 @@ class TestGetPollConfigManager:
 
     def test_singleton_pattern(self):
         """测试单例模式"""
-        import core.poll_config
+        import core.infrastructure.config.poll_config
 
-        core.poll_config._poll_config_manager = None
+        core.infrastructure.config.poll_config._poll_config_manager = None
 
         manager1 = get_poll_config_manager()
         manager2 = get_poll_config_manager()
@@ -321,9 +332,9 @@ class TestGetPollConfigManager:
 
     def test_creates_instance(self):
         """测试创建实例"""
-        import core.poll_config
+        import core.infrastructure.config.poll_config
 
-        core.poll_config._poll_config_manager = None
+        core.infrastructure.config.poll_config._poll_config_manager = None
 
         manager = get_poll_config_manager()
 
@@ -336,9 +347,9 @@ class TestConvenienceFunctions:
 
     def test_get_channel_poll_config(self):
         """测试获取频道配置便捷函数"""
-        import core.poll_config
+        import core.infrastructure.config.poll_config
 
-        core.poll_config._poll_config_manager = None
+        core.infrastructure.config.poll_config._poll_config_manager = None
 
         config = get_channel_poll_config("https://t.me/channel1")
 
@@ -347,9 +358,9 @@ class TestConvenienceFunctions:
 
     def test_set_channel_poll_config(self):
         """测试设置频道配置便捷函数"""
-        import core.poll_config
+        import core.infrastructure.config.poll_config
 
-        core.poll_config._poll_config_manager = None
+        core.infrastructure.config.poll_config._poll_config_manager = None
 
         set_channel_poll_config("https://t.me/channel1", enabled=True)
 
@@ -358,9 +369,9 @@ class TestConvenienceFunctions:
 
     def test_delete_channel_poll_config(self):
         """测试删除频道配置便捷函数"""
-        import core.poll_config
+        import core.infrastructure.config.poll_config
 
-        core.poll_config._poll_config_manager = None
+        core.infrastructure.config.poll_config._poll_config_manager = None
 
         set_channel_poll_config("https://t.me/channel1", enabled=True)
         result = delete_channel_poll_config("https://t.me/channel1")

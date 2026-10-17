@@ -52,7 +52,7 @@ def mock_config(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        "core.config.save_config",
+        "core.config.save_config_changes",
         fake_save_config,
         raising=False,
     )
@@ -64,7 +64,7 @@ def mock_config(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        "core.handlers.channel_comment_welcome_config.save_config",
+        "core.handlers.channel_comment_welcome_config.save_config_changes",
         fake_save_config,
         raising=False,
     )
@@ -127,7 +127,7 @@ class TestSetChannelCommentWelcomeConfig:
         channel = "https://t.me/test_channel"
         config = {"enabled": True}
 
-        await set_channel_comment_welcome_config(channel, config)
+        await set_channel_comment_welcome_config(channel, **config)
 
         result = await get_channel_comment_welcome_config(channel)
         assert result.get("enabled") is True
@@ -143,7 +143,7 @@ class TestSetChannelCommentWelcomeConfig:
             "button_text": "申请总结",
         }
 
-        await set_channel_comment_welcome_config(channel, config)
+        await set_channel_comment_welcome_config(channel, **config)
 
         result = await get_channel_comment_welcome_config(channel)
         assert result.get("welcome_message") == custom_message
@@ -154,7 +154,7 @@ class TestSetChannelCommentWelcomeConfig:
         channel = "https://t.me/test_channel"
         config = {"enabled": False}
 
-        await set_channel_comment_welcome_config(channel, config)
+        await set_channel_comment_welcome_config(channel, **config)
 
         result = await get_channel_comment_welcome_config(channel)
         assert result.get("enabled") is False
@@ -166,7 +166,7 @@ class TestSetChannelCommentWelcomeConfig:
         long_text = "a" * 100  # 超过 MAX_BUTTON_TEXT_LENGTH (20)
 
         with pytest.raises(ValueError, match="按钮文本过长"):
-            await set_channel_comment_welcome_config(channel, {"button_text": long_text})
+            await set_channel_comment_welcome_config(channel, **{"button_text": long_text})
 
     @pytest.mark.asyncio
     async def test_invalid_button_action(self, mock_config):
@@ -174,7 +174,7 @@ class TestSetChannelCommentWelcomeConfig:
         channel = "https://t.me/test_channel"
 
         with pytest.raises(ValueError, match="无效的按钮行为"):
-            await set_channel_comment_welcome_config(channel, {"button_action": "invalid_action"})
+            await set_channel_comment_welcome_config(channel, **{"button_action": "invalid_action"})
 
 
 class TestGetChannelCommentWelcomeConfig:
@@ -187,7 +187,7 @@ class TestGetChannelCommentWelcomeConfig:
 
         # 先设置配置
         await set_channel_comment_welcome_config(
-            channel, {"enabled": True, "welcome_message": "test"}
+            channel, **{"enabled": True, "welcome_message": "test"}
         )
 
         result = await get_channel_comment_welcome_config(channel)
@@ -219,8 +219,8 @@ class TestGetAllCommentWelcomeConfigs:
         config2 = {"enabled": False, "welcome_message": "Welcome 2"}
 
         # 设置多个频道的配置
-        await set_channel_comment_welcome_config(channel1, config1)
-        await set_channel_comment_welcome_config(channel2, config2)
+        await set_channel_comment_welcome_config(channel1, **config1)
+        await set_channel_comment_welcome_config(channel2, **config2)
 
         # 获取所有配置
         all_configs = await get_all_comment_welcome_configs()
@@ -254,7 +254,7 @@ class TestDeleteChannelCommentWelcomeConfig:
         channel = "https://t.me/test_channel"
 
         # 先设置配置
-        await set_channel_comment_welcome_config(channel, {"enabled": True})
+        await set_channel_comment_welcome_config(channel, **{"enabled": True})
 
         # 删除配置
         result = await delete_channel_comment_welcome_config(channel)

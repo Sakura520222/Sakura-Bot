@@ -93,13 +93,13 @@ async def cmd_forwarding_enable(
         handler.enabled = True
 
         # 持久化到配置文件
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
         if "forwarding" not in config:
             config["forwarding"] = {}
         config["forwarding"]["enabled"] = True
-        save_config(config)
+        save_config_changes(config)
 
         await message.reply(t("forwarding.enabled"))
         logger.info(f"用户 {message.sender_id} 启用了转发功能（已保存到配置文件）")
@@ -129,13 +129,13 @@ async def cmd_forwarding_disable(
         handler.enabled = False
 
         # 持久化到配置文件
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
         if "forwarding" not in config:
             config["forwarding"] = {}
         config["forwarding"]["enabled"] = False
-        save_config(config)
+        save_config_changes(config)
 
         await message.reply(t("forwarding.disabled"))
         logger.info(f"用户 {message.sender_id} 禁用了转发功能（已保存到配置文件）")
@@ -258,7 +258,7 @@ async def cmd_forwarding_footer(
         # 检查是否要清除底栏
         if len(args) >= 3 and args[2].lower() == "clear":
             matched_rule["custom_footer"] = ""
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "custom_footer", matched_rule)
             await message.reply(
                 t(
                     "forwarding.footer.cleared",
@@ -279,7 +279,7 @@ async def cmd_forwarding_footer(
 
         # 存储到配置中
         matched_rule["custom_footer"] = footer_text
-        _persist_forwarding_config(handler.config)
+        _persist_forwarding_config(handler.config, "custom_footer", matched_rule)
 
         await message.reply(
             t(
@@ -330,12 +330,12 @@ async def cmd_forwarding_default_footer(
 
         if action in ["on", "true", "1", "yes"]:
             config["show_default_footer"] = True
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "show_default_footer")
             await message.reply(t("forwarding.footer.default_enabled"))
             logger.info(f"用户 {message.sender_id} 启用了默认底栏")
         elif action in ["off", "false", "0", "no"]:
             config["show_default_footer"] = False
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "show_default_footer")
             await message.reply(t("forwarding.footer.default_disabled"))
             logger.info(f"用户 {message.sender_id} 禁用了默认底栏")
         else:
@@ -375,7 +375,7 @@ async def cmd_forwarding_add_rule(
         target_channel = args[1]
 
         # 加载当前配置
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
 
@@ -405,7 +405,7 @@ async def cmd_forwarding_add_rule(
         config["forwarding"]["rules"].append(new_rule)
 
         # 保存配置
-        save_config(config)
+        save_config_changes(config)
 
         # 更新 handler 的配置
         handler.set_config(config["forwarding"])
@@ -447,7 +447,7 @@ async def cmd_forwarding_add_and_enable(
         target_channel = args[1]
 
         # 加载当前配置
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
 
@@ -482,7 +482,7 @@ async def cmd_forwarding_add_and_enable(
         config["forwarding"]["enabled"] = True
 
         # 保存配置
-        save_config(config)
+        save_config_changes(config)
 
         # 更新 handler 的配置和状态
         handler.set_config(config["forwarding"])
@@ -533,7 +533,7 @@ async def cmd_forwarding_remove_rule(
         target_channel = args[1]
 
         # 加载当前配置
-        from core.config import load_config, save_config
+        from core.config import load_config, save_config_changes
 
         config = load_config()
 
@@ -559,7 +559,7 @@ async def cmd_forwarding_remove_rule(
             return
 
         # 保存配置
-        save_config(config)
+        save_config_changes(config)
 
         # 更新 handler 的配置
         handler.set_config(config["forwarding"])
@@ -628,22 +628,38 @@ def _find_rule(config: dict, source_channel: str, target_channel: str) -> dict |
     return None
 
 
-def _persist_forwarding_config(handler_config: dict):
+def _persist_forwarding_config(handler_config: dict, field: str, rule: dict | None = None):
     """
-    将内存中的转发配置持久化到配置文件
-
-    由于规则命令直接修改 handler.config 中的 rule 字典（内存引用），
-    需要将完整的配置写回磁盘以确保重启后生效。
+    只持久化命令明确修改的字段，保留 WebUI 在其他字段上的最新修改。
 
     Args:
         handler_config: handler.config 转发配置字典（已被修改的内存引用）
+        field: 明确修改的字段名
+        rule: 被修改的规则；为 None 时更新转发全局字段
     """
-    from core.config import load_config, save_config
+    from copy import deepcopy
 
-    config = load_config()
-    config["forwarding"] = handler_config
-    save_config(config)
-    logger.info("转发配置已持久化到配置文件")
+    from core.config import read_config, save_config_changes
+
+    config = read_config()
+    forwarding = config.setdefault("forwarding", {})
+    if rule is None:
+        forwarding[field] = deepcopy(handler_config[field])
+    else:
+        latest_rule = _find_rule(
+            forwarding, rule.get("source_channel", ""), rule.get("target_channel", "")
+        )
+        if latest_rule is None:
+            raise ValueError(
+                t(
+                    "forwarding.error.rule_not_found",
+                    source=rule.get("source_channel", ""),
+                    target=rule.get("target_channel", ""),
+                )
+            )
+        latest_rule[field] = deepcopy(rule[field])
+    save_config_changes(config)
+    logger.info("转发配置字段已持久化: %s", field)
 
 
 def _validate_regex(pattern: str) -> tuple[bool, str]:
@@ -738,7 +754,7 @@ async def cmd_forwarding_keywords(
         # 清空关键词
         if action == "clear":
             rule["keywords"] = []
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "keywords", rule)
             await message.reply(
                 t("forwarding.keywords.cleared", source=source_channel, target=target_channel)
             )
@@ -758,7 +774,7 @@ async def cmd_forwarding_keywords(
             # 去重
             rule["keywords"] = list(set(rule["keywords"]))
 
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "keywords", rule)
             keywords_str = "\n".join(f"🏷️ {kw}" for kw in new_keywords)
             await message.reply(
                 t(
@@ -788,7 +804,7 @@ async def cmd_forwarding_keywords(
                     removed.append(kw)
 
             if removed:
-                _persist_forwarding_config(handler.config)
+                _persist_forwarding_config(handler.config, "keywords", rule)
                 removed_str = "\n".join(f"🏷️ {kw}" for kw in removed)
                 await message.reply(
                     t(
@@ -871,7 +887,7 @@ async def cmd_forwarding_blacklist(
         # 清空黑名单
         if action == "clear":
             rule["blacklist"] = []
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "blacklist", rule)
             await message.reply(
                 t("forwarding.blacklist.cleared", source=source_channel, target=target_channel)
             )
@@ -891,7 +907,7 @@ async def cmd_forwarding_blacklist(
             # 去重
             rule["blacklist"] = list(set(rule["blacklist"]))
 
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "blacklist", rule)
             keywords_str = "\n".join(f"🚫 {kw}" for kw in new_keywords)
             await message.reply(
                 t(
@@ -921,7 +937,7 @@ async def cmd_forwarding_blacklist(
                     removed.append(kw)
 
             if removed:
-                _persist_forwarding_config(handler.config)
+                _persist_forwarding_config(handler.config, "blacklist", rule)
                 removed_str = "\n".join(f"🚫 {kw}" for kw in removed)
                 await message.reply(
                     t(
@@ -1004,7 +1020,7 @@ async def cmd_forwarding_patterns(
         # 清空正则
         if action == "clear":
             rule["patterns"] = []
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "patterns", rule)
             await message.reply(
                 t("forwarding.patterns.cleared", source=source_channel, target=target_channel)
             )
@@ -1040,7 +1056,7 @@ async def cmd_forwarding_patterns(
             # 去重
             rule["patterns"] = list(set(rule["patterns"]))
 
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "patterns", rule)
             patterns_str = "\n".join(f"🔍 {p}" for p in new_patterns)
             await message.reply(
                 t(
@@ -1072,7 +1088,7 @@ async def cmd_forwarding_patterns(
                     removed.append(pattern)
 
             if removed:
-                _persist_forwarding_config(handler.config)
+                _persist_forwarding_config(handler.config, "patterns", rule)
                 removed_str = "\n".join(f"🔍 {p}" for p in removed)
                 await message.reply(
                     t(
@@ -1155,7 +1171,7 @@ async def cmd_forwarding_blacklist_patterns(
         # 清空正则
         if action == "clear":
             rule["blacklist_patterns"] = []
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "blacklist_patterns", rule)
             await message.reply(
                 t(
                     "forwarding.blacklist_patterns.cleared",
@@ -1195,7 +1211,7 @@ async def cmd_forwarding_blacklist_patterns(
             # 去重
             rule["blacklist_patterns"] = list(set(rule["blacklist_patterns"]))
 
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "blacklist_patterns", rule)
             patterns_str = "\n".join(f"🚫 {p}" for p in new_patterns)
             await message.reply(
                 t(
@@ -1227,7 +1243,7 @@ async def cmd_forwarding_blacklist_patterns(
                     removed.append(pattern)
 
             if removed:
-                _persist_forwarding_config(handler.config)
+                _persist_forwarding_config(handler.config, "blacklist_patterns", rule)
                 removed_str = "\n".join(f"🚫 {p}" for p in removed)
                 await message.reply(
                     t(
@@ -1313,7 +1329,7 @@ async def cmd_forwarding_copy_mode(
         # 启用复制模式
         if action in ["on", "true", "1", "yes", "enable"]:
             rule["copy_mode"] = True
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "copy_mode", rule)
             await message.reply(
                 t("forwarding.copy_mode.enabled", source=source_channel, target=target_channel)
             )
@@ -1323,7 +1339,7 @@ async def cmd_forwarding_copy_mode(
         # 禁用复制模式
         if action in ["off", "false", "0", "no", "disable"]:
             rule["copy_mode"] = False
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "copy_mode", rule)
             await message.reply(
                 t("forwarding.copy_mode.disabled", source=source_channel, target=target_channel)
             )
@@ -1400,7 +1416,7 @@ async def cmd_forwarding_original_only(
         # 启用只转发原创
         if action in ["on", "true", "1", "yes", "enable"]:
             rule["forward_original_only"] = True
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "forward_original_only", rule)
             await message.reply(
                 t(
                     "forwarding.original_only.enabled",
@@ -1414,7 +1430,7 @@ async def cmd_forwarding_original_only(
         # 禁用只转发原创
         if action in ["off", "false", "0", "no", "disable"]:
             rule["forward_original_only"] = False
-            _persist_forwarding_config(handler.config)
+            _persist_forwarding_config(handler.config, "forward_original_only", rule)
             await message.reply(
                 t(
                     "forwarding.original_only.disabled",

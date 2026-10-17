@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -225,42 +226,49 @@ else:
 
 # 读取配置文件
 def load_config():
-    """从配置文件读取AI配置"""
-    import json
+    """兼容只读调用方；读取失败的空结果不能作为写入基线。"""
+    from core.config.persistence import ConfigPersistenceError, ConfigSnapshot
 
-    logger.info(f"开始读取配置文件: {CONFIG_FILE}")
     try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            config = json.load(f)
-            logger.info(f"成功读取配置文件，配置项数量: {len(config)}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"配置文件 {CONFIG_FILE} 不存在，返回空配置")
-        return {}
-    except json.JSONDecodeError as e:
-        logger.error(f"配置文件 {CONFIG_FILE} 格式错误: {e}", exc_info=True)
-        return {}
-    except Exception as e:
-        logger.error(f"读取配置文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
-        return {}
+        return read_config()
+    except ConfigPersistenceError as error:
+        logger.warning("无法读取完整配置: %s", error)
+        return ConfigSnapshot({}, Path(CONFIG_FILE), valid=False)
+
+
+def read_config():
+    """严格读取完整配置，缺失、损坏或校验失败时向调用方报错。"""
+    from core.config.persistence import ConfigStore
+
+    return ConfigStore(CONFIG_FILE).read()
 
 
 # 保存配置文件
 def save_config(config):
-    """保存AI配置到文件"""
-    import json
+    """明确的完整替换接口，保留删除语义；失败会抛出异常。"""
+    from core.config.persistence import ConfigStore
 
-    logger.info(f"开始保存配置到文件: {CONFIG_FILE}")
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-        logger.info(f"成功保存配置到文件，配置项数量: {len(config)}")
+    saved = ConfigStore(CONFIG_FILE).replace(config)
+    update_module_variables(saved)
+    return saved
 
-        # 更新模块变量以保持一致性
-        update_module_variables(config)
 
-    except Exception as e:
-        logger.error(f"保存配置到文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)
+def update_config_fields(fields):
+    """原子更新指定顶层字段，始终从最新且有效的完整配置开始。"""
+    from core.config.persistence import ConfigStore
+
+    saved = ConfigStore(CONFIG_FILE).update_fields(fields)
+    update_module_variables(saved)
+    return saved
+
+
+def save_config_changes(snapshot):
+    """提交 load_config/read_config 的显式差异，保护并发更新及字段删除。"""
+    from core.config.persistence import ConfigStore
+
+    saved = ConfigStore(CONFIG_FILE).save_changes(snapshot)
+    update_module_variables(saved)
+    return saved
 
 
 def _parse_bool(value) -> bool:
@@ -287,6 +295,7 @@ def update_module_variables(config):
         LLM_BASE_URL, \
         LLM_MODEL, \
         CHANNELS, \
+        ENABLE_POLL, \
         SEND_REPORT_TO_SOURCE, \
         SUMMARY_SCHEDULES, \
         CHANNEL_POLL_SETTINGS, \
@@ -303,7 +312,7 @@ def update_module_variables(config):
 
     # 更新频道列表
     config_channels = config.get("channels")
-    if config_channels and isinstance(config_channels, list):
+    if isinstance(config_channels, list):
         CHANNELS = config_channels
         logger.info(f"已更新内存中的频道列表: {CHANNELS}")
 
@@ -378,7 +387,7 @@ i18n.set_language(final_language)
 logger.info(f"国际化模块语言已设置为: {i18n.get_language()}")
 
 if config:
-    logger.debug(f"从配置文件读取的配置: {config}")
+    logger.debug("已读取配置文件，字段数量: %s", len(config))
     # 只有当配置文件中存在且不为None时才覆盖环境变量的值
     if "api_key" in config and config["api_key"]:
         LLM_API_KEY = config["api_key"]
@@ -603,7 +612,7 @@ def delete_channel_schedule(channel):
             del current_config["summary_schedules"][channel]
 
             # 保存配置（save_config会自动更新模块变量）
-            save_config(current_config)
+            save_config_changes(current_config)
 
             logger.info(f"已删除频道 {channel} 的时间配置")
             return True
@@ -766,7 +775,7 @@ def set_channel_schedule_v2(channel, frequency, days=None, hour=None, minute=Non
         current_config["summary_schedules"][channel] = config_dict
 
         # 保存配置
-        save_config(current_config)
+        save_config_changes(current_config)
 
         logger.info(f"已更新频道 {channel} 的时间配置: {config_dict}")
         return True
@@ -887,7 +896,7 @@ def set_channel_poll_config(channel, enabled=None, send_to_channel=None, public_
             logger.info(f"设置频道 {channel} 的投票模式: {mode}")
 
         # 保存配置
-        save_config(current_config)
+        save_config_changes(current_config)
 
         logger.info(f"已更新频道 {channel} 的投票配置")
         return True
@@ -920,7 +929,7 @@ def delete_channel_poll_config(channel):
             del current_config["channel_poll_settings"][channel]
 
             # 保存配置
-            save_config(current_config)
+            save_config_changes(current_config)
 
             logger.info(f"已删除频道 {channel} 的投票配置，将使用全局配置")
             return True
@@ -1001,7 +1010,7 @@ def set_channel_auto_poll_config(channel, enabled=None):
             channel_config["enabled"] = enabled
             logger.info(f"设置频道 {channel} 的自动趣味投票启用状态: {enabled}")
 
-        save_config(current_config)
+        save_config_changes(current_config)
 
         logger.info(f"已更新频道 {channel} 的自动趣味投票配置")
         return True
@@ -1029,7 +1038,7 @@ def delete_channel_auto_poll_config(channel):
             and channel in current_config["channel_auto_poll_settings"]
         ):
             del current_config["channel_auto_poll_settings"][channel]
-            save_config(current_config)
+            save_config_changes(current_config)
             logger.info(f"已删除频道 {channel} 的自动趣味投票配置，将使用全局配置")
             return True
         else:
@@ -1413,7 +1422,7 @@ def get_forwarding_config():
                 "enabled": forwarding_config.get("enabled", False),
                 "rules": old_rules,
             }
-            save_config(config)
+            save_config_changes(config)
             forwarding_config["rules"] = old_rules
         else:
             forwarding_config["rules"] = []
@@ -1494,7 +1503,7 @@ def add_forwarding_rule(
         config.setdefault("forwarding_rules", []).append(new_rule)
 
         # 保存配置
-        save_config(config)
+        save_config_changes(config)
 
         logger.info(f"已添加转发规则: {source_channel} -> {target_channel}")
         return True
@@ -1541,7 +1550,7 @@ def remove_forwarding_rule(source_channel, target_channel):
         config["forwarding_rules"] = rules
 
         # 保存配置
-        save_config(config)
+        save_config_changes(config)
 
         logger.info(f"已移除转发规则: {source_channel} -> {target_channel}")
         return True
@@ -1583,7 +1592,7 @@ def update_forwarding_rule(source_channel, target_channel, **kwargs):
                         logger.info(f"更新转发规则字段 {key}: {source_channel} -> {target_channel}")
 
                 # 保存配置
-                save_config(config)
+                save_config_changes(config)
                 return True
 
         logger.warning(f"转发规则不存在: {source_channel} -> {target_channel}")
@@ -1624,7 +1633,7 @@ def toggle_forwarding_rule(source_channel, target_channel):
                 rule["enabled"] = new_state
 
                 # 保存配置
-                save_config(config)
+                save_config_changes(config)
 
                 logger.info(
                     f"转发规则状态已切换: {source_channel} -> {target_channel}, enabled={new_state}"

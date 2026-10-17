@@ -19,7 +19,7 @@ from core.config import (
     get_channel_auto_poll_config,
     load_config,
     logger,
-    save_config,
+    save_config_changes,
     set_channel_auto_poll_config,
 )
 from core.i18n.i18n import get_text
@@ -156,7 +156,7 @@ async def handle_set_auto_poll(event):
             new_value = action == "on"
             config = load_config()
             config["enable_auto_poll"] = new_value
-            save_config(config)
+            save_config_changes(config)
 
             status = (
                 get_text("auto_poll.status_enabled")

@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 class ConfigChangedEvent(BaseModel):
     """配置变更成功事件"""
 
-    config: dict  # 配置字典
+    config: dict = Field(repr=False)  # 内部消费者需要完整配置，禁止在事件 repr 中暴露凭据
     version: int
-    old_config: dict | None = None
+    old_config: dict | None = Field(default=None, repr=False)
     changed_fields: set[str] = Field(default_factory=set)
     timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
 

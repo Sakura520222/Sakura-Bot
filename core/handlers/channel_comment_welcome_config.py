@@ -15,7 +15,7 @@
 import asyncio
 from typing import Any
 
-from core.config import load_config, logger, save_config
+from core.config import load_config, logger, save_config_changes
 
 # 默认配置
 DEFAULT_COMMENT_WELCOME_CONFIG = {
@@ -137,7 +137,7 @@ async def set_channel_comment_welcome_config(
 
     # 保存配置
     settings[channel_url] = channel_config
-    await asyncio.to_thread(save_config, config)
+    await asyncio.to_thread(save_config_changes, config)
 
     logger.info(f"已更新频道 {channel_url} 的评论区欢迎配置")
     return channel_config
@@ -159,7 +159,7 @@ async def delete_channel_comment_welcome_config(channel_url: str) -> bool:
     if channel_url in settings:
         del settings[channel_url]
         config["channel_comment_welcome"] = settings
-        await asyncio.to_thread(save_config, config)
+        await asyncio.to_thread(save_config_changes, config)
         logger.info(f"已删除频道 {channel_url} 的评论区欢迎配置")
         return True
 

@@ -279,5 +279,10 @@ query
 .trae
 TG-Forwarder/
 data/config.json.last_valid
+data/config.json.backups/
+data/config.json.lock
+data/.config.json.*.tmp
+data/.config.json.last_valid.*.tmp
+data/.config-write-*/
 .codex
 .codegraph/

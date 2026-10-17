@@ -41,7 +41,7 @@ class ConfigValidator:
                 config_dict = json.load(f)
 
             # 业务逻辑验证
-            validation_error = ConfigValidator._validate_business_logic(config_dict, file_path)
+            validation_error = ConfigValidator.validate_config(config_dict, file_path)
             if validation_error:
                 return False, validation_error, None
 
@@ -57,11 +57,48 @@ class ConfigValidator:
             )
             return False, error_event, None
 
-        except Exception as e:
+        except Exception:
             error_event = ConfigValidationErrorEvent(
-                error=f"未知错误: {str(e)}", config_path=str(file_path)
+                error="读取配置文件失败", config_path=str(file_path)
             )
             return False, error_event, None
+
+    @staticmethod
+    def validate_config(config: dict, file_path: Path) -> ConfigValidationErrorEvent | None:
+        """文件读取与写入候选共用的校验，不在错误中包含配置值。"""
+        if not isinstance(config, dict):
+            return ConfigValidationErrorEvent(
+                error="配置根节点必须是对象", config_path=str(file_path)
+            )
+        for field in ("api_key", "base_url", "model"):
+            if field in config and config[field] is not None and not isinstance(config[field], str):
+                return ConfigValidationErrorEvent(
+                    error=f"{field} 必须是字符串或 null", config_path=str(file_path)
+                )
+        if "channels" in config and (
+            not isinstance(config["channels"], list)
+            or any(not isinstance(channel, str) for channel in config["channels"])
+        ):
+            return ConfigValidationErrorEvent(
+                error="channels 必须是字符串数组", config_path=str(file_path)
+            )
+        return ConfigValidator._validate_business_logic(config, file_path)
+
+    @staticmethod
+    def validate_transition(
+        previous: dict, config: dict, file_path: Path
+    ) -> ConfigValidationErrorEvent | None:
+        """阻断 AI 草稿覆盖和异常大量顶层字段删除，允许普通的显式字段删除。"""
+        removed = previous.keys() - config.keys()
+        ai_fields = {"api_key", "base_url", "model"}
+        if (removed and config.keys() <= ai_fields and previous.keys() - ai_fields) or (
+            len(removed) >= 3 and len(removed) * 2 >= len(previous)
+        ):
+            return ConfigValidationErrorEvent(
+                error="检测到异常大量配置字段删除，已拒绝更新；请从完整有效备份恢复",
+                config_path=str(file_path),
+            )
+        return None
 
     @staticmethod
     def _validate_business_logic(
@@ -77,7 +114,7 @@ class ConfigValidator:
                 or log_level.upper() not in ConfigValidator.VALID_LOG_LEVELS
             ):
                 return ConfigValidationErrorEvent(
-                    error=f"无效的日志级别: {log_level}，有效值: {', '.join(ConfigValidator.VALID_LOG_LEVELS)}",
+                    error="log_level 必须是有效的日志级别",
                     config_path=str(file_path),
                 )
 
@@ -127,14 +164,14 @@ class ConfigValidator:
         """验证单个时间配置"""
         if not isinstance(schedule, dict):
             return ConfigValidationErrorEvent(
-                error=f"频道 {channel} 的时间配置必须是对象类型", config_path=str(file_path)
+                error="频道时间配置必须是对象类型", config_path=str(file_path)
             )
 
         # 验证 frequency
         frequency = schedule.get("frequency")
         if frequency and frequency not in ConfigValidator.VALID_FREQUENCIES:
             return ConfigValidationErrorEvent(
-                error=f"无效的频率: {frequency}，有效值: {', '.join(ConfigValidator.VALID_FREQUENCIES)}",
+                error="时间配置的 frequency 必须是 daily 或 weekly",
                 config_path=str(file_path),
             )
 
@@ -142,13 +179,13 @@ class ConfigValidator:
         hour = schedule.get("hour")
         if hour is not None and (not isinstance(hour, int) or hour < 0 or hour > 23):
             return ConfigValidationErrorEvent(
-                error=f"无效的小时: {hour}，有效范围: 0-23", config_path=str(file_path)
+                error="时间配置的 hour 必须是 0-23 的整数", config_path=str(file_path)
             )
 
         minute = schedule.get("minute")
         if minute is not None and (not isinstance(minute, int) or minute < 0 or minute > 59):
             return ConfigValidationErrorEvent(
-                error=f"无效的分钟: {minute}，有效范围: 0-59", config_path=str(file_path)
+                error="时间配置的 minute 必须是 0-59 的整数", config_path=str(file_path)
             )
 
         return None
