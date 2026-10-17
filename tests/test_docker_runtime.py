@@ -62,9 +62,12 @@ def test_restart_reuses_synced_dependencies_and_frontend(project, monkeypatch):
     run.assert_not_called()
 
 
-def test_recreated_container_syncs_updated_mounted_source(project, monkeypatch):
+@pytest.mark.parametrize("has_lockfile", [True, False])
+def test_recreated_container_syncs_updated_mounted_source(project, monkeypatch, has_lockfile):
     (project / "requirements.txt").write_text("example==2.0\n")
     (project / "web/src/App.vue").write_text("<template>new</template>")
+    if not has_lockfile:
+        (project / "web/package-lock.json").unlink()
     run = Mock()
     monkeypatch.setattr(runtime.subprocess, "run", run)
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "npm")
@@ -73,7 +76,12 @@ def test_recreated_container_syncs_updated_mounted_source(project, monkeypatch):
 
     args = [call.args[0] for call in run.call_args_list]
     assert args[0][1:] == ["-m", "pip", "install", "-r", "requirements.txt"]
-    assert args[1:] == [["npm", "ci", "--include=dev"], ["npm", "run", "build"]]
+    install = (
+        ["npm", "ci", "--include=dev"]
+        if has_lockfile
+        else ["npm", "install", "--include=dev", "--package-lock=false"]
+    )
+    assert args[1:] == [install, ["npm", "run", "build"]]
     assert runtime._read_marker("requirements") == runtime.dependency_fingerprint(
         "requirements", project
     )

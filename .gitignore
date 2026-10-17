@@ -198,6 +198,7 @@ cython_debug/
 web/node_modules/
 web/dist/
 web/.vite/
+*.tsbuildinfo
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
