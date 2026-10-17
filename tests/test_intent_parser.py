@@ -41,21 +41,43 @@ class TestParseQuery:
         assert result["intent"] == "keyword"
         assert "AI" in result["keywords"] or "ai" in [k.lower() for k in result["keywords"]]
 
-    def test_parse_status_query(self):
-        """测试解析状态查询"""
+    def test_parse_no_status_keyword_interception(self):
+        """回归测试（Issue #112）：普通对话不再被 status/stats 关键词硬拦截。
+
+        "还剩多少配额"包含"配额""剩余"，历史上会被硬编码识别为 status 意图
+        并绕过模型直接进入状态查询；现在应作为普通内容查询处理。
+        """
         parser = IntentParser()
         result = parser.parse_query("还剩多少配额")
 
-        assert result["intent"] == "status"
-        assert result["confidence"] >= 0.9
+        assert result["intent"] in ["summary", "keyword", "topic"]
 
-    def test_parse_stats_query(self):
-        """测试解析统计查询"""
+    def test_parse_no_stats_keyword_interception(self):
+        """回归测试（Issue #112）："总共有多少条总结"不再被硬编码识别为 stats 意图"""
         parser = IntentParser()
         result = parser.parse_query("总共有多少条总结")
 
-        assert result["intent"] == "stats"
-        assert result["confidence"] >= 0.9
+        assert result["intent"] in ["summary", "keyword", "topic"]
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "还能",
+            "排名",
+            "统计学是什么？",
+            "我还能学习 Python 吗？",
+            "帮我写一段 Python 代码",
+            "你好",
+        ],
+    )
+    def test_parse_normal_chat_not_intercepted(self, query):
+        """回归测试（Issue #112 验收）：普通聊天词句走通用助手路径，不产生特殊意图"""
+        parser = IntentParser()
+        result = parser.parse_query(query)
+
+        assert result["intent"] in ["summary", "keyword", "topic"]
+        assert "status" not in result and result["intent"] != "status"
+        assert result["intent"] != "stats"
 
     def test_parse_with_time_range_days(self):
         """测试解析带天数的查询"""

@@ -71,21 +71,35 @@ class TestIsAdmin:
         """测试用户在管理员列表"""
         mock_get_db.return_value = MagicMock()
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", [123, 456]):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", [123, 456]):
             qm = QuotaManager()
             assert qm.is_admin(123) is True
             assert qm.is_admin(456) is True
             assert qm.is_admin(789) is False
 
     @patch("core.ai.quota_manager.get_db_manager")
-    def test_is_admin_with_me(self, mock_get_db):
-        """测试ADMIN_LIST为['me']时任何人都是管理员"""
+    def test_is_admin_empty_list_fail_closed(self, mock_get_db):
+        """测试未配置管理员时任何人都不具备管理员权限（fail-closed）"""
         mock_get_db.return_value = MagicMock()
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", ["me"]):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
-            assert qm.is_admin(123) is True
-            assert qm.is_admin(456) is True
+            assert qm.is_admin(123) is False
+            assert qm.is_admin(456) is False
+
+    @patch("core.ai.quota_manager.get_db_manager")
+    def test_is_admin_me_wildcard_removed(self, mock_get_db):
+        """回归测试（Issue #112）：ADMIN_LIST=['me'] 不再是全员管理员通配。
+
+        历史实现中 `user_id in ADMIN_LIST or ADMIN_LIST == ["me"]` 会在未配置
+        REPORT_ADMIN_IDS 时把所有用户当作管理员，导致越权与无限配额。
+        """
+        mock_get_db.return_value = MagicMock()
+
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", ["me"]):
+            qm = QuotaManager()
+            assert qm.is_admin(123) is False
+            assert qm.is_admin(456) is False
 
 
 @pytest.mark.unit
@@ -103,7 +117,7 @@ class TestCheckQuota:
         )
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", [123]):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", [123]):
             qm = QuotaManager()
             result = await qm.check_quota(123)
 
@@ -119,7 +133,7 @@ class TestCheckQuota:
         mock_db.get_total_daily_usage = AsyncMock(return_value=200)
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.check_quota(123)
 
@@ -138,7 +152,7 @@ class TestCheckQuota:
         )
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.check_quota(123)
 
@@ -157,7 +171,7 @@ class TestCheckQuota:
         )
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.check_quota(123)
 
@@ -174,7 +188,7 @@ class TestCheckQuota:
         mock_db.get_total_daily_usage = AsyncMock(side_effect=Exception("DB错误"))
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.check_quota(123)
 
@@ -195,7 +209,7 @@ class TestGetUsageStatus:
         mock_db.get_total_daily_usage = AsyncMock(return_value=100)
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", [123]):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", [123]):
             qm = QuotaManager()
             result = await qm.get_usage_status(123)
 
@@ -212,7 +226,7 @@ class TestGetUsageStatus:
         mock_db.get_total_daily_usage = AsyncMock(return_value=50)
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.get_usage_status(123)
 
@@ -229,7 +243,7 @@ class TestGetUsageStatus:
         mock_db.get_quota_usage = AsyncMock(side_effect=Exception("DB错误"))
         mock_get_db.return_value = mock_db
 
-        with patch("core.ai.quota_manager.ADMIN_LIST", []):
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
             qm = QuotaManager()
             result = await qm.get_usage_status(123)
 
@@ -283,6 +297,69 @@ class TestGetSystemStatus:
         result = await qm.get_system_status()
 
         assert "error" in result
+
+
+@pytest.mark.unit
+class TestRefundQuota:
+    """配额回退测试（Issue #112：内部失败不扣费）"""
+
+    @pytest.mark.asyncio
+    @patch("core.ai.quota_manager.get_db_manager")
+    async def test_refund_quota_normal_user(self, mock_get_db):
+        """测试普通用户回退配额"""
+        mock_db = MagicMock()
+        mock_db.refund_quota = AsyncMock(return_value=True)
+        mock_get_db.return_value = mock_db
+
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
+            qm = QuotaManager()
+            result = await qm.refund_quota(123)
+
+            assert result is True
+            mock_db.refund_quota.assert_awaited_once_with(123)
+
+    @pytest.mark.asyncio
+    @patch("core.ai.quota_manager.get_db_manager")
+    async def test_refund_quota_admin_noop(self, mock_get_db):
+        """测试管理员回退配额为无操作（管理员不消耗额度）"""
+        mock_db = MagicMock()
+        mock_db.refund_quota = AsyncMock(return_value=True)
+        mock_get_db.return_value = mock_db
+
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", [123]):
+            qm = QuotaManager()
+            result = await qm.refund_quota(123)
+
+            assert result is True
+            mock_db.refund_quota.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("core.ai.quota_manager.get_db_manager")
+    async def test_refund_quota_no_usage(self, mock_get_db):
+        """测试当日无占用记录时回退无副作用"""
+        mock_db = MagicMock()
+        mock_db.refund_quota = AsyncMock(return_value=False)
+        mock_get_db.return_value = mock_db
+
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
+            qm = QuotaManager()
+            result = await qm.refund_quota(123)
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    @patch("core.ai.quota_manager.get_db_manager")
+    async def test_refund_quota_error_fail_safe(self, mock_get_db):
+        """测试回退配额异常时不向上抛出"""
+        mock_db = MagicMock()
+        mock_db.refund_quota = AsyncMock(side_effect=Exception("DB错误"))
+        mock_get_db.return_value = mock_db
+
+        with patch("core.infrastructure.utils.auth.ADMIN_LIST", []):
+            qm = QuotaManager()
+            result = await qm.refund_quota(123)
+
+            assert result is False
 
 
 @pytest.mark.unit

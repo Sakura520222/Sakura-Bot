@@ -154,19 +154,21 @@ class QABot:
             update.effective_user.first_name,
         )
 
-        welcome_message = """🤖 **你好！我是智能资讯助手。**
+        welcome_message = """🤖 **你好！我是你的智能助手。**
 
-我可以帮你从频道的历史记录中快速查找信息和知识。
-无论是最近的讨论，还是过去的精华总结，只要你提问，我就能为你找到答案。
+我可以陪你聊天、回答问题、协助编程和写作；
+同时我接入了频道管理系统，可以按需查询频道的历史总结、消息记录和统计数据。
 
-🌟 **你可以试着对我提问：**
-• "最近频道里发生了什么新鲜事？"
-• "帮我分析一下关于某个关键词的讨论。"
-• "查看本周的精华总结。"
-• "今天有什么更新？"
+🌟 **你可以试着这样问我：**
+• 日常对话："今天心情不太好，陪我聊聊"
+• 知识与创作："帮我写一段 Python 脚本" / "用一句话解释什么是 RAG"
+• 频道查询："最近频道里发生了什么新鲜事？"
+• 指定频道："@channel 最近有什么更新？"
 
 💡 **小提示：**
-我会记住我们的对话上下文（30分钟内），所以你可以用代词追问，比如"那它呢？"、"这个怎么样？"。"""
+- 需要查频道资料时我会自动检索，不需要时直接回答，不用你操心
+- 我会记住我们的对话上下文（30分钟内），可以用代词追问，比如"那它呢？""这个怎么样？"
+- 发送 /status 可查看你的使用配额"""
 
         await update.message.reply_text(
             welcome_message,
@@ -193,12 +195,12 @@ class QABot:
     • <code>/mysubscriptions</code> - 查看我的订阅列表
     • <code>/request_summary</code> - 请求生成频道总结
 
-    <b>自然语言查询</b>
-直接发送问题，例如：
-• "上周发生了什么？"
-• "最近有什么技术讨论？"
-• "今天有什么更新？"
-• "关于特定关键词的内容"
+    <b>自然对话</b>
+直接发送消息即可，例如：
+• "你好，介绍一下你自己"
+• "帮我写一段 Python 代码"
+• "上周频道里发生了什么？"
+• "统计学是什么？"
 
     <b>指定频道查询</b>
     • <code>/ask @channel_name 最近有什么更新？</code>
@@ -210,22 +212,12 @@ class QABot:
 • 你可以使用代词追问："那它呢？"、"这个怎么样？"
 • 对话超时后会自动开始新会话
 
-    <b>时间关键词</b>
-• 今天、昨天、前天
-• 本周、上周
-• 本月、上月
-• 最近7天、最近30天
-
     <b>功能特点</b>
-✅ 智能意图识别
+✅ 通用 AI 助手：闲聊、知识问答、编程创作都可以
+✅ 按需检索：涉及频道内容时自动查询历史总结与消息
 ✅ 上下文感知（多轮对话）
-✅ 频道画像注入
-✅ 多频道综合查询
 ✅ 频道订阅推送
-✅ 总结请求功能
-
-⚠️ <b>注意</b>
-请尽量提出与频道总结相关的问题。过度偏离的查询可能会被拦截。"""
+✅ 总结请求功能"""
 
         await update.message.reply_text(
             help_text,
@@ -237,6 +229,11 @@ class QABot:
         """处理/status命令"""
         user_id = update.effective_user.id
         status_info = await self.quota_manager.get_usage_status(user_id)
+
+        # 异步服务失败时返回可观测的错误提示，而不是渲染空数据
+        if "error" in status_info:
+            await update.message.reply_text("❌ 获取状态失败，请稍后再试。")
+            return
 
         # 构建配额状态文本
         if status_info.get("is_admin"):
@@ -604,17 +601,26 @@ class QABot:
             if not quota_check.get("allowed", False):
                 await update.message.reply_text(quota_check.get("message", "配额不足"))
                 return
+        except Exception as e:
+            logger.error(f"配额检查失败: {type(e).__name__}: {e}", exc_info=True)
+            await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
+            return
 
-            placeholder = await update.message.reply_text("🔍 正在限定频道检索相关记录...")
-            await self._stream_and_edit(
+        try:
+            placeholder = await update.message.reply_text("💭 正在思考（限定频道）...")
+            success = await self._stream_and_edit(
                 placeholder=placeholder,
                 query=query,
                 user_id=user_id,
                 quota_check=quota_check,
                 channel_hint=channel_hint,
             )
+            if not success:
+                await self.quota_manager.refund_quota(user_id)
         except Exception as e:
             logger.error(f"处理指定频道查询失败: {type(e).__name__}: {e}", exc_info=True)
+            # 异常发生在配额预留之后，回退本次占用
+            await self.quota_manager.refund_quota(user_id)
             await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -636,23 +642,36 @@ class QABot:
 
         logger.info(f"收到查询: user_id={user_id}, query={query}")
 
+        # 配额预留与后续处理分开：预留成功后的任何内部失败都会回退占用，
+        # 保证普通用户不为失败的请求消耗每日额度
         try:
-            # 1. 检查配额
+            # 1. 检查配额（原子预留一次使用）
             quota_check = await self.quota_manager.check_quota(user_id)
             if not quota_check.get("allowed", False):
                 await update.message.reply_text(quota_check.get("message", "配额不足"))
                 return
+        except Exception as e:
+            logger.error(f"配额检查失败: {type(e).__name__}: {e}", exc_info=True)
+            await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
+            return
 
+        try:
             # 2. 发送初始占位消息
-            placeholder = await update.message.reply_text("🔍 正在检索相关记录...")
+            placeholder = await update.message.reply_text("💭 正在思考...")
 
             # 3. 流式处理并实时编辑消息
-            await self._stream_and_edit(
+            success = await self._stream_and_edit(
                 placeholder=placeholder, query=query, user_id=user_id, quota_check=quota_check
             )
 
+            # 4. 内部失败时回退本次配额占用
+            if not success:
+                await self.quota_manager.refund_quota(user_id)
+
         except Exception as e:
             logger.error(f"处理消息失败: {type(e).__name__}: {e}", exc_info=True)
+            # 异常发生在配额预留之后，同样回退
+            await self.quota_manager.refund_quota(user_id)
             try:
                 await update.message.reply_text("❌ 抱歉，处理查询时出错。请稍后再试。")
             except Exception:
@@ -665,7 +684,7 @@ class QABot:
         user_id: int,
         quota_check: dict,
         channel_hint: str | None = None,
-    ) -> None:
+    ) -> bool:
         """
         流式接收 QA 引擎输出，并实时编辑 Telegram 消息。
 
@@ -674,6 +693,10 @@ class QABot:
           每积累 STREAM_EDIT_THRESHOLD 字符或超过 STREAM_EDIT_INTERVAL 秒则编辑一次。
         - 完成阶段：用完整文本做最终编辑，并尝试启用 Markdown 格式。
         - 如果单条消息超过 4096 字符，则继续追加新消息。
+
+        Returns:
+            bool: 完整回答成功输出返回 True；内部错误/中断返回 False
+                  （调用方据此回退本次配额占用，不为失败请求扣费）
         """
         # ── 可调参数 ─────────────────────────────────────────────────────────
         # 每积累多少字符触发一次编辑
@@ -772,7 +795,7 @@ class QABot:
                 if chunk.startswith("__ERROR__:"):
                     error_msg = chunk[len("__ERROR__:") :]
                     await _safe_edit(current_msg, error_msg)
-                    return
+                    return False
 
                 # ── 首个真实文本块：更新占位消息状态 ────────────────────────
                 if not accumulated:
@@ -809,12 +832,16 @@ class QABot:
             logger.error(f"流式接收失败: {type(e).__name__}: {e}", exc_info=True)
             if not accumulated:
                 await _safe_edit(current_msg, "❌ 抱歉，处理查询时出错。请稍后再试。")
-                return
+                return False
+            # 已有部分内容：继续走最终编辑保留已生成内容，但仍视为失败以便回退配额
+            success = False
+        else:
+            success = True
 
         # ── 生成完成：最终编辑，追加配额提示并启用 Markdown ─────────────────
         if not accumulated.strip():
             await _safe_edit(current_msg, "❌ 未能获取回答，请稍后再试。")
-            return
+            return False
 
         # 追加配额提示（剩余次数不足时）
         if not quota_check.get("is_admin", False):
@@ -825,6 +852,7 @@ class QABot:
         # 最终写入（启用 Markdown）
         await _flush_edit(final=True)
         logger.info(f"流式回答完成，总长度: {len(accumulated)} 字符")
+        return success
 
     def _split_long_message(self, text: str, max_length: int = 4096) -> list:
         """将长消息分割为多个部分"""

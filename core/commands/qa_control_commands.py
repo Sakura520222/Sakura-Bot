@@ -15,9 +15,9 @@
 
 import logging
 
-from core.config import ADMIN_LIST
 from core.i18n.i18n import get_text
 from core.infrastructure.database import get_db_manager
+from core.infrastructure.utils.auth import is_admin
 from core.system.process_manager import (
     format_uptime,
     get_qa_bot_status,
@@ -35,7 +35,7 @@ async def handle_qa_status(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.admin_only"))
         return
@@ -124,7 +124,7 @@ async def handle_qa_start(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.admin_only"))
         return
@@ -166,7 +166,7 @@ async def handle_qa_stop(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.admin_only"))
         return
@@ -199,7 +199,7 @@ async def handle_qa_restart(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.admin_only"))
         return
@@ -237,7 +237,7 @@ async def handle_qa_stats(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.admin_only"))
         return

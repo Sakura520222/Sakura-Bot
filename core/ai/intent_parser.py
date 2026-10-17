@@ -174,12 +174,17 @@ class IntentParser:
         """
         解析用户查询
 
+        仅做检索辅助信息提取（频道提示、时间范围、关键词），不再对
+        "状态/统计"等关键词做硬编码意图拦截——普通对话中的"还能""排名"
+        "统计学"等词语曾因此被误路由并绕过模型。系统状态查询请使用
+        显式命令（如 /status），由命令层处理。
+
         Args:
             query: 用户查询文本
 
         Returns:
             {
-                "intent": str,         # 意图类型: summary, topic, keyword, stats, status
+                "intent": str,         # 意图类型: summary, topic, keyword
                 "time_range": Optional[int],  # 时间范围（天数），None 表示不限制
                 "keywords": List[str], # 关键词
                 "channel_id": Optional[str],  # 频道ID
@@ -206,34 +211,20 @@ class IntentParser:
             result["channel_hint"] = channel_hint
             logger.info(f"提取频道提示: {channel_hint}")
 
-        # 1. 检测状态查询意图
-        if self._is_status_query(query):
-            result["intent"] = "status"
-            result["confidence"] = 0.9
-            logger.info("识别为状态查询意图")
-            return result
-
-        # 2. 检测统计查询意图
-        if self._is_stats_query(query):
-            result["intent"] = "stats"
-            result["confidence"] = 0.9
-            logger.info("识别为统计查询意图")
-            return result
-
-        # 3. 提取时间范围
+        # 1. 提取时间范围
         time_range = self._extract_time_range(query)
         if time_range is not None:
             result["time_range"] = time_range
             logger.info(f"提取时间范围: {time_range}天")
 
-        # 4. 提取关键词（智能提取，不依赖硬编码词典）
+        # 2. 提取关键词（智能提取，不依赖硬编码词典）
         keywords = self._extract_keywords(query)
         if keywords:
             result["keywords"] = keywords
             result["intent"] = "keyword"
             logger.info(f"提取关键词: {keywords}")
 
-        # 5. 检测主题查询（主题会追加到关键词中）
+        # 3. 检测主题查询（主题会追加到关键词中）
         topics = self._extract_topics(query)
         if topics:
             # 只添加不在已有关键词中的主题词
@@ -244,7 +235,7 @@ class IntentParser:
                 result["intent"] = "topic"
             logger.info(f"提取主题: {topics}")
 
-        # 6. 计算置信度
+        # 4. 计算置信度
         if time_range is not None or result["keywords"]:
             result["confidence"] = 0.8
         else:
@@ -282,38 +273,6 @@ class IntentParser:
                 return match.group(1).strip()
 
         return None
-
-    def _is_status_query(self, query: str) -> bool:
-        """检查是否为状态查询"""
-        status_keywords = [
-            "配额",
-            "剩余",
-            "还能",
-            "几次",
-            "限额",
-            "quota",
-            "remaining",
-            "limit",
-            "次数",
-        ]
-        query_lower = query.lower()
-        return any(kw in query_lower for kw in status_keywords)
-
-    def _is_stats_query(self, query: str) -> bool:
-        """检查是否为统计查询"""
-        stats_keywords = [
-            "统计",
-            "总数",
-            "多少条",
-            "有多少条",
-            "数量",
-            "排名",
-            "排行",
-            "top",
-            "总共有多少",
-        ]
-        query_lower = query.lower()
-        return any(kw in query_lower for kw in stats_keywords)
 
     def _extract_time_range(self, query: str) -> int | None:
         """
@@ -442,8 +401,6 @@ class IntentParser:
             "summary": "总结查询",
             "keyword": "关键词查询",
             "topic": "主题查询",
-            "stats": "统计查询",
-            "status": "状态查询",
         }
 
         result = "🔍 查询解析:\n"

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import core.config as config_module
+import core.infrastructure.utils.auth as auth_module
 from core.commands import ai_config_commands as commands
 from core.infrastructure.utils.states import UserContext
 
@@ -41,7 +42,7 @@ def ai_session(tmp_path, monkeypatch):
     config_module.update_module_variables(original)
     context = UserContext()
     monkeypatch.setattr(commands, "get_user_context", lambda: context)
-    monkeypatch.setattr(commands, "ADMIN_LIST", [123456, 789012])
+    monkeypatch.setattr(auth_module, "ADMIN_LIST", [123456, 789012])
     return SimpleNamespace(path=config_file, original=original, context=context)
 
 

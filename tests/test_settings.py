@@ -147,13 +147,13 @@ class TestAdminSettings:
     """管理员配置测试"""
 
     def test_default_values(self, monkeypatch):
-        """测试默认值"""
+        """测试默认值（fail-closed：未配置时管理员列表为空）"""
         # 清除环境变量以测试真正的默认值
         monkeypatch.delenv("REPORT_ADMIN_IDS", raising=False)
 
         settings = AdminSettings()
         assert settings.report_admin_ids == ""
-        assert settings.admin_list == ["me"]
+        assert settings.admin_list == []
 
     def test_single_admin(self):
         """测试单个管理员"""
@@ -168,11 +168,11 @@ class TestAdminSettings:
             assert settings.admin_list == [123456, 789012, 345678]
 
     def test_invalid_admin_id_format(self, caplog):
-        """测试无效的管理员 ID 格式"""
+        """测试无效的管理员 ID 格式（跳过非法条目，保留合法条目）"""
         with patch.dict(os.environ, {"REPORT_ADMIN_IDS": "invalid,123456"}):
             settings = AdminSettings()
-            # 当格式错误时应该返回默认值
-            assert settings.admin_list == ["me"]
+            # 非法条目被跳过，合法条目仍然生效
+            assert settings.admin_list == [123456]
 
 
 @pytest.mark.unit
@@ -388,12 +388,12 @@ class TestConvenienceFunctions:
         assert channels == ["@test_channel"]
 
     def test_get_admin_list(self, monkeypatch):
-        """测试获取管理员列表（默认）"""
+        """测试获取管理员列表（默认 fail-closed：未配置时为空）"""
         # 清除环境变量以测试真正的默认值
         monkeypatch.delenv("REPORT_ADMIN_IDS", raising=False)
 
         admin_list = get_admin_list()
-        assert admin_list == ["me"]
+        assert admin_list == []
 
     def test_get_admin_list_with_env(self, mock_env_vars):
         """测试从环境变量获取管理员列表"""

@@ -24,13 +24,13 @@ import core.config as config_module
 from core.ai.ai_client import analyze_with_ai
 from core.ai.vector_store import get_vector_store
 from core.config import (
-    ADMIN_LIST,
     LAST_SUMMARY_FILE,
     get_channel_schedule,
     logger,
 )
 from core.i18n.i18n import get_text
 from core.infrastructure.config.prompt_manager import load_prompt
+from core.infrastructure.utils.auth import is_admin
 from core.summary_time_manager import load_last_summary_time, save_last_summary_time
 from core.telegram.client import fetch_last_week_messages, send_long_message, send_report
 
@@ -284,7 +284,7 @@ async def handle_manual_summary(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -485,7 +485,7 @@ async def handle_manual_summary(event):
                 await send_long_message(event.client, sender_id, report_text)
                 # 根据配置决定是否向源频道发送总结，传递现有客户端实例避免数据库锁定
                 # 如果请求者是管理员，跳过向管理员发送报告，避免重复发送
-                skip_admins = sender_id in ADMIN_LIST or ADMIN_LIST == ["me"]
+                skip_admins = is_admin(sender_id)
                 if config_module.SEND_REPORT_TO_SOURCE:
                     sent_report_ids = await send_report(
                         report_text,
@@ -568,7 +568,7 @@ async def handle_clear_summary_time(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

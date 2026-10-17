@@ -27,6 +27,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def is_admin(user_id: int | str | None) -> bool:
+    """严格判定用户是否为管理员（fail-closed）。
+
+    只有与 ``REPORT_ADMIN_IDS`` 中显式配置、格式合法的 Telegram 数字用户 ID
+    完全一致时才返回 True；未配置管理员、ID 非法或类型不匹配一律返回 False。
+    历史上的 ``ADMIN_LIST == ["me"]`` 通配语义已废除——绝不能因未配置而放行
+    所有用户。
+
+    Args:
+        user_id: Telegram 用户 ID（int 或数字字符串）
+
+    Returns:
+        bool: 是否为管理员
+    """
+    if user_id is None:
+        return False
+
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        logger.warning(f"管理员身份检查收到非法用户ID: {user_id!r}")
+        return False
+
+    return uid in ADMIN_LIST
+
+
 async def check_admin_permission(
     event: Any,
     command_name: str | None = None,
@@ -50,7 +76,7 @@ async def check_admin_permission(
         logger.warning(f"事件缺少 sender_id，无法进行权限检查，命令: {command}")
         return False
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         reply = reply_func or getattr(event, "reply", None)
         if reply:
