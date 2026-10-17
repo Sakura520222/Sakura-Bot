@@ -92,7 +92,10 @@ def prepare_runtime(root: Path = Path(".")) -> None:
         print("构建挂载源码的 WebUI...", flush=True)
         npm = shutil.which("npm") or "npm"
         install_command = "ci" if (root / "web/package-lock.json").is_file() else "install"
-        subprocess.run([npm, install_command, "--include=dev"], cwd=root / "web", check=True)
+        install_args = [npm, install_command, "--include=dev"]
+        if install_command == "install":
+            install_args.append("--package-lock=false")
+        subprocess.run(install_args, cwd=root / "web", check=True)
         subprocess.run([npm, "run", "build"], cwd=root / "web", check=True)
     record_runtime_state("frontend", root)
 

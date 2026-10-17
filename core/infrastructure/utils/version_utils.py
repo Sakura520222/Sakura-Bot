@@ -11,12 +11,17 @@
 """版本检查和更新工具模块"""
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import aiohttp
@@ -25,6 +30,9 @@ from packaging import version
 from core.docker_runtime import record_runtime_state
 
 logger = logging.getLogger(__name__)
+
+# 仅兼容旧部署遗留的生成文件，绝不清理配置、提示词或其他源码。
+_GENERATED_UPDATE_FILES = ("web/package-lock.json", "web/tsconfig.tsbuildinfo")
 
 
 def get_local_version():
@@ -84,64 +92,173 @@ def compare_versions(local, remote):
         return False
 
 
+def _run_git(*args, cwd=None, check=True):
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=check,
+        timeout=30,
+    )
+
+
+def _generated_file_state(path):
+    """保留原始字节和权限；拒绝沿符号链接清理文件。"""
+    if path.is_symlink() or path.parent.is_symlink():
+        raise ValueError(f"生成文件路径是符号链接，拒绝自动处理: {path}")
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"生成文件路径不是普通文件，拒绝自动处理: {path}")
+    return path.read_bytes(), stat.S_IMODE(info.st_mode)
+
+
+def _restore_generated_file(path, state):
+    if state is None:
+        path.unlink(missing_ok=True)
+        return
+    content, mode = state
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+        temporary.chmod(mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _clean_generated_files(root, head):
+    """先持久备份再清理；合并失败时恢复，不覆盖期间发生的并发修改。"""
+    paths = _GENERATED_UPDATE_FILES
+    if _run_git("diff", "--cached", "--name-only", "--", *paths, cwd=root).stdout:
+        raise ValueError("生成文件存在已暂存修改，请先提交或取消暂存后再更新")
+    changed = _run_git("diff", "--name-only", "-z", "--", *paths, cwd=root).stdout
+    untracked = _run_git("ls-files", "--others", "-z", "--", *paths, cwd=root).stdout
+    names = sorted(set(filter(None, (changed + untracked).split("\0"))))
+    if any(name not in paths for name in names):
+        raise ValueError("生成文件路径包含目录或异常路径，拒绝自动处理")
+    if not names:
+        yield None
+        return
+
+    if "web/package-lock.json" in names:
+        manifest_tracked = _run_git(
+            "ls-files", "--error-unmatch", "--", "web/package.json", cwd=root, check=False
+        )
+        manifest_diff = _run_git(
+            "diff", "--quiet", "HEAD", "--", "web/package.json", cwd=root, check=False
+        )
+        manifest_staged = _run_git(
+            "diff", "--cached", "--quiet", "--", "web/package.json", cwd=root, check=False
+        )
+        if manifest_tracked.returncode or manifest_diff.returncode or manifest_staged.returncode:
+            raise ValueError(
+                "package.json 存在本地修改或未跟踪，保留自定义依赖和锁文件，请先手动处理"
+            )
+        manifest_state = _generated_file_state(root / "web/package.json")
+
+    original = {name: _generated_file_state(root / name) for name in names}
+    tracked = set(_run_git("ls-files", "-z", "--", *names, cwd=root).stdout.split("\0"))
+    git_path = _run_git("rev-parse", "--git-path", "sakura-update-backups", cwd=root).stdout.strip()
+    backup_root = (root / git_path).resolve()
+    backup_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    backup = Path(tempfile.mkdtemp(prefix="generated-", dir=backup_root))
+    metadata = {"head": head, "files": {}}
+    for name, state in original.items():
+        if state is not None:
+            saved = backup / "files" / name
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_bytes(state[0])
+            saved.chmod(state[1])
+        metadata["files"][name] = {
+            "sha256": hashlib.sha256(state[0]).hexdigest() if state is not None else None,
+            "mode": state[1] if state is not None else None,
+            "tracked": name in tracked,
+        }
+    (backup / "manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    logger.info("更新前生成文件已备份: %s", backup)
+
+    cleaned = {}
+    try:
+        if _run_git("rev-parse", "HEAD", cwd=root).stdout.strip() != head:
+            raise RuntimeError("备份期间 HEAD 已变化，停止更新")
+        if _run_git("diff", "--cached", "--name-only", "--", *paths, cwd=root).stdout:
+            raise RuntimeError("备份期间生成文件已被暂存，停止更新")
+        if "web/package-lock.json" in names and (
+            _generated_file_state(root / "web/package.json") != manifest_state
+            or _run_git(
+                "diff", "--cached", "--quiet", "--", "web/package.json", cwd=root, check=False
+            ).returncode
+        ):
+            raise RuntimeError("备份期间 package.json 已变化，停止更新")
+        for name, state in original.items():
+            if _generated_file_state(root / name) != state:
+                raise RuntimeError(f"备份期间生成文件已变化，停止更新: {name}")
+        for name, state in original.items():
+            if _generated_file_state(root / name) != state:
+                raise RuntimeError(f"清理前生成文件已变化，停止更新: {name}")
+            if name in tracked:
+                _run_git("restore", f"--source={head}", "--worktree", "--", name, cwd=root)
+            else:
+                (root / name).unlink()
+            cleaned[name] = _generated_file_state(root / name)
+        yield backup
+    except Exception as error:
+        for name, state in cleaned.items():
+            try:
+                current = _generated_file_state(root / name)
+                if current == state:
+                    _restore_generated_file(root / name, original[name])
+                elif current != original[name]:
+                    logger.error("生成文件发生并发修改，保留当前内容；原内容见备份: %s", name)
+            except Exception:
+                logger.exception("恢复生成文件失败，原内容见备份: %s", name)
+        detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
+        raise RuntimeError(f"{detail}；生成文件原内容已备份至 {backup}") from error
+
+
+def _fast_forward_update():
+    root = Path(_run_git("rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    _run_git("fetch", "origin", cwd=root)
+    target = None
+    for branch in ("main", "master"):
+        result = _run_git(
+            "rev-parse", "--verify", f"refs/remotes/origin/{branch}", cwd=root, check=False
+        )
+        if result.returncode == 0:
+            target = result.stdout.strip()
+            break
+    if target is None:
+        return False, "无法获取远程 main/master 分支"
+    head = _run_git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    ancestor = _run_git("merge-base", "--is-ancestor", head, target, cwd=root, check=False)
+    if ancestor.returncode != 0:
+        return False, "Git 分支分叉或无法确认快进关系，请先手动处理；本地文件未清理"
+    with _clean_generated_files(root, head) as backup:
+        _run_git("merge", "--ff-only", target, cwd=root)
+    message = f"更新成功: {target[:7]}"
+    if backup is not None:
+        message += f"；旧生成文件备份: {backup}"
+    return True, message
+
+
 async def git_pull_latest():
-    """快进更新代码，保留挂载仓库中的配置和本地修改。"""
+    """仅清理已备份的生成文件，快进更新并保留配置及其他本地修改。"""
 
     try:
-        # 检测远程分支
-        detect_branch = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "branch", "-r"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if detect_branch.returncode != 0:
-            logger.error("无法获取远程分支列表")
-            return False, "无法获取远程分支"
-
-        # 确定远程主分支名称
-        branch = "origin/main" if "origin/main" in detect_branch.stdout else "origin/master"
-
-        # 执行更新
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "fetch", "origin"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return False, f"Git fetch 失败: {result.stderr}"
-
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "merge", "--ff-only", branch],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return False, f"Git 快进更新失败，请先处理本地修改或分支分叉: {result.stderr}"
-
-        # 获取最新 commit 信息
-        commit_result = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        new_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
-
-        return True, f"更新成功: {new_commit}"
-
+        return await asyncio.to_thread(_fast_forward_update)
     except subprocess.TimeoutExpired:
         return False, "Git 操作超时"
+    except subprocess.CalledProcessError as error:
+        return False, f"Git 更新失败，请先处理本地修改: {error.stderr}"
     except Exception as e:
         logger.error(f"Git 更新失败: {e}")
         return False, str(e)
@@ -205,9 +322,12 @@ async def build_frontend():
         npm = shutil.which("npm") or "npm"
         has_lockfile = await asyncio.to_thread(Path("web/package-lock.json").is_file)
         install_command = "ci" if has_lockfile else "install"
+        install_args = [npm, install_command, "--include=dev"]
+        if not has_lockfile:
+            install_args.append("--package-lock=false")
         npm_install = await asyncio.to_thread(
             subprocess.run,
-            [npm, install_command, "--include=dev"],
+            install_args,
             cwd="web",
             capture_output=True,
             text=True,

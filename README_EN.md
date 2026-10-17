@@ -61,6 +61,8 @@ docker-compose logs -f
 
 The project directory is mounted at `/app` (`.:/app`). `/update` updates the host repository, installs Python dependencies, builds the WebUI, and restarts the bot. The image includes Git, Node.js, and npm. GitHub SSH remotes use HTTPS inside the container, without mounting host SSH keys. Updates use fast-forward merges to preserve local settings and stop on conflicts or diverged branches.
 
+Legacy changes to `web/package-lock.json` and the `web/tsconfig.tsbuildinfo` cache are backed up under `sakura-update-backups/generated-*` inside the Git directory before cleanup. Failed merges restore their original contents. Staged generated files or local `package.json` changes require manual handling to protect custom dependencies. Configuration, prompts, and other source files are never automatically cleaned. Frontend builds use `npm ci` and type checking without incremental cache output to keep the checkout clean.
+
 For an existing Docker deployment, update the deployment files on the host and rebuild once:
 
 ```bash

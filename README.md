@@ -61,6 +61,8 @@ docker-compose logs -f
 
 项目目录通过 `.:/app` 挂载到容器，`/update` 会直接更新宿主机仓库，然后安装 Python 依赖、构建 WebUI 并重启。镜像已包含 Git、Node.js 和 npm；GitHub SSH 远程地址在容器内通过 HTTPS 拉取，无需挂载宿主机 SSH 密钥。更新使用快进合并，保留本地配置；遇到冲突或分支分叉时会停止并提示处理。
 
+旧部署遗留的 `web/package-lock.json` 修改和 `web/tsconfig.tsbuildinfo` 缓存会先备份到 Git 目录中的 `sakura-update-backups/generated-*`，再清理并更新；合并失败会恢复原内容。已暂存的生成文件或本地 `package.json` 修改需要手动处理，避免覆盖自定义依赖。配置、提示词和其他源码不会被自动清理。前端使用 `npm ci` 和不生成增量缓存的类型检查，避免构建再次污染仓库。
+
 旧版 Docker 部署需先在宿主机更新上述部署文件，再重建一次：
 
 ```bash
