@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
 jobs:
   analyze-and-update-release:
     name: 分析 PR 并更新 Release
@@ -17,8 +21,9 @@ jobs:
     outputs:
       version: ${{ steps.read_version.outputs.current_version }}
       release_exists: ${{ steps.check_release.outputs.exists }}
-      pr_title: ${{ github.event.pull_request.title }}
-      pr_number: ${{ github.event.pull_request.number }}
+      pr_title: ${{ steps.extract_pr_info.outputs.title }}
+      pr_number: ${{ steps.extract_pr_info.outputs.pr_number }}
+      release_sha: ${{ steps.collect_commits.outputs.release_sha }}
     
     steps:
       - name: 检出代码
@@ -28,24 +33,34 @@ jobs:
           fetch-depth: 0
           ref: main  # 显式指定 main 分支，避免处于 PR ref 导致 push 失败
       
-      - name: 提取 PR 信息
+      - name: 提取发布来源信息
         id: extract_pr_info
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          echo "PR 标题: ${{ github.event.pull_request.title }}"
-          echo "PR 编号: ${{ github.event.pull_request.number }}"
-          echo "合并时间: $(date +'%Y-%m-%d')"
-          
-          # 提取 PR 标签
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
-          echo "PR 标签: $LABELS"
-          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            TITLE="$PR_TITLE"
+            LABELS="$PR_LABELS"
+          else
+            TITLE=$(git log -1 --format=%s)
+            PR_NUMBER=""
+            LABELS=""
+          fi
+          # 输出按单行传递，内容只作为数据使用，不插入 shell 脚本源码。
+          TITLE=$(printf '%s' "$TITLE" | tr '\r\n' '  ')
+          LABELS=$(printf '%s' "$LABELS" | tr '\r\n' '  ')
+          printf 'title=%s\npr_number=%s\nlabels=%s\n' "$TITLE" "$PR_NUMBER" "$LABELS" >> "$GITHUB_OUTPUT"
+          printf '发布来源: %s\n标题: %s\n' "$EVENT_NAME" "$TITLE"
       
       - name: 分析 PR 类型
         id: analyze_type
+        env:
+          TITLE: ${{ steps.extract_pr_info.outputs.title }}
+          LABELS: ${{ steps.extract_pr_info.outputs.labels }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          LABELS="${{ steps.extract_pr_info.outputs.labels }}"
-          
           # 根据 PR 标签确定类型
           if echo "$LABELS" | grep -q "enhancement"; then
             CHANGE_TYPE="新增"
@@ -77,12 +92,6 @@ jobs:
           echo "change_type=$CHANGE_TYPE" >> $GITHUB_OUTPUT
           echo "变更类型: $CHANGE_TYPE"
       
-      - name: 提取提交信息到文件
-        run: |
-          git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > "${{ runner.temp }}/commits_list.txt"
-          
-          echo "📝 提交信息已写入 ${{ runner.temp }}/commits_list.txt"
-      
       - name: 读取当前版本
         id: read_version
         run: |
@@ -109,6 +118,32 @@ jobs:
           TODAY=$(date +'%Y-%m-%d')
           echo "today=$TODAY" >> "$GITHUB_OUTPUT"
           echo "今天日期: $TODAY"
+
+      - name: 提取提交信息到文件
+        id: collect_commits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VERSION: ${{ steps.read_version.outputs.current_version }}
+        run: |
+          RELEASE_SHA=$(git rev-parse HEAD)
+          COMMITS_FILE="${RUNNER_TEMP}/commits_list.txt"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+              echo "PR 提交范围缺失，无法生成发布记录。" >&2
+              exit 1
+            fi
+            git log --format=%s "${BASE_SHA}..${HEAD_SHA}" -- > "$COMMITS_FILE"
+          elif PREVIOUS_TAG=$(git describe --tags --abbrev=0 --exclude "v${VERSION}" "$RELEASE_SHA" 2>/dev/null); then
+            # 手动发布没有 PR；只收集上一个可达 Tag 之后的提交。
+            git log --format=%s "${PREVIOUS_TAG}..${RELEASE_SHA}" -- > "$COMMITS_FILE"
+          else
+            # 首次发布、没有历史 Tag 时使用当前提交的完整历史。
+            git log --format=%s "$RELEASE_SHA" -- > "$COMMITS_FILE"
+          fi
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "📝 提交信息已写入 $COMMITS_FILE"
       
       - name: 检查 Release 是否存在
         id: check_release
@@ -223,7 +258,7 @@ jobs:
             
             # 添加到对应类型（不加粗）
             # 添加 PR 编号（如果还没有）
-            if [[ "$commit_msg" != *"(PR #"* ]]; then
+            if [ -n "$PR_NUM" ] && [[ "$commit_msg" != *"(PR #"* ]]; then
               commit_msg="$commit_msg (PR #${PR_NUM})"
               # 如果有标签，添加标签信息
               if [ -n "$LABELS" ]; then
@@ -257,7 +292,7 @@ jobs:
             if [ -n "$commits" ]; then
               echo "### ${TYPE_MAP[$type]}" >> release_notes.txt
               echo "" >> release_notes.txt
-              echo "$commits" >> release_notes.txt
+              printf '%s\n' "$commits" | awk '!seen[$0]++' >> release_notes.txt
               echo "" >> release_notes.txt
             fi
           done
@@ -277,8 +312,8 @@ jobs:
           VERSION: ${{ steps.read_version.outputs.current_version }}
           TODAY: ${{ steps.read_version.outputs.today }}
           CHANGE_TYPE: ${{ steps.analyze_type.outputs.change_type }}
-          TITLE: ${{ github.event.pull_request.title }}
-          PR_NUM: ${{ github.event.pull_request.number }}
+          TITLE: ${{ steps.extract_pr_info.outputs.title }}
+          PR_NUM: ${{ steps.extract_pr_info.outputs.pr_number }}
           EXISTS: ${{ steps.check_release.outputs.exists }}
           LABELS: ${{ steps.extract_pr_info.outputs.labels }}
       
@@ -294,6 +329,7 @@ jobs:
             echo "📝 正在创建 Release ${TAG_NAME}..."
             gh release create "$TAG_NAME" \
               --title "Release ${TAG_NAME}" \
+              --target "${{ steps.collect_commits.outputs.release_sha }}" \
               --notes-file release_notes.txt \
               --latest
             echo "✅ Release ${TAG_NAME} 已创建"
@@ -415,11 +451,11 @@ jobs:
       contents: write
     
     steps:
-      - name: 检出代码（使用合并后的 main 分支）
+      - name: 检出发布对应的提交
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main  # 确保使用的是合并后的 main 分支代码
+          ref: ${{ needs.analyze-and-update-release.outputs.release_sha }}
       
       - name: 验证项目结构
         run: |
@@ -491,7 +527,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: 检查并清理 Release 附件状态
+      - name: 检查 Release 附件状态
         id: check_assets
         run: |
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
@@ -500,24 +536,9 @@ jobs:
           ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
           echo "现有附件数量: $ASSETS"
           
-          if [ "$ASSETS" -gt 0 ]; then
-            echo "🗑️ 检测到已有附件，正在清理旧附件..."
-            
-            # 获取所有附件名称并删除
-            ASSET_NAMES=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name')
-            for asset in $ASSET_NAMES; do
-              echo "  删除附件: $asset"
-              gh release delete-asset "$TAG_NAME" "$asset" -y
-            done
-            
-            echo "✅ 已删除 $ASSETS 个旧附件"
-          else
-            echo "ℹ️ Release 没有附件"
-          fi
-          
-          # 无论是否有旧附件，都标记为需要上传（确保附件与代码同步）
+          # 先完成打包，再由 upload --clobber 替换本次生成的同名资源。
+          # 保留其他附件，也避免打包失败时丢失已有下载文件。
           echo "should_upload=true" >> $GITHUB_OUTPUT
-          echo "has_assets=false" >> $GITHUB_OUTPUT
           echo "ℹ️ 将上传新的发布附件"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -647,13 +668,18 @@ jobs:
             TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
             PR_NUMBER="${{ needs.analyze-and-update-release.outputs.pr_number }}"
+            if [ -n "$PR_NUMBER" ]; then
+              SOURCE_INFO="🔖 PR: #${PR_NUMBER}"
+            else
+              SOURCE_INFO="🖐 发布方式: 手动运行"
+            fi
             
             MESSAGE="🚀 **新版本发布通知**
             
             Sakura-Bot v${VERSION} 已发布！
             
             📦 版本: v${VERSION}
-            🔖 PR: #${PR_NUMBER}
+            ${SOURCE_INFO}
             
             📦 **下载附件**:
             ${RELEASE_URL}
