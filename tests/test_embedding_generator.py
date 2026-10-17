@@ -17,7 +17,7 @@ class TestEmbeddingGeneratorInit:
     """初始化测试"""
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_init_with_api_key(self, mock_openai):
         """测试使用API key初始化"""
         generator = EmbeddingGenerator()
@@ -25,7 +25,7 @@ class TestEmbeddingGeneratorInit:
         assert generator.api_key == "test_key"
         assert generator.is_available()
 
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_init_without_api_key(self, mock_openai):
         """测试没有API key初始化"""
         with patch.dict(os.environ, {}, clear=True):
@@ -43,7 +43,7 @@ class TestEmbeddingGeneratorInit:
             "EMBEDDING_DIMENSION": "512",
         },
     )
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_init_with_custom_config(self, mock_openai):
         """测试自定义配置初始化"""
         generator = EmbeddingGenerator()
@@ -58,14 +58,14 @@ class TestIsAvailable:
     """可用性测试"""
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_is_available_when_client_exists(self, mock_openai):
         """测试客户端存在时返回True"""
         generator = EmbeddingGenerator()
 
         assert generator.is_available() is True
 
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_is_available_when_client_missing(self, mock_openai):
         """测试客户端不存在时返回False"""
         with patch.dict(os.environ, {}, clear=True):
@@ -79,7 +79,7 @@ class TestGenerate:
     """生成单个embedding测试"""
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_generate_success(self, mock_openai):
         """测试成功生成embedding"""
         mock_response = MagicMock()
@@ -93,7 +93,7 @@ class TestGenerate:
 
         assert result == [0.1, 0.2, 0.3]
 
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_generate_unavailable(self, mock_openai):
         """测试服务不可用时生成"""
         with patch.dict(os.environ, {}, clear=True):
@@ -104,7 +104,7 @@ class TestGenerate:
         assert result is None
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_generate_api_error(self, mock_openai):
         """测试API错误"""
         mock_client = MagicMock()
@@ -122,7 +122,7 @@ class TestBatchGenerate:
     """批量生成embedding测试"""
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_batch_generate_success(self, mock_openai):
         """测试成功批量生成"""
         mock_response = MagicMock()
@@ -143,7 +143,7 @@ class TestBatchGenerate:
         assert result[1] == [0.3, 0.4]
         assert result[2] == [0.5, 0.6]
 
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_batch_generate_unavailable(self, mock_openai):
         """测试服务不可用时批量生成"""
         with patch.dict(os.environ, {}, clear=True):
@@ -154,7 +154,7 @@ class TestBatchGenerate:
         assert result == [None, None]
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_batch_generate_api_error(self, mock_openai):
         """测试批量生成API错误"""
         mock_client = MagicMock()
@@ -172,12 +172,12 @@ class TestGetEmbeddingGenerator:
     """获取全局实例测试"""
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_singleton_pattern(self, mock_openai):
         """测试单例模式"""
-        import core.embedding_generator
+        import core.ai.embedding_generator
 
-        core.embedding_generator.embedding_generator = None
+        core.ai.embedding_generator.embedding_generator = None
 
         gen1 = get_embedding_generator()
         gen2 = get_embedding_generator()
@@ -185,12 +185,12 @@ class TestGetEmbeddingGenerator:
         assert gen1 is gen2
 
     @patch.dict(os.environ, {"EMBEDDING_API_KEY": "test_key"})
-    @patch("core.embedding_generator.OpenAI")
+    @patch("core.ai.embedding_generator.OpenAI")
     def test_returns_embedding_generator_instance(self, mock_openai):
         """测试返回EmbeddingGenerator实例"""
-        import core.embedding_generator
+        import core.ai.embedding_generator
 
-        core.embedding_generator.embedding_generator = None
+        core.ai.embedding_generator.embedding_generator = None
 
         generator = get_embedding_generator()
 

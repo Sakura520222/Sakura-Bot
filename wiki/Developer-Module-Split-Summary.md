@@ -284,18 +284,19 @@ core/
 class NewFeatureInitializer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-    
+
     async def initialize(self, client) -> None:
         self.logger.info("初始化新功能...")
         # 初始化逻辑
         self.logger.info("新功能初始化完成")
+
 
 # 在 AppBootstrap 中使用
 class AppBootstrap:
     def __init__(self):
         # ... 现有初始化器
         self.new_feature_initializer = NewFeatureInitializer()
-    
+
     async def run(self) -> None:
         # ... 现有初始化流程
         # 在合适的位置初始化新功能

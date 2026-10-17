@@ -49,12 +49,14 @@ client_llm = OpenAI(api_key=api_key, base_url=base_url)
 from functools import lru_cache
 from openai import OpenAI
 
+
 @lru_cache
 def get_ai_client():
     """获取 AI 客户端单例（延迟初始化）"""
     api_key = get_llm_api_key()
     base_url = get_llm_base_url()
     return OpenAI(api_key=api_key, base_url=base_url)
+
 
 def analyze_with_ai(messages, prompt, model=None):
     """使用 AI 分析消息"""
@@ -77,14 +79,15 @@ def analyze_with_ai(messages, prompt, model=None):
 # core/ai_client.py
 class AIClient:
     """AI 客户端单例"""
+
     _instance = None
     _client = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     @property
     def client(self):
         """延迟初始化客户端"""
@@ -93,13 +96,16 @@ class AIClient:
             base_url = get_llm_base_url()
             self._client = OpenAI(api_key=api_key, base_url=base_url)
         return self._client
-    
+
     def reset(self):
         """重置客户端（用于测试）"""
         self._client = None
 
+
 # 使用
 ai_client = AIClient()
+
+
 def analyze_with_ai(messages, prompt, model=None):
     client = ai_client.client
     # ...

@@ -197,9 +197,9 @@ class AIClient:
 ```python
 {
     "intent": "summary_query",  # 意图类型
-    "time_range": 7,            # 时间范围（天）
+    "time_range": 7,  # 时间范围（天）
     "keywords": ["AI", "GPT"],  # 关键词
-    "topics": ["技术"],         # 主题
+    "topics": ["技术"],  # 主题
 }
 ```
 

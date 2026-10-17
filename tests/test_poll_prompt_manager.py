@@ -20,7 +20,9 @@ class TestPollPromptManager:
         prompt_file = temp_dir / "test_poll_prompt.txt"
         test_prompt = "这是一个测试投票提示词"
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)
+        ):
             # 保存提示词
             save_poll_prompt(test_prompt)
             assert prompt_file.exists()
@@ -34,7 +36,9 @@ class TestPollPromptManager:
         """测试加载不存在的投票提示词文件"""
         nonexistent_file = temp_dir / "nonexistent_poll_prompt.txt"
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(nonexistent_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(nonexistent_file)
+        ):
             from core.config import DEFAULT_POLL_PROMPT
 
             prompt = load_poll_prompt()
@@ -49,7 +53,9 @@ class TestPollPromptManager:
 
         prompt_file.write_text(test_prompt, encoding="utf-8")
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)
+        ):
             loaded_prompt = load_poll_prompt()
             assert loaded_prompt == test_prompt
 
@@ -57,7 +63,9 @@ class TestPollPromptManager:
         """测试覆盖已存在的投票提示词文件"""
         prompt_file = temp_dir / "test_poll_prompt.txt"
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)
+        ):
             # 保存第一个提示词
             save_poll_prompt("第一个投票提示词")
             assert prompt_file.read_text(encoding="utf-8") == "第一个投票提示词"
@@ -70,7 +78,9 @@ class TestPollPromptManager:
         """测试保存空字符串"""
         prompt_file = temp_dir / "test_poll_prompt.txt"
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)
+        ):
             save_poll_prompt("")
             assert prompt_file.read_text(encoding="utf-8") == ""
 
@@ -81,7 +91,9 @@ class TestPollPromptManager:
 
         prompt_file.write_text(test_prompt, encoding="utf-8")
 
-        with patch("core.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)):
+        with patch(
+            "core.infrastructure.config.poll_prompt_manager.POLL_PROMPT_FILE", str(prompt_file)
+        ):
             loaded_prompt = load_poll_prompt()
             assert loaded_prompt == "测试投票提示词"
 

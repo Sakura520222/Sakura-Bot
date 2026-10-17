@@ -23,36 +23,36 @@ def handler():
 
 
 @pytest.mark.unit
-def test_build_review_buttons_anonymous_contains_signed_approve(handler):
+def test_build_review_buttons_anonymous_contains_signed_approve(handler, inline_button_payload):
     """测试匿名投稿审核按钮包含署名通过。"""
     buttons = handler._build_review_buttons(12, can_force_signature=True)
 
     button_texts = [button.text for row in buttons for button in row]
-    button_data = [button.data.decode() for row in buttons for button in row]
+    button_data = [inline_button_payload(button).decode() for row in buttons for button in row]
 
     assert "✍️ 署名通过" in button_texts
     assert "submission_signapprove_12" in button_data
 
 
 @pytest.mark.unit
-def test_build_review_buttons_non_anonymous_without_signed_approve(handler):
+def test_build_review_buttons_non_anonymous_without_signed_approve(handler, inline_button_payload):
     """测试非匿名投稿审核按钮不包含署名通过。"""
     buttons = handler._build_review_buttons(12, can_force_signature=False)
 
     button_texts = [button.text for row in buttons for button in row]
-    button_data = [button.data.decode() for row in buttons for button in row]
+    button_data = [inline_button_payload(button).decode() for row in buttons for button in row]
 
     assert "✍️ 署名通过" not in button_texts
     assert "submission_signapprove_12" not in button_data
 
 
 @pytest.mark.unit
-def test_build_review_buttons_restore_keeps_signed_approve(handler):
+def test_build_review_buttons_restore_keeps_signed_approve(handler, inline_button_payload):
     """测试恢复原文阶段仍保留署名通过按钮。"""
     buttons = handler._build_review_buttons(12, show_restore=True, can_force_signature=True)
 
     button_texts = [button.text for row in buttons for button in row]
-    button_data = [button.data.decode() for row in buttons for button in row]
+    button_data = [inline_button_payload(button).decode() for row in buttons for button in row]
 
     assert "✍️ 署名通过" in button_texts
     assert "🔄 恢复原文" in button_texts
@@ -212,7 +212,7 @@ async def test_notify_submitter_forced_signature_adds_notice(handler):
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_handle_ai_optimize_success_reuses_submission_lookup(handler):
+async def test_handle_ai_optimize_success_reuses_submission_lookup(handler, inline_button_payload):
     """测试 AI 优化成功时复用投稿查询结果构建按钮。"""
     event = MagicMock()
     event.edit = AsyncMock()
@@ -232,13 +232,15 @@ async def test_handle_ai_optimize_success_reuses_submission_lookup(handler):
     handler.repo.get_submission.assert_awaited_once_with(123)
     assert event.edit.await_count == 2
     _, kwargs = event.edit.await_args
-    button_data = [button.data.decode() for row in kwargs["buttons"] for button in row]
+    button_data = [
+        inline_button_payload(button).decode() for row in kwargs["buttons"] for button in row
+    ]
     assert "submission_signapprove_123" in button_data
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_handle_ai_optimize_failure_reuses_submission_lookup(handler):
+async def test_handle_ai_optimize_failure_reuses_submission_lookup(handler, inline_button_payload):
     """测试 AI 优化失败时复用投稿查询结果构建按钮。"""
     event = MagicMock()
     event.edit = AsyncMock()
@@ -251,5 +253,7 @@ async def test_handle_ai_optimize_failure_reuses_submission_lookup(handler):
 
     handler.repo.get_submission.assert_awaited_once_with(123)
     _, kwargs = event.edit.await_args
-    button_data = [button.data.decode() for row in kwargs["buttons"] for button in row]
+    button_data = [
+        inline_button_payload(button).decode() for row in kwargs["buttons"] for button in row
+    ]
     assert "submission_signapprove_123" in button_data

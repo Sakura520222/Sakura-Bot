@@ -104,15 +104,16 @@ pytest tests/ --cov=core --cov-report=html
 ```python
 import pytest
 
+
 @pytest.mark.unit
 class TestMyModule:
     """模块测试"""
-    
+
     def test_function_success(self, mock_env_vars):
         """测试成功场景"""
         result = my_function("test")
         assert result == "expected"
-    
+
     def test_function_failure(self):
         """测试失败场景"""
         with pytest.raises(ValueError):

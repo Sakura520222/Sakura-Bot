@@ -112,7 +112,7 @@ class TestRerankerRerank:
 
         assert result == []
 
-    @patch("core.reranker.httpx.Client")
+    @patch("core.ai.reranker.httpx.Client")
     def test_rerank_success(self, mock_client_class, monkeypatch):
         """测试成功重排序"""
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
@@ -150,7 +150,7 @@ class TestRerankerRerank:
         assert result[2]["summary_id"] == 2  # index 1
         assert result[2]["rerank_score"] == 0.75
 
-    @patch("core.reranker.httpx.Client")
+    @patch("core.ai.reranker.httpx.Client")
     def test_rerank_with_missing_score(self, mock_client_class, monkeypatch):
         """测试响应中缺少relevance_score"""
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
@@ -181,7 +181,7 @@ class TestRerankerRerank:
         assert len(result) == 2
         assert result[0]["rerank_score"] == 0  # 默认值
 
-    @patch("core.reranker.httpx.Client")
+    @patch("core.ai.reranker.httpx.Client")
     def test_rerank_api_error(self, mock_client_class, monkeypatch):
         """测试API调用失败"""
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
@@ -204,7 +204,7 @@ class TestRerankerRerank:
         assert len(result) == 1
         assert result[0]["summary_id"] == 1
 
-    @patch("core.reranker.httpx.Client")
+    @patch("core.ai.reranker.httpx.Client")
     def test_rerank_invalid_response_format(self, mock_client_class, monkeypatch):
         """测试API返回格式异常"""
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
@@ -231,7 +231,7 @@ class TestRerankerRerank:
         assert len(result) == 1
         assert result[0]["summary_id"] == 1
 
-    @patch("core.reranker.httpx.Client")
+    @patch("core.ai.reranker.httpx.Client")
     def test_rerank_preserves_original_fields(self, mock_client_class, monkeypatch):
         """测试保留原始文档的所有字段"""
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
@@ -278,9 +278,9 @@ class TestGetReranker:
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
 
         # 重置全局变量
-        import core.reranker
+        import core.ai.reranker
 
-        core.reranker.reranker = None
+        core.ai.reranker.reranker = None
 
         r1 = get_reranker()
         r2 = get_reranker()
@@ -292,9 +292,9 @@ class TestGetReranker:
         monkeypatch.setenv("RERANKER_API_KEY", "test_key")
 
         # 重置全局变量
-        import core.reranker
+        import core.ai.reranker
 
-        core.reranker.reranker = None
+        core.ai.reranker.reranker = None
 
         r = get_reranker()
 

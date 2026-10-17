@@ -160,7 +160,7 @@ def test_build_callback_rejects_oversized_data():
 
 
 @pytest.mark.parametrize("menu", [MENU_MAIN, MENU_BASIC, MENU_QA, MENU_FORWARDING, MENU_CONFIG])
-def test_build_mainbot_menu_keyboard_callback_data_within_limit(menu):
+def test_build_mainbot_menu_keyboard_callback_data_within_limit(menu, inline_button_payload):
     """测试主菜单回调数据不超过 Telegram 限制。"""
     buttons = build_mainbot_menu_keyboard(menu)
-    assert all(len(button.data) <= 64 for row in buttons for button in row)
+    assert all(len(inline_button_payload(button)) <= 64 for row in buttons for button in row)

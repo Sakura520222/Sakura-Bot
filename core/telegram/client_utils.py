@@ -225,6 +225,11 @@ def validate_message_entities(text):
     if not text:
         return True, "空文本，无需验证"
 
+    # 先检查代码块，避免将未闭合的三个反引号误报为内联代码错误。
+    code_block_count = text.count("```")
+    if code_block_count % 2 != 0:
+        return False, f"代码块标记不匹配: 找到{code_block_count}个```标记"
+
     # 检查粗体标记 **
     bold_count = text.count("**")
     if bold_count % 2 != 0:
@@ -263,14 +268,9 @@ def validate_message_entities(text):
         if "](" not in link_text or not link_text.endswith(")"):
             return False, f"链接格式错误: {link_text}"
         # 检查链接内容是否为空
-        link_content = link_text[1:-1]  # 去掉 []
+        link_content = link_text[1 : link_text.index("](")]
         if not link_content:
             return False, f"链接文本为空: {link_text}"
-
-    # 检查代码块标记 ```
-    code_block_count = text.count("```")
-    if code_block_count % 2 != 0:
-        return False, f"代码块标记不匹配: 找到{code_block_count}个```标记"
 
     # 检查实体是否超出字符串边界
     all_entity_patterns = [
@@ -400,6 +400,8 @@ def split_by_lines_smart(text, max_length):
     Returns:
         list: 分割后的行列表
     """
+    if max_length <= 0:
+        raise ValueError("max_length 必须大于零")
     lines = text.split("\n")
     result_lines = []
 
@@ -417,6 +419,10 @@ def split_by_lines_smart(text, max_length):
                 else:
                     if current_line:
                         result_lines.append(current_line)
+                    # 无空格的长单词或中文段落也必须遵守长度限制。
+                    while len(word) > max_length:
+                        result_lines.append(word[:max_length])
+                        word = word[max_length:]
                     current_line = word
 
             if current_line:

@@ -314,6 +314,7 @@ async def fetch_user_data(user_id: int) -> dict[str, Any] | None:
         logger.error(f"获取用户数据失败: {e}")
         return None
 
+
 # ❌ 避免的示例
 def getuser(id):
     # 获取用户
@@ -338,6 +339,7 @@ except AIServiceError as e:
 ```python
 # ✅ 使用类型提示
 from typing import Optional
+
 
 def process_message(text: str, user_id: int) -> Optional[str]:
     """处理消息并返回结果。"""
@@ -372,7 +374,9 @@ def calculate_summary(messages: list[Message]) -> str:
 ### 使用 pdb 调试
 
 ```python
-import pdb; pdb.set_trace()  # 设置断点
+import pdb
+
+pdb.set_trace()  # 设置断点
 ```
 
 ### 使用日志

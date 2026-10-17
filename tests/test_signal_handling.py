@@ -42,59 +42,32 @@ class TestSignalHandling:
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown_resources(self):
-        """测试优雅关闭资源功能"""
-        with patch("main.stop_qa_bot") as mock_stop_qa_bot:
-            with patch("core.config.get_scheduler_instance") as mock_get_scheduler:
-                with patch("core.database.get_db_manager") as mock_get_db:
-                    with patch("core.telegram_client.get_active_client") as mock_get_client:
-                        # 配置模拟对象
-                        mock_scheduler = MagicMock()
-                        mock_scheduler.running = True
-                        mock_get_scheduler.return_value = mock_scheduler
+        """兼容入口应将活动客户端交给统一关机管理器。"""
+        from main import graceful_shutdown_resources
 
-                        # 模拟没有 close 方法的数据库管理器
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_client = MagicMock()
-                        mock_client.is_connected.return_value = True
-                        mock_client.disconnect = AsyncMock()
-                        mock_get_client.return_value = mock_client
-
-                        # 导入并执行优雅关闭函数
-                        from main import graceful_shutdown_resources
-
-                        await graceful_shutdown_resources()
-
-                        # 验证关键组件被调用
-                        mock_stop_qa_bot.assert_called_once()
-                        mock_scheduler.shutdown.assert_called_once_with(wait=False)
-                        mock_client.disconnect.assert_awaited_once()
+        manager = MagicMock()
+        manager.graceful_shutdown = AsyncMock()
+        client = MagicMock()
+        with (
+            patch("core.system.shutdown_manager.get_shutdown_manager", return_value=manager),
+            patch("core.telegram.client.get_active_client", return_value=client),
+        ):
+            await graceful_shutdown_resources()
+        manager.graceful_shutdown.assert_awaited_once_with(client=client)
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown_with_no_client(self):
-        """测试没有活动客户端时的优雅关闭"""
-        with patch("main.stop_qa_bot") as mock_stop_qa_bot:
-            with patch("core.config.get_scheduler_instance") as mock_get_scheduler:
-                with patch("core.database.get_db_manager") as mock_get_db:
-                    with patch("core.telegram_client.get_active_client") as mock_get_client:
-                        # 配置模拟对象
-                        mock_scheduler = MagicMock()
-                        mock_scheduler.running = False
-                        mock_get_scheduler.return_value = mock_scheduler
+        """没有活动客户端也应完成统一关机委托。"""
+        from main import graceful_shutdown_resources
 
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_get_client.return_value = None
-
-                        # 导入并执行优雅关闭函数
-                        from main import graceful_shutdown_resources
-
-                        await graceful_shutdown_resources()
-
-                        # 验证问答Bot被停止
-                        mock_stop_qa_bot.assert_called_once()
+        manager = MagicMock()
+        manager.graceful_shutdown = AsyncMock()
+        with (
+            patch("core.system.shutdown_manager.get_shutdown_manager", return_value=manager),
+            patch("core.telegram.client.get_active_client", return_value=None),
+        ):
+            await graceful_shutdown_resources()
+        manager.graceful_shutdown.assert_awaited_once_with(client=None)
 
     @pytest.mark.asyncio
     async def test_task_cancellation(self):

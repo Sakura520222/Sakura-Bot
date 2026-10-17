@@ -90,10 +90,11 @@ class AutoPollHandler:
         remaining = self._queue.qsize()
         if remaining > 0:
             logger.info(f"自动趣味投票处理器停止前处理剩余 {remaining} 个任务...")
-            try:
-                await asyncio.wait_for(self._queue.join(), timeout=30.0)
-            except TimeoutError:
-                logger.warning(f"自动趣味投票处理器停止超时，丢弃 {self._queue.qsize()} 个任务")
+        # join 同时等待已出队但尚未完成的任务。
+        try:
+            await asyncio.wait_for(self._queue.join(), timeout=30.0)
+        except TimeoutError:
+            logger.warning(f"自动趣味投票处理器停止超时，丢弃 {self._queue.qsize()} 个任务")
 
         if self._worker_task and not self._worker_task.done():
             self._worker_task.cancel()
@@ -195,7 +196,7 @@ class AutoPollHandler:
         """后台 worker 循环，逐个处理队列中的投票任务"""
         logger.info("自动趣味投票 worker 已启动")
 
-        while self._running:
+        while self._running or not self._queue.empty():
             try:
                 task = None
                 try:
@@ -203,8 +204,10 @@ class AutoPollHandler:
                 except TimeoutError:
                     continue
 
-                await self._process_poll_task(task)
-                self._queue.task_done()
+                try:
+                    await self._process_poll_task(task)
+                finally:
+                    self._queue.task_done()
 
             except asyncio.CancelledError:
                 logger.info("自动趣味投票 worker 收到取消信号")

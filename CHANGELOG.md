@@ -1017,12 +1017,12 @@ QA_BOT_USERNAME=your_qa_bot_username_here
 - **返回值格式**：
   ```python
   {
-      'success': bool,           # 是否成功
-      'summary_text': str,       # 总结文本（成功时）
-      'message_count': int,      # 消息数量
-      'channel_name': str,       # 频道名称
-      'message_ids': dict,       # 发送的消息ID
-      'error': str              # 错误信息（失败时）
+      "success": bool,  # 是否成功
+      "summary_text": str,  # 总结文本（成功时）
+      "message_count": int,  # 消息数量
+      "channel_name": str,  # 频道名称
+      "message_ids": dict,  # 发送的消息ID
+      "error": str,  # 错误信息（失败时）
   }
   ```
 
@@ -1627,12 +1627,12 @@ QA_BOT_PERSONA=data/custom_persona.txt
 - **数据结构**：
   ```python
   {
-      'user_id': 123456,
-      'session_id': 'uuid-string',
-      'role': 'user',  # 或 'assistant'
-      'content': '消息内容',
-      'timestamp': '2026-02-16T00:00:00+00:00',
-      'metadata': {}  # 可选
+      "user_id": 123456,
+      "session_id": "uuid-string",
+      "role": "user",  # 或 'assistant'
+      "content": "消息内容",
+      "timestamp": "2026-02-16T00:00:00+00:00",
+      "metadata": {},  # 可选
   }
   ```
 
@@ -1760,35 +1760,30 @@ QA_BOT_PERSONA=data/custom_persona.txt
       id=0,
       question=TextWithEntities(question_text, entities=[]),
       answers=[
-          PollAnswer(
-              text=TextWithEntities(option_text, entities=[]),
-              option=bytes([i])
-          ) for i, opt in enumerate(options)
+          PollAnswer(text=TextWithEntities(option_text, entities=[]), option=bytes([i]))
+          for i, opt in enumerate(options)
       ],
       closed=False,
       public_voters=False,
       multiple_choice=False,
-      quiz=False
+      quiz=False,
   )
   ```
 
 - **SiliconFlow Reranker API调用方式**：
   ```python
   import httpx
-  
+
   with httpx.Client(timeout=30.0) as client:
       response = client.post(
           "https://api.siliconflow.cn/v1/rerank",
-          headers={
-              "Authorization": f"Bearer {api_key}",
-              "Content-Type": "application/json"
-          },
+          headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
           json={
               "model": "BAAI/bge-reranker-v2-m3",
               "query": query,
               "documents": documents,
-              "top_n": 5
-          }
+              "top_n": 5,
+          },
       )
   ```
 

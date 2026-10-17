@@ -19,7 +19,7 @@ from core.ai.conversation_manager import (
 class TestConversationManagerInit:
     """初始化测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_init(self, mock_get_db):
         """测试初始化"""
         mock_db = MagicMock()
@@ -35,7 +35,7 @@ class TestConversationManagerInit:
 class TestGetOrCreateSession:
     """获取或创建会话测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_create_new_session(self, mock_get_db):
         """测试创建新会话"""
         mock_db = MagicMock()
@@ -48,7 +48,7 @@ class TestGetOrCreateSession:
         assert session_id is not None
         assert 123 in manager._session_cache
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_reuse_existing_session(self, mock_get_db):
         """测试复用现有会话"""
         mock_db = MagicMock()
@@ -65,7 +65,7 @@ class TestGetOrCreateSession:
         assert is_new2 is False
         assert session_id1 == session_id2
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_session_timeout(self, mock_get_db):
         """测试会话超时"""
         mock_db = MagicMock()
@@ -85,7 +85,7 @@ class TestGetOrCreateSession:
         assert is_new is True
         assert session_id1 != session_id2
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_different_users_separate_sessions(self, mock_get_db):
         """测试不同用户有独立会话"""
         mock_db = MagicMock()
@@ -105,7 +105,7 @@ class TestGetOrCreateSession:
 class TestSaveMessage:
     """保存消息测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_save_message_success(self, mock_get_db):
         """测试成功保存消息"""
@@ -121,7 +121,7 @@ class TestSaveMessage:
         assert success is True
         mock_db.save_conversation.assert_called_once()
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_save_message_failure(self, mock_get_db):
         """测试保存消息失败"""
@@ -140,7 +140,7 @@ class TestSaveMessage:
 class TestGetConversationHistory:
     """获取对话历史测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_get_history_success(self, mock_get_db):
         """测试成功获取历史"""
@@ -160,7 +160,7 @@ class TestGetConversationHistory:
         assert len(history) == 2
         assert history[0]["role"] == "user"
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_get_history_empty(self, mock_get_db):
         """测试获取空历史"""
@@ -179,7 +179,7 @@ class TestGetConversationHistory:
 class TestClearUserHistory:
     """清除用户历史测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_clear_all_history(self, mock_get_db):
         """测试清除所有历史"""
@@ -195,7 +195,7 @@ class TestClearUserHistory:
         assert deleted == 5
         assert 123 not in manager._session_cache
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_clear_specific_session(self, mock_get_db):
         """测试清除特定会话"""
@@ -257,7 +257,7 @@ class TestFormatConversationContext:
 class TestGetSessionInfo:
     """获取会话信息测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_get_session_info(self, mock_get_db):
         """测试获取会话信息"""
@@ -275,7 +275,7 @@ class TestGetSessionInfo:
         assert "message_count" in info
         assert info["message_count"] == 2
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_get_session_info_not_found(self, mock_get_db):
         """测试获取不存在会话的信息"""
@@ -293,7 +293,7 @@ class TestGetSessionInfo:
 class TestCleanupOldSessions:
     """清理旧会话测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     @pytest.mark.asyncio
     async def test_cleanup_old_sessions(self, mock_get_db):
         """测试清理旧会话"""
@@ -317,24 +317,24 @@ class TestCleanupOldSessions:
 class TestGetConversationManager:
     """获取全局实例测试"""
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_singleton(self, mock_get_db):
         """测试单例模式"""
-        import core.conversation_manager
+        import core.ai.conversation_manager
 
-        core.conversation_manager.conversation_manager = None
+        core.ai.conversation_manager.conversation_manager = None
 
         manager1 = get_conversation_manager()
         manager2 = get_conversation_manager()
 
         assert manager1 is manager2
 
-    @patch("core.conversation_manager.get_db_manager")
+    @patch("core.ai.conversation_manager.get_db_manager")
     def test_returns_conversation_manager_instance(self, mock_get_db):
         """测试返回ConversationManager实例"""
-        import core.conversation_manager
+        import core.ai.conversation_manager
 
-        core.conversation_manager.conversation_manager = None
+        core.ai.conversation_manager.conversation_manager = None
 
         manager = get_conversation_manager()
 

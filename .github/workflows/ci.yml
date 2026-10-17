@@ -149,6 +149,7 @@ jobs:
             --junitxml=test-results/unit.xml \
             --tb=short \
             --strict-markers
+          test -s test-results/unit.xml
           echo "✅ 单元测试通过，覆盖率报告生成完成"
       
       - name: 运行集成测试（如果单元测试通过）
@@ -162,6 +163,7 @@ jobs:
             --junitxml=test-results/integration.xml \
             --tb=short \
             --strict-markers
+          test -s test-results/integration.xml
       
       - name: 验证 coverage 数据文件
         if: always()
