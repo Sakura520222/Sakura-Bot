@@ -59,6 +59,16 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+The project directory is mounted at `/app` (`.:/app`). `/update` updates the host repository, installs Python dependencies, builds the WebUI, and restarts the bot. The image includes Git, Node.js, and npm. GitHub SSH remotes use HTTPS inside the container, without mounting host SSH keys. Updates use fast-forward merges to preserve local settings and stop on conflicts or diverged branches.
+
+For an existing Docker deployment, update the deployment files on the host and rebuild once:
+
+```bash
+docker compose up -d --build
+```
+
+Source code, frontend artifacts, and `data/` persist on the host. Recreated containers synchronize Python dependencies and the WebUI using source fingerprints; ordinary restarts reuse installed dependencies and existing builds. Changes to system dependencies or the Dockerfile still require the host-side rebuild command above.
+
 ### 💻 Local Installation
 
 ```bash

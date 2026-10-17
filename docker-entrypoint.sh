@@ -33,7 +33,15 @@ fi
 
 echo "环境变量检查完成"
 
+# /app 可由宿主机源码覆盖；重建容器后同步新增依赖并恢复前端产物。
+# 自定义诊断命令（例如 python --version）无需安装依赖或构建前端。
+if [[ "${1:-}" == "python" || "${1:-}" == "python3" ]] && \
+   [[ "${2:-}" == "main.py" || "${2:-}" == "qa_bot.py" ]]; then
+    python /usr/local/bin/sakura-docker-runtime.py prepare
+fi
+
 # 检查并创建必要的文件
+mkdir -p /app/data
 if [ ! -f /app/data/config.json ]; then
     echo "创建默认 config.json 文件"
     echo '{}' > /app/data/config.json

@@ -405,7 +405,11 @@ async def _op_update(_params: dict[str, Any], _request: Request) -> dict[str, An
     import sys
 
     from core.config import RESTART_FLAG_FILE, trigger_shutdown
-    from core.infrastructure.utils.version_utils import git_pull_latest, install_dependencies
+    from core.infrastructure.utils.version_utils import (
+        build_frontend,
+        git_pull_latest,
+        install_dependencies,
+    )
 
     success, message = await git_pull_latest()
     if not success:
@@ -418,6 +422,10 @@ async def _op_update(_params: dict[str, Any], _request: Request) -> dict[str, An
             "message": f"依赖安装失败: {deps_message}",
             "data": {"git": message},
         }
+
+    frontend_success, frontend_message = await build_frontend()
+    if not frontend_success:
+        return {"success": False, "message": frontend_message, "data": {"git": message}}
 
     if sys.platform != "win32":
         import subprocess
@@ -434,7 +442,7 @@ async def _op_update(_params: dict[str, Any], _request: Request) -> dict[str, An
     return {
         "success": True,
         "message": "更新完成，正在重启 Bot...",
-        "data": {"git": message, "deps": deps_message},
+        "data": {"git": message, "deps": deps_message, "frontend": frontend_message},
     }
 
 

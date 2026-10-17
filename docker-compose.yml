@@ -11,6 +11,8 @@ services:
     env_file:
       - data/.env
     volumes:
+      # 挂载源码及 .git，支持 /update；Python 依赖仍由容器管理。
+      - .:/app
       # 持久化整个 data 目录 - 避免单文件挂载错误
       - ./data:/app/data
     # 健康检查
