@@ -13,8 +13,9 @@
 """
 
 import core.config as config_module
-from core.config import ADMIN_LIST, load_config, logger, save_config_changes
+from core.config import load_config, logger, save_config_changes
 from core.i18n.i18n import get_text
+from core.infrastructure.utils.auth import is_admin
 
 
 async def handle_show_channels(event):
@@ -24,7 +25,7 @@ async def handle_show_channels(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -50,7 +51,7 @@ async def handle_add_channel(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -96,7 +97,7 @@ async def handle_delete_channel(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

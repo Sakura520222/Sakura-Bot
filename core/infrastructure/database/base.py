@@ -101,6 +101,11 @@ class DatabaseManagerBase(ABC):
         pass
 
     @abstractmethod
+    def refund_quota(self, user_id: int, date: str | None = None) -> bool:
+        """回退一次配额使用（内部错误时不扣费）"""
+        pass
+
+    @abstractmethod
     def get_total_daily_usage(self, date: str | None = None) -> int:
         """获取指定日期的总使用次数"""
         pass

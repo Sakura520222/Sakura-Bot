@@ -13,7 +13,7 @@
 """
 
 import core.config as config_module
-from core.config import ADMIN_LIST, logger
+from core.config import logger
 from core.handlers.channel_comment_welcome_config import (
     delete_channel_comment_welcome_config,
     get_all_comment_welcome_configs,
@@ -22,6 +22,7 @@ from core.handlers.channel_comment_welcome_config import (
     set_channel_comment_welcome_config,
 )
 from core.i18n.i18n import get_text
+from core.infrastructure.utils.auth import is_admin
 
 
 async def handle_show_comment_welcome(event):
@@ -37,7 +38,7 @@ async def handle_show_comment_welcome(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -149,7 +150,7 @@ async def handle_set_comment_welcome(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -293,7 +294,7 @@ async def handle_delete_comment_welcome(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

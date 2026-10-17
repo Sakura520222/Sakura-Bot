@@ -133,21 +133,23 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 """
 
 # 默认问答Bot人格提示词
-DEFAULT_QA_PERSONA = """你是一个专业的智能资讯助手，擅长从历史记录中提取关键信息并回答用户问题。
+DEFAULT_QA_PERSONA = """你是一个友好、专业的通用智能助手。
 
 【角色特点】
-- [Friendly] 友好亲切，乐于助人
-- [Concise] 回答简洁明了，直击要点
-- [Expert] 专业可靠，基于事实回答
+- [Helpful] 乐于助人，可以回答各类问题：日常聊天、知识问答、编程、写作、分析等
+- [Concise] 回答清晰有条理，直击要点
+- [Trustworthy] 基于事实回答，不确定时如实说明
 
-【你的任务】
-基于频道历史总结为用户提供准确、有价值的信息，不要编造不存在的内容。
+【你的能力】
+- 你接入了一个 Telegram 频道管理系统的数据（频道历史总结、消息记录、统计数据等）。
+  当用户的问题涉及这些频道内容时，你可以按需调用提供的检索工具查询后再回答。
+- 普通聊天、通用知识、编程与创作类问题无需检索，直接回答即可。
+- 是否需要检索由你根据问题性质自主判断，不要把每条消息都当成频道查询。
 
 【回答风格】
-- 使用清晰的结构和要点
-- 语言简洁专业但不失亲和力
-- 严格基于提供的历史总结回答
-- 总结中没有相关信息时，明确说明"""
+- 使用清晰的结构和要点，语言自然、专业但不失亲和力
+- 引用频道检索结果时保留相关帖子链接作为证据来源
+- 检索不到相关信息时如实说明，不要编造"""
 
 # 加载 .env 文件中的变量
 # 显式指定 .env 文件路径（data/.env）
@@ -213,15 +215,33 @@ REPORT_ADMIN_IDS = os.getenv("REPORT_ADMIN_IDS", "")
 logger.debug(f"从环境变量读取的管理员ID: {REPORT_ADMIN_IDS}")
 
 # 处理管理员ID列表
-ADMIN_LIST = []
+# 安全策略（fail-closed）：只有明确配置且格式合法的 Telegram 数字用户 ID 才会被
+# 授予管理员权限；未配置或配置无效时管理员列表为空，所有管理命令与 WebUI 管理
+# 权限一律拒绝，绝不能默认放行所有用户。
+ADMIN_LIST: list[int] = []
 if REPORT_ADMIN_IDS:
-    # 支持多个管理员ID，用逗号分隔
-    ADMIN_LIST = [int(admin_id.strip()) for admin_id in REPORT_ADMIN_IDS.split(",")]
-    logger.info(f"已从环境变量加载管理员ID列表: {ADMIN_LIST}")
+    # 支持多个管理员ID，用逗号分隔；非法条目跳过并告警
+    for admin_id in REPORT_ADMIN_IDS.split(","):
+        admin_id = admin_id.strip()
+        if not admin_id:
+            continue
+        try:
+            ADMIN_LIST.append(int(admin_id))
+        except ValueError:
+            logger.warning(f"忽略非法的管理员ID配置项: {admin_id!r}（必须是 Telegram 数字用户 ID）")
+    if ADMIN_LIST:
+        logger.info(f"已从环境变量加载管理员ID列表: {ADMIN_LIST}")
+    else:
+        logger.warning(
+            "REPORT_ADMIN_IDS 未包含任何合法的数字用户 ID，管理员列表为空，"
+            "所有管理命令与 WebUI 管理权限将被拒绝"
+        )
 else:
-    # 如果没有配置管理员ID，默认发送给自己
-    ADMIN_LIST = ["me"]
-    logger.info("未配置管理员ID，默认发送给机器人所有者")
+    logger.warning(
+        "未配置 REPORT_ADMIN_IDS：管理员列表为空（fail-closed），"
+        "所有管理命令与 WebUI 管理权限将被拒绝。"
+        "请在 data/.env 中配置 REPORT_ADMIN_IDS=<Telegram数字用户ID>（多个用逗号分隔）"
+    )
 
 
 # 读取配置文件

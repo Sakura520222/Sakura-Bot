@@ -7,8 +7,9 @@
 """AI 配置管理命令：会话只收集字段补丁，不保存完整配置。"""
 
 import core.config as config_module
-from core.config import ADMIN_LIST, logger, update_config_fields
+from core.config import logger, update_config_fields
 from core.i18n.i18n import get_text
+from core.infrastructure.utils.auth import is_admin
 from core.infrastructure.utils.states import get_user_context
 
 
@@ -35,7 +36,7 @@ async def handle_show_ai_config(event):
     """处理 /showaicfg，不记录可能携带凭据的命令参数。"""
     sender_id = event.sender_id
     logger.info("收到 /showaicfg 命令，发送者: %s", sender_id)
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         await event.reply(get_text("error.permission_denied"))
         return
     await event.reply(f"{get_text('aicfg.title')}\n\n" + _format_config({}))
@@ -45,7 +46,7 @@ async def handle_set_ai_config(event):
     """处理 /setaicfg，触发当前用户的 AI 配置会话。"""
     sender_id = event.sender_id
     logger.info("收到 /setaicfg 命令，发送者: %s", sender_id)
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         await event.reply(get_text("error.permission_denied"))
         return
     get_user_context().start_setting_ai_config(sender_id)

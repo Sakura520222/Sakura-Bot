@@ -91,13 +91,24 @@ class AdminSettings(BaseSettings):
 
     @property
     def admin_list(self) -> list[int | str]:
-        """获取管理员 ID 列表"""
+        """获取管理员 ID 列表（fail-closed）。
+
+        仅返回显式配置且格式合法的数字用户 ID；未配置或配置无效时返回
+        空列表，绝不返回历史上的 ["me"] 通配值（那会让通知发往无效目标，
+        也曾被误用作"全员管理员"的授权依据）。
+        """
         if self.report_admin_ids:
-            try:
-                return [int(admin_id.strip()) for admin_id in self.report_admin_ids.split(",")]
-            except ValueError:
-                logger.warning("管理员 ID 格式错误，使用默认值 'me'")
-        return ["me"]
+            admin_ids: list[int] = []
+            for admin_id in self.report_admin_ids.split(","):
+                admin_id = admin_id.strip()
+                if not admin_id:
+                    continue
+                try:
+                    admin_ids.append(int(admin_id))
+                except ValueError:
+                    logger.warning(f"忽略非法的管理员ID配置项: {admin_id!r}")
+            return admin_ids
+        return []
 
     model_config = {"extra": "ignore"}
 

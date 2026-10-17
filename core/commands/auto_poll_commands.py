@@ -14,7 +14,6 @@
 
 import core.config as config_module
 from core.config import (
-    ADMIN_LIST,
     delete_channel_auto_poll_config,
     get_channel_auto_poll_config,
     load_config,
@@ -23,6 +22,7 @@ from core.config import (
     set_channel_auto_poll_config,
 )
 from core.i18n.i18n import get_text
+from core.infrastructure.utils.auth import is_admin
 
 
 async def handle_show_auto_poll(event):
@@ -37,7 +37,7 @@ async def handle_show_auto_poll(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -137,7 +137,7 @@ async def handle_set_auto_poll(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -223,7 +223,7 @@ async def handle_delete_auto_poll(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

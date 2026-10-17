@@ -517,6 +517,7 @@ LLM_MODEL=deepseek-chat
 # LLM_MODEL=gpt-4o
 
 # ===== 管理员配置 =====
+# 未配置时所有管理命令与 WebUI 管理权限将被拒绝（fail-closed），请务必配置
 REPORT_ADMIN_IDS=your_admin_id_here,another_admin_id_here
 
 # ===== 日志级别 =====

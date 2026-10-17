@@ -12,10 +12,11 @@
 提示词管理命令处理
 """
 
-from core.config import ADMIN_LIST, logger
+from core.config import logger
 from core.i18n.i18n import get_text
 from core.infrastructure.config.poll_prompt_manager import load_poll_prompt, save_poll_prompt
 from core.infrastructure.config.prompt_manager import load_prompt, save_prompt
+from core.infrastructure.utils.auth import is_admin
 from core.infrastructure.utils.states import get_user_context
 
 
@@ -26,7 +27,7 @@ async def handle_show_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -44,7 +45,7 @@ async def handle_set_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -105,7 +106,7 @@ async def handle_show_poll_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -123,7 +124,7 @@ async def handle_set_poll_prompt(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

@@ -9,13 +9,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import core.infrastructure.utils.auth as auth_module
 from core.commands import other_commands as commands
 from core.infrastructure.utils import version_utils
 
 
 @pytest.fixture
 def update_event(monkeypatch):
-    monkeypatch.setattr(commands, "ADMIN_LIST", [123456])
+    monkeypatch.setattr(auth_module, "ADMIN_LIST", [123456])
     monkeypatch.setattr(commands, "get_local_version", lambda: "1.8.9-2")
     monkeypatch.setattr(commands, "get_remote_version", AsyncMock(return_value="1.8.9-3"))
     return SimpleNamespace(sender_id=123456, text="/update", reply=AsyncMock())

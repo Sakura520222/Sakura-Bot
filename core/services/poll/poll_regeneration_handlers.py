@@ -18,7 +18,6 @@ from telethon import Button
 
 import core.config as config_module
 from core.config import (
-    ADMIN_LIST,
     get_poll_regeneration,
     increment_vote_count,
     load_poll_regenerations,
@@ -26,6 +25,7 @@ from core.config import (
     update_poll_regeneration,
 )
 from core.i18n.i18n import get_text
+from core.infrastructure.utils.auth import is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ async def handle_poll_regeneration_callback(event):
     logger.info(f"收到投票重新生成请求: {callback_data}, 来自用户: {sender_id}")
 
     # 1. 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"用户 {sender_id} 没有权限重新生成投票")
         await event.answer(get_text("poll_regen.admin_only"), alert=True)
         return

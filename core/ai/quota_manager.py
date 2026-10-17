@@ -16,8 +16,8 @@ import logging
 import os
 from typing import Any
 
-from core.config import ADMIN_LIST
 from core.infrastructure.database import get_db_manager
+from core.infrastructure.utils.auth import is_admin as _strict_is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,12 @@ class QuotaManager:
             return 200
 
     def is_admin(self, user_id: int) -> bool:
-        """检查用户是否为管理员"""
-        return user_id in ADMIN_LIST or ADMIN_LIST == ["me"]
+        """检查用户是否为管理员（严格模式，fail-closed）。
+
+        委托 core.infrastructure.utils.auth.is_admin：仅当用户 ID 与
+        REPORT_ADMIN_IDS 中显式配置的数字 ID 一致时为 True。
+        """
+        return _strict_is_admin(user_id)
 
     async def check_quota(self, user_id: int) -> dict[str, Any]:
         """
@@ -139,6 +143,33 @@ class QuotaManager:
                 "is_admin": False,
                 "message": "⚠️ **系统错误**\n\n配额检查失败，请稍后再试。",
             }
+
+    async def refund_quota(self, user_id: int) -> bool:
+        """回退一次配额使用（内部错误时不扣费）。
+
+        check_quota() 通过"检查并原子递增"完成配额预留；当请求后续处理因内部
+        错误失败（而非用户配额不足）时，调用本方法把这一次预留退回，保证普通
+        用户不会为失败的请求消耗每日额度。管理员本身不消耗额度，调用无副作用。
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            bool: 是否成功回退
+        """
+        try:
+            if self.is_admin(user_id):
+                return True
+
+            refunded = await self.db.refund_quota(user_id)
+            if refunded:
+                logger.info(f"用户 {user_id} 的请求处理失败，已回退本次配额占用")
+            else:
+                logger.info(f"用户 {user_id} 无需回退配额（当日无占用记录）")
+            return refunded
+        except Exception as e:
+            logger.error(f"回退配额失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
 
     async def get_usage_status(self, user_id: int) -> dict[str, Any]:
         """

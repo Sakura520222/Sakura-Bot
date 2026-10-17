@@ -518,6 +518,7 @@ LLM_MODEL=deepseek-chat
 # LLM_MODEL=gpt-4o
 
 # ===== Admin Configuration =====
+# If unset, all admin commands and WebUI admin access are denied (fail-closed)
 REPORT_ADMIN_IDS=your_admin_id_here,another_admin_id_here
 
 # ===== Log Level =====

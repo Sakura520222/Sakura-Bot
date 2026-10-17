@@ -193,7 +193,11 @@ def verify_telegram_auth(auth_data: dict[str, Any]) -> bool:
 
 
 def check_admin_permission(user_id: int | str) -> bool:
-    """检查用户是否在管理员列表中
+    """检查用户是否在管理员列表中（fail-closed）。
+
+    仅当用户 ID 与 ``REPORT_ADMIN_IDS`` 显式配置的 Telegram 数字用户 ID 一致时
+    才返回 True。历史遗留的 ``ADMIN_LIST == ["me"]`` 通配放行语义已废除：
+    未配置管理员时任何用户都不能通过 WebUI 管理认证。
 
     Args:
         user_id: Telegram 用户 ID
@@ -201,9 +205,11 @@ def check_admin_permission(user_id: int | str) -> bool:
     Returns:
         bool: 是否为管理员
     """
-    if ADMIN_LIST == ["me"]:
-        return True
-    return user_id in ADMIN_LIST
+    from core.infrastructure.utils.auth import is_admin
+
+    if not ADMIN_LIST:
+        logger.warning("REPORT_ADMIN_IDS 未配置，WebUI 管理权限拒绝所有用户（fail-closed）")
+    return is_admin(user_id)
 
 
 # ==================== JWT 认证（简化版）====================

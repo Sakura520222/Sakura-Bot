@@ -17,9 +17,10 @@ import os
 from datetime import UTC, datetime, timedelta
 
 import core.config as config_module
-from core.config import ADMIN_LIST, logger
+from core.config import logger
 from core.i18n.i18n import get_text
 from core.infrastructure.database import get_db_manager
+from core.infrastructure.utils.auth import is_admin
 from core.telegram.client import send_long_message
 
 
@@ -30,7 +31,7 @@ async def handle_history(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -154,7 +155,7 @@ async def handle_export(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -228,7 +229,7 @@ async def handle_stats(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 检查发送者是否为管理员
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return

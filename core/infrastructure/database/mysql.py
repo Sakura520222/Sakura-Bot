@@ -1007,6 +1007,44 @@ class MySQLManager(DatabaseManagerBase):
             logger.error(f"配额检查失败: {type(e).__name__}: {e}", exc_info=True)
             return {"allowed": False, "error": str(e)}
 
+    async def refund_quota(self, user_id: int, date: str | None = None) -> bool:
+        """回退一次配额使用（内部错误时不扣费）。
+
+        单条 UPDATE 原子递减当日使用次数，usage_count > 0 的条件保证幂等且
+        不会出现负数；当日没有占用记录时无副作用。
+
+        Args:
+            user_id: 用户ID
+            date: 配额日期（默认今天，UTC）
+
+        Returns:
+            是否实际回退了一次占用
+        """
+        try:
+            if date is None:
+                date = datetime.now(UTC).strftime("%Y-%m-%d")
+
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        UPDATE usage_quota
+                        SET usage_count = usage_count - 1
+                        WHERE user_id = %s AND query_date = %s AND usage_count > 0
+                    """,
+                        (user_id, date),
+                    )
+                    await conn.commit()
+                    refunded = cursor.rowcount > 0
+
+            if refunded:
+                logger.info(f"用户 {user_id} 配额已回退一次（{date}）")
+            return refunded
+
+        except Exception as e:
+            logger.error(f"回退配额失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+
     async def get_total_daily_usage(self, date: str | None = None) -> int:
         """获取指定日期的总使用次数"""
         try:

@@ -47,6 +47,7 @@ from core.config import (
 from core.docker_runtime import is_docker
 from core.i18n.i18n import get_language, get_supported_languages, get_text, set_language
 from core.infrastructure.database.manager import get_db_manager
+from core.infrastructure.utils.auth import is_admin
 from core.infrastructure.utils.message_utils import format_schedule_info
 from core.infrastructure.utils.version_utils import (
     build_frontend,
@@ -67,7 +68,7 @@ async def handle_show_log_level(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -86,7 +87,7 @@ async def handle_set_log_level(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -137,7 +138,7 @@ async def handle_restart(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -221,7 +222,7 @@ async def handle_shutdown(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -257,7 +258,7 @@ async def handle_pause(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -289,7 +290,7 @@ async def handle_resume(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -324,7 +325,7 @@ async def handle_show_channel_schedule(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -377,7 +378,7 @@ async def handle_set_channel_schedule(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -528,7 +529,7 @@ async def handle_delete_channel_schedule(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -571,7 +572,7 @@ async def handle_show_channel_poll(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -658,7 +659,7 @@ async def handle_set_channel_poll(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -739,7 +740,7 @@ async def handle_delete_channel_poll(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -796,7 +797,7 @@ async def handle_set_send_to_source(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -835,7 +836,7 @@ async def handle_clear_cache(event):
     sender_id = event.sender_id
     command = event.text
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"用户 {sender_id} 尝试使用 /clearcache 命令，但没有管理员权限")
         await event.reply(get_text("cache.admin_only"))
         return
@@ -866,7 +867,7 @@ async def handle_clear_database(event):
     command = event.text
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"用户 {sender_id} 尝试使用 /db_clear 命令，但没有管理员权限")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -1049,7 +1050,7 @@ async def handle_changelog(event):
     command = event.text
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
@@ -1083,7 +1084,7 @@ async def handle_update(event):
     logger.info(f"收到命令: {command}，发送者: {sender_id}")
 
     # 权限检查
-    if sender_id not in ADMIN_LIST and ADMIN_LIST != ["me"]:
+    if not is_admin(sender_id):
         logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
         await event.reply(get_text("error.permission_denied"))
         return
