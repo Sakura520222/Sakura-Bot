@@ -2,6 +2,8 @@
 .git
 .gitignore
 .github
+.codegraph/
+.sakura/
 
 # 文档
 README.md
@@ -36,10 +38,16 @@ data/.last_summary_time.json
 data/.poll_regenerations.json
 data/.shutdown_flag
 data/sessions/*.session
+data/.env
+data/vectors/
+data/config.json.backups/
+data/config.json.last_valid
+data/config.json.lock
 .env
 
 # 日志
 *.log
+logs/
 
 # 其他
 .DS_Store
@@ -48,3 +56,8 @@ Thumbs.db
 tests/
 .pytest_cache/
 .coverage
+htmlcov/
+coverage.xml
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo

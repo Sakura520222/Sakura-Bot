@@ -44,6 +44,7 @@ from core.config import (
     set_channel_schedule_v2,
     validate_schedule,
 )
+from core.docker_runtime import is_docker
 from core.i18n.i18n import get_language, get_supported_languages, get_text, set_language
 from core.infrastructure.database.manager import get_db_manager
 from core.infrastructure.utils.message_utils import format_schedule_info
@@ -149,16 +150,16 @@ async def handle_restart(event):
     shutdown_manager = get_shutdown_manager()
     is_pm2 = shutdown_manager.detect_pm2()
 
-    if is_pm2:
-        # PM2 环境：执行关机，由 PM2 自动重启
-        logger.info("✅ [PM2 Mode] /restart 将执行关机，由 PM2 自动重启")
+    if is_pm2 or is_docker():
+        # PM2 交给监控器重启；Docker 在主循环关闭资源后替换当前进程。
+        logger.info("✅ 由进程管理器处理重启（Docker 使用 os.execv 替换主进程）")
         await event.reply(get_text("bot.restarting"))
 
         # 写入重启标记
         async with aiofiles.open(RESTART_FLAG_FILE, "w") as f:
             await f.write(str(sender_id))
 
-        # 触发与 Ctrl+C 相同的关机流程
+        # 主循环读取重启标记，关闭资源后再重启。
         from core.config import trigger_shutdown
 
         trigger_shutdown()
@@ -1115,12 +1116,16 @@ async def handle_update(event):
         # 检查是否为 Git 仓库
         import subprocess
 
-        check_git = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "rev-parse", "--git-dir"],
-            capture_output=True,
-            timeout=5,
-        )
+        try:
+            check_git = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--git-dir"],
+                capture_output=True,
+                timeout=5,
+            )
+        except FileNotFoundError:
+            await event.reply(get_text("update.git_missing"))
+            return
 
         if check_git.returncode != 0:
             await event.reply(get_text("update.no_git"))

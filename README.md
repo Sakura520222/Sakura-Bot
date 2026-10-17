@@ -59,6 +59,16 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+项目目录通过 `.:/app` 挂载到容器，`/update` 会直接更新宿主机仓库，然后安装 Python 依赖、构建 WebUI 并重启。镜像已包含 Git、Node.js 和 npm；GitHub SSH 远程地址在容器内通过 HTTPS 拉取，无需挂载宿主机 SSH 密钥。更新使用快进合并，保留本地配置；遇到冲突或分支分叉时会停止并提示处理。
+
+旧版 Docker 部署需先在宿主机更新上述部署文件，再重建一次：
+
+```bash
+docker compose up -d --build
+```
+
+源码、前端构建产物和 `data/` 均保存在宿主机。重新创建容器时会按源码指纹同步 Python 依赖和 WebUI；普通重启会复用已安装依赖和已有构建。涉及系统依赖或 Dockerfile 的更新仍需在宿主机执行上述重建命令。
+
 ### 💻 本地安装
 
 ```bash

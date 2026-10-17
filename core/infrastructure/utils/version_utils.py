@@ -14,12 +14,15 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import aiohttp
 from packaging import version
+
+from core.docker_runtime import record_runtime_state
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +85,7 @@ def compare_versions(local, remote):
 
 
 async def git_pull_latest():
-    """执行 git pull 更新代码"""
+    """快进更新代码，保留挂载仓库中的配置和本地修改。"""
 
     try:
         # 检测远程分支
@@ -115,14 +118,14 @@ async def git_pull_latest():
 
         result = await asyncio.to_thread(
             subprocess.run,
-            ["git", "reset", "--hard", branch],
+            ["git", "merge", "--ff-only", branch],
             capture_output=True,
             text=True,
             timeout=30,
         )
 
         if result.returncode != 0:
-            return False, f"Git reset 失败: {result.stderr}"
+            return False, f"Git 快进更新失败，请先处理本地修改或分支分叉: {result.stderr}"
 
         # 获取最新 commit 信息
         commit_result = await asyncio.to_thread(
@@ -157,6 +160,7 @@ async def install_dependencies():
         )
 
         if result.returncode == 0:
+            await asyncio.to_thread(record_runtime_state, "requirements")
             return True, "依赖安装完成"
         else:
             return False, f"依赖安装失败: {result.stderr[-500:]}"  # 最后500字符
@@ -168,7 +172,7 @@ async def install_dependencies():
 
 
 async def build_frontend():
-    """构建前端应用（npm install && npm run build）"""
+    """按锁文件安装前端依赖并构建应用。"""
 
     try:
         # 检查web目录
@@ -198,9 +202,12 @@ async def build_frontend():
 
         # 安装前端依赖
         logger.info("安装前端依赖...")
+        npm = shutil.which("npm") or "npm"
+        has_lockfile = await asyncio.to_thread(Path("web/package-lock.json").is_file)
+        install_command = "ci" if has_lockfile else "install"
         npm_install = await asyncio.to_thread(
             subprocess.run,
-            ["npm", "install"],
+            [npm, install_command, "--include=dev"],
             cwd="web",
             capture_output=True,
             text=True,
@@ -224,7 +231,7 @@ async def build_frontend():
         logger.info("构建前端应用...")
         npm_build = await asyncio.to_thread(
             subprocess.run,
-            ["npm", "run", "build"],
+            [npm, "run", "build"],
             cwd="web",
             capture_output=True,
             text=True,
@@ -243,6 +250,7 @@ async def build_frontend():
             return False, f"前端构建失败: {error_msg}"
 
         logger.info("前端构建完成")
+        await asyncio.to_thread(record_runtime_state, "frontend")
         return True, "前端构建完成"
 
     except subprocess.TimeoutExpired:

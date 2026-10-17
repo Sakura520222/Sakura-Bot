@@ -35,6 +35,7 @@ from core.config import (
     logger,
     set_shutdown_event,
 )
+from core.docker_runtime import is_docker
 from core.settings import get_admin_list, get_bot_token, validate_required_settings
 from core.system.process_manager import start_qa_bot, stop_qa_bot
 
@@ -243,13 +244,14 @@ if __name__ == "__main__":
                         await event_bus.shutdown()
                     logger.info("配置热重载系统已关闭")
 
-                # 退出程序（检查是否为 WebUI 触发的重启）
+                # 退出程序，或在 WebUI / Docker 重启时替换当前进程。
                 from core.system.shutdown_manager import get_shutdown_manager
 
                 shutdown_manager = get_shutdown_manager()
 
-                # 检查是否为 WebUI 触发的重启（使用 os.execv 替换进程，不新开控制台）
+                # WebUI 标记在替换进程前清理；Docker 用户标记留给启动通知器。
                 is_webui_restart = False
+                flag_content = None
                 try:
 
                     def _read_restart_flag() -> str | None:
@@ -268,12 +270,14 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
-                if is_webui_restart:
-                    logger.info("🔄 WebUI 重启标记 %s：使用 os.execv 替换当前进程...", flag_content)
-                    try:
-                        os.remove(RESTART_FLAG_FILE)
-                    except Exception:
-                        pass
+                is_docker_restart = is_docker() and bool(flag_content and flag_content.isdecimal())
+                if is_webui_restart or is_docker_restart:
+                    logger.info("🔄 重启标记 %s：使用 os.execv 替换当前进程...", flag_content)
+                    if is_webui_restart:
+                        try:
+                            os.remove(RESTART_FLAG_FILE)
+                        except Exception:
+                            pass
                     # os.execv 替换当前进程映像，不会新开控制台
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 else:

@@ -99,6 +99,24 @@ jobs:
             -e TELEGRAM_BOT_TOKEN=123:mock_token \
             sakura-bot:test python --version
 
+      - name: 验证源码挂载和更新工具链
+        run: |
+          docker run --rm -i \
+            -e TELEGRAM_API_ID=12345 \
+            -e TELEGRAM_API_HASH=mock_hash \
+            -e TELEGRAM_BOT_TOKEN=123:mock_token \
+            -v "$PWD:/app" \
+            sakura-bot:test python - <<'PY'
+          import subprocess
+          from pathlib import Path
+          from core.docker_runtime import prepare_runtime
+
+          for command in (["git", "rev-parse", "--show-toplevel"], ["node", "--version"], ["npm", "--version"]):
+              subprocess.run(command, check=True)
+          prepare_runtime()
+          assert Path("web/dist/index.html").is_file()
+          PY
+
   tests:
     name: 单元测试
     runs-on: ubuntu-latest
