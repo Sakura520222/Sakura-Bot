@@ -97,12 +97,12 @@ async def update_poll_settings(channel: str, request: PollSettingsUpdate):
         poll_settings = config.get("channel_poll_settings", {})
         current = poll_settings.get(channel, {})
 
-        if request.enabled is not None:
-            current["enabled"] = request.enabled
-        if request.send_to_channel is not None:
-            current["send_to_channel"] = request.send_to_channel
-        if request.public_voters is not None:
-            current["public_voters"] = request.public_voters
+        # 未提交的字段保持不变；显式 null 删除覆盖，恢复全局配置或默认发送位置。
+        for field, value in request.model_dump(exclude_unset=True).items():
+            if value is None:
+                current.pop(field, None)
+            else:
+                current[field] = value
 
         poll_settings[channel] = current
         config["channel_poll_settings"] = poll_settings

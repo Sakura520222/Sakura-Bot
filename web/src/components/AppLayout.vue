@@ -58,7 +58,7 @@
       <!-- 页脚 -->
       <n-layout-footer bordered class="app-footer">
         <n-text depth="3" class="footer-text">
-          Sakura-Bot WebUI v1.0.0 · 基于 AGPL-3.0 许可
+          Sakura-Bot WebUI v{{ webuiVersion }} · 基于 AGPL-3.0 许可
         </n-text>
       </n-layout-footer>
     </n-layout>
@@ -69,6 +69,7 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import type { MenuOption } from "naive-ui";
+import { version as webuiVersion } from "../../package.json";
 import {
   DashboardOutlined,
   ChannelOutlined,
