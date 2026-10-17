@@ -98,9 +98,11 @@ class RealtimeRAGInitializer:
                 if not text or not text.strip():
                     return
 
-                # 获取频道信息
+                # 获取频道信息（保留数字内部 ID 与公开 username，前者用于
+                # 向量唯一标识与 /c/ 私有链接，后者用于生成更友好的公开链接）
                 channel_id = str(chat.id)
                 channel_name = getattr(chat, "title", channel_id)
+                channel_username = getattr(chat, "username", None)
                 message_id = event.message.id
                 sender_id = event.message.sender_id
 
@@ -111,6 +113,7 @@ class RealtimeRAGInitializer:
                     message_id=message_id,
                     text=text,
                     sender_id=sender_id,
+                    channel_username=channel_username,
                 )
 
             except Exception as e:
@@ -133,6 +136,7 @@ class RealtimeRAGInitializer:
 
                 channel_id = str(chat.id)
                 channel_name = getattr(chat, "title", channel_id)
+                channel_username = getattr(chat, "username", None)
                 message_id = event.message.id
                 sender_id = event.message.sender_id
 
@@ -142,6 +146,7 @@ class RealtimeRAGInitializer:
                     message_id=message_id,
                     text=text,
                     sender_id=sender_id,
+                    channel_username=channel_username,
                 )
 
             except Exception as e:

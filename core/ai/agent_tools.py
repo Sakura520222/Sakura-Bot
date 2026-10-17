@@ -19,6 +19,8 @@ import logging
 import re
 from typing import Any
 
+from core.infrastructure.utils.telegram_links import build_telegram_post_link
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -35,6 +37,8 @@ TOOL_SCHEMAS = [
                 "使用向量相似度检索，适合模糊匹配和概念性查询。"
                 "当用户询问某个主题、概念或需要广泛召回时使用此工具。"
                 "默认同时搜索总结和原始消息两个数据源。"
+                "结果中的 post_url 是后端验证过的帖子链接，引用时只使用 post_url；"
+                "总结类结果没有 post_url，不要根据任何 ID 自行拼接链接。"
             ),
             "parameters": {
                 "type": "object",
@@ -80,6 +84,7 @@ TOOL_SCHEMAS = [
                 "使用SQL匹配，适合精确关键词查找和补充语义检索的结果。"
                 "当语义搜索结果不足、需要查找特定术语，或需要按频道/时间获取最近总结时使用。"
                 "keywords 可为空；为空时将按 channel_id/time_range_days/limit 做频道或时间过滤。"
+                "返回的是总结记录（source_type=summary），没有帖子链接 post_url。"
             ),
             "parameters": {
                 "type": "object",
@@ -195,13 +200,20 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_source_detail",
-            "description": "按 summary_id 或 doc_id 获取之前搜索结果中的完整来源内容。用户要求展开来源、查看详情时使用。",
+            "description": (
+                "按 result_id（推荐）或 doc_id 获取之前搜索结果中的完整来源内容。"
+                "用户要求展开来源、查看详情时使用。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "result_id": {
+                        "type": "integer",
+                        "description": "搜索结果中的 result_id 字段，请求内唯一且稳定",
+                    },
                     "summary_id": {
                         "type": "integer",
-                        "description": "搜索结果中的 summary_id",
+                        "description": "总结类结果中的数据库总结ID（仅 source_type=summary 时有效）",
                     },
                     "doc_id": {
                         "type": "string",
@@ -231,7 +243,7 @@ TOOL_SCHEMAS = [
                     "result_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "需要重排序的结果ID列表（从之前搜索结果中选取）",
+                        "description": "需要重排序的结果ID列表（取之前搜索结果中的 result_id 字段）",
                     },
                     "top_k": {
                         "type": "integer",
@@ -275,14 +287,20 @@ class ToolExecutor:
         self.vector_store = vector_store
         self.memory_manager = memory_manager
         self.reranker = reranker
-        # 累积所有搜索结果，供 rerank_results 按 ID 引用
+        # 结果存储：内部引用一律使用请求内自增的 result_id，
+        # 不依赖 summary_id / doc_id 的巧合唯一性
         self._result_store: dict[int, dict[str, Any]] = {}
+        # 真实数据库总结ID（source_type=summary 时才有）→ 结果
+        self._result_by_summary_id: dict[int, dict[str, Any]] = {}
         self._doc_result_store: dict[str, dict[str, Any]] = {}
+        self._next_result_id = 0
 
     def reset(self):
         """重置结果存储（每次 agent loop 开始时调用）"""
         self._result_store.clear()
+        self._result_by_summary_id.clear()
         self._doc_result_store.clear()
+        self._next_result_id = 0
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """执行工具调用，返回 JSON 字符串格式的结果。
@@ -386,22 +404,22 @@ class ToolExecutor:
             limit=args.get("limit", 10),
         )
 
-        # keyword_search 返回原始 DB 行，需要归一化为统一格式
+        # keyword_search 返回原始 DB 行，需要归一化为统一格式。
+        # 注意：DB 行的 summary_message_ids 是机器人发布的总结报告消息 ID，
+        # 不是频道原帖 ID，不能用于构造帖子链接（历史 Bug）。
         serialized = []
         for r in results:
             sid = r.get("id")
             if sid is None:
                 continue
-            post_links = self._build_summary_post_links(r)
             normalized = {
                 "summary_id": sid,
                 "summary_text": r.get("summary_text", ""),
-                "post_links": post_links,
+                "source": "summary",
                 "metadata": {
                     "channel_id": r.get("channel_id"),
                     "channel_name": r.get("channel_name"),
                     "created_at": r.get("created_at"),
-                    "post_links": post_links,
                 },
             }
             self._store_result(normalized)
@@ -469,23 +487,21 @@ class ToolExecutor:
             limit=args.get("limit", 5),
             time_range_days=args.get("time_range_days"),
         )
+        # 与 keyword_search 相同：总结记录不构造帖子链接
         serialized = []
         for r in results:
             sid = r.get("id") or r.get("summary_id")
             if sid is None:
                 continue
-            post_links = self._build_summary_post_links(r)
             normalized = {
                 "summary_id": sid,
                 "summary_text": r.get("summary_text", ""),
-                "post_links": post_links,
+                "source": "summary",
                 "metadata": {
                     "channel_id": r.get("channel_id"),
                     "channel_name": r.get("channel_name"),
                     "created_at": r.get("created_at"),
-                    "post_links": post_links,
                 },
-                "source": "summary",
             }
             self._store_result(normalized)
             serialized.append(self._serialize_result(normalized))
@@ -498,11 +514,19 @@ class ToolExecutor:
 
     async def _execute_source_detail(self, args: dict) -> str:
         result = None
+        result_id = args.get("result_id")
         summary_id = args.get("summary_id")
         doc_id = args.get("doc_id")
 
-        if summary_id is not None:
-            result = self._result_store.get(summary_id)
+        # 优先内部 result_id；兼容旧的 summary_id / doc_id 引用方式
+        if result_id is not None:
+            try:
+                result = self._result_store.get(int(result_id))
+            except (TypeError, ValueError):
+                result = None
+
+        if result is None and summary_id is not None:
+            result = self._result_by_summary_id.get(summary_id)
 
         if result is None and doc_id:
             result = self._doc_result_store.get(str(doc_id))
@@ -534,8 +558,90 @@ class ToolExecutor:
     # ---- 辅助方法 ----
 
     @staticmethod
+    def _resolve_source_type(result: dict[str, Any]) -> str:
+        """判定结果来源类型："message"（频道原始消息）或 "summary"（总结记录）。"""
+        source = result.get("source")
+        if source in ("message", "summary"):
+            return source
+
+        # 无显式标记时推断：无真实总结ID且 doc_id 为 "channel:msg" 格式 → 消息
+        doc_id = result.get("doc_id")
+        if result.get("summary_id") is None and isinstance(doc_id, str) and ":" in doc_id:
+            return "message"
+        return "summary"
+
+    @staticmethod
+    def _resolve_message_id(result: dict[str, Any]) -> int | None:
+        """提取结果对应的真实 Telegram 消息 ID（仅消息类结果有效）。
+
+        优先级：显式 message_id 字段 / metadata.message_id → doc_id 末段
+        （"channel_id:message_id" 格式）。内部哈希、数据库主键不会被返回。
+        """
+        raw_mid = result.get("message_id")
+        if raw_mid is None:
+            raw_mid = (result.get("metadata") or {}).get("message_id")
+
+        if raw_mid is not None:
+            try:
+                mid = int(raw_mid)
+                return mid if mid > 0 else None
+            except (TypeError, ValueError):
+                pass
+
+        match = re.search(r":(\d+)$", str(result.get("doc_id") or ""))
+        if match:
+            mid = int(match.group(1))
+            return mid if mid > 0 else None
+
+        return None
+
+    @classmethod
+    def _resolve_post_url(cls, result: dict[str, Any]) -> str | None:
+        """为消息类结果构造经过验证的帖子链接。
+
+        - 仅 source_type=message 的结果才可能有帖子链接；总结报告消息 ID
+          不是频道原帖，绝不能拼接为链接
+        - 频道标识优先公开 username（更友好），其次数字 ID（/c/ 私有格式）
+        - 无法验证时返回 None，由模型不引用任何链接
+        """
+        if cls._resolve_source_type(result) != "message":
+            return None
+
+        message_id = cls._resolve_message_id(result)
+        if message_id is None:
+            return None
+
+        metadata = result.get("metadata") or {}
+        candidates = (
+            metadata.get("channel_username"),
+            metadata.get("channel_id"),
+            result.get("channel_id"),
+        )
+        for channel in candidates:
+            if not channel:
+                continue
+            link = build_telegram_post_link(str(channel), message_id)
+            if link:
+                return link
+
+        # 兜底：从 doc_id 前缀提取频道标识（"channel_id:message_id" 格式）
+        doc_id = str(result.get("doc_id") or "")
+        if ":" in doc_id:
+            doc_channel = doc_id.rsplit(":", 1)[0]
+            return build_telegram_post_link(doc_channel, message_id)
+
+        return None
+
+    @staticmethod
     def _serialize_result(result: dict) -> dict:
-        """序列化单条结果用于 tool message（截断长文本）。"""
+        """序列化单条结果用于 tool message（截断长文本）。
+
+        字段语义（重要，勿混淆三种 ID）：
+        - result_id: 请求内自增的内部引用 ID，供 rerank/get_source_detail 使用
+        - summary_id: 仅总结类结果携带的 MySQL 总结记录 ID；消息类结果为 None
+        - message_id: 仅消息类结果携带的真实 Telegram 频道消息 ID
+        - post_url:   后端验证过的帖子链接；总结类结果为 None
+        """
         text = result.get("summary_text", "")
         truncated = (
             text[:_SUMMARY_TRUNCATE_LEN] + "..." if len(text) > _SUMMARY_TRUNCATE_LEN else text
@@ -546,15 +652,24 @@ class ToolExecutor:
         if hasattr(created_at, "isoformat"):
             created_at = created_at.isoformat()
 
+        source_type = ToolExecutor._resolve_source_type(result)
+        post_url = ToolExecutor._resolve_post_url(result)
+
         serialized = {
-            "summary_id": result.get("summary_id"),
+            "result_id": result.get("result_id"),
+            "source_type": source_type,
+            "summary_id": result.get("summary_id") if source_type == "summary" else None,
             "summary_text": truncated,
-            "channel_id": metadata.get("channel_id"),
-            "channel_name": metadata.get("channel_name"),
+            "channel_id": metadata.get("channel_id") or result.get("channel_id"),
+            "channel_name": metadata.get("channel_name") or result.get("channel_name"),
             "created_at": created_at,
+            "message_id": ToolExecutor._resolve_message_id(result)
+            if source_type == "message"
+            else None,
             "doc_id": result.get("doc_id"),
-            "source": result.get("source"),
-            "post_links": ToolExecutor._get_post_links(result),
+            "post_url": post_url,
+            # 兼容字段：仅包含已验证链接
+            "post_links": [post_url] if post_url else [],
         }
         if "similarity" in result:
             serialized["similarity"] = round(result["similarity"], 3)
@@ -564,77 +679,26 @@ class ToolExecutor:
 
     def _store_result(self, result: dict[str, Any]) -> None:
         """缓存搜索结果，供重排序和来源详情工具复用。"""
+        self._next_result_id += 1
+        result["result_id"] = self._next_result_id
+        self._result_store[self._next_result_id] = result
+
         sid = result.get("summary_id")
         if sid is not None:
-            self._result_store[sid] = result
+            self._result_by_summary_id[sid] = result
+
         doc_id = result.get("doc_id")
         if doc_id:
             self._doc_result_store[str(doc_id)] = result
 
     @staticmethod
-    def _build_summary_post_links(summary: dict[str, Any], max_links: int = 5) -> list[str]:
-        """根据总结中的消息 ID 构造 Telegram 帖子链接。"""
-        channel_id = summary.get("channel_id") or summary.get("metadata", {}).get("channel_id")
-        metadata = summary.get("metadata", {})
-        message_ids = (
-            summary.get("summary_message_ids") or metadata.get("summary_message_ids") or []
-        )
-        if isinstance(message_ids, str):
-            try:
-                message_ids = json.loads(message_ids)
-            except json.JSONDecodeError:
-                message_ids = []
-
-        return [
-            link
-            for message_id in message_ids[:max_links]
-            if (link := ToolExecutor._build_post_link(channel_id, message_id))
-        ]
-
-    @staticmethod
-    def _get_post_links(result: dict[str, Any]) -> list[str]:
-        """从结果中提取或构造帖子链接。"""
-        metadata = result.get("metadata", {})
-        links = result.get("post_links") or metadata.get("post_links") or []
-        if isinstance(links, str):
-            try:
-                links = json.loads(links)
-            except json.JSONDecodeError:
-                links = [links]
-        if links:
-            return links
-
-        summary_links = ToolExecutor._build_summary_post_links(result)
-        if summary_links:
-            return summary_links
-
-        doc_id = result.get("doc_id")
-        channel_id = metadata.get("channel_id") or result.get("channel_id")
-        message_id = metadata.get("message_id") or result.get("message_id")
-
-        if not message_id and doc_id:
-            match = re.search(r":(\d+)$", str(doc_id))
-            if match:
-                message_id = match.group(1)
-
-        link = ToolExecutor._build_post_link(channel_id, message_id)
-        return [link] if link else []
-
-    @staticmethod
     def _build_post_link(channel_id: str | None, message_id: Any) -> str | None:
-        """构造 Telegram 公开频道帖子链接。"""
-        if not channel_id or not message_id:
-            return None
+        """构造 Telegram 帖子链接。
 
-        channel = str(channel_id).strip().rstrip("/")
-        if "/+" in channel or channel.split("/")[-1].startswith("+"):
-            return None
-
-        channel_part = channel.split("/")[-1].lstrip("@")
-        if not channel_part or not str(message_id).isdigit():
-            return None
-
-        return f"https://t.me/{channel_part}/{message_id}"
+        统一委托 core.infrastructure.utils.telegram_links.build_telegram_post_link：
+        数字频道 ID 使用 /c/ 私有格式，username 使用公开格式，无法验证返回 None。
+        """
+        return build_telegram_post_link(channel_id, message_id)
 
     def get_all_results(self) -> list[dict[str, Any]]:
         """获取所有累积的搜索结果（完整文本，不截断）。"""

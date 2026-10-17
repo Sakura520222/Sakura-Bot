@@ -151,6 +151,65 @@ class TestSearchSimilar:
     @patch("core.ai.vector_store.CHROMADB_AVAILABLE", True)
     @patch("core.ai.vector_store.chromadb.PersistentClient")
     @patch("core.ai.embedding_generator.get_embedding_generator")
+    def test_search_message_doc_separates_ids(self, mock_get_emb, mock_client):
+        """回归测试：消息文档（字符串 doc_id）不再把 md5 哈希当 summary_id。
+
+        历史 Bug：doc_id "2039687763:9457" 的 md5 哈希（如 1119685268）
+        被塞进 summary_id 字段，模型误把它当作消息 ID 拼进链接。
+        现在 summary_id 为 None，真实消息 ID 解析进 message_id 字段。
+        """
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 10
+        mock_collection.query.return_value = {
+            "ids": [["2039687763:9457"]],
+            "documents": [["消息文本"]],
+            "metadatas": [[{"channel_id": "2039687763", "message_id": "9457"}]],
+            "distances": [[0.1]],
+        }
+        mock_client.return_value.get_or_create_collection.return_value = mock_collection
+
+        mock_emb_gen = MagicMock()
+        mock_emb_gen.is_available.return_value = True
+        mock_emb_gen.generate.return_value = [0.1, 0.2]
+        mock_get_emb.return_value = mock_emb_gen
+
+        store = VectorStore()
+        results = store.search_messages("test")
+
+        assert len(results) == 1
+        assert results[0]["summary_id"] is None
+        assert results[0]["message_id"] == 9457
+        assert results[0]["doc_id"] == "2039687763:9457"
+
+    @patch("core.ai.vector_store.CHROMADB_AVAILABLE", True)
+    @patch("core.ai.vector_store.chromadb.PersistentClient")
+    @patch("core.ai.embedding_generator.get_embedding_generator")
+    def test_search_summary_doc_keeps_real_summary_id(self, mock_get_emb, mock_client):
+        """总结文档（数字 doc_id）保留真实数据库总结ID，message_id 为 None"""
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 10
+        mock_collection.query.return_value = {
+            "ids": [["42"]],
+            "documents": [["总结文本"]],
+            "metadatas": [[{"channel_id": "https://t.me/test"}]],
+            "distances": [[0.2]],
+        }
+        mock_client.return_value.get_or_create_collection.return_value = mock_collection
+
+        mock_emb_gen = MagicMock()
+        mock_emb_gen.is_available.return_value = True
+        mock_emb_gen.generate.return_value = [0.1, 0.2]
+        mock_get_emb.return_value = mock_emb_gen
+
+        store = VectorStore()
+        results = store.search_similar("test")
+
+        assert results[0]["summary_id"] == 42
+        assert results[0]["message_id"] is None
+
+    @patch("core.ai.vector_store.CHROMADB_AVAILABLE", True)
+    @patch("core.ai.vector_store.chromadb.PersistentClient")
+    @patch("core.ai.embedding_generator.get_embedding_generator")
     def test_search_similar_empty_results(self, mock_get_emb, mock_client):
         """测试搜索无结果"""
         mock_collection = MagicMock()

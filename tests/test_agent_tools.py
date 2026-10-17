@@ -41,60 +41,122 @@ def test_tool_schemas_include_channel_tools():
     assert "get_source_detail" in names
 
 
-def test_serialize_result_builds_message_post_link():
-    """测试消息向量结果会生成帖子链接"""
+def test_serialize_result_builds_message_post_link_public_channel():
+    """测试消息向量结果（公开频道）生成帖子链接"""
     result = {
-        "summary_id": 1,
         "summary_text": "消息内容",
-        "doc_id": "https://t.me/test:123",
-        "metadata": {"channel_id": "https://t.me/test", "channel_name": "Test"},
+        "doc_id": "12345:777",
+        "source": "message",
+        "metadata": {
+            "channel_id": "12345",
+            "channel_username": "test",
+            "channel_name": "Test",
+            "message_id": "777",
+        },
     }
 
     serialized = ToolExecutor._serialize_result(result)
 
-    assert serialized["post_links"] == ["https://t.me/test/123"]
+    # 公开 username 优先于数字 ID
+    assert serialized["post_url"] == "https://t.me/test/777"
+    assert serialized["post_links"] == ["https://t.me/test/777"]
+    assert serialized["message_id"] == 777
+    assert serialized["source_type"] == "message"
+    # 消息类结果不携带总结ID
+    assert serialized["summary_id"] is None
 
 
-def test_build_summary_post_links_uses_summary_message_ids():
-    """测试总结结果会根据 summary_message_ids 生成帖子链接"""
-    summary = {
-        "channel_id": "https://t.me/test",
-        "summary_message_ids": [10, 11, 12],
+def test_serialize_result_numeric_channel_uses_private_format():
+    """回归测试：数字频道 ID 必须生成 /c/ 私有格式链接。
+
+    历史 Bug 把内部数字频道 ID 直接拼成公开频道链接
+    （如 https://t.me/2039687763/9973），该地址实际不存在。
+    """
+    result = {
+        "summary_id": None,
+        "summary_text": "频道原始消息",
+        "doc_id": "2039687763:9457",
+        "source": "message",
+        "metadata": {"channel_id": "2039687763", "message_id": "9457"},
     }
 
-    links = ToolExecutor._build_summary_post_links(summary)
+    serialized = ToolExecutor._serialize_result(result)
 
-    assert links == [
-        "https://t.me/test/10",
-        "https://t.me/test/11",
-        "https://t.me/test/12",
-    ]
+    assert serialized["post_url"] == "https://t.me/c/2039687763/9457"
+    assert serialized["message_id"] == 9457
+    assert serialized["summary_id"] is None
 
 
-def test_serialize_result_builds_summary_post_links_from_metadata_json():
-    """测试总结向量元数据中的消息 ID 会生成帖子链接"""
+def test_serialize_result_message_id_from_doc_id_tail():
+    """doc_id 末段（channel:message 格式）解析出真实消息 ID"""
+    result = {
+        "summary_text": "消息",
+        "doc_id": "2039687763:9457",
+        "source": "message",
+        "metadata": {"channel_id": "2039687763"},
+    }
+
+    serialized = ToolExecutor._serialize_result(result)
+
+    assert serialized["message_id"] == 9457
+    assert serialized["post_url"] == "https://t.me/c/2039687763/9457"
+
+
+def test_serialize_result_summary_has_no_fabricated_links():
+    """回归测试：总结类结果不再根据 summary_message_ids 伪造帖子链接。
+
+    summary_message_ids 是机器人发布的总结报告消息 ID（甚至可能来自
+    管理员私聊），不是频道原帖 ID，绝不能拼成频道链接。
+    """
     result = {
         "summary_id": 1,
         "summary_text": "总结内容",
+        "source": "summary",
         "metadata": {
             "channel_id": "https://t.me/test",
             "channel_name": "Test",
             "summary_message_ids": "[10, 11]",
         },
-        "source": "summary",
     }
 
     serialized = ToolExecutor._serialize_result(result)
 
-    assert serialized["post_links"] == ["https://t.me/test/10", "https://t.me/test/11"]
+    assert serialized["source_type"] == "summary"
+    assert serialized["post_url"] is None
+    assert serialized["post_links"] == []
+    assert serialized["message_id"] is None
+    # 真实数据库总结 ID 保留
+    assert serialized["summary_id"] == 1
 
 
-def test_build_post_link_rejects_invalid_sources():
-    """测试帖子链接构造会拒绝无效或私有来源"""
+def test_serialize_result_excludes_internal_hash_from_summary_id():
+    """回归测试：消息结果不会被塞入内部哈希伪造成 summary_id。"""
+    result = {
+        "summary_id": None,
+        "summary_text": "消息",
+        "doc_id": "2039687763:9457",
+        "source": "message",
+        "metadata": {"channel_id": "2039687763"},
+    }
+
+    serialized = ToolExecutor._serialize_result(result)
+
+    assert serialized["summary_id"] is None
+    assert serialized["message_id"] == 9457
+
+
+def test_build_post_link_delegates_to_shared_builder():
+    """测试 _build_post_link 委托统一链接构造并拒绝无效来源"""
     assert ToolExecutor._build_post_link(None, 1) is None
     assert ToolExecutor._build_post_link("https://t.me/+private", 1) is None
     assert ToolExecutor._build_post_link("https://t.me/test", "abc") is None
     assert ToolExecutor._build_post_link("@test_channel", 123) == "https://t.me/test_channel/123"
+    # 数字频道 → /c/ 私有格式
+    assert ToolExecutor._build_post_link("2039687763", 9973) == ("https://t.me/c/2039687763/9973")
+    # Bot API -100 前缀
+    assert ToolExecutor._build_post_link("-1002039687763", 9973) == (
+        "https://t.me/c/2039687763/9973"
+    )
 
 
 def test_get_all_results_includes_doc_results_without_duplicates(executor):
@@ -191,3 +253,86 @@ async def test_execute_source_detail_returns_full_text(executor):
 
     assert "detail" in result
     assert len(result["detail"]["summary_text"]) > 500
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_does_not_fabricate_post_links(executor):
+    """回归测试：keyword_search 的总结结果不携带伪造的帖子链接"""
+    executor.memory_manager.search_summaries = AsyncMock(
+        return_value=[
+            {
+                "id": 5,
+                "summary_text": "总结",
+                "channel_id": "https://t.me/test",
+                "channel_name": "Test",
+                "created_at": "2026-10-17T00:00:00",
+                "summary_message_ids": [10, 11],  # 报告消息 ID，不应变成链接
+            }
+        ]
+    )
+
+    result = json.loads(await executor.execute("keyword_search", {"keywords": ["AI"]}))
+
+    serialized = result["results"][0]
+    assert serialized["source_type"] == "summary"
+    assert serialized["summary_id"] == 5
+    assert serialized["post_url"] is None
+    assert serialized["post_links"] == []
+    assert serialized["result_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_rerank_uses_result_id_reference(executor):
+    """rerank 通过请求内 result_id 引用结果，而非 summary_id/doc_id"""
+    executor.reranker.is_available.return_value = True
+    executor.vector_store.search_all.return_value = [
+        {
+            "summary_id": None,
+            "message_id": 9457,
+            "summary_text": "消息",
+            "doc_id": "2039687763:9457",
+            "source": "message",
+            "metadata": {"channel_id": "2039687763"},
+        }
+    ]
+    await executor.execute("semantic_search", {"query": "AI"})
+
+    executor.reranker.rerank.return_value = [
+        {
+            "summary_id": None,
+            "message_id": 9457,
+            "summary_text": "消息",
+            "doc_id": "2039687763:9457",
+            "source": "message",
+            "metadata": {"channel_id": "2039687763"},
+            "rerank_score": 0.9,
+        }
+    ]
+
+    result = json.loads(
+        await executor.execute("rerank_results", {"query": "AI", "result_ids": [1]})
+    )
+
+    assert result["count"] == 1
+    assert result["results"][0]["rerank_score"] == 0.9
+
+
+@pytest.mark.asyncio
+async def test_source_detail_supports_result_id(executor):
+    """get_source_detail 优先支持 result_id 引用"""
+    executor.vector_store.search_all.return_value = [
+        {
+            "summary_id": None,
+            "message_id": 9457,
+            "summary_text": "完整内容" * 100,
+            "doc_id": "2039687763:9457",
+            "source": "message",
+            "metadata": {"channel_id": "2039687763"},
+        }
+    ]
+    await executor.execute("semantic_search", {"query": "AI"})
+
+    result = json.loads(await executor.execute("get_source_detail", {"result_id": 1}))
+
+    assert "detail" in result
+    assert result["detail"]["post_url"] == "https://t.me/c/2039687763/9457"
