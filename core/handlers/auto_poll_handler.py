@@ -281,6 +281,15 @@ class AutoPollHandler:
                 quiz=False,
             )
 
+            # AI 生成耗时期间配置可能已被热重载（如 WebUI 禁用了该频道），
+            # 发送前基于最新生效配置做最终拦截，避免禁用后仍然发送
+            if not is_auto_poll_enabled_for_channel(channel_id):
+                logger.info(
+                    f"🚫 频道 {channel_id} 的自动趣味投票在生成期间被禁用，取消发送: "
+                    f"discussion={discussion_id}, forward_msg_id={forward_msg_id}"
+                )
+                return
+
             # 发送到讨论组，回复转发消息
             poll_msg = await self.client.send_message(
                 discussion_id,

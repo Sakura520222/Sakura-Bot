@@ -58,6 +58,7 @@ build_cron_trigger = _old_config.build_cron_trigger
 cache_discussion_group_id = _old_config.cache_discussion_group_id
 cleanup_old_regenerations = _old_config.cleanup_old_regenerations
 clear_discussion_group_cache = _old_config.clear_discussion_group_cache
+comparable_channel_key = _old_config.comparable_channel_key
 delete_channel_poll_config = _old_config.delete_channel_poll_config
 delete_channel_auto_poll_config = _old_config.delete_channel_auto_poll_config
 delete_channel_schedule = _old_config.delete_channel_schedule
@@ -68,6 +69,7 @@ get_channel_poll_config = _old_config.get_channel_poll_config
 get_channel_auto_poll_config = _old_config.get_channel_auto_poll_config
 get_channel_schedule = _old_config.get_channel_schedule
 get_discussion_group_id_cached = _old_config.get_discussion_group_id_cached
+find_equivalent_channel_key = _old_config.find_equivalent_channel_key
 get_forwarding_config = _old_config.get_forwarding_config
 get_forwarding_enabled_sources = _old_config.get_forwarding_enabled_sources
 get_forwarding_rules = _old_config.get_forwarding_rules
@@ -194,6 +196,7 @@ __all__ = [
     "cache_discussion_group_id",
     "cleanup_old_regenerations",
     "clear_discussion_group_cache",
+    "comparable_channel_key",
     "delete_channel_poll_config",
     "delete_channel_auto_poll_config",
     "delete_channel_schedule",
@@ -204,6 +207,7 @@ __all__ = [
     "get_channel_auto_poll_config",
     "get_channel_schedule",
     "get_discussion_group_id_cached",
+    "find_equivalent_channel_key",
     "get_forwarding_config",
     "get_forwarding_enabled_sources",
     "get_forwarding_rules",

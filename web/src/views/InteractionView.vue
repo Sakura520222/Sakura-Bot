@@ -90,6 +90,9 @@
                   </n-button>
                 </n-space>
               </template>
+              <n-text depth="3" style="display: block; margin-bottom: 8px">
+                此处的投票为「总结投票」：每次总结完成后根据总结内容生成并发送，与「自动投票」页签中逐帖触发的自动趣味投票相互独立。
+              </n-text>
               <n-empty
                 v-if="!Object.keys(pollSettings.settings).length"
                 :description="channels.length ? '暂无频道投票配置，点击右上角添加' : '暂无频道，请先在频道管理中添加频道'"
@@ -185,7 +188,8 @@
                 </n-switch>
               </template>
               <n-text depth="3">
-                启用后，每次总结完成后将自动根据总结内容生成一个趣味投票。可以为每个频道单独配置。
+                启用后，频道每条符合条件的帖子同步到讨论组时，将根据该帖内容自动生成趣味投票并回复到讨论组。
+                与「投票设置」中总结完成后发送的普通投票是两个独立功能，互不影响。可以为每个频道单独配置。
               </n-text>
             </n-card>
 
