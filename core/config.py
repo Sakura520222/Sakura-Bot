@@ -109,6 +109,38 @@ def normalize_channel_id(channel_id: str) -> str:
     return f"https://t.me/{channel_id}"
 
 
+def comparable_channel_key(channel_id: str) -> str:
+    """提取频道键的可比较形式，用于频道配置键的等价匹配
+
+    在 normalize_channel_id 的基础上去除 URL 前缀并统一小写：
+    username 在 Telegram 中不区分大小写，数字 ID 不受小写影响。
+    仅用于比较，不作为持久化的配置键。
+
+    Examples:
+        >>> comparable_channel_key('@Nahida_Leak')
+        'nahida_leak'
+        >>> comparable_channel_key('https://t.me/Nahida_Leak/')
+        'nahida_leak'
+    """
+    return normalize_channel_id(channel_id).removeprefix("https://t.me/").lower()
+
+
+def find_equivalent_channel_key(settings: dict, channel: str) -> str | None:
+    """在频道配置字典中查找与 channel 指向同一频道的既有键
+
+    兼容 @username、username、完整 URL、大小写差异与末尾斜杠等写法，
+    使读取、写入、删除使用同一匹配规则；无匹配时返回 None。
+    仅做键的等价匹配，不猜测数字 ID 与 username 的对应关系。
+    """
+    if not isinstance(channel, str) or not channel.strip():
+        return None
+    target = comparable_channel_key(channel)
+    for key in settings:
+        if isinstance(key, str) and comparable_channel_key(key) == target:
+            return key
+    return None
+
+
 # 默认提示词
 DEFAULT_PROMPT = "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：\n\n"
 
@@ -972,20 +1004,26 @@ def get_channel_auto_poll_config(channel):
     """获取指定频道的自动趣味投票配置
 
     Args:
-        channel: 频道URL
+        channel: 频道URL、@username、username 或数字ID
 
     Returns:
         dict: 包含 enabled 的配置字典
             - enabled: 是否启用自动趣味投票（None 表示使用全局配置）
+            - matched_key: 命中的配置键（None 表示无独立配置）
     """
-    if channel in CHANNEL_AUTO_POLL_SETTINGS:
-        config = CHANNEL_AUTO_POLL_SETTINGS[channel]
+    matched_key = find_equivalent_channel_key(CHANNEL_AUTO_POLL_SETTINGS, channel)
+    if matched_key is not None:
+        if matched_key != channel:
+            logger.info(f"频道自动趣味投票配置键已归一化: '{channel}' -> '{matched_key}'")
+        config = CHANNEL_AUTO_POLL_SETTINGS[matched_key]
         return {
             "enabled": config.get("enabled", None),  # None 表示使用全局配置
+            "matched_key": matched_key,
         }
     else:
         return {
             "enabled": None,  # 使用全局 ENABLE_AUTO_POLL
+            "matched_key": None,
         }
 
 
@@ -996,13 +1034,23 @@ def is_auto_poll_enabled_for_channel(channel):
     全局开启时，未配置频道默认启用，频道配置可显式启用或禁用。
     """
     if not ENABLE_AUTO_POLL:
+        logger.debug(f"[自动趣味投票] 全局开关关闭: channel={channel} -> enabled=False")
         return False
 
     channel_config = get_channel_auto_poll_config(channel)
     enabled = channel_config.get("enabled")
     if enabled is None:
+        logger.debug(
+            f"[自动趣味投票] 频道无独立配置，继承全局开关: "
+            f"channel={channel}, matched_key=None -> enabled=True"
+        )
         return True
-    return _parse_bool(enabled)
+    result = _parse_bool(enabled)
+    logger.debug(
+        f"[自动趣味投票] 频道独立配置生效: "
+        f"channel={channel}, matched_key={channel_config.get('matched_key')} -> enabled={result}"
+    )
+    return result
 
 
 def set_channel_auto_poll_config(channel, enabled=None):
@@ -1021,10 +1069,18 @@ def set_channel_auto_poll_config(channel, enabled=None):
         if "channel_auto_poll_settings" not in current_config:
             current_config["channel_auto_poll_settings"] = {}
 
-        if channel not in current_config["channel_auto_poll_settings"]:
-            current_config["channel_auto_poll_settings"][channel] = {}
+        settings = current_config["channel_auto_poll_settings"]
+        # 命中既有等价键时原地更新，避免同一频道产生多个配置条目
+        channel_key = find_equivalent_channel_key(settings, channel)
+        if channel_key is None:
+            channel_key = channel
+        elif channel_key != channel:
+            logger.info(f"频道自动趣味投票配置键已归一化: '{channel}' -> '{channel_key}'")
 
-        channel_config = current_config["channel_auto_poll_settings"][channel]
+        if channel_key not in settings:
+            settings[channel_key] = {}
+
+        channel_config = settings[channel_key]
 
         if enabled is not None:
             channel_config["enabled"] = enabled
@@ -1053,17 +1109,18 @@ def delete_channel_auto_poll_config(channel):
     try:
         current_config = load_config()
 
-        if (
-            "channel_auto_poll_settings" in current_config
-            and channel in current_config["channel_auto_poll_settings"]
-        ):
-            del current_config["channel_auto_poll_settings"][channel]
-            save_config_changes(current_config)
-            logger.info(f"已删除频道 {channel} 的自动趣味投票配置，将使用全局配置")
-            return True
-        else:
-            logger.info(f"频道 {channel} 没有独立的自动趣味投票配置，无需删除")
-            return True
+        if "channel_auto_poll_settings" in current_config:
+            settings = current_config["channel_auto_poll_settings"]
+            # 按等价规则命中既有键（兼容 @username、username、URL、大小写差异）
+            channel_key = find_equivalent_channel_key(settings, channel)
+            if channel_key is not None:
+                del settings[channel_key]
+                save_config_changes(current_config)
+                logger.info(f"已删除频道 {channel_key} 的自动趣味投票配置，将使用全局配置")
+                return True
+
+        logger.info(f"频道 {channel} 没有独立的自动趣味投票配置，无需删除")
+        return True
     except Exception as e:
         logger.error(f"删除频道自动趣味投票配置时出错: {type(e).__name__}: {e}", exc_info=True)
         return False

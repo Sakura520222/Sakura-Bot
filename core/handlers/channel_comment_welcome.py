@@ -22,7 +22,7 @@ from telethon import Button, events
 from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest
 
-from core.config import QA_BOT_USERNAME, normalize_channel_id
+from core.config import QA_BOT_USERNAME, comparable_channel_key, normalize_channel_id
 from core.handlers.channel_comment_welcome_config import (
     get_channel_comment_welcome_config,
     validate_callback_data_length,
@@ -32,6 +32,26 @@ from core.infrastructure.database import get_db_manager
 from core.system.error_handler import record_error
 
 logger = logging.getLogger(__name__)
+
+
+def _channel_entry_matches(entry: str, channel_id: int | str) -> bool:
+    """判断白名单条目 entry 是否指向 channel_id 标识的频道
+
+    使用与频道配置读取一致的等价规则（忽略 URL 前缀、@、大小写与末尾斜杠）。
+
+    匹配逻辑：
+    1. 如果 channel_id 是 username（含 @/URL/大小写差异），直接等价比较
+    2. 如果 channel_id 是数字ID字符串，直接比较（用于无username的频道，
+       兼容 t.me/c/<id> 私有频道链接形式）
+    """
+    # 查询侧与白名单条目侧使用同一归一化规则
+    channel_key = comparable_channel_key(str(channel_id).strip())
+    if not channel_key:
+        return False
+
+    # 标准化频道URL，提取标识符；支持 @username、https://t.me/username、username
+    normalized = comparable_channel_key(str(entry))
+    return normalized == channel_key or normalized.endswith(f"/{channel_key}")
 
 
 def is_channel_in_whitelist(channel_id: int | str, channels: list[str]) -> bool:
@@ -45,21 +65,8 @@ def is_channel_in_whitelist(channel_id: int | str, channels: list[str]) -> bool:
     Returns:
         bool: 是否在白名单中
     """
-    channel_id_str = str(channel_id)
-
     for ch in channels:
-        # 标准化频道URL，提取标识符
-        # 支持格式：@username, https://t.me/username, username
-        normalized = ch.strip().lstrip("@")
-        if normalized.startswith("https://t.me/"):
-            normalized = normalized.replace("https://t.me/", "")
-        elif normalized.startswith("t.me/"):
-            normalized = normalized.replace("t.me/", "")
-
-        # 匹配逻辑：
-        # 1. 如果 channel_id 是 username，直接比较
-        # 2. 如果 channel_id 是数字ID字符串，直接比较（用于无username的频道）
-        if normalized == channel_id_str or normalized.endswith(f"/{channel_id_str}"):
+        if _channel_entry_matches(ch, channel_id):
             return True
 
     return False
@@ -311,6 +318,38 @@ class CommentWelcomeHandler:
             logger.warning(f"获取频道实体失败 (id={channel_id}): {e}")
         return str(channel_id)
 
+    async def _resolve_linked_channel(self, channel_id: int) -> tuple[str, str | None]:
+        """解析频道数字ID在 CHANNELS 白名单中的规范配置键。
+
+        先通过 Telegram 实体解析 username（权威映射，不做字符串猜测），
+        再用与配置读取一致的等价规则在 CHANNELS 中匹配；私有频道
+        （无 username）按数字ID或 t.me/c/<id> 链接形式匹配。
+        该规范键与 WebUI 写入 channel_auto_poll_settings 等配置的键一致，
+        后续入队与配置读取都必须使用它，避免不同写法导致配置错配。
+
+        Args:
+            channel_id: 频道数字ID
+
+        Returns:
+            (identifier, canonical_key):
+            - identifier: username 或字符串化数字ID（用于日志）
+            - canonical_key: CHANNELS 中命中的原始条目；不在白名单时为 None
+        """
+        import core.config as config_module
+
+        identifier = await self._get_channel_identifier(channel_id)
+
+        for entry in config_module.CHANNELS:
+            if not isinstance(entry, str):
+                continue
+            if _channel_entry_matches(entry, identifier) or _channel_entry_matches(
+                entry, str(channel_id)
+            ):
+                return identifier, entry
+
+        # 未命中白名单：identifier 仍返回，供日志排查
+        return identifier, None
+
     async def _collect_media_group_text(self, source_channel_id: int, channel_post_id: int) -> str:
         """从源频道获取媒体组的完整文本。
 
@@ -457,13 +496,20 @@ class CommentWelcomeHandler:
 
             # 白名单检查：验证讨论组所属的频道是否在 CHANNELS 配置中
             # 这样可以确保只在配置的目标频道的讨论组中发送欢迎消息
-            import core.config as config_module
 
-            # linked_chat_id 已通过上方守卫保证非 None
-            linked_identifier = await self._get_channel_identifier(linked_chat_id)
+            # linked_chat_id 已通过上方守卫保证非 None。
+            # 解析 CHANNELS 中的规范配置键：与 WebUI 写入
+            # channel_auto_poll_settings / channel_comment_welcome 的键一致，
+            # 入队与后续配置读取都必须使用该键，避免 username 与 URL
+            # 两种写法错配导致频道级禁用配置失效。
+            linked_identifier, linked_channel_key = await self._resolve_linked_channel(
+                linked_chat_id
+            )
 
-            if not is_channel_in_whitelist(linked_identifier, config_module.CHANNELS):
-                logger.debug(f"关联频道 {linked_identifier} 不在白名单中，忽略")
+            if linked_channel_key is None:
+                logger.debug(
+                    f"关联频道 {linked_identifier} (id={linked_chat_id}) 不在白名单中，忽略"
+                )
                 return
 
             source_identifier = await self._get_channel_identifier(source_channel_id)
@@ -483,19 +529,21 @@ class CommentWelcomeHandler:
 
                 _message_cache[cache_key] = datetime.now(UTC)
 
-            # 添加到任务队列
+            # 添加到任务队列（channel_id 使用规范配置键，与
+            # channel_comment_welcome 配置读取的键一致）
             await self.task_queue.put(
                 {
                     "discussion_id": msg.chat_id,
                     "forward_msg_id": msg.id,
-                    "channel_id": linked_identifier,
+                    "channel_id": linked_channel_key,
                     "channel_msg_id": channel_post_id,
                 }
             )
 
             logger.info(
                 f"📥 检测到来自频道 {source_identifier} 的转发消息 "
-                f"(帖子 {channel_post_id}) 出现在讨论组 {msg.chat_id}，已加入发送队列"
+                f"(帖子 {channel_post_id}) 出现在讨论组 {msg.chat_id}，已加入发送队列 "
+                f"(关联频道: {linked_channel_key})"
             )
 
             # 将趣味投票任务入队（独立队列，与欢迎消息互不干扰）
@@ -537,14 +585,15 @@ class CommentWelcomeHandler:
                             )
 
                     enqueued = auto_poll_handler.enqueue_poll_task(
-                        channel_id=linked_identifier,
+                        channel_id=linked_channel_key,
                         discussion_id=msg.chat_id,
                         forward_msg_id=msg.id,
                         message_text=message_text,
                     )
                     logger.info(
                         f"📊 趣味投票入队结果: {enqueued}, "
-                        f"channel={linked_identifier}, text_len={len(message_text)}"
+                        f"channel={linked_channel_key} (linked_id={linked_chat_id}), "
+                        f"text_len={len(message_text)}"
                     )
             except Exception as e:
                 logger.warning(f"趣味投票入队失败（不影响欢迎消息）: {type(e).__name__}: {e}")

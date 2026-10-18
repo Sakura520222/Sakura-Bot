@@ -5,6 +5,7 @@ Copyright 2026 Sakura-Bot
 """
 
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -524,3 +525,256 @@ class TestDeduplicationCache:
         assert r1 is True
         assert r2 is True
         assert running_handler._queue.qsize() == 2
+
+
+# ==================== 频道标识归一化与配置生效测试（Issue #115） ====================
+
+
+def _old_config_module():
+    """获取自动趣味投票判定函数实际读取全局变量的模块（core._old_config）"""
+    import core.config  # noqa: F401 确保旧配置模块已加载
+
+    return sys.modules["core._old_config"]
+
+
+@pytest.mark.unit
+class TestAutoPollChannelKeyResolution:
+    """频道标识归一化测试
+
+    WebUI 以完整 URL 写入配置键，后台以 username 查询，
+    必须命中同一频道的配置，否则显式禁用会被误判为"无独立配置"。
+    使用真实配置字典与真实判定函数，不 Mock is_auto_poll_enabled_for_channel。
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_real_config(self, monkeypatch):
+        """让真实判定函数读取测试配置字典"""
+        self.settings = {
+            "https://t.me/Nahida_Leak": {"enabled": False},
+            "https://t.me/FireflyLeak": {"enabled": True},
+        }
+        monkeypatch.setattr(_old_config_module(), "CHANNEL_AUTO_POLL_SETTINGS", self.settings)
+        monkeypatch.setattr(_old_config_module(), "ENABLE_AUTO_POLL", True)
+
+    def test_disabled_channel_matched_by_all_key_variants(self):
+        """WebUI 存 URL 键，后台传 username/@/大小写混合/尾斜杠都解析到 disabled"""
+        from core.config import get_channel_auto_poll_config, is_auto_poll_enabled_for_channel
+
+        for channel in (
+            "Nahida_Leak",
+            "@Nahida_Leak",
+            "https://t.me/Nahida_Leak",
+            "https://t.me/nahida_leak",
+            "https://t.me/NAHIDA_LEAK/",
+            "t.me/Nahida_Leak",
+        ):
+            config = get_channel_auto_poll_config(channel)
+            assert config["enabled"] is False, channel
+            assert config["matched_key"] == "https://t.me/Nahida_Leak", channel
+            assert is_auto_poll_enabled_for_channel(channel) is False, channel
+
+    def test_explicitly_enabled_channel_still_enabled(self):
+        """显式启用的频道保持启用"""
+        from core.config import is_auto_poll_enabled_for_channel
+
+        assert is_auto_poll_enabled_for_channel("FireflyLeak") is True
+        assert is_auto_poll_enabled_for_channel("@FireflyLeak") is True
+
+    def test_unconfigured_channel_inherits_global(self):
+        """无独立配置的频道继承全局开关（全局开启时为 True）"""
+        from core.config import is_auto_poll_enabled_for_channel
+
+        assert is_auto_poll_enabled_for_channel("SomeOtherChannel") is True
+
+    def test_global_off_disables_all_channels(self, monkeypatch):
+        """全局关闭时一律关闭，显式 true 也不生效"""
+        from core.config import is_auto_poll_enabled_for_channel
+
+        monkeypatch.setattr(_old_config_module(), "ENABLE_AUTO_POLL", False)
+        assert is_auto_poll_enabled_for_channel("@FireflyLeak") is False
+        assert is_auto_poll_enabled_for_channel("SomeOtherChannel") is False
+
+    def test_numeric_id_does_not_mismatch_other_channels(self):
+        """数字 ID 仅严格匹配，不与 username 或 c/<id> 链接互相猜测"""
+        from core.config import is_auto_poll_enabled_for_channel
+
+        self.settings["https://t.me/c/1234567890"] = {"enabled": False}
+        # 裸数字 ID 不等于 c/ 链接键，也不能命中任何 username 键 → 继承全局
+        assert is_auto_poll_enabled_for_channel("1234567890") is True
+        # c/<id> 链接形式与存储键一致 → 命中禁用配置
+        assert is_auto_poll_enabled_for_channel("https://t.me/c/1234567890") is False
+        # 其它频道不受影响
+        assert is_auto_poll_enabled_for_channel("Nahida_Leak") is False
+        assert is_auto_poll_enabled_for_channel("FireflyLeak") is True
+
+
+@pytest.mark.unit
+class TestAutoPollHandlerWithRealConfig:
+    """基于真实配置字典的处理器行为测试（不 Mock 判定函数本身）"""
+
+    @pytest.fixture(autouse=True)
+    def setup_real_config(self, monkeypatch):
+        self.settings = {
+            "https://t.me/Nahida_Leak": {"enabled": False},
+            "https://t.me/FireflyLeak": {"enabled": True},
+        }
+        monkeypatch.setattr(_old_config_module(), "CHANNEL_AUTO_POLL_SETTINGS", self.settings)
+        monkeypatch.setattr(_old_config_module(), "ENABLE_AUTO_POLL", True)
+
+    def test_enqueue_rejected_for_disabled_channel_variant_keys(self, mock_client):
+        """入队前检查：显式禁用频道的各种键写法都不入队（不调用 AI）"""
+        h = AutoPollHandler(mock_client)
+        h._running = True
+
+        for channel in ("Nahida_Leak", "@Nahida_Leak", "https://t.me/nahida_leak"):
+            assert h.enqueue_poll_task(channel, 123, 1, "这是一条测试消息内容") is False
+        assert h._queue.qsize() == 0
+
+    def test_enqueue_accepted_for_enabled_channel(self, mock_client):
+        """显式启用的频道正常入队"""
+        h = AutoPollHandler(mock_client)
+        h._running = True
+
+        assert h.enqueue_poll_task("FireflyLeak", 123, 1, "这是一条测试消息内容") is True
+        assert h._queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_queued_task_skipped_after_disable(self, handler):
+        """已入队但未处理的任务，禁用后不再生成与发送"""
+        task = {
+            "channel_id": "https://t.me/Nahida_Leak",
+            "discussion_id": 123,
+            "forward_msg_id": 456,
+            "message_text": "这是一条较长的测试消息内容，用于生成趣味投票",
+        }
+
+        with patch(
+            "core.handlers.auto_poll_handler.generate_poll_from_summary",
+            new_callable=AsyncMock,
+        ) as mock_generate:
+            await handler._process_poll_task(task)
+
+        mock_generate.assert_not_called()
+        handler.client.send_message.assert_not_called()
+        assert handler._processed_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_cancelled_when_disabled_during_generation(self, mock_client):
+        """AI 生成过程中关闭频道开关：生成完成但最终不发送"""
+        h = AutoPollHandler(mock_client)
+
+        async def disable_during_generation(_text):
+            # 模拟 AI 生成期间管理员通过 WebUI 禁用该频道（热重载即时生效）
+            self.settings["https://t.me/Nahida_Leak"]["enabled"] = False
+            return {"question": "生成期间被禁用", "options": ["选项A", "选项B"]}
+
+        task = {
+            "channel_id": "https://t.me/Nahida_Leak",
+            "discussion_id": 123,
+            "forward_msg_id": 456,
+            "message_text": "这是一条较长的测试消息内容，用于生成趣味投票",
+        }
+
+        self.settings["https://t.me/Nahida_Leak"]["enabled"] = True
+        with patch(
+            "core.handlers.auto_poll_handler.generate_poll_from_summary",
+            side_effect=disable_during_generation,
+        ):
+            await h._process_poll_task(task)
+
+        h.client.send_message.assert_not_called()
+        assert h._processed_count == 0
+        assert h._failed_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_succeeds_for_enabled_channel_with_real_config(self, mock_client):
+        """显式启用频道（真实配置判定）全流程生成并发送成功"""
+        h = AutoPollHandler(mock_client)
+
+        task = {
+            "channel_id": "https://t.me/FireflyLeak",
+            "discussion_id": 123,
+            "forward_msg_id": 456,
+            "message_text": "这是一条较长的测试消息内容，用于生成趣味投票",
+        }
+
+        with patch(
+            "core.handlers.auto_poll_handler.generate_poll_from_summary",
+            return_value={"question": "测试问题", "options": ["选项A", "选项B"]},
+        ):
+            await h._process_poll_task(task)
+
+        h.client.send_message.assert_called_once()
+        assert h._processed_count == 1
+
+
+@pytest.mark.unit
+class TestLinkedChannelCanonicalKeyResolution:
+    """讨论组事件 linked_chat_id → CHANNELS 规范配置键解析测试"""
+
+    def _make_handler(self, mock_client, username):
+        entity = MagicMock()
+        entity.username = username
+        mock_client.get_entity = AsyncMock(return_value=entity)
+        from core.handlers.channel_comment_welcome import CommentWelcomeHandler
+
+        return CommentWelcomeHandler(client=mock_client)
+
+    @pytest.mark.asyncio
+    async def test_resolve_returns_channels_entry(self, mock_client, monkeypatch):
+        """实体解析出的 username 能命中 CHANNELS 中的原始条目（规范键）"""
+        monkeypatch.setattr(
+            _old_config_module(),
+            "CHANNELS",
+            ["https://t.me/Nahida_Leak", "https://t.me/FireflyLeak"],
+        )
+        handler = self._make_handler(mock_client, "Nahida_Leak")
+
+        identifier, canonical_key = await handler._resolve_linked_channel(123456)
+
+        assert identifier == "Nahida_Leak"
+        assert canonical_key == "https://t.me/Nahida_Leak"
+
+    @pytest.mark.asyncio
+    async def test_resolve_username_case_insensitive(self, mock_client, monkeypatch):
+        """username 大小写差异仍命中同一白名单条目"""
+        monkeypatch.setattr(_old_config_module(), "CHANNELS", ["https://t.me/Nahida_Leak"])
+        handler = self._make_handler(mock_client, "nahida_leak")
+
+        identifier, canonical_key = await handler._resolve_linked_channel(123456)
+
+        assert identifier == "nahida_leak"
+        assert canonical_key == "https://t.me/Nahida_Leak"
+
+    @pytest.mark.asyncio
+    async def test_resolve_private_channel_by_numeric_id(self, mock_client, monkeypatch):
+        """无 username 的私有频道按数字 ID / c/<id> 链接匹配，不猜测 username"""
+        monkeypatch.setattr(_old_config_module(), "CHANNELS", ["https://t.me/c/1234567890"])
+        handler = self._make_handler(mock_client, None)
+
+        identifier, canonical_key = await handler._resolve_linked_channel(1234567890)
+
+        assert identifier == "1234567890"
+        assert canonical_key == "https://t.me/c/1234567890"
+
+    @pytest.mark.asyncio
+    async def test_resolve_not_in_whitelist_returns_none(self, mock_client, monkeypatch):
+        """不在白名单的频道返回 None，且不误配其它频道"""
+        monkeypatch.setattr(_old_config_module(), "CHANNELS", ["https://t.me/OtherChannel"])
+        handler = self._make_handler(mock_client, "Nahida_Leak")
+
+        identifier, canonical_key = await handler._resolve_linked_channel(123456)
+
+        assert identifier == "Nahida_Leak"
+        assert canonical_key is None
+
+    def test_is_channel_in_whitelist_case_insensitive(self):
+        """白名单匹配忽略 URL 前缀、@ 与大小写差异"""
+        from core.handlers.channel_comment_welcome import is_channel_in_whitelist
+
+        channels = ["https://t.me/Nahida_Leak", "@FireflyLeak"]
+        assert is_channel_in_whitelist("Nahida_Leak", channels) is True
+        assert is_channel_in_whitelist("nahida_leak", channels) is True
+        assert is_channel_in_whitelist("@fireflyleak", channels) is True
+        assert is_channel_in_whitelist("https://t.me/NAHIDA_LEAK/", channels) is True
+        assert is_channel_in_whitelist("OtherChannel", channels) is False
