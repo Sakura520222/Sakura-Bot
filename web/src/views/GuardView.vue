@@ -129,6 +129,7 @@
           <span v-else>{{ detail.payload?.message_id || '—' }}</span>
         </n-descriptions-item>
         <n-descriptions-item label="状态">{{ recordStatus(detail) }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.report_message_deletion" label="原消息删除">{{ detail.payload.report_message_deletion.status === 'deleted' ? '已删除或已不存在' : '待确认删除，后台自动重试' }} · {{ detail.payload.report_message_deletion.actor }} · {{ detail.payload.report_message_deletion.completed_at || detail.payload.report_message_deletion.requested_at }} UTC<span v-if="detail.payload.report_message_deletion.error"> · {{ deletionError(detail.payload.report_message_deletion.error) }}</span></n-descriptions-item>
         <n-descriptions-item label="审核人 / UTC 时间">{{ detail.reviewer_actor || detail.reviewer_id || '—' }} / {{ detail.reviewed_at || '—' }}</n-descriptions-item>
         <n-descriptions-item label="错误">{{ detail.error || '—' }}</n-descriptions-item>
         <n-descriptions-item v-if="detail.message_cleanup_pending !== undefined" label="验证消息清理">{{ detail.message_cleanup_pending ? '待清理，后台自动重试' : '已清理或当前无需清理' }}</n-descriptions-item>
@@ -200,6 +201,18 @@ Object.assign(statusNames, { deleting: "旧通知清理中", removed: "原通知
 const statuses = Object.entries(statusNames).map(([value, label]) => ({ label: value === "pending" ? "待审核（封禁 / 用户举报）" : value === "ignored" ? "已忽略（警告 / 举报）" : label, value }));
 const statusLabel = (value?: string) => value ? statusNames[value] || value : "—";
 const pendingReport = (row: GuardRecord) => row.action === "report" && !row.payload?.review_ban_confirmed;
+function deletionError(value: string) {
+  const names: Record<string, string> = {
+    "guard.report_delete_permission_error": "主 Bot 缺少管理员或删除消息权限",
+    "guard.report_delete_target_changed": "原消息身份与举报记录不符，已停止删除",
+    "guard.report_delete_unconfirmed": "仍能读取原消息，等待重试确认",
+    MessageDeleteForbiddenError: "Bot 没有删除该消息的权限",
+    ChatAdminRequiredError: "Bot 需要群管理员权限",
+    ChatWriteForbiddenError: "Bot 当前无法操作该群组",
+    TimeoutError: "Telegram 请求超时，稍后重试",
+  };
+  return names[value] || "删除未确认，请检查 Bot 权限或稍后重试";
+}
 function recordStatus(row: GuardRecord) {
   if (pendingReport(row) && row.status === "pending") return "用户举报 · 待审核（尚未处罚）";
   if (pendingReport(row) && row.status === "ignored") return "已忽略举报";
@@ -333,10 +346,10 @@ async function loadRecords() {
 }
 function resetRecords() { page.value = 1; loadRecords(); }
 function changeTable() { filterStatus.value = table.value === "cases" ? "pending" : null; resetRecords(); }
-async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "retry" | "removeWhite" | "removeBlack") {
+async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "retry" | "removeWhite" | "removeBlack") {
   dialog.warning({
-    title: "确认群管操作",
-    content: action === "unban" && pendingReport(row) ? "忽略本次举报，保留记录，不修改成员权限或黑白名单。" : action === "unban" ? "仅撤销本次案件的封禁、禁言或警告，不新增白名单。其他限制及入群验证继续生效。" : action === "ban" ? "将该用户在本群封禁，保留后续审核入口，不加入永久黑名单。" : action === "allow" ? "撤销本次限制并加入本群白名单。其他限制及入群验证继续生效，不会自动重新拉入群。" : action === "blacklist" ? "封禁并将用户 ID 记入永久黑名单；其他群按共享开关生效。" : action === "removeBlack" ? "撤销全局永久拉黑记录。各群现有封禁仍需分别通过案件解除。" : action === "removeWhite" ? "删除本群白名单后，该用户会重新接受本群规则检测。" : "重试此前失败的操作，实际结果会记录在案件中。",
+    title: action === "delete" ? "确认删除被举报消息" : "确认群管操作",
+    content: action === "delete" ? "删除本案被举报的原消息，删除后无法恢复。用户权限及黑白名单由其他审核操作决定。" : action === "unban" && pendingReport(row) ? "忽略本次举报，保留记录，不修改成员权限或黑白名单。" : action === "unban" ? "仅撤销本次案件的封禁、禁言或警告，不新增白名单。其他限制及入群验证继续生效。" : action === "ban" ? "将该用户在本群封禁，保留后续审核入口，不加入永久黑名单。" : action === "allow" ? "撤销本次限制并加入本群白名单。其他限制及入群验证继续生效，不会自动重新拉入群。" : action === "blacklist" ? "封禁并将用户 ID 记入永久黑名单；其他群按共享开关生效。" : action === "removeBlack" ? "撤销全局永久拉黑记录。各群现有封禁仍需分别通过案件解除。" : action === "removeWhite" ? "删除本群白名单后，该用户会重新接受本群规则检测。" : "重试此前失败的操作，实际结果会记录在案件中。",
     positiveText: "确认", negativeText: "取消",
     onPositiveClick: async () => {
       try {
@@ -367,6 +380,7 @@ const columns = computed<DataTableColumns<GuardRecord>>(() => [
   { title: "错误", key: "error", width: 180, ellipsis: { tooltip: true } },
   { title: "操作", key: "actions", width: 440, render: row => h(NSpace, { size: "small" }, { default: () => [
     h(NButton, { size: "small", onClick: () => { detail.value = row; showDetail.value = true; } }, { default: () => "详情" }),
+    ...(table.value === "cases" && row.action === "report" && row.payload?.message_id && row.payload?.report_message_deletion?.status !== "deleted" ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "delete") }, { default: () => row.payload?.report_message_deletion?.error ? "重试删除被举报消息" : "删除被举报消息" })] : []),
     ...(table.value === "cases" && (row.status === "pending" || (row.status === "done" && ["mute", "warn"].includes(row.action || "") && !row.payload?.verification_failure)) ? [
       h(NButton, { size: "small", onClick: () => act(row, "unban") }, { default: () => pendingReport(row) ? "忽略本次举报" : row.status === "pending" ? "仅解除封禁" : row.action === "mute" ? "仅解除本次禁言" : "忽略本次警告" }),
       ...(!pendingReport(row) ? [h(NButton, { size: "small", type: "primary", onClick: () => act(row, "allow") }, { default: () => row.action === "warn" && row.status !== "pending" ? "加入本群白名单" : "解除并加入白名单" })] : []),

@@ -80,6 +80,14 @@ export interface GuardRecord {
     report_link?: string;
     message_date?: string;
     has_media?: boolean;
+    report_message_deletion?: {
+      status: "pending" | "deleted";
+      actor: string;
+      requested_at: string;
+      completed_at?: string;
+      attempts?: number;
+      error?: string | null;
+    };
     evidence?: { target?: string; rule_id?: string; reason?: string; original?: string; normalized?: string };
   };
 }
@@ -160,7 +168,7 @@ export async function addGuardGroup(chat_id: number) {
 export async function getGuardRecords(table: GuardTable, params: Record<string, unknown>) {
   return (await api.get<{ rows: GuardRecord[]; total: number }>(`/guard/records/${table}`, { params })).data;
 }
-export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban", generation = 0) {
+export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban" | "delete", generation = 0) {
   return (await api.post(`/guard/cases/${id}/review`, { action, generation })).data;
 }
 export async function retryGuardCase(id: string) {

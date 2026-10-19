@@ -267,6 +267,7 @@ class FakeTelegram:
         self.member_rights = defaultdict(lambda: rights_dict(None))
         self.admins = set()
         self.sent = {}
+        self.source_messages = {}
         self.forwarded = {}
         self.forward_attempts = []
         self.random_ids = {}
@@ -390,11 +391,17 @@ class FakeTelegram:
 
     async def delete_messages(self, chat_id, ids):
         self.calls.append(("delete", chat_id, tuple(ids)))
+        if "delete" in self.fail:
+            raise self.fail["delete"]
         self.deleted.update((chat_id, identifier) for identifier in ids)
         for identifier in ids:
             self.sent.pop((chat_id, identifier), None)
 
     async def get_messages(self, chat_id, *, ids):
+        if (chat_id, ids) in self.deleted:
+            return None
+        if (chat_id, ids) in self.source_messages:
+            return self.source_messages[chat_id, ids]
         return SimpleNamespace(id=ids) if (chat_id, ids) in self.sent else None
 
 

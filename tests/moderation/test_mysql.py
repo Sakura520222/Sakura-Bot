@@ -112,6 +112,67 @@ async def test_mysql_user_report_is_deduplicated_and_reviewed(
         assert not await store.whitelisted(CHAT, USER)
 
 
+async def test_mysql_old_report_notifications_are_selected_for_control_refresh(
+    guard, mysql_repository
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    case = (await mysql_repository.query("cases"))["rows"][0]
+    before = None
+    async with mysql_repository.lock(USER) as store:
+        before = await store.notices(case["id"])
+        payload = dict(case["payload"])
+        payload.pop("report_controls_version")
+        await store.update_case(case["id"], case["status"], payload=payload)
+    cases, _ = await mysql_repository.work()
+    assert case["id"] in {row["id"] for row in cases}
+    await guard.recover_once()
+    current = await mysql_repository.get_case(case["id"])
+    assert current["payload"]["report_controls_version"] == 1
+    async with mysql_repository.lock(USER) as store:
+        assert {(row["target_id"], row["message_id"]) for row in before} == {
+            (row["target_id"], row["message_id"]) for row in await store.notices(case["id"])
+        }
+
+
+async def test_mysql_pending_message_deletion_survives_cleanup_and_recovers(
+    guard, mysql_repository
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    case = (await mysql_repository.query("cases"))["rows"][0]
+    await guard.reviews.review(case["id"], "unban", ADMIN)
+    guard.client.fail["delete"] = PermissionError("missing rights")
+    with pytest.raises(GuardError):
+        await guard.reviews.review(case["id"], "delete", ADMIN)
+    current = await mysql_repository.get_case(case["id"])
+    payload = current["payload"]
+    payload["report_message_deletion"]["retry_at"] = (
+        utc_now_naive() - timedelta(seconds=1)
+    ).isoformat()
+    async with mysql_repository.lock(USER) as store:
+        await store.update_case(case["id"], current["status"], payload=payload)
+        await store.execute(
+            "UPDATE moderation_cases SET created_at=%s WHERE id=%s",
+            (utc_now_naive() - timedelta(days=100), case["id"]),
+        )
+    await mysql_repository.cleanup(7)
+    assert await mysql_repository.get_case(case["id"])
+    cases, _ = await mysql_repository.work()
+    assert case["id"] in {row["id"] for row in cases}
+    guard.client.fail.clear()
+    await guard.recover_once()
+    current = await mysql_repository.get_case(case["id"])
+    assert current["status"] == "ignored"
+    assert current["payload"]["report_message_deletion"]["status"] == "deleted"
+    await mysql_repository.cleanup(7)
+    assert await mysql_repository.get_case(case["id"]) is None
+
+
 async def test_history_cleanup_persists_per_bot_without_touching_guard_data(mysql_repository):
     repository = mysql_repository
     await repository.initialize()

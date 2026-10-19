@@ -20,6 +20,7 @@ from .telegram import TelegramActionError, call
 
 logger = logging.getLogger(__name__)
 RETIRED_NOTICES = {"deleting", "removed"}
+REPORT_CONTROLS_VERSION = 1
 
 
 def stable_random_id(value):
@@ -45,6 +46,21 @@ def review_buttons(case, config=None):
         return None
     generation = case.get("payload", {}).get("review_generation", 0)
     prefix = f"sg:r:{case['id']}:"
+    deletion = case["payload"].get("report_message_deletion", {})
+    message_id = case["payload"].get("message_id")
+    delete_buttons = []
+    if (
+        case["action"] == "report"
+        and type(message_id) is int
+        and 0 < message_id < 2**31
+        and deletion.get("status") != "deleted"
+    ):
+        key = (
+            "guard.report_delete_retry_button"
+            if deletion.get("error")
+            else "guard.report_delete_button"
+        )
+        delete_buttons = [[Button.inline(t(key), f"{prefix}d:{generation}".encode())]]
     if case["action"] == "report" and case["status"] == "pending" and not is_ban_case(case):
         return [
             [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
@@ -53,7 +69,7 @@ def review_buttons(case, config=None):
                 ("k", "guard.verify_ban_button"),
                 ("b", "guard.verify_blacklist_button"),
             ]
-        ]
+        ] + delete_buttons
     if is_ban_case(case) and case["status"] == "pending":
         return [
             [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
@@ -62,7 +78,7 @@ def review_buttons(case, config=None):
                 ("a", "guard.allow_button"),
                 ("b", "guard.blacklist_button"),
             ]
-        ]
+        ] + delete_buttons
     verification_failure = bool(case["payload"].get("verification_failure"))
     if case["action"] in {"mute", "warn"} and case["status"] == "done" and not verification_failure:
         return [
@@ -87,7 +103,7 @@ def review_buttons(case, config=None):
     if case["action"] not in {"verify_start", "verify_pass", "verify_skip"} and not (
         verification_failure and case["payload"].get("verification_result") == "held"
     ):
-        return None
+        return delete_buttons or None
     state = case["payload"].get("verification_state") or (
         "admin_skipped"
         if case["action"] == "verify_skip" and case["status"] == "done"
@@ -179,7 +195,32 @@ def notification_text(case, *, link_profile=False):
             if link and link.startswith("https://t.me/"):
                 escaped = escape(link)
                 values[key] = values[key].replace(escaped, f'<a href="{escaped}">{escaped}</a>')
-    return t("guard.report_notification" if reported else "guard.notification", **values)
+    text = t("guard.report_notification" if reported else "guard.notification", **values)
+    deletion = payload.get("report_message_deletion") if reported else None
+    if deletion:
+        error = deletion.get("error") or "—"
+        if error.startswith("guard."):
+            error = t(error)
+        elif error in {
+            "ChatAdminRequiredError",
+            "MessageDeleteForbiddenError",
+            "ChatWriteForbiddenError",
+        }:
+            error = t("guard.report_delete_permission_error")
+        details = {
+            "state": t(
+                "guard.report_delete_deleted"
+                if deletion["status"] == "deleted"
+                else "guard.report_delete_waiting"
+            ),
+            "actor": deletion["actor"],
+            "time": deletion.get("completed_at") or deletion["requested_at"],
+            "error": error,
+        }
+        if link_profile:
+            details = {key: escape(str(value)) for key, value in details.items()}
+        text += "\n" + t("guard.report_delete_details", **details)
+    return text
 
 
 def notification_event(case):
@@ -390,6 +431,27 @@ class Notifier:
         await self.save_payload(store, parent, notification_cleanup_pending=bool(pending))
 
     async def sync(self, store, case, config):
+        if case["action"] == "report" and (
+            case["payload"].get("report_controls_version") != REPORT_CONTROLS_VERSION
+            or case["payload"].get("report_notice_dirty")
+        ):
+            # 先使原通知待同步，再清除标记；任一步失败均可恢复，复用原消息 ID。
+            for notice in await store.notices(case["id"]):
+                if notice.get("synced_status") not in RETIRED_NOTICES:
+                    await store.notice(
+                        case["id"],
+                        notice["target_id"],
+                        notice.get("message_id"),
+                        None,
+                        None,
+                        notice.get("attempts", 0),
+                    )
+            await self.save_payload(
+                store,
+                case,
+                report_controls_version=REPORT_CONTROLS_VERSION,
+                report_notice_dirty=False,
+            )
         if case["action"] == "verify_start":
             current = await store.case(case["id"])
             if (current or case)["payload"].get("notification_replaced_by"):

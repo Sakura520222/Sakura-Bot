@@ -4,13 +4,24 @@
 """案件审核；首次持久化选择获胜，同一选择可安全恢复。"""
 
 import re
+from datetime import datetime, timedelta
+
+from telethon.tl.types import MessageEmpty
 
 from core.i18n.i18n import t
+from core.infrastructure.database.mysql import utc_now_naive
 
 from .moderator import GuardError
 from .notification import RETIRED_NOTICES, case_status, is_ban_case
 from .repository import ACTIVE_VERIFICATIONS
-from .telegram import call, mute_rights, same_rights, verification_rights
+from .telegram import (
+    TelegramActionError,
+    call,
+    mutate,
+    mute_rights,
+    same_rights,
+    verification_rights,
+)
 
 
 class ReviewHandler:
@@ -18,12 +29,14 @@ class ReviewHandler:
         self.service = service
 
     async def callback(self, event):
-        match = re.fullmatch(rb"sg:r:([0-9a-f]{32}):([abuk])(?::([0-9]{1,8}))?", event.data)
+        match = re.fullmatch(rb"sg:r:([0-9a-f]{32}):([abukd])(?::([0-9]{1,8}))?", event.data)
         if not match:
             await event.answer(t("guard.invalid_callback"), alert=True)
             return
         case_id = match[1].decode()
-        action = {b"a": "allow", b"b": "blacklist", b"u": "unban", b"k": "ban"}[match[2]]
+        action = {b"a": "allow", b"b": "blacklist", b"u": "unban", b"k": "ban", b"d": "delete"}[
+            match[2]
+        ]
         result = await self.review(
             case_id,
             action,
@@ -31,7 +44,12 @@ class ReviewHandler:
             origin=(event.chat_id, event.message_id),
             expected_generation=int(match[3] or b"0"),
         )
-        await event.answer(t("guard.review_result", status=case_status(result)), alert=True)
+        await event.answer(
+            t("guard.report_delete_done")
+            if action == "delete"
+            else t("guard.review_result", status=case_status(result)),
+            alert=True,
+        )
 
     async def review(
         self,
@@ -44,7 +62,7 @@ class ReviewHandler:
         expected_chat_id=None,
         expected_generation=None,
     ):
-        if action not in {"allow", "blacklist", "unban", "ban"}:
+        if action not in {"allow", "blacklist", "unban", "ban", "delete"}:
             raise GuardError("guard.invalid_callback")
         # 初次读取只定位锁；锁内再次读取目标与状态，完全不采信回调里的群/用户。
         initial = await self.service.repository.get_case(case_id)
@@ -58,8 +76,10 @@ class ReviewHandler:
                 raise GuardError("guard.invalid_callback")
             if not await self.service.authorized(reviewer_id, case["chat_id"], web=web):
                 raise GuardError("error.permission_denied")
-            if expected_generation is not None and expected_generation != case["payload"].get(
-                "review_generation", 0
+            if (
+                action != "delete"
+                and expected_generation is not None
+                and expected_generation != case["payload"].get("review_generation", 0)
             ):
                 raise GuardError("guard.invalid_callback")
             if (
@@ -75,6 +95,13 @@ class ReviewHandler:
                     for row in notices
                 ):
                     raise GuardError("guard.invalid_callback")
+            if action == "delete":
+                await self.request_message_deletion(store, case, reviewer_id, web=web)
+                result = await store.case(case_id)
+                await self.service.notifier.sync(store, result, self.service.group(case["chat_id"]))
+                if result["payload"]["report_message_deletion"]["status"] != "deleted":
+                    raise GuardError("guard.report_delete_pending")
+                return result
             if case["status"] in {"allowed", "blacklisted", "unbanned", "unmuted", "ignored"}:
                 return case
             if action == "ban" and is_ban_case(case):
@@ -108,6 +135,115 @@ class ReviewHandler:
             if result["status"].startswith("reviewing_"):
                 raise GuardError("guard.operation_failed")
             return result
+
+    async def save_message_deletion(self, store, case, deletion):
+        payload = {
+            **case["payload"],
+            "report_message_deletion": deletion,
+            "report_notice_dirty": True,
+        }
+        await store.update_case(
+            case["id"], case["status"], error=case.get("error"), payload=payload
+        )
+        case["payload"] = payload
+
+    async def request_message_deletion(self, store, case, reviewer_id, *, web=False):
+        message_id = case["payload"].get("message_id")
+        if case["action"] != "report" or type(message_id) is not int or not 0 < message_id < 2**31:
+            raise GuardError("guard.invalid_callback")
+        deletion = case["payload"].get("report_message_deletion")
+        if deletion and deletion["status"] == "deleted":
+            return
+        if not deletion:
+            # 删除意图和首次操作人先落盘，独立于封禁/忽略等审核决定。
+            await self.save_message_deletion(
+                store,
+                case,
+                {
+                    "status": "pending",
+                    "chat_id": case["chat_id"],
+                    "user_id": case["user_id"],
+                    "message_id": message_id,
+                    "actor": "webui:admin"
+                    if web and reviewer_id == "admin"
+                    else f"telegram:{reviewer_id}",
+                    "requested_at": utc_now_naive().isoformat(),
+                    "attempts": 0,
+                },
+            )
+        await self.resume_message_deletion(store, case, force=True)
+
+    async def resume_message_deletion(self, store, case, *, force=False):
+        deletion = case["payload"].get("report_message_deletion")
+        if case["action"] != "report" or not deletion or deletion["status"] != "pending":
+            return
+        if (
+            not force
+            and deletion.get("retry_at")
+            and datetime.fromisoformat(deletion["retry_at"]) > utc_now_naive()
+        ):
+            return
+        try:
+            message_id = case["payload"].get("message_id")
+            if type(message_id) is not int or not 0 < message_id < 2**31:
+                raise GuardError("guard.invalid_callback")
+            if (deletion.get("chat_id"), deletion.get("user_id"), deletion.get("message_id")) != (
+                case["chat_id"],
+                case["user_id"],
+                message_id,
+            ):
+                raise GuardError("guard.report_delete_target_changed")
+            permissions = await self.service.actions.permissions(
+                case["chat_id"], self.service.bot_id
+            )
+            if not (permissions.is_admin or permissions.is_creator):
+                raise GuardError("guard.report_delete_permission_error")
+            original = await call(self.service.client.get_messages(case["chat_id"], ids=message_id))
+            if original is not None and not isinstance(original, MessageEmpty):
+                if (
+                    getattr(original, "chat_id", None),
+                    getattr(original, "sender_id", None),
+                    getattr(original, "id", None),
+                ) != (case["chat_id"], case["user_id"], message_id):
+                    raise GuardError("guard.report_delete_target_changed")
+                await mutate(self.service.client.delete_messages(case["chat_id"], [message_id]))
+                remaining = await call(
+                    self.service.client.get_messages(case["chat_id"], ids=message_id)
+                )
+                if remaining is not None and not isinstance(remaining, MessageEmpty):
+                    raise GuardError("guard.report_delete_unconfirmed")
+            await self.save_message_deletion(
+                store,
+                case,
+                {
+                    **deletion,
+                    "status": "deleted",
+                    "completed_at": utc_now_naive().isoformat(),
+                    "error": None,
+                    "retry_at": None,
+                },
+            )
+        except Exception as error:
+            attempts = deletion.get("attempts", 0) + 1
+            reason = (
+                str(error)
+                if isinstance(error, (GuardError, TelegramActionError))
+                else type(error).__name__
+            )
+            await self.save_message_deletion(
+                store,
+                case,
+                {
+                    **deletion,
+                    "status": "pending",
+                    "attempts": attempts,
+                    "error": reason,
+                    "retry_at": (
+                        utc_now_naive()
+                        + timedelta(seconds=min(900, 30 * 2 ** min(attempts - 1, 5)))
+                    ).isoformat(),
+                },
+            )
 
     async def resume(self, store, case):
         action = case["status"].removeprefix("reviewing_")

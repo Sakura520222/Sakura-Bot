@@ -606,6 +606,7 @@ class Moderator:
                         await self.execute_case(store, case)
                     elif case["status"].startswith("reviewing_"):
                         await self.reviews.resume(store, case)
+                    await self.reviews.resume_message_deletion(store, await store.case(case["id"]))
                     await self.notifier.sync(
                         store, await store.case(case["id"]), self.group(case["chat_id"])
                     )

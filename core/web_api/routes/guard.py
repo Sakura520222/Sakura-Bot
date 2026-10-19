@@ -42,7 +42,7 @@ router = APIRouter(dependencies=[GUARD_ADMIN])
 
 
 class ReviewRequest(BaseModel):
-    action: Literal["allow", "blacklist", "unban", "ban"]
+    action: Literal["allow", "blacklist", "unban", "ban", "delete"]
     generation: int | None = Field(default=None, ge=0, le=99999999)
 
 
