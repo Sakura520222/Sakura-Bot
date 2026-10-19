@@ -116,7 +116,7 @@ async def test_verification_messages_offer_kick_only_with_legacy_action_lists(
 async def test_kick_remains_available_when_other_verification_controls_are_hidden(guard, store):
     guard.group(CHAT).verification_admin_actions = []
     session = await begin(guard, store)
-    controls = guard.client.sent[CHAT, session["message_id"]]["buttons"][1:]
+    controls = guard.client.sent[CHAT, session["message_id"]]["buttons"][1:-1]
     assert [button.text for row in controls for button in row] == ["仅踢出"]
 
 

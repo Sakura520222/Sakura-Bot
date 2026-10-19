@@ -5,6 +5,8 @@ from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from telethon import TelegramClient
+from telethon.extensions import BinaryReader
 
 from core.infrastructure.database.mysql import utc_now_naive
 from core.moderation.moderator import GuardError, Moderator
@@ -33,8 +35,8 @@ async def test_challenge_shows_identity_and_admin_buttons(guard, store):
     message = guard.client.sent[(CHAT, session["message_id"])]
     assert "昵称：正常成员" in message["text"]
     assert "用户名：@alice" in message["text"] and str(USER) in message["text"]
-    assert [len(row) for row in message["buttons"]] == [4, 3, 1]
-    controls = [button for row in message["buttons"][1:] for button in row]
+    assert [len(row) for row in message["buttons"]] == [4, 3, 1, 1]
+    controls = [button for row in message["buttons"][1:-1] for button in row]
     assert [button.text for button in controls] == [
         "一键封禁",
         "封禁并加入黑名单",
@@ -43,6 +45,27 @@ async def test_challenge_shows_identity_and_admin_buttons(guard, store):
     ]
     assert [button.type.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"j", b"s"]
     assert all(len(button.type.data) <= 64 for button in controls)
+
+
+@pytest.mark.parametrize("username", ["alice", None])
+@pytest.mark.parametrize("status", ["waiting", "held"])
+async def test_profile_button_targets_member_with_or_without_username(
+    guard, store, username, status
+):
+    guard.client.users[USER].username = username
+    session = await begin(guard, store)
+    if status == "held":
+        session["status"] = "held"
+        await store.save_verification(session)
+        await guard.recover_once()
+    message = guard.client.sent[(CHAT, session["message_id"])]
+    markup = TelegramClient.build_reply_markup(message["buttons"])
+    with BinaryReader(bytes(markup)) as reader:
+        wire_markup = reader.tgread_object()
+    profile = wire_markup.rows[-1].buttons[0]
+    assert profile.text == "打开用户资料"
+    assert profile.type.url == f"tg://user?id={USER}"
+    assert (await store.verification(CHAT, USER))["status"] == status
 
 
 async def test_missing_username_and_multiline_name_have_safe_plain_text_fallbacks(guard, store):
@@ -56,6 +79,7 @@ async def test_missing_username_and_multiline_name_have_safe_plain_text_fallback
 async def test_legacy_challenge_is_upgraded_without_resetting_session(guard, store):
     session = await begin(guard, store)
     original = {key: session[key] for key in ["id", "message_id", "expires_at"]}
+    original_tokens = session["payload"]["answer_tokens"].copy()
     session["attempts"] = 2
     session["payload"].pop("challenge_version")
     session["payload"].pop("name")
@@ -66,8 +90,11 @@ async def test_legacy_challenge_is_upgraded_without_resetting_session(guard, sto
     assert {key: updated[key] for key in original} == original
     assert updated["attempts"] == 2
     assert updated["payload"]["question"] == session["payload"]["question"]
+    assert updated["payload"]["answer_tokens"] == original_tokens
     assert updated["payload"]["challenge_version"] == CHALLENGE_VERSION
-    assert len(guard.client.sent[(CHAT, session["message_id"])]["buttons"]) == 3
+    buttons = guard.client.sent[(CHAT, session["message_id"])]["buttons"]
+    assert len(buttons) == 4
+    assert buttons[-1][0].type.url == f"tg://user?id={USER}"
     guard.client.users[USER].first_name = "改名后的成员"
     await guard.recover_once()
     assert "改名后的成员" in guard.client.sent[(CHAT, session["message_id"])]["text"]

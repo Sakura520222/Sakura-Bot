@@ -25,7 +25,7 @@ from .repository import ACTIVE_VERIFICATIONS
 from .telegram import call, same_rights, verification_rights
 
 logger = logging.getLogger(__name__)
-CHALLENGE_VERSION = 4
+CHALLENGE_VERSION = 5
 ADMIN_ACTIONS = {b"b": "ban", b"x": "blacklist", b"j": "kick", b"s": "skip"}
 ADMIN_RESULTS = {
     "ban": "admin_banned",
@@ -162,6 +162,7 @@ def challenge_buttons(session, config=None):
         rows.append(management)
     if "skip" in config.verification_admin_actions:
         rows.append([Button.inline(t("guard.verify_skip_button"), (prefix + "s").encode())])
+    rows.append([Button.url(t("guard.open_profile_button"), f"tg://user?id={session['user_id']}")])
     return rows
 
 
