@@ -221,6 +221,17 @@ class MemoryRepository:
     def __init__(self):
         self.store = MemoryStore()
         self.locks = defaultdict(asyncio.Lock)
+        self.cleaned_history = {}
+
+    async def cleaned_chat_history(self, bot_id):
+        return {chat_id for (bot, chat_id) in self.cleaned_history if bot == bot_id}
+
+    async def mark_chat_history_cleaned(self, bot_id, chat_id, actor):
+        self.cleaned_history[bot_id, chat_id] = str(actor)
+
+    async def restore_chat_history(self, bot_id, chat_ids):
+        for chat_id in chat_ids:
+            self.cleaned_history.pop((bot_id, chat_id), None)
 
     @asynccontextmanager
     async def lock(self, user_id):

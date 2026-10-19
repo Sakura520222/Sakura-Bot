@@ -7,7 +7,7 @@
       </n-alert>
       <n-space align="center">
         <n-button :loading="loading || discovering" :disabled="running || previewLoading" @click="loadChats(true)">刷新列表</n-button>
-        <n-button type="error" :loading="previewLoading" :disabled="loading || discovering || running || !memberCount" @click="openPreview">
+        <n-button type="error" :loading="previewLoading && previewMode === 'leave'" :disabled="loading || discovering || running || previewLoading || !memberCount" @click="openPreview('leave')">
           预览退出非管理员会话
         </n-button>
         <n-text v-if="discovering" role="status">正在核实 {{ checked }}/{{ total }} 个会话…</n-text>
@@ -25,34 +25,53 @@
         <n-collapse-item name="history" :title="`历史记录：${history.length} 个会话无法确认当前成员身份`">
           <n-space vertical :size="12">
             <n-text depth="3">这些是曾接触过的会话，名称可能已过期。无法访问不代表机器人当前仍在里面，也不能判断管理员权限；这些记录不计入已加入数量，不会进入退出名单。</n-text>
+            <n-space align="center">
+              <n-button type="warning" :loading="previewLoading && previewMode === 'history'" :disabled="loading || discovering || running || previewLoading || !historyCleanableCount" @click="openPreview('history')">预览清理无法访问的历史记录</n-button>
+              <n-text depth="3">可清理 {{ historyCleanableCount }} 条。仅清理本页历史记录；已加入、已配置群管和暂时核实失败的会话会保留。</n-text>
+            </n-space>
             <n-data-table :columns="historyColumns" :data="history" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="700" :bordered="false" />
           </n-space>
         </n-collapse-item>
       </n-collapse>
 
       <template v-if="job">
-        <n-alert :type="job.error ? 'warning' : running ? 'info' : 'success'" :bordered="false" role="status">
-          {{ running ? '正在逐项复核并退出' : job.error ? '退出任务已中断' : '退出任务已完成' }}：{{ job.checked }}/{{ job.total }}。
+        <n-alert :type="job.error ? 'warning' : leaving ? 'info' : 'success'" :bordered="false" role="status">
+          {{ leaving ? '正在逐项复核并退出' : job.error ? '退出任务已中断' : '退出任务已完成' }}：{{ job.checked }}/{{ job.total }}。
           已退出 {{ resultCount('left') }} · 已跳过 {{ resultCount('skipped') }} · 失败 {{ resultCount('failed') }}
           <span v-if="job.total > job.checked"> · 尚未处理 {{ job.total - job.checked }}</span>
           <div v-if="job.error">{{ job.error }}</div>
         </n-alert>
         <n-data-table v-if="job.results.length" :columns="resultColumns" :data="job.results" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="700" :bordered="false" />
       </template>
+      <template v-if="historyJob">
+        <n-alert :type="historyJob.error ? 'warning' : cleaning ? 'info' : 'success'" :bordered="false" role="status">
+          {{ cleaning ? '正在逐项复核并清理历史记录' : historyJob.error ? '历史记录清理已中断' : '历史记录清理已完成' }}：{{ historyJob.checked }}/{{ historyJob.total }}。
+          已清理 {{ resultCount('cleaned', historyJob.results) }} · 已保留 {{ resultCount('skipped', historyJob.results) }} · 失败 {{ resultCount('failed', historyJob.results) }}
+          <span v-if="historyJob.total > historyJob.checked"> · 尚未处理 {{ historyJob.total - historyJob.checked }}</span>
+          <div v-if="historyJob.error">{{ historyJob.error }}</div>
+        </n-alert>
+        <n-data-table v-if="historyJob.results.length" :columns="historyResultColumns" :data="historyJob.results" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="700" :bordered="false" />
+      </template>
     </n-space>
   </n-card>
 
-  <n-modal v-model:show="showPreview" preset="card" title="退出预览" style="width: min(920px, 94vw)" :mask-closable="!confirming" :closable="!confirming" :close-on-esc="!confirming">
+  <n-modal v-model:show="showPreview" preset="card" :title="previewMode === 'history' ? '清理历史记录预览' : '退出预览'" style="width: min(920px, 94vw)" :mask-closable="!confirming" :closable="!confirming" :close-on-esc="!confirming">
     <n-space v-if="preview" vertical :size="16">
-      <n-alert type="warning" :bordered="false">
+      <n-alert v-if="previewMode === 'leave'" type="warning" :bordered="false">
         确认后，主机器人将退出以下 {{ preview.total }} 个群组或频道。重新加入需要重新邀请。
         每次退出前会再次核实权限，已成为管理员或权限无法确认的会话会自动跳过。
       </n-alert>
-      <n-text>已排除管理员会话 {{ preview.admin_count }} 个、待核实会话 {{ preview.unknown_count }} 个。预览 5 分钟内有效。</n-text>
-      <n-data-table :columns="previewColumns" :data="preview.chats" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="600" :bordered="false" />
+      <n-alert v-else type="warning" :bordered="false">
+        确认后将清理以下 {{ preview.total }} 条无法访问的管理页历史记录，刷新和重启后仍生效。
+        每条记录清理前会重新核实，当前已加入、已恢复访问、已配置群管或无法确认访问状态的会话自动保留。
+        不会退出群组或频道，不删除 Telegram 消息、群管配置或登录会话；重新收到活动或确认加入后会自动显示。
+      </n-alert>
+      <n-text v-if="previewMode === 'leave'">已排除管理员会话 {{ preview.admin_count }} 个、待核实会话 {{ preview.unknown_count }} 个。</n-text>
+      <n-text>预览 5 分钟内有效，只处理当前预览名单。</n-text>
+      <n-data-table :columns="previewMode === 'history' ? historyColumns : previewColumns" :data="preview.chats" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="600" :bordered="false" />
       <n-space justify="end">
         <n-button :disabled="confirming" @click="showPreview = false">取消</n-button>
-        <n-button type="error" :loading="confirming" :disabled="!preview.total" @click="confirmLeave">确认退出这 {{ preview.total }} 个会话</n-button>
+        <n-button :type="previewMode === 'history' ? 'warning' : 'error'" :loading="confirming" :disabled="!preview.total" @click="confirmPreview">{{ previewMode === 'history' ? `确认清理这 ${preview.total} 条历史记录` : `确认退出这 ${preview.total} 个会话` }}</n-button>
       </n-space>
     </n-space>
   </n-modal>
@@ -61,16 +80,20 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NDataTable, NInput, NModal, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from "naive-ui";
-import { getGuardBotChats, leaveBotChats, previewLeaveBotChats, type BotChat, type BotChatCleanup, type BotChatPreview } from "@/api/guard";
+import { cleanBotChatHistory, getGuardBotChats, leaveBotChats, previewCleanBotChatHistory, previewLeaveBotChats, type BotChat, type BotChatCleanup, type BotChatPreview, type BotHistoryCleanup } from "@/api/guard";
 import { saveError } from "@/composables/autosave";
 
 const emit = defineEmits<{ changed: [] }>();
 const message = useMessage();
 const chats = ref<BotChat[]>([]), history = ref<BotChat[]>([]), job = ref<BotChatCleanup | null>(null);
+const historyJob = ref<BotHistoryCleanup | null>(null), historyCleanableCount = ref(0);
+const previewMode = ref<"leave" | "history">("leave");
 const loading = ref(false), discovering = ref(false), previewLoading = ref(false), confirming = ref(false);
 const checked = ref(0), total = ref(0), relatedCount = ref(0), showPreview = ref(false), preview = ref<BotChatPreview | null>(null);
 const search = ref(""), kind = ref("all"), role = ref("all");
-const running = computed(() => job.value?.status === "running");
+const leaving = computed(() => job.value?.status === "running");
+const cleaning = computed(() => historyJob.value?.status === "running");
+const running = computed(() => leaving.value || cleaning.value);
 const joinedCount = computed(() => chats.value.filter(chat => chat.joined === true).length);
 const adminCount = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === true).length);
 const memberCount = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === false).length);
@@ -117,7 +140,11 @@ const historyColumns: DataTableColumns<BotChat> = [
     return "暂时无法确认成员身份，请稍后刷新";
   } },
 ];
-const resultCount = (status: string) => job.value?.results.filter(row => row.status === status).length || 0;
+const historyResultColumns: DataTableColumns<BotHistoryCleanup["results"][number]> = [
+  ...historyColumns.slice(0, 2),
+  { title: "清理结果", key: "message", minWidth: 320 },
+];
+const resultCount = (status: string, results: { status: string }[] | undefined = job.value?.results) => results?.filter(row => row.status === status).length || 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false, requestId = 0, expiresAt = 0, pollFailed = false;
 function clearTimer() { if (timer) { clearTimeout(timer); timer = null; } }
@@ -139,6 +166,8 @@ async function loadChats(force = false) {
     total.value = result.total;
     relatedCount.value = result.related_chat_count;
     job.value = result.cleanup;
+    historyJob.value = result.history_cleanup;
+    historyCleanableCount.value = result.history_cleanable_count;
     pollFailed = false;
     if (wasRunning && !running.value) emit("changed");
     if (result.discovering || running.value) schedule();
@@ -150,11 +179,12 @@ async function loadChats(force = false) {
     }
   } finally { if (!disposed && request === requestId) loading.value = false; }
 }
-async function openPreview() {
+async function openPreview(mode: "leave" | "history") {
   if (previewLoading.value || running.value) return;
   previewLoading.value = true;
+  previewMode.value = mode;
   try {
-    const result = await previewLeaveBotChats();
+    const result = await (mode === "history" ? previewCleanBotChatHistory() : previewLeaveBotChats());
     if (disposed) return;
     preview.value = result;
     expiresAt = Date.now() + result.expires_in_seconds * 1000;
@@ -162,12 +192,13 @@ async function openPreview() {
   } catch (error) { if (!disposed) { message.error(saveError(error)); await loadChats(); } }
   finally { previewLoading.value = false; }
 }
-async function confirmLeave() {
+async function confirmPreview() {
   if (!preview.value || confirming.value) return;
   if (Date.now() >= expiresAt) { message.warning("预览已过期，请重新预览并确认"); showPreview.value = false; return; }
   confirming.value = true;
   try {
-    job.value = await leaveBotChats(preview.value.token);
+    if (previewMode.value === "history") historyJob.value = await cleanBotChatHistory(preview.value.token);
+    else job.value = await leaveBotChats(preview.value.token);
     if (disposed) return;
     showPreview.value = false;
     await loadChats();

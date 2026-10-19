@@ -20,6 +20,7 @@ from telethon.tl.types import Chat, InputUserSelf, UpdateChannel
 
 from core.moderation.chat_cleanup import ChatCleanup, ChatCleanupError
 from core.moderation.groups import GroupDirectory, cached_chats
+from core.moderation.history_cleanup import HistoryCleanup
 from core.web_api.auth import WebUIUser
 from core.web_api.routes import guard as routes
 
@@ -271,7 +272,11 @@ async def test_stop_cancels_a_confirmed_job_before_any_leave(cleanup):
 async def test_api_preview_confirm_progress_and_final_list_use_the_real_service(
     cleanup, monkeypatch
 ):
-    service = SimpleNamespace(directory=cleanup.directory, chat_cleanup=cleanup)
+    service = SimpleNamespace(
+        directory=cleanup.directory,
+        chat_cleanup=cleanup,
+        history_cleanup=HistoryCleanup(cleanup.directory, cleanup.authorized),
+    )
     app = FastAPI()
     app.dependency_overrides[routes.guard_admin] = lambda: (service, ADMIN)
     app.include_router(routes.router, prefix="/api/guard")
@@ -316,6 +321,8 @@ def test_api_requires_current_global_admin_for_listing_preview_and_confirm(api, 
         ("chats", "get"),
         ("chats/leave-preview", "post"),
         ("chats/leave", "post"),
+        ("chats/history-cleanup-preview", "post"),
+        ("chats/history-cleanup", "post"),
     ]:
         call = getattr(api, method)
         assert call(f"/api/guard/{path}", headers={"x-test-user": str(USER)}).status_code == 403

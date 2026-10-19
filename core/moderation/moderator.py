@@ -25,6 +25,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
 from .groups import GroupDirectory
+from .history_cleanup import HistoryCleanup
 from .matcher import Match, Matcher, normalize
 from .notification import Notifier, stable_random_id
 from .repository import ACTIVE_VERIFICATIONS
@@ -49,8 +50,13 @@ class Moderator:
         self._handlers = []
         self._worker = None
         self._wake = asyncio.Event()
-        self.directory = GroupDirectory(client, lambda: self.config.groups, lambda: self.bot_id)
+        self.directory = GroupDirectory(
+            client, lambda: self.config.groups, lambda: self.bot_id, repository
+        )
         self.chat_cleanup = ChatCleanup(
+            self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
+        )
+        self.history_cleanup = HistoryCleanup(
             self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
         )
         from .review_handler import ReviewHandler
@@ -101,6 +107,7 @@ class Moderator:
             self.client.remove_event_handler(callback, builder)
         self._handlers.clear()
         await self.chat_cleanup.stop()
+        await self.history_cleanup.stop()
         await self.directory.stop()
         if self._worker:
             self._worker.cancel()

@@ -317,6 +317,32 @@ class GuardRepository:
         async with self.pool.acquire() as connection:
             return await GuardStore(connection).verification_by_id(session_id)
 
+    async def cleaned_chat_history(self, bot_id):
+        async with self.pool.acquire() as connection:
+            rows = await GuardStore(connection).all(
+                "SELECT chat_id FROM moderation_cleaned_chat_history WHERE bot_id=%s", (bot_id,)
+            )
+            return {row["chat_id"] for row in rows}
+
+    async def mark_chat_history_cleaned(self, bot_id, chat_id, actor):
+        async with self.pool.acquire() as connection:
+            await GuardStore(connection).execute(
+                """INSERT INTO moderation_cleaned_chat_history (bot_id,chat_id,actor,cleaned_at)
+                VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE actor=VALUES(actor),cleaned_at=VALUES(cleaned_at)""",
+                (bot_id, chat_id, str(actor), utc_now_naive()),
+            )
+
+    async def restore_chat_history(self, bot_id, chat_ids):
+        if not chat_ids:
+            return
+        async with self.pool.acquire() as connection:
+            store = GuardStore(connection)
+            for chat_id in chat_ids:
+                await store.execute(
+                    "DELETE FROM moderation_cleaned_chat_history WHERE bot_id=%s AND chat_id=%s",
+                    (bot_id, chat_id),
+                )
+
     @asynccontextmanager
     async def lock(self, user_id):
         # 连接级锁跨事务提交仍有效；进程/连接断开即释放，无过期租约双写。

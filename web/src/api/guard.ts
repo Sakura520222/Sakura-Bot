@@ -125,10 +125,14 @@ export interface BotChatPreview {
   admin_count: number;
   unknown_count: number;
 }
+export interface BotHistoryCleanup extends Omit<BotChatCleanup, "results"> {
+  results: (BotChat & { status: "cleaned" | "skipped" | "failed"; message: string })[];
+}
 export async function getGuardBotChats(refresh = false) {
   return (await api.get<{
     chats: BotChat[]; metadata: Record<string, BotChat>; discovering: boolean;
     checked: number; total: number; related_chat_count: number; complete_history_available: boolean; cleanup: BotChatCleanup | null;
+    history_cleanable_count: number; history_cleanup: BotHistoryCleanup | null;
   }>("/guard/chats", { params: { refresh } })).data;
 }
 export async function previewLeaveBotChats() {
@@ -136,6 +140,12 @@ export async function previewLeaveBotChats() {
 }
 export async function leaveBotChats(token: string) {
   return (await api.post<BotChatCleanup>("/guard/chats/leave", { token, confirmed: true })).data;
+}
+export async function previewCleanBotChatHistory() {
+  return (await api.post<BotChatPreview>("/guard/chats/history-cleanup-preview")).data;
+}
+export async function cleanBotChatHistory(token: string) {
+  return (await api.post<BotHistoryCleanup>("/guard/chats/history-cleanup", { token, confirmed: true })).data;
 }
 export async function getGuardJoinedGroups(refresh = false) {
   return (await api.get<{ groups: GuardChat[]; metadata: Record<string, GuardChat>; discovering: boolean; checked: number; total: number }>("/guard/groups", { params: { refresh } })).data;

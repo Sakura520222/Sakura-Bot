@@ -1,4 +1,12 @@
 -- Sakura Guard v1. Only additive, idempotent MySQL/InnoDB tables.
+CREATE TABLE IF NOT EXISTS moderation_cleaned_chat_history (
+    bot_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    actor VARCHAR(64) NOT NULL,
+    cleaned_at DATETIME NOT NULL,
+    PRIMARY KEY (bot_id, chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS moderation_cases (
     id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     event_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,

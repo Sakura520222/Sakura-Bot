@@ -87,6 +87,21 @@ async def test_schema_case_and_whitelist_survive_repository_restart(guard, mysql
             await store.create_case({**case, "id": uuid.uuid4().hex})
 
 
+async def test_history_cleanup_persists_per_bot_without_touching_guard_data(mysql_repository):
+    repository = mysql_repository
+    await repository.initialize()
+    await repository.mark_chat_history_cleaned(999, CHAT, ADMIN)
+    await repository.mark_chat_history_cleaned(1000, CHAT, "admin")
+    await repository.mark_chat_history_cleaned(999, CHAT, "admin")
+    restarted = GuardRepository(repository.pool)
+    assert await restarted.cleaned_chat_history(999) == {CHAT}
+    assert await restarted.cleaned_chat_history(1000) == {CHAT}
+    await restarted.restore_chat_history(999, {CHAT, CHAT - 1})
+    assert not await repository.cleaned_chat_history(999)
+    assert await repository.cleaned_chat_history(1000) == {CHAT}
+    assert (await repository.query("cases"))["total"] == 0
+
+
 async def test_mysql_multi_instance_opposing_reviews_and_permanent_identity(
     guard, mysql_repository
 ):
