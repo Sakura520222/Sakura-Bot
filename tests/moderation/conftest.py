@@ -10,9 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
 from telethon.tl.functions.messages import HideChatJoinRequestRequest, SendMessageRequest
-from telethon.tl.types import ChatBannedRights
+from telethon.tl.types import Channel, Chat, ChatBannedRights, PeerChat
 
 from core.infrastructure.database.mysql import utc_now_naive
 from core.moderation.config import GuardConfig, GuardGroup
@@ -260,8 +261,22 @@ class FakeTelegram:
 
     async def get_entity(self, identifier):
         if identifier < 0:
-            return SimpleNamespace(
-                id=abs(identifier), title="测试群", username=None, megagroup=True
+            bare_id, peer_type = utils.resolve_id(identifier)
+            if peer_type is PeerChat:
+                return Chat(
+                    id=bare_id,
+                    title="测试群",
+                    photo=None,
+                    participants_count=2,
+                    date=utc_now_naive(),
+                    version=1,
+                )
+            return Channel(
+                id=bare_id,
+                title="测试群",
+                photo=None,
+                date=utc_now_naive(),
+                megagroup=True,
             )
         return self.users.get(
             identifier,

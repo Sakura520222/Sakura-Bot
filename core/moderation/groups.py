@@ -10,8 +10,9 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from telethon import utils
 from telethon.errors import FloodWaitError, UserNotParticipantError
-from telethon.tl.types import Channel, ChannelParticipantLeft, Chat
+from telethon.tl.types import Channel, ChannelParticipantLeft, Chat, PeerChannel
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,9 @@ class GroupDirectory:
                 "title": "",
                 "username": None,
                 "chat_type": "unknown",
+                "is_standalone": True,
+                "parent_chat_id": None,
+                "identity_verified": False,
                 "joined": None,
                 "is_admin": None,
                 "role": "unknown",
@@ -69,12 +73,13 @@ class GroupDirectory:
             entry["title"] = title[:256]
 
     def observe(self, chat_id, chat=None, *, left=False):
-        self.remember(chat_id, getattr(chat, "title", ""))
+        self.remember(chat_id)
         entry = self.entries.get(chat_id)
         if entry is None:
             return
         if chat is not None:
-            entry.update(chat_type=self.chat_type(chat), username=getattr(chat, "username", None))
+            if not self._identify(chat_id, chat):
+                return
         if left:
             entry.update(
                 joined=False, is_admin=None, role="unknown", checked_at=time.monotonic(), error=None
@@ -88,20 +93,66 @@ class GroupDirectory:
                 entry.update(is_admin=None, role="unknown")
             entry.update(joined=True, checked_at=time.monotonic(), error=None)
 
+    def _identify(self, chat_id, chat):
+        entry = self.entries[chat_id]
+        try:
+            matches = utils.get_peer_id(chat) == chat_id
+        except (TypeError, ValueError):
+            matches = False
+        if not matches:
+            entry.update(
+                joined=None,
+                is_admin=None,
+                role="unknown",
+                identity_verified=False,
+                checked_at=time.monotonic(),
+                error="ChatIdentityMismatch",
+            )
+            return False
+        self.remember(chat_id, getattr(chat, "title", ""))
+        kind = self.chat_type(chat)
+        entry.update(
+            chat_type=kind,
+            username=getattr(chat, "username", None),
+            identity_verified=True,
+            is_standalone=kind != "channel_dm",
+            parent_chat_id=None,
+        )
+        if kind == "channel_dm":
+            # 频道私信不是独立加入的群组；其成员身份不能代替所属频道的管理员身份。
+            # linked_monoforum_id 在私信会话上指向原频道，在原频道上则指向私信会话。
+            parent_id = getattr(chat, "linked_monoforum_id", None)
+            if isinstance(parent_id, int) and not isinstance(parent_id, bool) and parent_id > 0:
+                entry["parent_chat_id"] = utils.get_peer_id(PeerChannel(parent_id))
+                self.remember(entry["parent_chat_id"])
+            entry.update(joined=None, is_admin=None, role="unknown", error=None)
+            return False
+        return True
+
     def invalidate(self, chat_id):
         """成员或权限变化后先清除旧判断，后台重新核实。"""
         self.remember(chat_id)
         if chat_id in self.entries:
             self.entries[chat_id].update(
-                joined=None, is_admin=None, role="unknown", checked_at=0.0, error=None
+                joined=None,
+                is_admin=None,
+                role="unknown",
+                identity_verified=False,
+                checked_at=0.0,
+                error=None,
             )
 
     @staticmethod
     def is_group(chat):
-        return bool(getattr(chat, "megagroup", False) or isinstance(chat, Chat))
+        return GroupDirectory.chat_type(chat) in {"group", "supergroup"}
 
     @staticmethod
     def chat_type(chat):
+        if (
+            getattr(chat, "monoforum", False) is True
+            or getattr(chat, "is_direct_messages", False) is True
+        ):
+            return "channel_dm"
         if isinstance(chat, Chat):
             return "group"
         if getattr(chat, "megagroup", False) or getattr(chat, "gigagroup", False):
@@ -109,6 +160,17 @@ class GroupDirectory:
         if isinstance(chat, Channel) or getattr(chat, "broadcast", False):
             return "channel"
         return "unknown"
+
+    @staticmethod
+    def can_leave(row):
+        return (
+            row.get("is_standalone") is True
+            and row.get("identity_verified") is True
+            and row.get("chat_type") in {"group", "supergroup", "channel"}
+            and row.get("joined") is True
+            and row.get("is_admin") is False
+            and row.get("error") is None
+        )
 
     def refresh(self, *, force=False):
         if self._stopped or self.mutating:
@@ -129,12 +191,9 @@ class GroupDirectory:
         entry["checked_at"] = time.monotonic()
         if count:
             self.checked += 1
-        entry.update(
-            chat_type=self.chat_type(chat),
-            username=getattr(chat, "username", None),
-            is_admin=None,
-            role="unknown",
-        )
+        entry.update(is_admin=None, role="unknown", identity_verified=False)
+        if not self._identify(chat_id, chat):
+            return
         if (
             entry["chat_type"] == "unknown"
             or getattr(chat, "left", False)
@@ -190,7 +249,11 @@ class GroupDirectory:
             return await self._resolve(chat_id, chat, count=count)
         except FloodWaitError:
             self.entries[chat_id].update(
-                joined=None, is_admin=None, role="unknown", error="FloodWaitError"
+                joined=None,
+                is_admin=None,
+                role="unknown",
+                identity_verified=False,
+                error="FloodWaitError",
             )
             raise
         except Exception as error:
@@ -198,6 +261,7 @@ class GroupDirectory:
                 joined=None,
                 is_admin=None,
                 role="unknown",
+                identity_verified=False,
                 checked_at=time.monotonic(),
                 error=type(error).__name__,
             )
@@ -247,11 +311,16 @@ class GroupDirectory:
             str(chat_id): {key: value for key, value in row.items() if key != "checked_at"}
             for chat_id, row in self.entries.items()
         }
-        joined = [row for row in metadata.values() if row["joined"] is True]
+        joined = [
+            row
+            for row in metadata.values()
+            if row["joined"] is True and row["is_standalone"] and row["identity_verified"]
+        ]
         joined.sort(key=lambda row: (row["title"].casefold(), row["chat_id"]))
         return {
             "groups": [row for row in joined if row["chat_type"] in {"group", "supergroup"}],
             "chats": joined,
+            "related_chat_count": sum(not row["is_standalone"] for row in metadata.values()),
             "metadata": metadata,
             "discovering": self.task is not None and not self.task.done(),
             "checked": self.checked,

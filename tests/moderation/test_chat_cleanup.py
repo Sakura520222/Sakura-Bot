@@ -26,11 +26,13 @@ from core.web_api.routes import guard as routes
 from .conftest import ADMIN, CHAT, USER
 from .test_groups import DirectoryClient
 
+BASIC_CHAT = -123
+
 
 class CleanupClient(DirectoryClient):
     def __init__(self):
         super().__init__()
-        self.chats[CHAT - 3] = Chat(
+        self.chats[BASIC_CHAT] = Chat(
             id=123,
             title="普通群",
             photo=None,
@@ -38,7 +40,7 @@ class CleanupClient(DirectoryClient):
             date=datetime.now(UTC),
             version=1,
         )
-        self.members.update({CHAT - 1, CHAT - 3})
+        self.members.update({CHAT - 1, BASIC_CHAT})
         self.admins = {CHAT - 1}
         self.unknown = set()
         self.errors = {}
@@ -89,14 +91,14 @@ async def test_list_includes_channels_but_guard_group_picker_stays_group_only(cl
     assert len(snapshot["groups"]) == 3
     assert snapshot["metadata"][str(CHAT - 1)]["is_admin"] is True
     assert snapshot["metadata"][str(CHAT - 2)]["chat_type"] == "channel"
-    assert snapshot["metadata"][str(CHAT - 3)]["chat_type"] == "group"
+    assert snapshot["metadata"][str(BASIC_CHAT)]["chat_type"] == "group"
 
 
 async def test_preview_excludes_admin_unknown_and_departed_without_leaving(cleanup):
     directory = cleanup.directory
     directory.client.unknown.add(CHAT - 2)
     await directory.check(CHAT - 2)
-    directory.observe(CHAT - 3, left=True)
+    directory.observe(BASIC_CHAT, left=True)
     preview = cleanup.preview(ADMIN)
     assert [row["chat_id"] for row in preview["chats"]] == [CHAT]
     assert preview["admin_count"] == 1

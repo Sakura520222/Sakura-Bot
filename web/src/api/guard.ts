@@ -103,7 +103,10 @@ export interface GuardChat {
 }
 export interface BotChat extends GuardChat {
   username: string | null;
-  chat_type: "group" | "supergroup" | "channel" | "unknown";
+  chat_type: "group" | "supergroup" | "channel" | "channel_dm" | "unknown";
+  is_standalone: boolean;
+  parent_chat_id: number | null;
+  identity_verified: boolean;
   is_admin: boolean | null;
   role: "creator" | "admin" | "member" | "unknown";
 }
@@ -125,7 +128,7 @@ export interface BotChatPreview {
 export async function getGuardBotChats(refresh = false) {
   return (await api.get<{
     chats: BotChat[]; metadata: Record<string, BotChat>; discovering: boolean;
-    checked: number; total: number; complete_history_available: boolean; cleanup: BotChatCleanup | null;
+    checked: number; total: number; related_chat_count: number; complete_history_available: boolean; cleanup: BotChatCleanup | null;
   }>("/guard/chats", { params: { refresh } })).data;
 }
 export async function previewLeaveBotChats() {
