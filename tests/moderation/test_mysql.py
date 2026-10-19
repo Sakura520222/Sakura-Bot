@@ -677,3 +677,30 @@ async def test_mysql_old_mute_detects_later_indefinite_mute_within_the_same_seco
     with pytest.raises(GuardError):
         await guard.reviews.review(first["id"], "unban", ADMIN)
     assert guard.client.member_rights[(CHAT, USER)]["send_messages"]
+
+
+@pytest.mark.parametrize(
+    "action,result", [("verify_skip", "admin_skipped"), ("verify_hold", "held")]
+)
+async def test_mysql_legacy_verification_controls_without_state_are_selected(
+    mysql_repository, action, result
+):
+    case_id = uuid.uuid4().hex
+    payload = {"verification_result": result}
+    if action == "verify_hold":
+        payload["verification_failure"] = {"reason": "timeout"}
+    async with mysql_repository.lock(USER) as store:
+        await store.create_case(
+            {
+                "id": case_id,
+                "event_key": uuid.uuid4().hex * 2,
+                "chat_id": CHAT,
+                "user_id": USER,
+                "action": action,
+                "status": "done",
+                "payload": payload,
+            }
+        )
+        await store.notice(case_id, ADMIN, 42, "done")
+    cases, _ = await mysql_repository.work()
+    assert case_id in {row["id"] for row in cases}
