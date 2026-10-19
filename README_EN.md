@@ -34,6 +34,8 @@ Sakura Channel Summary Assistant is a sophisticated Telegram channel management 
 
 ## 🚀 Quick Start
 
+**Sakura Guard moderation:** the main bot supports opt-in nickname/message rules, persistent join verification, administrator actions on moderation notifications and MySQL blacklists/whitelists. Configure each group in WebUI → Sakura Guard. It requires supergroup administrator permissions to delete messages and restrict/ban members; automatic join approval additionally requires invite permissions. All groups are disabled by default. See the [Guard guide](wiki/User-Sakura-Guard.md) for review permissions, manual join-request fallback, recovery and testing.
+
 ### Prerequisites
 
 - **Python 3.13+** or **Docker 20.10+**

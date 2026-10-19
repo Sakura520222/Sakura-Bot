@@ -26,6 +26,22 @@ from telethon.tl.types import BotCommand, BotCommandScopeDefault
 #   - commands: 命令列表
 # 每个命令是一个元组：(command, description)
 BOT_COMMANDS = [
+    {
+        "category": "Sakura Guard",
+        "i18n_key": "guard",
+        "commands": [
+            ("guard", "查看群管状态与帮助"),
+            ("guard_on", "启用指定群组的智能群管"),
+            ("guard_off", "关闭指定群组的智能群管"),
+            ("guard_verify", "开关入群验证"),
+            ("guard_bots", "开关拦截机器人发言"),
+            ("guard_addword", "添加昵称封禁关键词"),
+            ("guard_delword", "删除昵称封禁关键词"),
+            ("guard_whitelist", "管理本群白名单"),
+            ("guard_logs", "查看群管案件"),
+            ("guard_unban", "审核案件并解除封禁加入白名单"),
+        ],
+    },
     # ========== 1. 基础与核心 ==========
     {
         "category": "基础核心",
