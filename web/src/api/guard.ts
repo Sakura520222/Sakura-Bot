@@ -101,6 +101,39 @@ export interface GuardChat {
   joined: boolean | null;
   error: string | null;
 }
+export interface BotChat extends GuardChat {
+  username: string | null;
+  chat_type: "group" | "supergroup" | "channel" | "unknown";
+  is_admin: boolean | null;
+  role: "creator" | "admin" | "member" | "unknown";
+}
+export interface BotChatCleanup {
+  status: "running" | "completed" | "interrupted";
+  total: number;
+  checked: number;
+  error: string | null;
+  results: (BotChat & { status: "left" | "skipped" | "failed"; message: string })[];
+}
+export interface BotChatPreview {
+  token: string;
+  expires_in_seconds: number;
+  chats: BotChat[];
+  total: number;
+  admin_count: number;
+  unknown_count: number;
+}
+export async function getGuardBotChats(refresh = false) {
+  return (await api.get<{
+    chats: BotChat[]; metadata: Record<string, BotChat>; discovering: boolean;
+    checked: number; total: number; complete_history_available: boolean; cleanup: BotChatCleanup | null;
+  }>("/guard/chats", { params: { refresh } })).data;
+}
+export async function previewLeaveBotChats() {
+  return (await api.post<BotChatPreview>("/guard/chats/leave-preview")).data;
+}
+export async function leaveBotChats(token: string) {
+  return (await api.post<BotChatCleanup>("/guard/chats/leave", { token, confirmed: true })).data;
+}
 export async function getGuardJoinedGroups(refresh = false) {
   return (await api.get<{ groups: GuardChat[]; metadata: Record<string, GuardChat>; discovering: boolean; checked: number; total: number }>("/guard/groups", { params: { refresh } })).data;
 }

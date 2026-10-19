@@ -14,9 +14,11 @@ from core.config import read_config, save_config_changes
 from core.config.persistence import ConfigConflictError, ConfigPersistenceError, configs_equal
 from core.i18n.i18n import t
 from core.moderation import get_guard
+from core.moderation.chat_cleanup import ChatCleanupError
 from core.moderation.config import GuardConfig, GuardGroup
 from core.moderation.moderator import GuardError
 from core.moderation.repository import ACTIVE_VERIFICATIONS
+from core.web_api.deps import record_system_audit
 
 
 def guard_admin(request: Request):
@@ -56,6 +58,19 @@ class RetentionRequest(BaseModel):
 
 class AddGroupRequest(BaseModel):
     chat_id: int = Field(lt=0, gt=-(2**63))
+
+
+class LeaveChatsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    token: str = Field(min_length=32, max_length=128)
+    confirmed: bool
+
+    @model_validator(mode="after")
+    def require_confirmation(self):
+        if self.confirmed is not True:
+            raise ValueError("请先预览并确认退出名单")
+        return self
 
 
 class GroupSwitchRequest(BaseModel):
@@ -121,6 +136,31 @@ async def joined_groups(refresh: bool = False, context=GUARD_ADMIN):
     service, _ = context
     service.directory.refresh(force=refresh)
     return service.directory.snapshot()
+
+
+@router.get("/chats")
+async def joined_chats(refresh: bool = False, context=GUARD_ADMIN):
+    service, _ = context
+    service.directory.refresh(force=refresh)
+    return {**service.directory.snapshot(), "cleanup": service.chat_cleanup.status()}
+
+
+@router.post("/chats/leave-preview")
+async def preview_leave_chats(context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        return service.chat_cleanup.preview(actor)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@router.post("/chats/leave")
+async def leave_chats(body: LeaveChatsRequest, context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        return service.chat_cleanup.start(body.token, actor, audit=record_system_audit)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
 
 
 @router.post("/groups")

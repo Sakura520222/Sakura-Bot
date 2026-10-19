@@ -19,7 +19,9 @@ class DirectoryClient:
         self.chats = {
             CHAT: SimpleNamespace(title="真实群名", megagroup=True, left=False),
             CHAT - 1: SimpleNamespace(title="已退出群", megagroup=True, left=False),
-            CHAT - 2: SimpleNamespace(title="广播频道", megagroup=False, left=False),
+            CHAT - 2: SimpleNamespace(
+                title="广播频道", megagroup=False, broadcast=True, left=False
+            ),
         }
         self.members = {CHAT, CHAT - 2}
         self.fail_lookup = False
@@ -34,7 +36,11 @@ class DirectoryClient:
     async def get_permissions(self, chat_id, user_id):
         if chat_id not in self.members:
             raise UserNotParticipantError(request=None)
-        return SimpleNamespace(participant=SimpleNamespace(left=False, banned_rights=None))
+        return SimpleNamespace(
+            is_admin=False,
+            is_creator=False,
+            participant=SimpleNamespace(left=False, banned_rights=None),
+        )
 
 
 def session_file(tmp_path):
@@ -74,7 +80,9 @@ async def test_discovery_resolves_current_names_and_confirms_membership(tmp_path
     assert [row["chat_id"] for row in snapshot["groups"]] == [CHAT]
     assert snapshot["groups"][0]["title"] == "真实群名"
     assert snapshot["metadata"][str(CHAT - 1)]["joined"] is False
-    assert snapshot["metadata"][str(CHAT - 2)]["joined"] is False
+    assert snapshot["metadata"][str(CHAT - 2)]["joined"] is True
+    assert snapshot["metadata"][str(CHAT - 2)]["chat_type"] == "channel"
+    assert len(snapshot["chats"]) == 2
     assert snapshot["checked"] == snapshot["total"] == 3
     assert not snapshot["complete_history_available"]
     await directory.stop()
