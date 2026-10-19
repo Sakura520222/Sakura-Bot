@@ -98,6 +98,7 @@ const pageTitle = computed(() => {
   const map: Record<string, string> = {
     "/": "仪表板",
     "/channels": "频道管理",
+    "/bot-chats": "机器人所在群组与频道",
     "/ai-config": "AI 配置",
     "/schedules": "定时任务",
     "/forwarding": "转发规则",
@@ -117,6 +118,7 @@ const pageTitle = computed(() => {
 const menuOptions: MenuOption[] = [
   { label: "仪表板", key: "/", icon: DashboardOutlined },
   { label: "频道管理", key: "/channels", icon: ChannelOutlined },
+  { label: "机器人群组与频道", key: "/bot-chats", icon: RobotOutlined },
   { label: "AI 配置", key: "/ai-config", icon: RobotOutlined },
   { label: "定时任务", key: "/schedules", icon: ScheduleOutlined },
   { label: "转发规则", key: "/forwarding", icon: SwapOutlined },

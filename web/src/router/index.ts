@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import("../components/AppLayout.vue"),
       children: [
         {
+          path: "bot-chats",
+          name: "BotChats",
+          component: () => import("../views/BotChatsView.vue"),
+        },
+        {
           path: "guard",
           name: "Guard",
           component: () => import("../views/GuardView.vue"),
