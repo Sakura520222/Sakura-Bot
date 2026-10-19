@@ -76,6 +76,10 @@ export interface GuardRecord {
     review_generation?: number;
     review_ban_confirmed?: boolean;
     verification_failure?: unknown;
+    reporter?: { user_id: number; name?: string; username?: string };
+    report_link?: string;
+    message_date?: string;
+    has_media?: boolean;
     evidence?: { target?: string; rule_id?: string; reason?: string; original?: string; normalized?: string };
   };
 }

@@ -59,10 +59,12 @@ class Moderator:
         self.history_cleanup = HistoryCleanup(
             self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
         )
+        from .report_handler import ReportHandler
         from .review_handler import ReviewHandler
         from .verification import Verification
 
         self.reviews = ReviewHandler(self)
+        self.reports = ReportHandler(self)
         self.verification = Verification(self)
 
     @staticmethod
@@ -85,6 +87,7 @@ class Moderator:
         from telethon.tl.types import UpdateBotChatInviteRequester
 
         for callback, builder in (
+            (self.reports.handle, events.NewMessage(incoming=True)),
             (self.handle_message, events.NewMessage(incoming=True)),
             (self.handle_message, events.MessageEdited(incoming=True)),
             (self.handle_join, events.ChatAction()),

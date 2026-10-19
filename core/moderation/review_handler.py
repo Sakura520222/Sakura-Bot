@@ -8,7 +8,7 @@ import re
 from core.i18n.i18n import t
 
 from .moderator import GuardError
-from .notification import RETIRED_NOTICES, is_ban_case
+from .notification import RETIRED_NOTICES, case_status, is_ban_case
 from .repository import ACTIVE_VERIFICATIONS
 from .telegram import call, mute_rights, same_rights, verification_rights
 
@@ -31,9 +31,7 @@ class ReviewHandler:
             origin=(event.chat_id, event.message_id),
             expected_generation=int(match[3] or b"0"),
         )
-        await event.answer(
-            t("guard.review_result", status=t(f"guard.status_{result['status']}")), alert=True
-        )
+        await event.answer(t("guard.review_result", status=case_status(result)), alert=True)
 
     async def review(
         self,
@@ -56,7 +54,7 @@ class ReviewHandler:
             raise GuardError("error.permission_denied")
         async with self.service.repository.lock(initial["user_id"]) as store:
             case = await store.case(case_id)
-            if not case or case["action"] not in {"ban", "mute", "warn"}:
+            if not case or case["action"] not in {"ban", "mute", "warn", "report"}:
                 raise GuardError("guard.invalid_callback")
             if not await self.service.authorized(reviewer_id, case["chat_id"], web=web):
                 raise GuardError("error.permission_denied")
@@ -81,10 +79,17 @@ class ReviewHandler:
                 return case
             if action == "ban" and is_ban_case(case):
                 return case
-            if (case["status"] == "pending" and is_ban_case(case)) or (
+            report_pending = case["action"] == "report" and not is_ban_case(case)
+            if report_pending and action == "allow":
+                raise GuardError("guard.invalid_callback")
+            if (case["status"] == "pending" and (is_ban_case(case) or report_pending)) or (
                 case["status"] == "done" and case["action"] in {"mute", "warn"}
             ):
-                if action in {"allow", "unban"} and await store.blacklist(case["user_id"]):
+                if (
+                    action in {"allow", "unban"}
+                    and not report_pending
+                    and await store.blacklist(case["user_id"])
+                ):
                     raise GuardError("guard.blacklist_conflict")
                 web_admin = web and reviewer_id == "admin"
                 if not await store.claim_review(
@@ -108,7 +113,8 @@ class ReviewHandler:
         action = case["status"].removeprefix("reviewing_")
         try:
             if action in {"allow", "unban"}:
-                if await store.blacklist(case["user_id"]):
+                report_only = case["action"] == "report" and not is_ban_case(case)
+                if not report_only and await store.blacklist(case["user_id"]):
                     config = self.service.group(case["chat_id"])
                     if config.enabled and config.share_global_blacklist:
                         # 解封后数据库提交失败期间，另一群可能已永久拉黑。
@@ -142,6 +148,8 @@ class ReviewHandler:
 
     async def release(self, store, case):
         chat_id, user_id = case["chat_id"], case["user_id"]
+        if case["action"] == "report" and not is_ban_case(case):
+            return
         other = await store.active_ban(chat_id, user_id)
         if other and other["id"] != case["id"]:
             raise GuardError("guard.other_ban_conflict")

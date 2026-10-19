@@ -16,7 +16,7 @@ from telethon.tl.types import InputMessageEntityMentionName, MessageEntityTextUr
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
-from .telegram import call
+from .telegram import TelegramActionError, call
 
 logger = logging.getLogger(__name__)
 RETIRED_NOTICES = {"deleting", "removed"}
@@ -30,11 +30,30 @@ def is_ban_case(case):
     return case["action"] == "ban" or bool(case["payload"].get("review_ban_confirmed"))
 
 
+def case_status(case):
+    if (
+        case["action"] == "report"
+        and not is_ban_case(case)
+        and case["status"] in {"pending", "ignored", "reviewing_unban"}
+    ):
+        return t(f"guard.report_status_{case['status']}")
+    return t(f"guard.status_{case['status']}")
+
+
 def review_buttons(case, config=None):
     if case.get("payload", {}).get("notification_replaced_by"):
         return None
     generation = case.get("payload", {}).get("review_generation", 0)
     prefix = f"sg:r:{case['id']}:"
+    if case["action"] == "report" and case["status"] == "pending" and not is_ban_case(case):
+        return [
+            [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
+            for code, key in [
+                ("u", "guard.report_dismiss_button"),
+                ("k", "guard.verify_ban_button"),
+                ("b", "guard.verify_blacklist_button"),
+            ]
+        ]
     if is_ban_case(case) and case["status"] == "pending":
         return [
             [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
@@ -94,7 +113,7 @@ def review_buttons(case, config=None):
 def notification_text(case, *, link_profile=False):
     payload = case["payload"]
     evidence = payload.get("evidence", {})
-    status = t(f"guard.status_{case['status']}")
+    status = case_status(case)
     if case["action"] in {"verify_start", "verify_pass", "verify_cancel"} and payload.get(
         "verification_state"
     ):
@@ -131,16 +150,36 @@ def notification_text(case, *, link_profile=False):
         reviewed_at=str(case.get("reviewed_at") or "—"),
         error=case.get("error") or "—",
     )
+    reported = case["action"] == "report"
+    if reported:
+        reporter = payload.get("reporter", {})
+        original = evidence.get("original", "")
+        values.update(
+            chat=values["chat"][:128],
+            name=values["name"][:80],
+            reason=values["reason"][:200],
+            original=(original[:1000] + ("…" if len(original) > 1000 else ""))
+            or t("guard.report_media" if payload.get("has_media") else "guard.report_empty"),
+            reporter_name=(reporter.get("name") or str(reporter.get("user_id", "—")))[:80],
+            reporter_id=reporter.get("user_id", "—"),
+            reporter_username="@" + reporter["username"] if reporter.get("username") else "—",
+            report_link=payload.get("report_link", ""),
+            message_date=payload.get("message_date") or "—",
+        )
     if link_profile:
         # 仅由程序生成链接，所有用户内容保持原样显示，不能注入 HTML。
         values = {key: escape(str(value)) for key, value in values.items()}
         values["name"] = f'<a href="tg://user?id={int(case["user_id"])}">{values["name"]}</a>'
-        for key in ("chat_link", "evidence_link"):
+        if reported and payload.get("reporter", {}).get("user_id"):
+            values["reporter_name"] = (
+                f'<a href="tg://user?id={int(payload["reporter"]["user_id"])}">{values["reporter_name"]}</a>'
+            )
+        for key in ("chat_link", "evidence_link", "report_link"):
             link = payload.get(key)
             if link and link.startswith("https://t.me/"):
                 escaped = escape(link)
                 values[key] = values[key].replace(escaped, f'<a href="{escaped}">{escaped}</a>')
-    return t("guard.notification", **values)
+    return t("guard.report_notification" if reported else "guard.notification", **values)
 
 
 def notification_event(case):
@@ -174,6 +213,34 @@ class Notifier:
                 case["id"], case["status"], error=case.get("error"), payload=payload
             )
             case["payload"] = payload
+
+    async def forward_report(self, store, case, target):
+        if case["action"] != "report":
+            return None
+        evidence = case["payload"].get("report_evidence", {})
+        if str(target) in evidence:
+            return evidence[str(target)]
+        result = "forwarded"
+        try:
+            await self.actions.forward_once(
+                target,
+                case["chat_id"],
+                case["payload"]["message_id"],
+                stable_random_id(f"guard-report-evidence:{case['id']}:{target}"),
+            )
+        except TelegramActionError as error:
+            if str(error) not in {
+                "ChatForwardsRestrictedError",
+                "MessageIdInvalidError",
+                "MessageIdsEmptyError",
+                "MessageEmptyError",
+                "ChannelPrivateError",
+            }:
+                raise
+            # 受保护或已删除的原消息无法转发时仍发送已保存的证据快照与审核按钮。
+            result = f"unavailable:{error}"
+        await self.save_payload(store, case, report_evidence={**evidence, str(target): result})
+        return result
 
     async def prepare_cleanup(self, store, case, config, notices, targets, enabled):
         payload = case["payload"]
@@ -343,26 +410,31 @@ class Notifier:
         failed = not targets
         text, entities = html.parse(notification_text(case, link_profile=True))
         buttons = review_buttons(case, config)
-        profile_url = f"tg://user?id={int(case['user_id'])}"
-        try:
-            user = await self.actions.input_user(case["user_id"])
-        except Exception as error:
-            # 资料解析异常不应阻断成员处理通知；已注销或无权访问的账号仍保留 ID。
-            entities = [
-                entity
-                for entity in entities
-                if not isinstance(entity, MessageEntityTextUrl) or entity.url != profile_url
-            ]
-            logger.warning(
-                "Guard 用户资料引用解析失败 case=%s error=%s", case["id"], type(error).__name__
-            )
-        else:
-            entities = [
-                InputMessageEntityMentionName(entity.offset, entity.length, user)
-                if isinstance(entity, MessageEntityTextUrl) and entity.url == profile_url
-                else entity
-                for entity in entities
-            ]
+        profile_ids = [case["user_id"]]
+        reporter_id = case["payload"].get("reporter", {}).get("user_id")
+        if reporter_id:
+            profile_ids.append(reporter_id)
+        for user_id in dict.fromkeys(profile_ids):
+            profile_url = f"tg://user?id={int(user_id)}"
+            try:
+                user = await self.actions.input_user(user_id)
+            except Exception as error:
+                # 资料解析异常不应阻断通知；已注销或无权访问的账号仍保留 ID。
+                entities = [
+                    entity
+                    for entity in entities
+                    if not isinstance(entity, MessageEntityTextUrl) or entity.url != profile_url
+                ]
+                logger.warning(
+                    "Guard 用户资料引用解析失败 case=%s error=%s", case["id"], type(error).__name__
+                )
+            else:
+                entities = [
+                    InputMessageEntityMentionName(entity.offset, entity.length, user)
+                    if isinstance(entity, MessageEntityTextUrl) and entity.url == profile_url
+                    else entity
+                    for entity in entities
+                ]
 
         async def deliver(target):
             row = notices.get(target, {})
@@ -374,13 +446,17 @@ class Notifier:
             if row.get("error") and row.get("retry_at", utc_now_naive()) > utc_now_naive():
                 return False
             try:
+                evidence = await self.forward_report(store, case, target)
+                target_text = text
+                if evidence and evidence.startswith("unavailable:"):
+                    target_text += "\n" + t("guard.report_evidence_unavailable")
                 if message_id:
                     try:
                         await call(
                             self.actions.client.edit_message(
                                 target,
                                 message_id,
-                                text,
+                                target_text,
                                 buttons=buttons,
                                 formatting_entities=entities,
                                 parse_mode=None,
@@ -392,7 +468,7 @@ class Notifier:
                 else:
                     message_id = await self.actions.send_once(
                         target,
-                        text,
+                        target_text,
                         buttons,
                         stable_random_id(f"guard:{case['id']}:{target}"),
                         entities=entities,

@@ -12,7 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.functions.messages import HideChatJoinRequestRequest, SendMessageRequest
+from telethon.tl.functions.messages import (
+    ForwardMessagesRequest,
+    HideChatJoinRequestRequest,
+    SendMessageRequest,
+)
 from telethon.tl.types import Channel, Chat, ChatBannedRights, PeerChat
 
 from core.infrastructure.database.mysql import utc_now_naive
@@ -263,6 +267,8 @@ class FakeTelegram:
         self.member_rights = defaultdict(lambda: rights_dict(None))
         self.admins = set()
         self.sent = {}
+        self.forwarded = {}
+        self.forward_attempts = []
         self.random_ids = {}
         self.deleted = set()
         self.calls = []
@@ -335,6 +341,14 @@ class FakeTelegram:
         return buttons
 
     async def __call__(self, request):
+        if isinstance(request, ForwardMessagesRequest):
+            self.forward_attempts.append(request)
+            if request.to_peer in self.fail:
+                raise self.fail[request.to_peer]
+            if "forward" in self.fail:
+                raise self.fail["forward"]
+            self.forwarded.setdefault(request.random_id[0], request)
+            return SimpleNamespace(updates=[])
         if isinstance(request, EditBannedRequest):
             self.calls.append(("restrict", request.channel, request.participant))
             if "restrict" in self.fail:

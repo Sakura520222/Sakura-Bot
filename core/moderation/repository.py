@@ -159,7 +159,7 @@ class GuardStore:
         return bool(
             await self.execute(
                 """UPDATE moderation_cases SET status=%s,reviewer_id=%s,reviewer_actor=%s,reviewed_at=%s,error=NULL,updated_at=%s
-            WHERE id=%s AND ((status='pending' AND action IN ('ban','mute','warn')) OR (status='done' AND action IN ('mute','warn')))""",
+            WHERE id=%s AND ((status='pending' AND action IN ('ban','mute','warn','report')) OR (status='done' AND action IN ('mute','warn')))""",
                 (
                     f"reviewing_{action}",
                     reviewer_id,

@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 
 from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.functions.messages import HideChatJoinRequestRequest, SendMessageRequest
+from telethon.tl.functions.messages import (
+    ForwardMessagesRequest,
+    HideChatJoinRequestRequest,
+    SendMessageRequest,
+)
 from telethon.tl.types import ChatBannedRights, PeerUser
 
 VERIFICATION_RESTRICTIONS = (
@@ -133,6 +137,19 @@ class TelegramActions:
 
     async def input_user(self, user_id):
         return utils.get_input_user(await call(self.client.get_input_entity(PeerUser(user_id))))
+
+    async def forward_once(self, target_id, source_chat_id, message_id, random_id):
+        # 原生转发保留文字及媒体；固定 random_id 覆盖转发成功但数据库未提交的重试。
+        await mutate(
+            self.client(
+                ForwardMessagesRequest(
+                    from_peer=await call(self.client.get_input_entity(source_chat_id)),
+                    id=[message_id],
+                    to_peer=await call(self.client.get_input_entity(target_id)),
+                    random_id=[random_id],
+                )
+            )
+        )
 
     async def send_once(self, target_id, text, buttons, random_id, *, entities=None):
         # 固定 random_id 让同一投递在提交失败后重试时仍由 Telegram 去重。

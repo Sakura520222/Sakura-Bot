@@ -87,6 +87,31 @@ async def test_schema_case_and_whitelist_survive_repository_restart(guard, mysql
             await store.create_case({**case, "id": uuid.uuid4().hex})
 
 
+@pytest.mark.parametrize(
+    "action,status", [("unban", "ignored"), ("ban", "pending"), ("blacklist", "blacklisted")]
+)
+async def test_mysql_user_report_is_deduplicated_and_reviewed(
+    guard, mysql_repository, action, status
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    rows = await mysql_repository.query("cases", chat_id=CHAT, status="pending")
+    assert rows["total"] == 1
+    case = rows["rows"][0]
+    assert case["action"] == "report" and not guard.client.calls
+    # 新 Repository 实例仍通过数据库原消息键去重，并可使用真实 SQL 认领举报审核。
+    guard.repository = GuardRepository(mysql_repository.pool)
+    await send(guard)
+    assert (await guard.repository.query("cases"))["total"] == 1
+    result = await guard.reviews.review(case["id"], action, ADMIN)
+    assert result["status"] == status
+    async with guard.repository.lock(USER) as store:
+        assert bool(await store.blacklist(USER)) == (action == "blacklist")
+        assert not await store.whitelisted(CHAT, USER)
+
+
 async def test_history_cleanup_persists_per_bot_without_touching_guard_data(mysql_repository):
     repository = mysql_repository
     await repository.initialize()
