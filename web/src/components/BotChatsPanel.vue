@@ -2,8 +2,8 @@
   <n-card title="机器人所在群组与频道" :segmented="{ content: true }">
     <n-space vertical :size="16">
       <n-alert type="info" :bordered="false">
-        查看主机器人已记录的群组和频道，成员身份与权限会自动核实。Telegram 不提供机器人完整历史会话列表，
-        未显示的会话可在机器人收到消息或成员变动后刷新。频道私信随所属频道管理，不单独计入退出名单。
+        默认显示已确认机器人加入的群组和频道，权限会自动核实。历史记录不能证明当前仍已加入，无法确认的记录单独收在下方。
+        Telegram 不提供机器人完整历史会话列表；未显示的会话可在机器人收到消息或成员变动后刷新。频道私信随所属频道管理，不单独计入退出名单。
       </n-alert>
       <n-space align="center">
         <n-button :loading="loading || discovering" :disabled="running || previewLoading" @click="loadChats(true)">刷新列表</n-button>
@@ -11,7 +11,7 @@
           预览退出非管理员会话
         </n-button>
         <n-text v-if="discovering" role="status">正在核实 {{ checked }}/{{ total }} 个会话…</n-text>
-        <n-text v-else depth="3">已加入 {{ joinedCount }} · 管理员 {{ adminCount }} · 非管理员 {{ memberCount }} · 待核实 {{ unknownCount }} · 频道私信 {{ relatedCount }}（随频道管理）</n-text>
+        <n-text v-else depth="3">已加入 {{ joinedCount }} · 管理员 {{ adminCount }} · 非管理员 {{ memberCount }} · 权限待核实 {{ unknownCount }} · 频道私信 {{ relatedCount }}（随频道管理）</n-text>
       </n-space>
       <n-space align="center">
         <n-input v-model:value="search" clearable placeholder="搜索名称、用户名或 ID" style="width: 260px" />
@@ -20,6 +20,15 @@
         <n-text depth="3">批量退出覆盖完整名单，不受搜索和筛选影响。</n-text>
       </n-space>
       <n-data-table :columns="columns" :data="filteredChats" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="850" :bordered="false" />
+
+      <n-collapse v-if="history.length">
+        <n-collapse-item name="history" :title="`历史记录：${history.length} 个会话无法确认当前成员身份`">
+          <n-space vertical :size="12">
+            <n-text depth="3">这些是曾接触过的会话，名称可能已过期。无法访问不代表机器人当前仍在里面，也不能判断管理员权限；这些记录不计入已加入数量，不会进入退出名单。</n-text>
+            <n-data-table :columns="historyColumns" :data="history" :row-key="rowKey" :pagination="{ pageSize: 10 }" :scroll-x="700" :bordered="false" />
+          </n-space>
+        </n-collapse-item>
+      </n-collapse>
 
       <template v-if="job">
         <n-alert :type="job.error ? 'warning' : running ? 'info' : 'success'" :bordered="false" role="status">
@@ -51,13 +60,13 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref } from "vue";
-import { NAlert, NButton, NCard, NDataTable, NInput, NModal, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from "naive-ui";
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NDataTable, NInput, NModal, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from "naive-ui";
 import { getGuardBotChats, leaveBotChats, previewLeaveBotChats, type BotChat, type BotChatCleanup, type BotChatPreview } from "@/api/guard";
 import { saveError } from "@/composables/autosave";
 
 const emit = defineEmits<{ changed: [] }>();
 const message = useMessage();
-const chats = ref<BotChat[]>([]), job = ref<BotChatCleanup | null>(null);
+const chats = ref<BotChat[]>([]), history = ref<BotChat[]>([]), job = ref<BotChatCleanup | null>(null);
 const loading = ref(false), discovering = ref(false), previewLoading = ref(false), confirming = ref(false);
 const checked = ref(0), total = ref(0), relatedCount = ref(0), showPreview = ref(false), preview = ref<BotChatPreview | null>(null);
 const search = ref(""), kind = ref("all"), role = ref("all");
@@ -67,7 +76,7 @@ const adminCount = computed(() => chats.value.filter(chat => chat.joined === tru
 const memberCount = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === false).length);
 const unknownCount = computed(() => chats.value.filter(chat => chat.joined === null || chat.is_admin === null).length);
 const kindOptions = [{ label: "全部类型", value: "all" }, { label: "群组", value: "group" }, { label: "频道", value: "channel" }];
-const roleOptions = [{ label: "全部身份", value: "all" }, { label: "管理员", value: "admin" }, { label: "非管理员", value: "member" }, { label: "待核实", value: "unknown" }];
+const roleOptions = [{ label: "全部身份", value: "all" }, { label: "管理员", value: "admin" }, { label: "非管理员", value: "member" }, { label: "权限待核实", value: "unknown" }];
 const kindNames = { group: "普通群组", supergroup: "超级群组", channel: "频道", channel_dm: "频道私信", unknown: "待核实" };
 const rowKey = (row: BotChat) => row.chat_id;
 const filteredChats = computed(() => {
@@ -97,6 +106,17 @@ const resultColumns: DataTableColumns<BotChatCleanup["results"][number]> = [
   ...previewColumns.slice(0, 3),
   { title: "结果", key: "message", minWidth: 240 },
 ];
+const historyColumns: DataTableColumns<BotChat> = [
+  { title: "历史名称", key: "title", minWidth: 180, render: row => row.title || "未记录名称" },
+  { title: "Telegram ID", key: "chat_id", width: 180 },
+  { title: "当前核实结果", key: "error", minWidth: 320, render: row => {
+    if (row.error === "ChannelPrivateError") return "机器人无法访问：可能未加入、已被移除或会话已不可用";
+    if (row.error === "ChatIdentityMismatch") return "会话 ID 不一致，无法确认成员身份";
+    if (row.error === "FloodWaitError") return "Telegram 暂时限流，请稍后刷新";
+    if (row.error === "TimeoutError") return "请求超时，暂时无法确认成员身份";
+    return "暂时无法确认成员身份，请稍后刷新";
+  } },
+];
 const resultCount = (status: string) => job.value?.results.filter(row => row.status === status).length || 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false, requestId = 0, expiresAt = 0, pollFailed = false;
@@ -111,8 +131,9 @@ async function loadChats(force = false) {
     const result = await getGuardBotChats(force);
     if (disposed || request !== requestId) return;
     const wasRunning = running.value;
-    chats.value = Object.values(result.metadata).filter(chat => chat.is_standalone !== false && chat.joined !== false)
-      .sort((a, b) => a.title.localeCompare(b.title, "zh-CN") || a.chat_id - b.chat_id);
+    const compare = (a: BotChat, b: BotChat) => a.title.localeCompare(b.title, "zh-CN") || a.chat_id - b.chat_id;
+    chats.value = [...result.chats].sort(compare);
+    history.value = Object.values(result.metadata).filter(chat => chat.is_standalone !== false && chat.joined === null).sort(compare);
     discovering.value = result.discovering;
     checked.value = result.checked;
     total.value = result.total;
