@@ -157,7 +157,7 @@ async def test_old_token_is_invalid_even_when_rebound_to_a_new_message_id(guard,
     with pytest.raises(GuardError, match="invalid_callback"):
         await guard.verification.callback(old)
     assert (await store.verification(CHAT, USER))["status"] == "waiting"
-    assert all(len(button.type.data) <= 64 for row in challenge_buttons(new) for button in row)
+    assert all(len(button.type.data) <= 64 for row in challenge_buttons(new)[:-1] for button in row)
 
 
 @pytest.mark.parametrize("action", ["allow", "warn", "mute"])

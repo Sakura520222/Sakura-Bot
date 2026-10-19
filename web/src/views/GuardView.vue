@@ -4,6 +4,7 @@
       <n-alert type="info" :bordered="false">
         每个群独立启用，默认关闭。主 Bot 需要删除消息、限制/封禁成员权限；自动批准入群还需要邀请用户权限。
         昵称会在入群、申请、发言和编辑消息时检查。验证通过恢复原权限，解封不会自动拉人回群。
+        在主 Bot 担任管理员的群，成员可引用其他用户消息发送“@admin 举报 [原因]”，提交管理员审核；无需开启自动群管。
       </n-alert>
     </n-card>
 
@@ -44,7 +45,7 @@
           <n-form-item label="验证超时后的动作"><n-select v-model:value="form.verification_timeout_action" :options="verificationActions" /></n-form-item>
           <n-form-item label="答错达到上限后的动作"><n-select v-model:value="form.verification_wrong_action" :options="verificationActions" /></n-form-item>
           <n-form-item label="验证结束后的消息处理"><n-select v-model:value="form.verification_message_mode" :options="verificationMessageModes" /></n-form-item>
-          <n-form-item label="验证管理按钮（群内及通知）"><n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏全部管理按钮" /></n-form-item>
+          <n-form-item label="验证管理按钮（仅踢出由上方独立开关控制）"><n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏封禁、拉黑和跳过按钮" /></n-form-item>
           <n-form-item label="昵称及用户名关键词命中动作"><n-select v-model:value="form.nickname_action" :options="memberActions" /></n-form-item>
           <n-form-item label="机器人发言命中动作"><n-select v-model:value="form.bot_message_action" :options="actions" /></n-form-item>
           <n-form-item label="消息关键词命中动作"><n-select v-model:value="form.message_action" :options="actions" /></n-form-item>
@@ -118,7 +119,8 @@
       <n-descriptions v-if="detail" :column="1" bordered label-placement="left">
         <n-descriptions-item label="案件">{{ detail.id || detail.case_id }}</n-descriptions-item>
         <n-descriptions-item label="群组 / 用户">{{ detail.chat_id || detail.source_chat_id }} / {{ detail.user_id }}</n-descriptions-item>
-        <n-descriptions-item label="封禁快照">{{ detail.payload?.name }} · @{{ detail.payload?.username || '—' }}</n-descriptions-item>
+        <n-descriptions-item label="用户快照">{{ detail.payload?.name }} · @{{ detail.payload?.username || '—' }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.reporter" label="举报人">{{ detail.payload.reporter.name || '—' }} · {{ detail.payload.reporter.user_id }} · @{{ detail.payload.reporter.username || '—' }}</n-descriptions-item>
         <n-descriptions-item label="规则 / 原因">{{ detail.payload?.evidence?.rule_id }} · {{ detail.payload?.evidence?.reason }}</n-descriptions-item>
         <n-descriptions-item label="命中原文"><span class="evidence">{{ detail.payload?.evidence?.original }}</span></n-descriptions-item>
         <n-descriptions-item label="归一化结果"><span class="evidence">{{ detail.payload?.evidence?.normalized }}</span></n-descriptions-item>
@@ -126,7 +128,8 @@
           <a v-if="evidenceUrl(detail)" :href="evidenceUrl(detail)" target="_blank" rel="noopener noreferrer">打开 Telegram 消息</a>
           <span v-else>{{ detail.payload?.message_id || '—' }}</span>
         </n-descriptions-item>
-        <n-descriptions-item label="状态">{{ statusLabel(detail.status || detail.synced_status) }}</n-descriptions-item>
+        <n-descriptions-item label="状态">{{ recordStatus(detail) }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.report_message_deletion" label="原消息删除">{{ detail.payload.report_message_deletion.status === 'deleted' ? '已删除或已不存在' : '待确认删除，后台自动重试' }} · {{ detail.payload.report_message_deletion.actor }} · {{ detail.payload.report_message_deletion.completed_at || detail.payload.report_message_deletion.requested_at }} UTC<span v-if="detail.payload.report_message_deletion.error"> · {{ deletionError(detail.payload.report_message_deletion.error) }}</span></n-descriptions-item>
         <n-descriptions-item label="审核人 / UTC 时间">{{ detail.reviewer_actor || detail.reviewer_id || '—' }} / {{ detail.reviewed_at || '—' }}</n-descriptions-item>
         <n-descriptions-item label="错误">{{ detail.error || '—' }}</n-descriptions-item>
         <n-descriptions-item v-if="detail.message_cleanup_pending !== undefined" label="验证消息清理">{{ detail.message_cleanup_pending ? '待清理，后台自动重试' : '已清理或当前无需清理' }}</n-descriptions-item>
@@ -183,8 +186,8 @@ const verificationActions = [{ label: "封禁并通知审核", value: "ban" }, {
 const verificationMessageModes = [{ label: "删除验证消息（默认）", value: "delete" }, { label: "保留处理结果，移除所有按钮", value: "result" }];
 const verificationAdminActions = [{ label: "一键封禁", value: "ban" }, { label: "封禁并加入黑名单", value: "blacklist" }, { label: "跳过验证", value: "skip" }];
 const requestMatchActions = [{ label: "拒绝申请（默认）", value: "reject" }, { label: "保持待审，通知管理员", value: "manual" }, { label: "批准后继续按入群规则处理", value: "approve" }];
-const notificationEvents = [{ label: "过滤及处罚", value: "moderation" }, { label: "验证开始", value: "verification_start" }, { label: "验证通过 / 取消", value: "verification_end" }, { label: "验证失败处理", value: "verification_fail" }, { label: "管理员验证操作", value: "admin_action" }, { label: "入群申请处理", value: "join_request" }, { label: "白名单操作", value: "whitelist" }, { label: "黑名单操作", value: "blacklist" }];
-const recordActionNames: Record<string, string> = { verify_skip: "管理员跳过验证", verify_hold: "保持验证禁言，等待管理员", verify_allow: "历史配置放行", verify_start: "开始入群验证", verify_pass: "入群验证通过", verify_cancel: "结束 / 取消验证", whitelist_add: "添加白名单", whitelist_remove: "移除白名单", blacklist_remove: "撤销永久黑名单", approve: "批准入群申请", reject: "拒绝入群申请", manual: "保留申请待审" };
+const notificationEvents = [{ label: "过滤、举报及处罚", value: "moderation" }, { label: "验证开始", value: "verification_start" }, { label: "验证通过 / 取消", value: "verification_end" }, { label: "验证失败处理", value: "verification_fail" }, { label: "管理员验证操作", value: "admin_action" }, { label: "入群申请处理", value: "join_request" }, { label: "白名单操作", value: "whitelist" }, { label: "黑名单操作", value: "blacklist" }];
+const recordActionNames: Record<string, string> = { report: "用户举报", verify_skip: "管理员跳过验证", verify_hold: "保持验证禁言，等待管理员", verify_allow: "历史配置放行", verify_start: "开始入群验证", verify_pass: "入群验证通过", verify_cancel: "结束 / 取消验证", whitelist_add: "添加白名单", whitelist_remove: "移除白名单", blacklist_remove: "撤销永久黑名单", approve: "批准入群申请", reject: "拒绝入群申请", manual: "保留申请待审" };
 const joinOptions = [{ label: "保持待审，由管理员处理", value: "manual" }, { label: "规则通过后批准；开启验证时入群后验证", value: "approve" }];
 const targets = [{ label: "昵称", value: "nickname" }, { label: "用户名", value: "username" }, { label: "消息 / 媒体说明", value: "message" }, { label: "链接", value: "link" }];
 const kinds = [{ label: "关键词", value: "keyword" }, { label: "正则", value: "regex" }];
@@ -195,8 +198,35 @@ Object.assign(statusNames, { failed_kicked: "验证失败 / 已踢出", failed_m
 Object.assign(statusNames, { held: "未通过验证 / 保持禁言待管理员处理" });
 Object.assign(statusNames, { reviewing_unban: "解除限制恢复中", reviewing_ban: "管理员封禁恢复中", unbanned: "已仅解除封禁", unmuted: "已撤销本次禁言", ignored: "已忽略本次警告", allowed: "已处理并加入本群白名单" });
 Object.assign(statusNames, { deleting: "旧通知清理中", removed: "原通知已清理" });
-const statuses = Object.entries(statusNames).map(([value, label]) => ({ label, value }));
+Object.assign(statusNames, { kicked: "已仅踢出 · 可再次加入", reviewing_kick: "仅踢出恢复中", admin_kicked: "管理员已仅踢出", admin_kick_pending: "管理员仅踢出处理中" });
+const statuses = Object.entries(statusNames).map(([value, label]) => ({ label: value === "pending" ? "待审核（封禁 / 用户举报）" : value === "ignored" ? "已忽略（警告 / 举报）" : label, value }));
 const statusLabel = (value?: string) => value ? statusNames[value] || value : "—";
+const pendingReport = (row: GuardRecord) => row.action === "report" && !row.payload?.review_ban_confirmed;
+function canKick(row: GuardRecord) {
+  return ["ban", "mute", "warn", "report"].includes(row.action || "") &&
+    (row.status === "pending" || (row.status === "done" && ["mute", "warn"].includes(row.action || "")) ||
+      (row.action === "report" && ["allowed", "blacklisted", "unbanned", "unmuted", "ignored", "reviewing_kick"].includes(row.status || ""))) &&
+    !row.payload?.verification_failure && (groups.value[String(row.chat_id)]?.kick_button_enabled ?? true);
+}
+function deletionError(value: string) {
+  const names: Record<string, string> = {
+    "guard.report_delete_permission_error": "主 Bot 缺少管理员或删除消息权限",
+    "guard.report_delete_target_changed": "原消息身份与举报记录不符，已停止删除",
+    "guard.report_delete_unconfirmed": "仍能读取原消息，等待重试确认",
+    MessageDeleteForbiddenError: "Bot 没有删除该消息的权限",
+    ChatAdminRequiredError: "Bot 需要群管理员权限",
+    ChatWriteForbiddenError: "Bot 当前无法操作该群组",
+    TimeoutError: "Telegram 请求超时，稍后重试",
+  };
+  return names[value] || "删除未确认，请检查 Bot 权限或稍后重试";
+}
+function recordStatus(row: GuardRecord) {
+  if (pendingReport(row) && row.status === "pending") return "用户举报 · 待审核（尚未处罚）";
+  if (pendingReport(row) && row.status === "ignored") return "已忽略举报";
+  if (pendingReport(row) && row.status === "reviewing_unban") return "忽略举报 · 正在保存审核决定";
+  if (!row.action && row.synced_status === "pending") return "待审核";
+  return statusLabel(row.status || row.synced_status);
+}
 type IdField = "trusted_bot_ids" | "reviewer_ids" | "notification_ids";
 const idFields: { key: IdField; label: string }[] = [{ key: "trusted_bot_ids", label: "受信任 Bot 的用户 ID" }, { key: "reviewer_ids", label: "授权审核用户 ID（留空复用 REPORT_ADMIN_IDS）" }, { key: "notification_ids", label: "通知收件用户 ID（留空复用 REPORT_ADMIN_IDS）" }];
 
@@ -323,10 +353,11 @@ async function loadRecords() {
 }
 function resetRecords() { page.value = 1; loadRecords(); }
 function changeTable() { filterStatus.value = table.value === "cases" ? "pending" : null; resetRecords(); }
-async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "retry" | "removeWhite" | "removeBlack") {
+async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "kick" | "retry" | "removeWhite" | "removeBlack") {
   dialog.warning({
-    title: "确认群管操作",
-    content: action === "unban" ? "仅撤销本次案件的封禁、禁言或警告，不新增白名单。其他限制及入群验证继续生效。" : action === "ban" ? "将该用户在本群封禁，保留后续审核入口，不加入永久黑名单。" : action === "allow" ? "撤销本次限制并加入本群白名单。其他限制及入群验证继续生效，不会自动重新拉入群。" : action === "blacklist" ? "封禁并将用户 ID 记入永久黑名单；其他群按共享开关生效。" : action === "removeBlack" ? "撤销全局永久拉黑记录。各群现有封禁仍需分别通过案件解除。" : action === "removeWhite" ? "删除本群白名单后，该用户会重新接受本群规则检测。" : "重试此前失败的操作，实际结果会记录在案件中。",
+    title: action === "kick" ? "确认仅踢出（允许再次加入）" : action === "delete" ? "确认删除被举报消息" : "确认群管操作",
+    content: action === "delete" ? "删除本案被举报的原消息，删除后无法恢复。用户权限及黑白名单由其他审核操作决定。" : action === "unban" && pendingReport(row) ? "忽略本次举报，保留记录，不修改成员权限或黑白名单。" : action === "unban" ? "仅撤销本次案件的封禁、禁言或警告，不新增白名单。其他限制及入群验证继续生效。" : action === "ban" ? "将该用户在本群封禁，保留后续审核入口，不加入永久黑名单。" : action === "allow" ? "撤销本次限制并加入本群白名单。其他限制及入群验证继续生效，不会自动重新拉入群。" : action === "blacklist" ? "封禁并将用户 ID 记入永久黑名单；其他群按共享开关生效。" : action === "removeBlack" ? "撤销全局永久拉黑记录。各群现有封禁仍需分别通过案件解除。" : action === "removeWhite" ? "删除本群白名单后，该用户会重新接受本群规则检测。" : "重试此前失败的操作，实际结果会记录在案件中。",
+    ...(action === "kick" ? { content: "仅踢出该用户，允许其再次加入本群。" } : {}),
     positiveText: "确认", negativeText: "取消",
     onPositiveClick: async () => {
       try {
@@ -351,16 +382,18 @@ function evidenceUrl(row: GuardRecord) {
 const columns = computed<DataTableColumns<GuardRecord>>(() => [
   { title: "群组 / 收件人", key: "chat_id", width: 180, render: row => String(row.chat_id || row.source_chat_id || row.target_id || "—") },
   { title: "用户 ID", key: "user_id", width: 150 },
-  { title: "动作", key: "action", width: 150, render: row => row.payload?.review_ban_confirmed ? "管理员封禁" : row.action ? recordActionNames[row.action] || actions.find(action => action.value === row.action)?.label || row.action : "—" },
-  { title: "状态", key: "status", width: 190, render: row => statusLabel(row.status || row.synced_status) },
+  { title: "动作", key: "action", width: 150, render: row => ["kicked", "reviewing_kick"].includes(row.status || "") ? "仅踢出" : row.payload?.review_ban_confirmed ? "管理员封禁" : row.action ? recordActionNames[row.action] || actions.find(action => action.value === row.action)?.label || row.action : "—" },
+  { title: "状态", key: "status", width: 190, render: recordStatus },
   { title: "时间（UTC）", key: "created_at", width: 190, render: row => row.updated_at || row.created_at || row.last_seen_at || "—" },
   { title: "错误", key: "error", width: 180, ellipsis: { tooltip: true } },
   { title: "操作", key: "actions", width: 440, render: row => h(NSpace, { size: "small" }, { default: () => [
     h(NButton, { size: "small", onClick: () => { detail.value = row; showDetail.value = true; } }, { default: () => "详情" }),
+    ...(table.value === "cases" && canKick(row) ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "kick") }, { default: () => "仅踢出" })] : []),
+    ...(table.value === "cases" && row.action === "report" && row.payload?.message_id && row.payload?.report_message_deletion?.status !== "deleted" ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "delete") }, { default: () => row.payload?.report_message_deletion?.error ? "重试删除被举报消息" : "删除被举报消息" })] : []),
     ...(table.value === "cases" && (row.status === "pending" || (row.status === "done" && ["mute", "warn"].includes(row.action || "") && !row.payload?.verification_failure)) ? [
-      h(NButton, { size: "small", onClick: () => act(row, "unban") }, { default: () => row.status === "pending" ? "仅解除封禁" : row.action === "mute" ? "仅解除本次禁言" : "忽略本次警告" }),
-      h(NButton, { size: "small", type: "primary", onClick: () => act(row, "allow") }, { default: () => row.action === "warn" && row.status !== "pending" ? "加入本群白名单" : "解除并加入白名单" }),
-      ...(row.status !== "pending" ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "ban") }, { default: () => "封禁" })] : []),
+      h(NButton, { size: "small", onClick: () => act(row, "unban") }, { default: () => pendingReport(row) ? "忽略本次举报" : row.status === "pending" ? "仅解除封禁" : row.action === "mute" ? "仅解除本次禁言" : "忽略本次警告" }),
+      ...(!pendingReport(row) ? [h(NButton, { size: "small", type: "primary", onClick: () => act(row, "allow") }, { default: () => row.action === "warn" && row.status !== "pending" ? "加入本群白名单" : "解除并加入白名单" })] : []),
+      ...(row.status !== "pending" || pendingReport(row) ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "ban") }, { default: () => "封禁" })] : []),
       h(NButton, { size: "small", type: "error", onClick: () => act(row, "blacklist") }, { default: () => "永久拉黑并入库标记" }),
     ] : []),
     ...(table.value === "cases" && row.status === "execution_failed" ? [h(NButton, { size: "small", onClick: () => act(row, "retry") }, { default: () => "重试" })] : []),

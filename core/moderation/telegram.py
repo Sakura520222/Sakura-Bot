@@ -8,7 +8,12 @@ from datetime import UTC, datetime
 
 from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.functions.messages import HideChatJoinRequestRequest, SendMessageRequest
+from telethon.tl.functions.messages import (
+    DeleteChatUserRequest,
+    ForwardMessagesRequest,
+    HideChatJoinRequestRequest,
+    SendMessageRequest,
+)
 from telethon.tl.types import ChatBannedRights, PeerUser
 
 VERIFICATION_RESTRICTIONS = (
@@ -128,11 +133,36 @@ class TelegramActions:
     async def unban(self, chat_id, user_id):
         await mutate(self.client.edit_permissions(chat_id, user_id, view_messages=True))
 
+    async def kick_basic_group(self, chat_id, user_id):
+        peer = await call(self.client.get_input_entity(chat_id))
+        await mutate(
+            self.client(
+                DeleteChatUserRequest(
+                    getattr(peer, "chat_id", abs(chat_id)),
+                    await self.input_user(user_id),
+                    revoke_history=False,
+                )
+            )
+        )
+
     async def join_request(self, chat_id, user_id, approved):
         await mutate(self.client(HideChatJoinRequestRequest(chat_id, user_id, approved=approved)))
 
     async def input_user(self, user_id):
         return utils.get_input_user(await call(self.client.get_input_entity(PeerUser(user_id))))
+
+    async def forward_once(self, target_id, source_chat_id, message_id, random_id):
+        # 原生转发保留文字及媒体；固定 random_id 覆盖转发成功但数据库未提交的重试。
+        await mutate(
+            self.client(
+                ForwardMessagesRequest(
+                    from_peer=await call(self.client.get_input_entity(source_chat_id)),
+                    id=[message_id],
+                    to_peer=await call(self.client.get_input_entity(target_id)),
+                    random_id=[random_id],
+                )
+            )
+        )
 
     async def send_once(self, target_id, text, buttons, random_id, *, entities=None):
         # 固定 random_id 让同一投递在提交失败后重试时仍由 Telegram 去重。

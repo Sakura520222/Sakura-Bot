@@ -67,7 +67,7 @@ async def test_pass_sends_and_records_result_before_deleting_start_per_recipient
         )
         assert (target, row["message_id"]) not in guard.client.sent
     result = lifecycle_case(store, "verify_pass")
-    assert len(review_buttons(result, guard.group(CHAT))) == 2
+    assert len(review_buttons(result, guard.group(CHAT))) == 3
     assert not (await store.case(result["id"]))["payload"]["notification_cleanup_pending"]
     assert await store.case(start["id"]) is not None
 
@@ -258,7 +258,7 @@ async def test_admin_skip_result_keeps_its_management_buttons_after_start_cleanu
         await notice_event(store, start, "s", prefix="n")
     )
     result = lifecycle_case(store, "verify_skip")
-    assert len(review_buttons(result, guard.group(CHAT))) == 2
+    assert len(review_buttons(result, guard.group(CHAT))) == 3
     assert all(row["synced_status"] == "removed" for row in await store.notices(start["id"]))
     await guard.verification.notification_callback(
         await notice_event(store, result, "b", prefix="n")

@@ -12,6 +12,7 @@ export interface GuardRule {
 }
 export interface GuardGroup {
   enabled: boolean;
+  kick_button_enabled: boolean;
   verify_join: boolean;
   verification_timeout: number;
   verification_max_attempts: number;
@@ -76,6 +77,18 @@ export interface GuardRecord {
     review_generation?: number;
     review_ban_confirmed?: boolean;
     verification_failure?: unknown;
+    reporter?: { user_id: number; name?: string; username?: string };
+    report_link?: string;
+    message_date?: string;
+    has_media?: boolean;
+    report_message_deletion?: {
+      status: "pending" | "deleted";
+      actor: string;
+      requested_at: string;
+      completed_at?: string;
+      attempts?: number;
+      error?: string | null;
+    };
     evidence?: { target?: string; rule_id?: string; reason?: string; original?: string; normalized?: string };
   };
 }
@@ -156,7 +169,7 @@ export async function addGuardGroup(chat_id: number) {
 export async function getGuardRecords(table: GuardTable, params: Record<string, unknown>) {
   return (await api.get<{ rows: GuardRecord[]; total: number }>(`/guard/records/${table}`, { params })).data;
 }
-export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban", generation = 0) {
+export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "kick", generation = 0) {
   return (await api.post(`/guard/cases/${id}/review`, { action, generation })).data;
 }
 export async function retryGuardCase(id: string) {

@@ -59,10 +59,12 @@ class Moderator:
         self.history_cleanup = HistoryCleanup(
             self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
         )
+        from .report_handler import ReportHandler
         from .review_handler import ReviewHandler
         from .verification import Verification
 
         self.reviews = ReviewHandler(self)
+        self.reports = ReportHandler(self)
         self.verification = Verification(self)
 
     @staticmethod
@@ -85,6 +87,7 @@ class Moderator:
         from telethon.tl.types import UpdateBotChatInviteRequester
 
         for callback, builder in (
+            (self.reports.handle, events.NewMessage(incoming=True)),
             (self.handle_message, events.NewMessage(incoming=True)),
             (self.handle_message, events.MessageEdited(incoming=True)),
             (self.handle_join, events.ChatAction()),
@@ -592,7 +595,11 @@ class Moderator:
         raise events.StopPropagation
 
     async def recover_once(self):
-        cases, sessions = await self.repository.work()
+        cases, sessions = await self.repository.work(
+            control_policy={
+                key: group.kick_button_enabled for key, group in self.config.groups.items()
+            }
+        )
         for candidate in cases:
             try:
                 async with self.repository.lock(candidate["user_id"]) as store:
@@ -603,6 +610,7 @@ class Moderator:
                         await self.execute_case(store, case)
                     elif case["status"].startswith("reviewing_"):
                         await self.reviews.resume(store, case)
+                    await self.reviews.resume_message_deletion(store, await store.case(case["id"]))
                     await self.notifier.sync(
                         store, await store.case(case["id"]), self.group(case["chat_id"])
                     )

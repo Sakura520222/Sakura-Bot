@@ -87,6 +87,129 @@ async def test_schema_case_and_whitelist_survive_repository_restart(guard, mysql
             await store.create_case({**case, "id": uuid.uuid4().hex})
 
 
+@pytest.mark.parametrize(
+    "action,status", [("unban", "ignored"), ("ban", "pending"), ("blacklist", "blacklisted")]
+)
+async def test_mysql_user_report_is_deduplicated_and_reviewed(
+    guard, mysql_repository, action, status
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    rows = await mysql_repository.query("cases", chat_id=CHAT, status="pending")
+    assert rows["total"] == 1
+    case = rows["rows"][0]
+    assert case["action"] == "report" and not guard.client.calls
+    # 新 Repository 实例仍通过数据库原消息键去重，并可使用真实 SQL 认领举报审核。
+    guard.repository = GuardRepository(mysql_repository.pool)
+    await send(guard)
+    assert (await guard.repository.query("cases"))["total"] == 1
+    result = await guard.reviews.review(case["id"], action, ADMIN)
+    assert result["status"] == status
+    async with guard.repository.lock(USER) as store:
+        assert bool(await store.blacklist(USER)) == (action == "blacklist")
+        assert not await store.whitelisted(CHAT, USER)
+
+
+async def test_mysql_old_report_notifications_are_selected_for_control_refresh(
+    guard, mysql_repository
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    case = (await mysql_repository.query("cases"))["rows"][0]
+    before = None
+    async with mysql_repository.lock(USER) as store:
+        before = await store.notices(case["id"])
+        payload = dict(case["payload"])
+        payload.pop("report_controls_version")
+        await store.update_case(case["id"], case["status"], payload=payload)
+    cases, _ = await mysql_repository.work()
+    assert case["id"] in {row["id"] for row in cases}
+    await guard.recover_once()
+    current = await mysql_repository.get_case(case["id"])
+    assert current["payload"]["report_controls_version"] == 1
+    async with mysql_repository.lock(USER) as store:
+        assert {(row["target_id"], row["message_id"]) for row in before} == {
+            (row["target_id"], row["message_id"]) for row in await store.notices(case["id"])
+        }
+
+
+async def test_mysql_pending_message_deletion_survives_cleanup_and_recovers(
+    guard, mysql_repository
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    await send(guard)
+    case = (await mysql_repository.query("cases"))["rows"][0]
+    await guard.reviews.review(case["id"], "unban", ADMIN)
+    guard.client.fail["delete"] = PermissionError("missing rights")
+    with pytest.raises(GuardError):
+        await guard.reviews.review(case["id"], "delete", ADMIN)
+    current = await mysql_repository.get_case(case["id"])
+    payload = current["payload"]
+    payload["report_message_deletion"]["retry_at"] = (
+        utc_now_naive() - timedelta(seconds=1)
+    ).isoformat()
+    async with mysql_repository.lock(USER) as store:
+        await store.update_case(case["id"], current["status"], payload=payload)
+        await store.execute(
+            "UPDATE moderation_cases SET created_at=%s WHERE id=%s",
+            (utc_now_naive() - timedelta(days=100), case["id"]),
+        )
+    await mysql_repository.cleanup(7)
+    assert await mysql_repository.get_case(case["id"])
+    cases, _ = await mysql_repository.work()
+    assert case["id"] in {row["id"] for row in cases}
+    guard.client.fail.clear()
+    await guard.recover_once()
+    current = await mysql_repository.get_case(case["id"])
+    assert current["status"] == "ignored"
+    assert current["payload"]["report_message_deletion"]["status"] == "deleted"
+    await mysql_repository.cleanup(7)
+    assert await mysql_repository.get_case(case["id"]) is None
+
+
+@pytest.mark.parametrize("kind", ["report", "warn", "mute", "ban"])
+async def test_mysql_kick_review_records_compensation_and_keeps_lists(
+    guard, mysql_repository, kind
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    if kind == "report":
+        await send(guard)
+        case = (await mysql_repository.query("cases"))["rows"][0]
+    else:
+        async with mysql_repository.lock(USER) as store:
+            case = await guard.punish(
+                store,
+                CHAT,
+                guard.client.users[USER],
+                Match("message", "kick-test", "test", "test", "test", kind),
+                "kick-sql",
+            )
+    result = await guard.reviews.review(case["id"], "kick", ADMIN)
+    assert result["status"] == "kicked" and result["payload"]["kick_unbanned"]
+    assert not guard.client.member_rights[CHAT, USER]["view_messages"]
+    async with mysql_repository.lock(USER) as store:
+        assert not await store.blacklist(USER) and not await store.whitelisted(CHAT, USER)
+
+
+async def test_mysql_kick_visibility_policy_selects_existing_notices(guard, mysql_repository):
+    guard.repository = mysql_repository
+    case = await create_ban(guard, mysql_repository)
+    guard.group(CHAT).kick_button_enabled = False
+    cases, _ = await mysql_repository.work(control_policy={str(CHAT): False})
+    assert case["id"] in {row["id"] for row in cases}
+    await guard.recover_once()
+    saved = await mysql_repository.get_case(case["id"])
+    assert saved["payload"]["controls_version"] == 2 and not saved["payload"]["kick_button_enabled"]
+
+
 async def test_history_cleanup_persists_per_bot_without_touching_guard_data(mysql_repository):
     repository = mysql_repository
     await repository.initialize()
@@ -554,3 +677,30 @@ async def test_mysql_old_mute_detects_later_indefinite_mute_within_the_same_seco
     with pytest.raises(GuardError):
         await guard.reviews.review(first["id"], "unban", ADMIN)
     assert guard.client.member_rights[(CHAT, USER)]["send_messages"]
+
+
+@pytest.mark.parametrize(
+    "action,result", [("verify_skip", "admin_skipped"), ("verify_hold", "held")]
+)
+async def test_mysql_legacy_verification_controls_without_state_are_selected(
+    mysql_repository, action, result
+):
+    case_id = uuid.uuid4().hex
+    payload = {"verification_result": result}
+    if action == "verify_hold":
+        payload["verification_failure"] = {"reason": "timeout"}
+    async with mysql_repository.lock(USER) as store:
+        await store.create_case(
+            {
+                "id": case_id,
+                "event_key": uuid.uuid4().hex * 2,
+                "chat_id": CHAT,
+                "user_id": USER,
+                "action": action,
+                "status": "done",
+                "payload": payload,
+            }
+        )
+        await store.notice(case_id, ADMIN, 42, "done")
+    cases, _ = await mysql_repository.work()
+    assert case_id in {row["id"] for row in cases}
