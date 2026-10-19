@@ -82,6 +82,18 @@ class ConfigValidator:
             return ConfigValidationErrorEvent(
                 error="channels 必须是字符串数组", config_path=str(file_path)
             )
+        if "sakura_guard" in config:
+            from pydantic import ValidationError
+
+            from core.moderation.config import GuardConfig
+
+            try:
+                GuardConfig.model_validate(config["sakura_guard"])
+            except (ValidationError, ValueError, TypeError):
+                return ConfigValidationErrorEvent(
+                    error="Sakura Guard 配置无效，请检查群组 ID、规则、动作及超时范围",
+                    config_path=str(file_path),
+                )
         return ConfigValidator._validate_business_logic(config, file_path)
 
     @staticmethod

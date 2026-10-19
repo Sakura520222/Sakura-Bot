@@ -41,6 +41,7 @@ CMD_SHOW_AI_CONFIG = "show_ai"
 CMD_SHOW_SCHEDULE = "show_schedule"
 CMD_SHOW_POLL = "show_poll"
 CMD_CONFIG_HELP = "config_help"
+CMD_GUARD = "guard"
 
 CONFIG_HELP_AI_COMMANDS = (
     ("/showprompt", "查看当前总结提示词"),
@@ -178,4 +179,5 @@ def build_mainbot_menu_keyboard(menu: str = MENU_MAIN) -> list[list[Button]]:
             Button.inline("⚙️ 配置入口", data=build_callback("menu", MENU_CONFIG)),
         ],
         [Button.inline("❓ 完整帮助", data=build_callback("cmd", CMD_HELP))],
+        [Button.inline("🛡 Sakura Guard", data=build_callback("cmd", CMD_GUARD))],
     ]

@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 
 from core.commands.ai_config_commands import handle_show_ai_config
 from core.commands.channel_commands import handle_show_channels
+from core.commands.guard_commands import handle_guard
 from core.commands.other_commands import (
     handle_help,
     handle_show_channel_poll,
@@ -39,6 +40,7 @@ from core.telegram.mainbot_keyboards import (
     CMD_FORWARDING_HELP,
     CMD_FORWARDING_STATS,
     CMD_FORWARDING_STATUS,
+    CMD_GUARD,
     CMD_HELP,
     CMD_HISTORY,
     CMD_QA_RESTART,
@@ -64,6 +66,7 @@ logger = logging.getLogger(__name__)
 CommandHandler = Callable[[object], Awaitable[None]]
 
 _COMMAND_TEXTS = {
+    CMD_GUARD: "/guard",
     CMD_HELP: "/help",
     CMD_SUMMARY: "/summary",
     CMD_CHANNELS: "/showchannels",
@@ -84,6 +87,7 @@ _COMMAND_TEXTS = {
 }
 
 _COMMAND_HANDLERS: dict[str, CommandHandler] = {
+    CMD_GUARD: handle_guard,
     CMD_HELP: handle_help,
     CMD_SUMMARY: handle_manual_summary,
     CMD_CHANNELS: handle_show_channels,
@@ -107,6 +111,7 @@ class MainBotMenuCommandEvent:
     def __init__(self, source_event, client, text: str):
         self._source_event = source_event
         self.sender_id = source_event.sender_id
+        self.chat_id = getattr(source_event, "chat_id", None)
         self.text = text
         self.raw_text = text
         self.message = text

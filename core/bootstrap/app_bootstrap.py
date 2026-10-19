@@ -39,6 +39,7 @@ from core.initializers import (
     UserBotInitializer,
     WebAPIInitializer,
 )
+from core.initializers.moderation_initializer import ModerationInitializer
 from core.settings import get_api_hash, get_api_id, get_bot_token, validate_required_settings
 from core.system.error_handler import initialize_error_handling
 from core.telegram.client import set_active_client
@@ -63,6 +64,7 @@ class AppBootstrap:
 
         # 初始化各个初始化器
         self.database_initializer = DatabaseInitializer()
+        self.moderation_initializer = ModerationInitializer(event_bus=self._event_bus)
         self.scheduler_initializer = SchedulerInitializer(
             system_config_manager=self.system_config_manager
         )
@@ -96,6 +98,9 @@ class AppBootstrap:
 
             # 第4步：启动Telegram Bot客户端
             await self._start_telegram_client()
+
+            # 主 Bot 独立处理群管，在欢迎/投票处理器之前检查已启用的群组。
+            await self.moderation_initializer.initialize(self.client, get_db_manager())
 
             # 第5步：初始化UserBot（可选）
             await self._initialize_userbot()
@@ -249,6 +254,11 @@ class AppBootstrap:
     async def _cleanup(self) -> None:
         """清理资源"""
         self.logger.info("正在清理资源...")
+
+        try:
+            await self.moderation_initializer.shutdown()
+        except Exception as e:
+            self.logger.error(f"关闭 Sakura Guard 时出错: {type(e).__name__}: {e}")
 
         # 0. 停止 WebUI API 服务器
         try:

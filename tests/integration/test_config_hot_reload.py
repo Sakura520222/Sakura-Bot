@@ -7,12 +7,14 @@ from pathlib import Path
 import pytest
 
 from core.config import AsyncIOEventBus, ConfigManager, FileWatcher
+from core.config.events import ConfigChangedEvent
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_config_hot_reload():
+@pytest.mark.parametrize("reload_delay", [0, 0.75], ids=["normal", "delayed"])
+async def test_end_to_end_config_hot_reload(monkeypatch, reload_delay):
     """端到端测试：配置热重载完整流程"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # 1. 创建测试配置文件
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -27,26 +29,45 @@ async def test_end_to_end_config_hot_reload():
         # 3. 初始化事件总线
         event_bus = AsyncIOEventBus(sequential_mode=True)
         config_manager.event_bus = event_bus
+        reloaded = asyncio.Event()
+        received_events = []
+
+        async def on_config_changed(event):
+            received_events.append(event)
+            reloaded.set()
+
+        await event_bus.subscribe(ConfigChangedEvent, on_config_changed)
+
+        if reload_delay:
+            reload_config = config_manager.reload_config
+
+            async def delayed_reload():
+                # 模拟慢磁盘/繁忙 CI：重载完成时间明确超过原来的固定等待。
+                await asyncio.sleep(reload_delay)
+                return await reload_config()
+
+            monkeypatch.setattr(config_manager, "reload_config", delayed_reload)
 
         # 4. 启动文件监控
         file_watcher = FileWatcher(config_manager, loop)
         file_watcher.start(tmpdir)
 
-        # 5. 修改配置文件
-        await asyncio.sleep(0.1)
-        config_file.write_text(json.dumps({"version": 2, "channels": ["test1", "test2"]}))
+        try:
+            # 5. 修改配置文件
+            await asyncio.sleep(0.1)
+            expected = {"version": 2, "channels": ["test1", "test2"]}
+            config_file.write_text(json.dumps(expected))
 
-        # 6. 等待防抖和重载
-        await asyncio.sleep(0.6)
+            # 6. 等待真实重载事件；超时仍会明确暴露监控或重载故障。
+            await asyncio.wait_for(reloaded.wait(), timeout=5)
 
-        # 7. 验证 - 由于ConfigChangedEvent需要BusinessConfig对象而不是dict，
-        # 我们只验证配置文件内容是否正确更新
-        new_config = await config_manager.get_config()
-        assert new_config["version"] == 2
-        assert len(new_config["channels"]) == 2
-
-        # 8. 清理
-        file_watcher.stop()
+            # 7. 同时验证内存快照和事件中的完整配置。
+            assert await config_manager.get_config() == expected
+            assert len(received_events) == 1
+            assert received_events[0].config == expected
+        finally:
+            # 断言失败时也必须停止监控，避免线程和任务干扰后续用例。
+            file_watcher.stop()
 
 
 @pytest.mark.asyncio

@@ -143,7 +143,7 @@ def test_build_mainbot_menu_keyboard_has_buttons():
 
     assert buttons
     assert all(row for row in buttons)
-    assert len(buttons) == 3
+    assert len(buttons) == 4
 
     button_texts = [button.text for row in buttons for button in row]
     assert "📌 基础功能" in button_texts
@@ -151,6 +151,7 @@ def test_build_mainbot_menu_keyboard_has_buttons():
     assert "🔁 频道转发" in button_texts
     assert "⚙️ 配置入口" in button_texts
     assert "❓ 完整帮助" in button_texts
+    assert "🛡 Sakura Guard" in button_texts
 
 
 def test_build_callback_rejects_oversized_data():

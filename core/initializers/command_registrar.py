@@ -190,6 +190,16 @@ class CommandRegistrar:
         # 15. UserBot命令
         self._register_userbot_commands(client)
 
+        from core.commands.guard_commands import handle_guard
+
+        client.add_event_handler(
+            handle_guard,
+            NewMessage(
+                pattern=r"^/guard(?:_on|_off|_verify|_bots|_addword|_delword|_whitelist|_logs|_unban)?(?:@[A-Za-z0-9_]+)?(?:\s|$)",
+                incoming=True,
+            ),
+        )
+
         # 16. 输入处理器（非命令消息）
         self._register_input_handlers(client)
 
