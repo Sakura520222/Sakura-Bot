@@ -42,7 +42,7 @@ class ChatCleanup:
         if time.monotonic() - self.directory.last_scan > 300:
             self.directory.refresh(force=True)
             raise ChatCleanupError("会话列表已过期，请等待刷新完成后重新预览")
-        candidates = [row for row in snapshot["chats"] if row["is_admin"] is False]
+        candidates = [row for row in snapshot["chats"] if self.directory.can_leave(row)]
         token = secrets.token_urlsafe(32)
         now = time.monotonic()
         self.previews = {
@@ -67,6 +67,7 @@ class ChatCleanup:
             "unknown_count": sum(
                 row["joined"] is None or (row["joined"] is True and row["is_admin"] is None)
                 for row in snapshot["metadata"].values()
+                if row["is_standalone"]
             ),
         }
 
@@ -107,11 +108,13 @@ class ChatCleanup:
     async def _leave(self, chat_id):
         chat = await self.directory.check(chat_id)
         entry = self.directory.entries[chat_id]
+        if not entry["is_standalone"]:
+            return "skipped", "频道私信随所属频道管理，已保留"
         if entry["joined"] is False:
             return "skipped", "已不在该会话中"
         if entry["is_admin"] is True:
             return "skipped", "机器人当前为管理员，已保留"
-        if chat is None or entry["joined"] is not True or entry["is_admin"] is not False:
+        if chat is None or not self.directory.can_leave(entry):
             return "skipped", "无法确认成员身份或权限，已保留"
         request = (
             DeleteChatUserRequest(chat.id, InputUserSelf())

@@ -114,7 +114,7 @@ class Moderator:
         if not config.enabled:
             return
         chat = await call(self.client.get_entity(chat_id))
-        if not getattr(chat, "megagroup", False):
+        if not getattr(chat, "megagroup", False) or not self.directory.is_group(chat):
             raise GuardError("guard.supergroup_required")
         permissions = await self.actions.permissions(chat_id, self.bot_id)
         rights = getattr(permissions.participant, "admin_rights", None)

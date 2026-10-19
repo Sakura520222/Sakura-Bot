@@ -4,9 +4,12 @@
 
 import hashlib
 import sqlite3
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+from telethon import utils
 from telethon.errors import UserNotParticipantError
+from telethon.tl.types import Channel
 
 from core.moderation.groups import GroupDirectory, cached_chats
 
@@ -17,10 +20,26 @@ class DirectoryClient:
     def __init__(self, filename=None):
         self.session = SimpleNamespace(filename=filename)
         self.chats = {
-            CHAT: SimpleNamespace(title="真实群名", megagroup=True, left=False),
-            CHAT - 1: SimpleNamespace(title="已退出群", megagroup=True, left=False),
-            CHAT - 2: SimpleNamespace(
-                title="广播频道", megagroup=False, broadcast=True, left=False
+            CHAT: Channel(
+                id=utils.resolve_id(CHAT)[0],
+                title="真实群名",
+                photo=None,
+                date=datetime.now(UTC),
+                megagroup=True,
+            ),
+            CHAT - 1: Channel(
+                id=utils.resolve_id(CHAT - 1)[0],
+                title="已退出群",
+                photo=None,
+                date=datetime.now(UTC),
+                megagroup=True,
+            ),
+            CHAT - 2: Channel(
+                id=utils.resolve_id(CHAT - 2)[0],
+                title="广播频道",
+                photo=None,
+                date=datetime.now(UTC),
+                broadcast=True,
             ),
         }
         self.members = {CHAT, CHAT - 2}
@@ -118,7 +137,9 @@ async def test_lookup_failure_never_claims_cached_group_is_still_joined(tmp_path
 
 def test_join_message_and_leave_events_keep_directory_current():
     directory = GroupDirectory(DirectoryClient(), lambda: [], lambda: 999)
-    directory.observe(CHAT, SimpleNamespace(title="新加入的群", megagroup=True, left=False))
+    chat = directory.client.chats[CHAT]
+    chat.title = "新加入的群"
+    directory.observe(CHAT, chat)
     assert directory.snapshot()["groups"][0]["title"] == "新加入的群"
     directory.observe(CHAT, left=True)
     assert not directory.snapshot()["groups"]
