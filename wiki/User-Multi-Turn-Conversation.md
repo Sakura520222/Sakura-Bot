@@ -193,4 +193,4 @@ AI提示词中加入了明确的代词理解指令：
 
 **版本**: v3.0.0  
 **更新时间**: 2026-02-16  
-**相关文档**: [QA_BOT_GUIDE.md](QA_BOT_GUIDE.md), [RAG_FEATURE_V3.md](RAG_FEATURE_V3.md)
+**相关文档**: [问答 Bot 指南](User-QA-Bot-Guide.md), [RAG 技术文档](Developer-RAG-Feature-V3.md)

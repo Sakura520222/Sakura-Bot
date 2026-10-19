@@ -28,6 +28,7 @@
 |------|------|------|
 | **[投票功能](User-Poll-Feature.md)** | 频道投票配置指南 | ⭐⭐ |
 | **[WebUI 管理面板](User-WebUI-Guide.md)** | Web 管理界面使用指南 | ⭐⭐ |
+| **[Sakura Guard 智能群管](User-Sakura-Guard.md)** | 群聊规则、入群验证与黑白名单 | ⭐⭐ |
 
 ### 📜 社区规范
 

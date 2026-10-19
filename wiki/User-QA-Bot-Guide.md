@@ -437,7 +437,7 @@ docker-compose up -d qa_bot
 ### 社区贡献
 
 欢迎贡献代码和想法！请查看：
-- [贡献指南](CODE_OF_CONDUCT.md)
+- [行为准则](Code-of-Conduct.md)
 - [开发文档](https://github.com/Sakura520222/Sakura-Bot)
 
 ---

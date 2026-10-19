@@ -451,7 +451,7 @@ docker-compose up -d qa_bot
 
 ### 文档资源
 
-- **使用指南**: [wiki/QA_BOT_GUIDE.md](QA_BOT_GUIDE.md)
+- **使用指南**: [问答 Bot 指南](User-QA-Bot-Guide.md)
 - **主README**: [README.md](../README.md)
 - **代码文档**: 代码内docstring
 

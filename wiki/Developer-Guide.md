@@ -42,6 +42,7 @@
 |------|------|------|
 | **[CI/CD 工作流](Developer-Workflow-Improvements.md)** | 持续集成配置 | ⭐⭐ |
 | **[配置持久化与恢复](Developer-Configuration-Persistence.md)** | 配置写入接口、并发保护、备份与事故恢复 | ⭐⭐ |
+| **[文档站维护与部署](Developer-Documentation-Site.md)** | 本地预览、文档导航与推送自动发布 | ⭐ |
 
 ---
 

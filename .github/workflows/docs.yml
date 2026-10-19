@@ -1,0 +1,73 @@
+name: 文档站构建与部署
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建文档站
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: wiki
+    steps:
+      - name: 检出文档和更新时间历史
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: wiki/package-lock.json
+
+      - name: 安装文档站依赖
+        run: npm ci
+
+      - name: 构建文档并检查内部链接
+        run: npm run docs:build
+        env:
+          DOCS_BASE: ${{ vars.DOCS_BASE }}
+
+      - name: 上传 GitHub Pages 产物
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: wiki/.vitepress/dist
+
+  deploy:
+    name: 部署 GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检查 Pages 配置
+        uses: actions/configure-pages@v5
+
+      - name: 发布文档站
+        id: deployment
+        uses: actions/deploy-pages@v4
