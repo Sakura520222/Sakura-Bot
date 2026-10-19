@@ -56,6 +56,7 @@ class GuardRule(BaseModel):
 class GuardGroup(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     enabled: bool = False
+    kick_button_enabled: bool = True
     verify_join: bool = True
     verification_timeout: int = Field(default=120, ge=30, le=600)
     verification_max_attempts: int = Field(default=3, ge=1, le=10)

@@ -33,10 +33,15 @@ async def test_challenge_shows_identity_and_admin_buttons(guard, store):
     message = guard.client.sent[(CHAT, session["message_id"])]
     assert "昵称：正常成员" in message["text"]
     assert "用户名：@alice" in message["text"] and str(USER) in message["text"]
-    assert [len(row) for row in message["buttons"]] == [4, 2, 1]
+    assert [len(row) for row in message["buttons"]] == [4, 3, 1]
     controls = [button for row in message["buttons"][1:] for button in row]
-    assert [button.text for button in controls] == ["一键封禁", "封禁并加入黑名单", "跳过验证"]
-    assert [button.type.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"s"]
+    assert [button.text for button in controls] == [
+        "一键封禁",
+        "封禁并加入黑名单",
+        "仅踢出",
+        "跳过验证",
+    ]
+    assert [button.type.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"j", b"s"]
     assert all(len(button.type.data) <= 64 for button in controls)
 
 

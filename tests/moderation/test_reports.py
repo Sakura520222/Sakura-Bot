@@ -101,6 +101,7 @@ async def test_report_works_without_automatic_guard_and_applies_no_penalty(guard
             "忽略本次举报",
             "一键封禁",
             "封禁并加入黑名单",
+            "仅踢出",
             "删除被举报消息",
         ]
     assert "已提交管理员审核" in event.reply.call_args.args[0]
@@ -340,7 +341,7 @@ async def test_administrator_can_dismiss_ban_or_blacklist_a_report(guard, store,
     assert not store.white
     if action == "unban":
         assert not guard.client.calls and not store.black
-        assert [row[0].text for row in review_buttons(result)] == ["删除被举报消息"]
+        assert [row[0].text for row in review_buttons(result)] == ["仅踢出", "删除被举报消息"]
         assert "已忽略" in case_status(result)
     else:
         assert guard.client.calls == [("ban", CHAT, USER)]
@@ -458,7 +459,7 @@ async def test_protected_or_deleted_original_uses_snapshot_without_losing_review
     assert not guard.client.forwarded and len(guard.client.sent) == 2
     for message in guard.client.sent.values():
         assert "无法转发" in message["text"] and "被举报的广告内容" in message["text"]
-        assert len(message["buttons"]) == 4
+        assert len(message["buttons"]) == 5
     attempts = len(guard.client.forward_attempts)
     await guard.reviews.review(case["id"], "unban", ADMIN)
     assert len(guard.client.forward_attempts) == attempts

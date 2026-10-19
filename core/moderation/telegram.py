@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
 from telethon.tl.functions.messages import (
+    DeleteChatUserRequest,
     ForwardMessagesRequest,
     HideChatJoinRequestRequest,
     SendMessageRequest,
@@ -131,6 +132,18 @@ class TelegramActions:
 
     async def unban(self, chat_id, user_id):
         await mutate(self.client.edit_permissions(chat_id, user_id, view_messages=True))
+
+    async def kick_basic_group(self, chat_id, user_id):
+        peer = await call(self.client.get_input_entity(chat_id))
+        await mutate(
+            self.client(
+                DeleteChatUserRequest(
+                    getattr(peer, "chat_id", abs(chat_id)),
+                    await self.input_user(user_id),
+                    revoke_history=False,
+                )
+            )
+        )
 
     async def join_request(self, chat_id, user_id, approved):
         await mutate(self.client(HideChatJoinRequestRequest(chat_id, user_id, approved=approved)))

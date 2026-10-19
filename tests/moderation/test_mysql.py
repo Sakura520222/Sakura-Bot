@@ -173,6 +173,43 @@ async def test_mysql_pending_message_deletion_survives_cleanup_and_recovers(
     assert await mysql_repository.get_case(case["id"]) is None
 
 
+@pytest.mark.parametrize("kind", ["report", "warn", "mute", "ban"])
+async def test_mysql_kick_review_records_compensation_and_keeps_lists(
+    guard, mysql_repository, kind
+):
+    from .test_reports import send
+
+    guard.repository = mysql_repository
+    if kind == "report":
+        await send(guard)
+        case = (await mysql_repository.query("cases"))["rows"][0]
+    else:
+        async with mysql_repository.lock(USER) as store:
+            case = await guard.punish(
+                store,
+                CHAT,
+                guard.client.users[USER],
+                Match("message", "kick-test", "test", "test", "test", kind),
+                "kick-sql",
+            )
+    result = await guard.reviews.review(case["id"], "kick", ADMIN)
+    assert result["status"] == "kicked" and result["payload"]["kick_unbanned"]
+    assert not guard.client.member_rights[CHAT, USER]["view_messages"]
+    async with mysql_repository.lock(USER) as store:
+        assert not await store.blacklist(USER) and not await store.whitelisted(CHAT, USER)
+
+
+async def test_mysql_kick_visibility_policy_selects_existing_notices(guard, mysql_repository):
+    guard.repository = mysql_repository
+    case = await create_ban(guard, mysql_repository)
+    guard.group(CHAT).kick_button_enabled = False
+    cases, _ = await mysql_repository.work(control_policy={str(CHAT): False})
+    assert case["id"] in {row["id"] for row in cases}
+    await guard.recover_once()
+    saved = await mysql_repository.get_case(case["id"])
+    assert saved["payload"]["controls_version"] == 2 and not saved["payload"]["kick_button_enabled"]
+
+
 async def test_history_cleanup_persists_per_bot_without_touching_guard_data(mysql_repository):
     repository = mysql_repository
     await repository.initialize()

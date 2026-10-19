@@ -25,9 +25,14 @@ from .repository import ACTIVE_VERIFICATIONS
 from .telegram import call, same_rights, verification_rights
 
 logger = logging.getLogger(__name__)
-CHALLENGE_VERSION = 3
-ADMIN_ACTIONS = {b"b": "ban", b"x": "blacklist", b"s": "skip"}
-ADMIN_RESULTS = {"ban": "admin_banned", "blacklist": "admin_blacklisted", "skip": "admin_skipped"}
+CHALLENGE_VERSION = 4
+ADMIN_ACTIONS = {b"b": "ban", b"x": "blacklist", b"j": "kick", b"s": "skip"}
+ADMIN_RESULTS = {
+    "ban": "admin_banned",
+    "blacklist": "admin_blacklisted",
+    "kick": "admin_kicked",
+    "skip": "admin_skipped",
+}
 ADMIN_ACTIONABLE_STATES = {"waiting", "passing", "cancelling", "held"}
 
 
@@ -146,7 +151,12 @@ def challenge_buttons(session, config=None):
     management = [
         Button.inline(t(f"guard.verify_{action}_button"), (prefix + code.decode()).encode())
         for code, action in ADMIN_ACTIONS.items()
-        if action in config.verification_admin_actions and action != "skip"
+        if action != "skip"
+        and (
+            config.kick_button_enabled
+            if action == "kick"
+            else action in config.verification_admin_actions
+        )
     ]
     if management:
         rows.append(management)
@@ -163,6 +173,7 @@ def challenge_policy(config):
             "verification_timeout_action",
             "verification_wrong_action",
             "verification_admin_actions",
+            "kick_button_enabled",
         )
     }
 
@@ -180,7 +191,7 @@ def challenge_text(session, identity, config=None):
         wrong_action=t(f"guard.verify_action_{config.verification_wrong_action}"),
         timeout_action=t(f"guard.verify_action_{config.verification_timeout_action}"),
         admin_hint="\n" + t("guard.admin_verification_hint")
-        if config.verification_admin_actions
+        if config.verification_admin_actions or config.kick_button_enabled
         else "",
     )
 
@@ -382,6 +393,7 @@ class Verification:
         policy = [
             session["status"],
             self.service.group(session["chat_id"]).verification_admin_actions,
+            self.service.group(session["chat_id"]).kick_button_enabled,
             session.get("message_id"),
         ]
         if session["payload"].get("notification_controls_policy") == policy:
@@ -408,7 +420,9 @@ class Verification:
         for case in cases:
             payload = dict(case["payload"])
             payload.update(
-                verification_state=session["status"], verification_admin_actions=policy[1]
+                verification_state=session["status"],
+                verification_admin_actions=policy[1],
+                kick_button_enabled=policy[2],
             )
             self.link_message(payload, session)
             if payload != case["payload"]:
@@ -752,7 +766,7 @@ class Verification:
             return False
 
     async def notification_callback(self, event):
-        matched = re.fullmatch(rb"sg:n:([0-9a-f]{32}):([bxs])", event.data)
+        matched = re.fullmatch(rb"sg:n:([0-9a-f]{32}):([bxjs])", event.data)
         if not matched:
             raise GuardError("guard.invalid_callback")
         case_id = matched[1].decode()
@@ -811,7 +825,7 @@ class Verification:
             post_verification = (
                 notice_case_id is not None
                 and session["status"] in {"passed", "admin_skipped"}
-                and action in {"ban", "blacklist"}
+                and action in {"ban", "blacklist", "kick"}
             )
             if (
                 session["status"] not in ADMIN_ACTIONABLE_STATES | {"admin_pending"}
@@ -837,7 +851,11 @@ class Verification:
                     session["status"] = "held"
             if session["status"] != "admin_pending":
                 config = self.service.group(session["chat_id"])
-                if action not in config.verification_admin_actions:
+                if (
+                    not config.kick_button_enabled
+                    if action == "kick"
+                    else action not in config.verification_admin_actions
+                ):
                     raise GuardError("guard.verification_action_disabled")
                 if (
                     session["expires_at"] <= utc_now_naive()
@@ -908,7 +926,7 @@ class Verification:
                 t(f"guard.verify_reason_{action}"),
                 str(user.id),
                 str(user.id),
-                "verify_skip" if action == "skip" else "ban",
+                "verify_skip" if action == "skip" else "kick" if action == "kick" else "ban",
             )
             payload = await self.service.snapshot(session["chat_id"], user, match)
             self.link_message(payload, session)
@@ -958,8 +976,12 @@ class Verification:
             await store.update_case(case["id"], "cancelled", payload=payload)
             return
         try:
-            user = await call(self.actions.client.get_entity(case["user_id"]))
             action = intent["action"]
+            if action == "kick":
+                await self.service.reviews.kick_member(store, case, manage_verification=False)
+                await store.update_case(case["id"], "done")
+                return
+            user = await call(self.actions.client.get_entity(case["user_id"]))
             if action == "skip":
                 if not verified_skip(session) or intent != session["payload"].get("admin_action"):
                     raise GuardError("error.permission_denied")
@@ -1010,7 +1032,7 @@ class Verification:
             )
 
     async def callback(self, event):
-        admin = re.fullmatch(rb"sg:v:([0-9a-f]{32}):([bxs])", event.data)
+        admin = re.fullmatch(rb"sg:v:([0-9a-f]{32}):([bxjs])", event.data)
         if admin:
             await self.admin_callback(event, admin[1].decode(), ADMIN_ACTIONS[admin[2]])
             return

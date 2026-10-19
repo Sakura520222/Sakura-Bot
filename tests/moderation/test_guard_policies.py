@@ -125,6 +125,7 @@ async def test_result_mode_preserves_result_with_no_active_buttons(guard, store)
 
 async def test_disabled_admin_action_is_hidden_and_rejected_even_with_forged_data(guard, store):
     config = guard.config.groups[str(CHAT)]
+    config.kick_button_enabled = False
     config.verification_admin_actions = ["skip"]
     session = await begin(guard, store)
     assert [len(row) for row in challenge_buttons(session, config)] == [4, 1]

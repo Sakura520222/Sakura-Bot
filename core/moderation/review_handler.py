@@ -6,7 +6,9 @@
 import re
 from datetime import datetime, timedelta
 
-from telethon.tl.types import MessageEmpty
+from telethon import utils
+from telethon.errors import UserNotParticipantError
+from telethon.tl.types import MessageEmpty, PeerChat
 
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
@@ -29,14 +31,19 @@ class ReviewHandler:
         self.service = service
 
     async def callback(self, event):
-        match = re.fullmatch(rb"sg:r:([0-9a-f]{32}):([abukd])(?::([0-9]{1,8}))?", event.data)
+        match = re.fullmatch(rb"sg:r:([0-9a-f]{32}):([abukdj])(?::([0-9]{1,8}))?", event.data)
         if not match:
             await event.answer(t("guard.invalid_callback"), alert=True)
             return
         case_id = match[1].decode()
-        action = {b"a": "allow", b"b": "blacklist", b"u": "unban", b"k": "ban", b"d": "delete"}[
-            match[2]
-        ]
+        action = {
+            b"a": "allow",
+            b"b": "blacklist",
+            b"u": "unban",
+            b"k": "ban",
+            b"d": "delete",
+            b"j": "kick",
+        }[match[2]]
         result = await self.review(
             case_id,
             action,
@@ -62,7 +69,7 @@ class ReviewHandler:
         expected_chat_id=None,
         expected_generation=None,
     ):
-        if action not in {"allow", "blacklist", "unban", "ban", "delete"}:
+        if action not in {"allow", "blacklist", "unban", "ban", "delete", "kick"}:
             raise GuardError("guard.invalid_callback")
         # 初次读取只定位锁；锁内再次读取目标与状态，完全不采信回调里的群/用户。
         initial = await self.service.repository.get_case(case_id)
@@ -102,16 +109,39 @@ class ReviewHandler:
                 if result["payload"]["report_message_deletion"]["status"] != "deleted":
                     raise GuardError("guard.report_delete_pending")
                 return result
-            if case["status"] in {"allowed", "blacklisted", "unbanned", "unmuted", "ignored"}:
+            if case["status"] == "kicked":
+                return case
+            if (
+                action == "kick"
+                and case["status"] != "reviewing_kick"
+                and not self.service.group(case["chat_id"]).kick_button_enabled
+            ):
+                raise GuardError("guard.kick_disabled")
+            if case["status"] in {
+                "allowed",
+                "blacklisted",
+                "unbanned",
+                "unmuted",
+                "ignored",
+            } and not (action == "kick" and case["action"] == "report"):
                 return case
             if action == "ban" and is_ban_case(case):
                 return case
             report_pending = case["action"] == "report" and not is_ban_case(case)
             if report_pending and action == "allow":
                 raise GuardError("guard.invalid_callback")
-            if (case["status"] == "pending" and (is_ban_case(case) or report_pending)) or (
-                case["status"] == "done" and case["action"] in {"mute", "warn"}
+            if (
+                (case["status"] == "pending" and (is_ban_case(case) or report_pending))
+                or (case["status"] == "done" and case["action"] in {"mute", "warn"})
+                or (
+                    action == "kick"
+                    and case["action"] == "report"
+                    and case["status"]
+                    in {"allowed", "blacklisted", "unbanned", "unmuted", "ignored"}
+                )
             ):
+                if action == "kick":
+                    await self.check_kick_conflicts(store, case)
                 if (
                     action in {"allow", "unban"}
                     and not report_pending
@@ -258,6 +288,8 @@ class ReviewHandler:
                         await self.service.actions.ban(case["chat_id"], case["user_id"])
                     raise GuardError("guard.blacklist_conflict")
                 await self.release(store, case)
+            elif action == "kick":
+                await self.kick_member(store, case)
             elif action in {"blacklist", "ban"}:
                 user = await call(self.service.client.get_entity(case["user_id"]))
                 if await self.service.protected(case["chat_id"], user, applicant=True):
@@ -281,6 +313,96 @@ class ReviewHandler:
                 case["status"],
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+
+    async def check_kick_conflicts(self, store, case):
+        if await store.blacklist(case["user_id"]):
+            raise GuardError("guard.blacklist_conflict")
+        other = await store.active_ban(case["chat_id"], case["user_id"], exclude_case_id=case["id"])
+        if other and other["id"] != case["id"]:
+            raise GuardError("guard.other_ban_conflict")
+
+    async def save_kick_progress(self, store, case, **changes):
+        payload = {**case["payload"], **changes, "report_notice_dirty": True}
+        await store.update_case(
+            case["id"], case["status"], error=case.get("error"), payload=payload
+        )
+        case["payload"] = payload
+
+    async def kick_member(self, store, case, *, manage_verification=True):
+        """临时封禁确认落盘后，只恢复解封阶段，避免重复踢出重新入群的用户。"""
+        if not case["payload"].get("kick_unbanned"):
+            await self.check_kick_conflicts(store, case)
+        chat_id, user_id = case["chat_id"], case["user_id"]
+        basic_group = utils.resolve_id(chat_id)[1] is PeerChat
+        if not basic_group and not case["payload"].get("kick_unbanned"):
+            own = await self.service.actions.permissions(chat_id, self.service.bot_id)
+            rights = getattr(own.participant, "admin_rights", None)
+            if not own.is_creator and not getattr(rights, "ban_users", False):
+                raise GuardError("guard.permissions_required")
+        freshly_banned = False
+        if not case["payload"].get("kick_banned"):
+            user = await call(self.service.client.get_entity(user_id))
+            if await self.service.protected(chat_id, user, applicant=True):
+                raise GuardError("guard.verification_target_protected")
+            current = {} if basic_group else await self.service.actions.rights(chat_id, user_id)
+            if current.get("view_messages"):
+                permissions = await self.service.actions.permissions(chat_id, user_id)
+                if not (
+                    is_ban_case(case)
+                    or (case["payload"].get("review_history") or [{}])[-1].get("action")
+                    == "blacklist"
+                    or case["payload"].get("kick_ban_intended")
+                ):
+                    raise GuardError("guard.other_ban_conflict")
+                if getattr(permissions.participant, "kicked_by", None) != self.service.bot_id:
+                    raise GuardError("guard.permissions_changed")
+            if manage_verification:
+                session = await store.verification(chat_id, user_id)
+                if session and session["status"] == "admin_pending":
+                    raise GuardError("guard.already_processing")
+                if not case["payload"].get("kick_session_checked"):
+                    await self.save_kick_progress(
+                        store,
+                        case,
+                        kick_session_checked=True,
+                        kick_session_id=session["id"] if session else None,
+                    )
+                elif (session["id"] if session else None) != case["payload"].get("kick_session_id"):
+                    raise GuardError("guard.permissions_changed")
+                if session and session["status"] in ACTIVE_VERIFICATIONS:
+                    session["status"] = "admin_kick_pending"
+                    session["payload"]["cleanup_pending"] = True
+                    await store.save_verification(session)
+                    await self.service.verification.finish_message(store, session)
+            if basic_group:
+                await self.service.actions.kick_basic_group(chat_id, user_id)
+            else:
+                if not current.get("view_messages"):
+                    await self.save_kick_progress(store, case, kick_ban_intended=True)
+                    await self.service.actions.ban(chat_id, user_id)
+                    freshly_banned = True
+            await self.save_kick_progress(store, case, kick_banned=True)
+        if not basic_group and not case["payload"].get("kick_unbanned"):
+            try:
+                current = await self.service.actions.rights(chat_id, user_id)
+            except UserNotParticipantError:
+                current = {}
+            if freshly_banned or current.get("view_messages"):
+                if not freshly_banned:
+                    permissions = await self.service.actions.permissions(chat_id, user_id)
+                    if getattr(permissions.participant, "kicked_by", None) != self.service.bot_id:
+                        raise GuardError("guard.permissions_changed")
+                await self.service.actions.unban(chat_id, user_id)
+        if not case["payload"].get("kick_unbanned"):
+            await self.save_kick_progress(store, case, kick_unbanned=True)
+        if manage_verification and case["payload"].get("kick_session_id"):
+            session = await store.verification_by_id(case["payload"]["kick_session_id"])
+            if session:
+                session["status"] = "admin_kicked"
+                session["error"] = None
+                session["payload"]["cleanup_pending"] = True
+                await store.save_verification(session)
+                await self.service.verification.finish_message(store, session)
 
     async def release(self, store, case):
         chat_id, user_id = case["chat_id"], case["user_id"]

@@ -21,6 +21,7 @@ from .telegram import TelegramActionError, call
 logger = logging.getLogger(__name__)
 RETIRED_NOTICES = {"deleting", "removed"}
 REPORT_CONTROLS_VERSION = 1
+CONTROLS_VERSION = 2
 
 
 def stable_random_id(value):
@@ -46,6 +47,16 @@ def review_buttons(case, config=None):
         return None
     generation = case.get("payload", {}).get("review_generation", 0)
     prefix = f"sg:r:{case['id']}:"
+    kick_enabled = (
+        config.kick_button_enabled if config else case["payload"].get("kick_button_enabled", True)
+    )
+    kick_buttons = (
+        [[Button.inline(t("guard.kick_button"), f"{prefix}j:{generation}".encode())]]
+        if kick_enabled
+        and case["status"] not in {"kicked", "executing"}
+        and not (case["status"].startswith("reviewing_") and case["status"] != "reviewing_kick")
+        else []
+    )
     deletion = case["payload"].get("report_message_deletion", {})
     message_id = case["payload"].get("message_id")
     delete_buttons = []
@@ -62,23 +73,31 @@ def review_buttons(case, config=None):
         )
         delete_buttons = [[Button.inline(t(key), f"{prefix}d:{generation}".encode())]]
     if case["action"] == "report" and case["status"] == "pending" and not is_ban_case(case):
-        return [
-            [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
-            for code, key in [
-                ("u", "guard.report_dismiss_button"),
-                ("k", "guard.verify_ban_button"),
-                ("b", "guard.verify_blacklist_button"),
+        return (
+            [
+                [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
+                for code, key in [
+                    ("u", "guard.report_dismiss_button"),
+                    ("k", "guard.verify_ban_button"),
+                    ("b", "guard.verify_blacklist_button"),
+                ]
             ]
-        ] + delete_buttons
+            + kick_buttons
+            + delete_buttons
+        )
     if is_ban_case(case) and case["status"] == "pending":
-        return [
-            [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
-            for code, key in [
-                ("u", "guard.unban_button"),
-                ("a", "guard.allow_button"),
-                ("b", "guard.blacklist_button"),
+        return (
+            [
+                [Button.inline(t(key), f"{prefix}{code}:{generation}".encode())]
+                for code, key in [
+                    ("u", "guard.unban_button"),
+                    ("a", "guard.allow_button"),
+                    ("b", "guard.blacklist_button"),
+                ]
             ]
-        ] + delete_buttons
+            + kick_buttons
+            + delete_buttons
+        )
     verification_failure = bool(case["payload"].get("verification_failure"))
     if case["action"] in {"mute", "warn"} and case["status"] == "done" and not verification_failure:
         return [
@@ -99,11 +118,11 @@ def review_buttons(case, config=None):
                 ("k", "guard.verify_ban_button"),
                 ("b", "guard.verify_blacklist_button"),
             ]
-        ]
+        ] + kick_buttons
     if case["action"] not in {"verify_start", "verify_pass", "verify_skip"} and not (
         verification_failure and case["payload"].get("verification_result") == "held"
     ):
-        return delete_buttons or None
+        return ((kick_buttons if case["action"] == "report" else []) + delete_buttons) or None
     state = case["payload"].get("verification_state") or (
         "admin_skipped"
         if case["action"] == "verify_skip" and case["status"] == "done"
@@ -121,8 +140,9 @@ def review_buttons(case, config=None):
     )
     return [
         [Button.inline(t(f"guard.verify_{action}_button"), f"sg:n:{case['id']}:{code}".encode())]
-        for code, action in [("b", "ban"), ("x", "blacklist"), ("s", "skip")]
-        if action in allowed and (action != "skip" or active)
+        for code, action in [("b", "ban"), ("x", "blacklist"), ("j", "kick"), ("s", "skip")]
+        if (kick_enabled if action == "kick" else action in allowed)
+        and (action != "skip" or active)
     ] or None
 
 
@@ -155,7 +175,11 @@ def notification_text(case, *, link_profile=False):
         reason=evidence.get("reason", "")[:256],
         original=evidence.get("original", "")[:200],
         normalized=evidence.get("normalized", "")[:200],
-        action="ban" if case["payload"].get("review_ban_confirmed") else case["action"],
+        action="kick"
+        if case["status"] in {"kicked", "reviewing_kick"}
+        else "ban"
+        if case["payload"].get("review_ban_confirmed")
+        else case["action"],
         status=status,
         time=str(case["created_at"]) + " UTC",
         message_id=payload.get("message_id") or "—",
@@ -431,8 +455,13 @@ class Notifier:
         await self.save_payload(store, parent, notification_cleanup_pending=bool(pending))
 
     async def sync(self, store, case, config):
-        if case["action"] == "report" and (
-            case["payload"].get("report_controls_version") != REPORT_CONTROLS_VERSION
+        if (
+            case["payload"].get("controls_version") != CONTROLS_VERSION
+            or (
+                case["action"] == "report"
+                and case["payload"].get("report_controls_version") != REPORT_CONTROLS_VERSION
+            )
+            or case["payload"].get("kick_button_enabled", True) != config.kick_button_enabled
             or case["payload"].get("report_notice_dirty")
         ):
             # 先使原通知待同步，再清除标记；任一步失败均可恢复，复用原消息 ID。
@@ -449,7 +478,11 @@ class Notifier:
             await self.save_payload(
                 store,
                 case,
-                report_controls_version=REPORT_CONTROLS_VERSION,
+                controls_version=CONTROLS_VERSION,
+                kick_button_enabled=config.kick_button_enabled,
+                report_controls_version=REPORT_CONTROLS_VERSION
+                if case["action"] == "report"
+                else case["payload"].get("report_controls_version"),
                 report_notice_dirty=False,
             )
         if case["action"] == "verify_start":

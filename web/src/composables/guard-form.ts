@@ -2,6 +2,7 @@ import type { GuardGroup, GuardRule, GuardSwitch } from "../api/guard";
 
 export const guardLabels: Record<keyof GuardGroup, string> = {
   enabled: "启用本群 Sakura Guard", verify_join: "普通入群验证",
+  kick_button_enabled: "显示“仅踢出”管理按钮",
   nickname_filter: "昵称及用户名过滤", message_filter: "消息及编辑消息过滤",
   block_bot_messages: "拦截机器人发言", share_global_blacklist: "共享全局永久黑名单",
   ban_any_traditional: "拦截任何繁体昵称（默认关闭）", allow_group_admin_review: "授权本群管理员审核",
@@ -17,7 +18,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   verification_notice_cleanup: "结果通知送达后删除验证开始通知",
 };
 export const guardSwitches: GuardSwitch[] = [
-  "enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
+  "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
 ];

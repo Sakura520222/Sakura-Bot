@@ -12,6 +12,7 @@ export interface GuardRule {
 }
 export interface GuardGroup {
   enabled: boolean;
+  kick_button_enabled: boolean;
   verify_join: boolean;
   verification_timeout: number;
   verification_max_attempts: number;
@@ -168,7 +169,7 @@ export async function addGuardGroup(chat_id: number) {
 export async function getGuardRecords(table: GuardTable, params: Record<string, unknown>) {
   return (await api.get<{ rows: GuardRecord[]; total: number }>(`/guard/records/${table}`, { params })).data;
 }
-export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban" | "delete", generation = 0) {
+export async function reviewGuardCase(id: string, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "kick", generation = 0) {
   return (await api.post(`/guard/cases/${id}/review`, { action, generation })).data;
 }
 export async function retryGuardCase(id: string) {

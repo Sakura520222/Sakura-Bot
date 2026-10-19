@@ -45,7 +45,7 @@
           <n-form-item label="验证超时后的动作"><n-select v-model:value="form.verification_timeout_action" :options="verificationActions" /></n-form-item>
           <n-form-item label="答错达到上限后的动作"><n-select v-model:value="form.verification_wrong_action" :options="verificationActions" /></n-form-item>
           <n-form-item label="验证结束后的消息处理"><n-select v-model:value="form.verification_message_mode" :options="verificationMessageModes" /></n-form-item>
-          <n-form-item label="验证管理按钮（群内及通知）"><n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏全部管理按钮" /></n-form-item>
+          <n-form-item label="验证管理按钮（仅踢出由上方独立开关控制）"><n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏封禁、拉黑和跳过按钮" /></n-form-item>
           <n-form-item label="昵称及用户名关键词命中动作"><n-select v-model:value="form.nickname_action" :options="memberActions" /></n-form-item>
           <n-form-item label="机器人发言命中动作"><n-select v-model:value="form.bot_message_action" :options="actions" /></n-form-item>
           <n-form-item label="消息关键词命中动作"><n-select v-model:value="form.message_action" :options="actions" /></n-form-item>
@@ -198,9 +198,16 @@ Object.assign(statusNames, { failed_kicked: "验证失败 / 已踢出", failed_m
 Object.assign(statusNames, { held: "未通过验证 / 保持禁言待管理员处理" });
 Object.assign(statusNames, { reviewing_unban: "解除限制恢复中", reviewing_ban: "管理员封禁恢复中", unbanned: "已仅解除封禁", unmuted: "已撤销本次禁言", ignored: "已忽略本次警告", allowed: "已处理并加入本群白名单" });
 Object.assign(statusNames, { deleting: "旧通知清理中", removed: "原通知已清理" });
+Object.assign(statusNames, { kicked: "已仅踢出 · 可再次加入", reviewing_kick: "仅踢出恢复中", admin_kicked: "管理员已仅踢出", admin_kick_pending: "管理员仅踢出处理中" });
 const statuses = Object.entries(statusNames).map(([value, label]) => ({ label: value === "pending" ? "待审核（封禁 / 用户举报）" : value === "ignored" ? "已忽略（警告 / 举报）" : label, value }));
 const statusLabel = (value?: string) => value ? statusNames[value] || value : "—";
 const pendingReport = (row: GuardRecord) => row.action === "report" && !row.payload?.review_ban_confirmed;
+function canKick(row: GuardRecord) {
+  return ["ban", "mute", "warn", "report"].includes(row.action || "") &&
+    (row.status === "pending" || (row.status === "done" && ["mute", "warn"].includes(row.action || "")) ||
+      (row.action === "report" && ["allowed", "blacklisted", "unbanned", "unmuted", "ignored", "reviewing_kick"].includes(row.status || ""))) &&
+    !row.payload?.verification_failure && (groups.value[String(row.chat_id)]?.kick_button_enabled ?? true);
+}
 function deletionError(value: string) {
   const names: Record<string, string> = {
     "guard.report_delete_permission_error": "主 Bot 缺少管理员或删除消息权限",
@@ -346,10 +353,11 @@ async function loadRecords() {
 }
 function resetRecords() { page.value = 1; loadRecords(); }
 function changeTable() { filterStatus.value = table.value === "cases" ? "pending" : null; resetRecords(); }
-async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "retry" | "removeWhite" | "removeBlack") {
+async function act(row: GuardRecord, action: "allow" | "blacklist" | "unban" | "ban" | "delete" | "kick" | "retry" | "removeWhite" | "removeBlack") {
   dialog.warning({
-    title: action === "delete" ? "确认删除被举报消息" : "确认群管操作",
+    title: action === "kick" ? "确认仅踢出（允许再次加入）" : action === "delete" ? "确认删除被举报消息" : "确认群管操作",
     content: action === "delete" ? "删除本案被举报的原消息，删除后无法恢复。用户权限及黑白名单由其他审核操作决定。" : action === "unban" && pendingReport(row) ? "忽略本次举报，保留记录，不修改成员权限或黑白名单。" : action === "unban" ? "仅撤销本次案件的封禁、禁言或警告，不新增白名单。其他限制及入群验证继续生效。" : action === "ban" ? "将该用户在本群封禁，保留后续审核入口，不加入永久黑名单。" : action === "allow" ? "撤销本次限制并加入本群白名单。其他限制及入群验证继续生效，不会自动重新拉入群。" : action === "blacklist" ? "封禁并将用户 ID 记入永久黑名单；其他群按共享开关生效。" : action === "removeBlack" ? "撤销全局永久拉黑记录。各群现有封禁仍需分别通过案件解除。" : action === "removeWhite" ? "删除本群白名单后，该用户会重新接受本群规则检测。" : "重试此前失败的操作，实际结果会记录在案件中。",
+    ...(action === "kick" ? { content: "仅踢出该用户，允许其再次加入本群。" } : {}),
     positiveText: "确认", negativeText: "取消",
     onPositiveClick: async () => {
       try {
@@ -374,12 +382,13 @@ function evidenceUrl(row: GuardRecord) {
 const columns = computed<DataTableColumns<GuardRecord>>(() => [
   { title: "群组 / 收件人", key: "chat_id", width: 180, render: row => String(row.chat_id || row.source_chat_id || row.target_id || "—") },
   { title: "用户 ID", key: "user_id", width: 150 },
-  { title: "动作", key: "action", width: 150, render: row => row.payload?.review_ban_confirmed ? "管理员封禁" : row.action ? recordActionNames[row.action] || actions.find(action => action.value === row.action)?.label || row.action : "—" },
+  { title: "动作", key: "action", width: 150, render: row => ["kicked", "reviewing_kick"].includes(row.status || "") ? "仅踢出" : row.payload?.review_ban_confirmed ? "管理员封禁" : row.action ? recordActionNames[row.action] || actions.find(action => action.value === row.action)?.label || row.action : "—" },
   { title: "状态", key: "status", width: 190, render: recordStatus },
   { title: "时间（UTC）", key: "created_at", width: 190, render: row => row.updated_at || row.created_at || row.last_seen_at || "—" },
   { title: "错误", key: "error", width: 180, ellipsis: { tooltip: true } },
   { title: "操作", key: "actions", width: 440, render: row => h(NSpace, { size: "small" }, { default: () => [
     h(NButton, { size: "small", onClick: () => { detail.value = row; showDetail.value = true; } }, { default: () => "详情" }),
+    ...(table.value === "cases" && canKick(row) ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "kick") }, { default: () => "仅踢出" })] : []),
     ...(table.value === "cases" && row.action === "report" && row.payload?.message_id && row.payload?.report_message_deletion?.status !== "deleted" ? [h(NButton, { size: "small", type: "warning", onClick: () => act(row, "delete") }, { default: () => row.payload?.report_message_deletion?.error ? "重试删除被举报消息" : "删除被举报消息" })] : []),
     ...(table.value === "cases" && (row.status === "pending" || (row.status === "done" && ["mute", "warn"].includes(row.action || "") && !row.payload?.verification_failure)) ? [
       h(NButton, { size: "small", onClick: () => act(row, "unban") }, { default: () => pendingReport(row) ? "忽略本次举报" : row.status === "pending" ? "仅解除封禁" : row.action === "mute" ? "仅解除本次禁言" : "忽略本次警告" }),

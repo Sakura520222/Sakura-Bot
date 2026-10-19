@@ -110,7 +110,7 @@ async def test_mute_and_warning_buttons_have_distinct_effects(guard, store, kind
     guard.client.member_rights[(CHAT, USER)]["send_polls"] = True
     original = deepcopy(guard.client.member_rights[(CHAT, USER)])
     case = await punish(guard, store, kind)
-    assert len(review_buttons(case)) == 4
+    assert len(review_buttons(case)) == 5
     await guard.reviews.callback(await notice_event(store, case, code))
     saved = await store.case(case["id"])
     assert saved["status"] == (status or ("unmuted" if kind == "mute" else "ignored"))
@@ -129,7 +129,7 @@ async def test_warning_escalation_invalidates_the_original_buttons(guard, store)
     await guard.reviews.callback(await notice_event(store, case, "k"))
     saved = await store.case(case["id"])
     assert saved["status"] == "pending" and saved["payload"]["review_generation"] == 1
-    assert len(review_buttons(saved)) == 3
+    assert len(review_buttons(saved)) == 4
     with pytest.raises(GuardError, match="invalid_callback"):
         await guard.reviews.callback(original_allow)
     assert guard.client.member_rights[(CHAT, USER)][
@@ -185,7 +185,7 @@ async def test_notification_review_rejects_non_admin_and_forged_origins(guard, s
 async def test_start_notification_can_manage_the_original_verification(guard, store, code, status):
     await begin(guard, store)
     case = lifecycle_case(store, "verify_start")
-    assert len(review_buttons(case, guard.group(CHAT))) == 3
+    assert len(review_buttons(case, guard.group(CHAT))) == 4
     await guard.verification.notification_callback(
         await notice_event(store, case, code, prefix="n")
     )
@@ -195,7 +195,7 @@ async def test_start_notification_can_manage_the_original_verification(guard, st
     assert controls is None
     if code == "s":
         result = next(row for row in store.cases.values() if row["action"] == "verify_skip")
-        assert len(review_buttons(result, guard.group(CHAT))) == 2
+        assert len(review_buttons(result, guard.group(CHAT))) == 3
 
 
 @pytest.mark.parametrize("code", ["b", "x"])
@@ -206,7 +206,7 @@ async def test_passed_notification_can_ban_after_original_verification_deadline(
     saved["expires_at"] = utc_now_naive() - timedelta(days=1)
     await store.save_verification(saved)
     case = lifecycle_case(store, "verify_pass")
-    assert len(review_buttons(case, guard.group(CHAT))) == 2
+    assert len(review_buttons(case, guard.group(CHAT))) == 3
     event = await notice_event(store, case, code, prefix="n")
     await guard.verification.notification_callback(event)
     assert (await store.verification(CHAT, USER))["status"] == (
@@ -225,7 +225,7 @@ async def test_passing_replaces_start_notification_with_result_controls(guard, s
     updated = await store.case(start["id"])
     assert updated["payload"]["verification_state"] == "passed"
     assert review_buttons(updated, guard.group(CHAT)) is None
-    assert len(review_buttons(lifecycle_case(store, "verify_pass"), guard.group(CHAT))) == 2
+    assert len(review_buttons(lifecycle_case(store, "verify_pass"), guard.group(CHAT))) == 3
     before = list(guard.client.calls)
     with pytest.raises(GuardError, match="invalid_callback"):
         await guard.verification.notification_callback(old_skip)

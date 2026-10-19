@@ -76,13 +76,13 @@ class GuardStore:
                 return row
         return None
 
-    async def active_ban(self, chat_id, user_id):
+    async def active_ban(self, chat_id, user_id, *, exclude_case_id=None):
         return await self.one(
-            """SELECT * FROM moderation_cases WHERE chat_id=%s AND user_id=%s
+            """SELECT * FROM moderation_cases WHERE chat_id=%s AND user_id=%s AND id<>%s
             AND (action='ban' OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.review_ban_confirmed'))='true' OR status IN ('reviewing_ban','reviewing_blacklist'))
             AND status IN ('executing','pending','reviewing_allow','reviewing_blacklist','reviewing_unban','reviewing_ban')
             ORDER BY created_at DESC LIMIT 1""",
-            (chat_id, user_id),
+            (chat_id, user_id, exclude_case_id or ""),
         )
 
     async def create_case(self, case):
@@ -159,7 +159,7 @@ class GuardStore:
         return bool(
             await self.execute(
                 """UPDATE moderation_cases SET status=%s,reviewer_id=%s,reviewer_actor=%s,reviewed_at=%s,error=NULL,updated_at=%s
-            WHERE id=%s AND ((status='pending' AND action IN ('ban','mute','warn','report')) OR (status='done' AND action IN ('mute','warn')))""",
+            WHERE id=%s AND ((status='pending' AND action IN ('ban','mute','warn','report')) OR (status='done' AND action IN ('mute','warn')) OR (%s='kick' AND action='report' AND status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))""",
                 (
                     f"reviewing_{action}",
                     reviewer_id,
@@ -167,6 +167,7 @@ class GuardStore:
                     utc_now_naive(),
                     utc_now_naive(),
                     case_id,
+                    action,
                 ),
             )
         )
@@ -214,7 +215,7 @@ class GuardStore:
                 await self.set_whitelist(
                     case["chat_id"], case["user_id"], case["reviewer_id"], False
                 )
-            elif action not in {"unban", "ban"}:
+            elif action not in {"unban", "ban", "kick"}:
                 raise ValueError("invalid review action")
             unban_status = (
                 "unbanned"
@@ -233,6 +234,7 @@ class GuardStore:
                     "blacklist": "blacklisted",
                     "unban": unban_status,
                     "ban": "pending",
+                    "kick": "kicked",
                 }[action],
                 payload=payload,
             )
@@ -433,23 +435,25 @@ class GuardRepository:
             )
         return {"rows": rows, "total": total["total"]}
 
-    async def work(self):
+    async def work(self, *, control_policy=None):
         async with self.pool.acquire() as connection:
             store = GuardStore(connection)
             cases = await store.all(
                 """SELECT DISTINCT c.* FROM moderation_cases c
                 LEFT JOIN moderation_notifications n ON n.case_id=c.id
                 WHERE NOT (c.action='verify_start' AND JSON_EXTRACT(c.payload,'$.notification_replaced_by') IS NOT NULL)
-                AND (c.status IN ('executing','reviewing_allow','reviewing_blacklist','reviewing_unban','reviewing_ban')
+                AND (c.status IN ('executing','reviewing_allow','reviewing_blacklist','reviewing_unban','reviewing_ban','reviewing_kick')
                 OR n.case_id IS NULL OR ((n.synced_status IS NULL OR n.synced_status NOT IN ('deleting','removed')) AND (n.synced_status IS NULL OR n.synced_status<>c.status OR n.error IS NOT NULL) AND n.retry_at<=%s)
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_pending'))='true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_retry_at')),'1970-01-01T00:00:00')<=%s)
                 OR (c.action='report' AND c.status='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_controls_version')),'0')<>'1')
+                OR (((c.action IN ('ban','mute','warn','report') AND (c.status='pending' OR (c.status='done' AND c.action IN ('mute','warn')) OR (c.action='report' AND c.status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))) OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_state')) IN ('waiting','passing','cancelling','held','passed','admin_skipped'))) AND (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.controls_version')),'0')<>'2' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.kick_button_enabled')),'true')<>COALESCE(JSON_UNQUOTE(JSON_EXTRACT(%s,CONCAT('$."',c.chat_id,'"'))),'true')))
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_notice_dirty'))='true'
                 OR (c.action='report' AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.status'))='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.retry_at')),'1970-01-01T00:00:00')<=%s))
                 ORDER BY c.updated_at ASC LIMIT 50""",
                 (
                     utc_now_naive(),
                     utc_now_naive().isoformat(timespec="seconds"),
+                    encode(control_policy or {}),
                     utc_now_naive().isoformat(),
                 ),
             )
@@ -466,10 +470,10 @@ class GuardRepository:
             store = GuardStore(connection)
             # 永久名单、待审核和待恢复操作不随审计留存期限删除。
             await store.execute(
-                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' LIMIT 500",
+                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' LIMIT 500",
                 (cutoff,),
             )
             await store.execute(
-                "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
+                "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','admin_kick_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
                 (cutoff,),
             )

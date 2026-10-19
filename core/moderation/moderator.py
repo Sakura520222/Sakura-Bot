@@ -595,7 +595,11 @@ class Moderator:
         raise events.StopPropagation
 
     async def recover_once(self):
-        cases, sessions = await self.repository.work()
+        cases, sessions = await self.repository.work(
+            control_policy={
+                key: group.kick_button_enabled for key, group in self.config.groups.items()
+            }
+        )
         for candidate in cases:
             try:
                 async with self.repository.lock(candidate["user_id"]) as store:

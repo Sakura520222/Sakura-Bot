@@ -66,6 +66,7 @@ async def test_nickname_enforced_when_content_is_clean_and_case_replay_is_idempo
         "仅解除封禁",
         "解除并加入白名单",
         "永久拉黑并入库标记",
+        "仅踢出",
     ]
 
 

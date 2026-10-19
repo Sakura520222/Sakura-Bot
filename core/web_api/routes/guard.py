@@ -42,7 +42,7 @@ router = APIRouter(dependencies=[GUARD_ADMIN])
 
 
 class ReviewRequest(BaseModel):
-    action: Literal["allow", "blacklist", "unban", "ban", "delete"]
+    action: Literal["allow", "blacklist", "unban", "ban", "delete", "kick"]
     generation: int | None = Field(default=None, ge=0, le=99999999)
 
 
@@ -78,6 +78,7 @@ class GroupSwitchRequest(BaseModel):
 
     field: Literal[
         "enabled",
+        "kick_button_enabled",
         "verify_join",
         "nickname_filter",
         "message_filter",

@@ -13,6 +13,7 @@ import pytest
 from telethon import utils
 from telethon.tl.functions.channels import EditBannedRequest
 from telethon.tl.functions.messages import (
+    DeleteChatUserRequest,
     ForwardMessagesRequest,
     HideChatJoinRequestRequest,
     SendMessageRequest,
@@ -71,13 +72,14 @@ class MemoryStore:
             None,
         )
 
-    async def active_ban(self, chat_id, user_id):
+    async def active_ban(self, chat_id, user_id, *, exclude_case_id=None):
         return next(
             (
                 deepcopy(row)
                 for row in self.cases.values()
                 if row["chat_id"] == chat_id
                 and row["user_id"] == user_id
+                and row["id"] != exclude_case_id
                 and (
                     row["action"] == "ban"
                     or row["payload"].get("review_ban_confirmed")
@@ -137,7 +139,11 @@ class MemoryStore:
 
     async def claim_review(self, case_id, action, reviewer_id, *, reviewer_actor=None):
         case = self.cases[case_id]
-        if case["status"] not in {"pending", "done"}:
+        if case["status"] not in {"pending", "done"} and not (
+            action == "kick"
+            and case["action"] == "report"
+            and case["status"] in {"allowed", "blacklisted", "unbanned", "unmuted", "ignored"}
+        ):
             return False
         case.update(
             status=f"reviewing_{action}",
@@ -184,6 +190,7 @@ class MemoryStore:
                 "blacklist": "blacklisted",
                 "unban": unban_status,
                 "ban": "pending",
+                "kick": "kicked",
             }[action],
             payload=payload,
         )
@@ -248,7 +255,7 @@ class MemoryRepository:
     async def get_verification(self, session_id):
         return await self.store.verification_by_id(session_id)
 
-    async def work(self):
+    async def work(self, *, control_policy=None):
         return deepcopy(list(self.store.cases.values())), deepcopy(
             list(self.store.sessions.values())
         )
@@ -266,6 +273,7 @@ class FakeTelegram:
         }
         self.member_rights = defaultdict(lambda: rights_dict(None))
         self.admins = set()
+        self.ban_actors = {}
         self.sent = {}
         self.source_messages = {}
         self.forwarded = {}
@@ -313,6 +321,7 @@ class FakeTelegram:
             is_admin=user_id in self.admins,
             is_creator=False,
             participant=SimpleNamespace(
+                kicked_by=self.ban_actors.get((chat_id, user_id)),
                 banned_rights=rights_object(self.member_rights[(chat_id, user_id)]),
                 admin_rights=SimpleNamespace(
                     ban_users=True, delete_messages=True, invite_users=True
@@ -325,6 +334,7 @@ class FakeTelegram:
         self.calls.append((action, chat_id, user_id))
         if action in self.fail:
             raise self.fail[action]
+        self.ban_actors[chat_id, user_id] = None if view_messages else 999
         self.member_rights[(chat_id, user_id)] = rights_dict(
             ChatBannedRights(until_date=None, view_messages=not view_messages)
         )
@@ -342,6 +352,11 @@ class FakeTelegram:
         return buttons
 
     async def __call__(self, request):
+        if isinstance(request, DeleteChatUserRequest):
+            self.calls.append(("kick", -request.chat_id, request.user_id.user_id))
+            if "kick" in self.fail:
+                raise self.fail["kick"]
+            return SimpleNamespace(updates=[])
         if isinstance(request, ForwardMessagesRequest):
             self.forward_attempts.append(request)
             if request.to_peer in self.fail:

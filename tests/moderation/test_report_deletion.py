@@ -35,6 +35,7 @@ async def test_delete_only_removes_reported_original_and_keeps_review_actions(gu
         "忽略本次举报",
         "一键封禁",
         "封禁并加入黑名单",
+        "仅踢出",
     ]
     assert {(row["target_id"], row["message_id"]) for row in before} == {
         (row["target_id"], row["message_id"]) for row in await store.notices(case["id"])
