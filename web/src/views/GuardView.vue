@@ -7,6 +7,8 @@
       </n-alert>
     </n-card>
 
+    <bot-chats-panel @changed="loadJoinedGroups()" />
+
     <n-card title="群组设置" :segmented="{ content: true }">
       <n-space align="center" class="toolbar">
         <n-select v-model:value="selectedId" :options="groupOptions" :disabled="loading || adding" placeholder="选择受管群组" style="width: 280px" />
@@ -151,6 +153,7 @@ import {
 } from "@/api/guard";
 import { createAutosave, type Autosave, saveError } from "@/composables/autosave";
 import { guardLabels, guardSwitches, immediateGuardFields, integerError, validateGuardField } from "@/composables/guard-form";
+import BotChatsPanel from "@/components/BotChatsPanel.vue";
 
 const message = useMessage();
 const dialog = useDialog();

@@ -12,10 +12,17 @@ from types import SimpleNamespace
 
 from telethon import events, utils
 from telethon.errors import UserNotParticipantError
+from telethon.tl.types import (
+    PeerChannel,
+    UpdateChannel,
+    UpdateChannelParticipant,
+    UpdateChatParticipantAdmin,
+)
 
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
 from .groups import GroupDirectory
 from .matcher import Match, Matcher, normalize
@@ -43,6 +50,9 @@ class Moderator:
         self._worker = None
         self._wake = asyncio.Event()
         self.directory = GroupDirectory(client, lambda: self.config.groups, lambda: self.bot_id)
+        self.chat_cleanup = ChatCleanup(
+            self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
+        )
         from .review_handler import ReviewHandler
         from .verification import Verification
 
@@ -73,6 +83,12 @@ class Moderator:
             (self.handle_message, events.MessageEdited(incoming=True)),
             (self.handle_join, events.ChatAction()),
             (self.handle_join_request, events.Raw(types=UpdateBotChatInviteRequester)),
+            (
+                self.handle_membership_update,
+                events.Raw(
+                    types=(UpdateChannel, UpdateChannelParticipant, UpdateChatParticipantAdmin)
+                ),
+            ),
             (self.handle_callback, events.CallbackQuery(pattern=rb"^sg:")),
         ):
             self.client.add_event_handler(callback, builder)
@@ -84,6 +100,7 @@ class Moderator:
         for callback, builder in self._handlers:
             self.client.remove_event_handler(callback, builder)
         self._handlers.clear()
+        await self.chat_cleanup.stop()
         await self.directory.stop()
         if self._worker:
             self._worker.cancel()
@@ -199,7 +216,7 @@ class Moderator:
 
     async def handle_message(self, event):
         chat_id = event.chat_id
-        if event.is_group:
+        if event.is_group or getattr(event, "is_channel", False):
             self.directory.observe(chat_id, getattr(event, "chat", None))
         if (
             not event.is_group
@@ -231,6 +248,18 @@ class Moderator:
             raise
         except Exception:
             logger.exception("Guard 消息检测失败 chat=%s", chat_id)
+
+    async def handle_membership_update(self, update):
+        if isinstance(update, (UpdateChannelParticipant, UpdateChatParticipantAdmin)):
+            if update.user_id != self.bot_id:
+                return
+        chat_id = (
+            -update.chat_id
+            if isinstance(update, UpdateChatParticipantAdmin)
+            else utils.get_peer_id(PeerChannel(update.channel_id))
+        )
+        self.directory.invalidate(chat_id)
+        self.directory.refresh()
 
     async def handle_join(self, event):
         chat_id = event.chat_id
