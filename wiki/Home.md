@@ -17,6 +17,7 @@
 - **[多轮对话功能](User-Multi-Turn-Conversation.md)** - 上下文感知对话说明
 - **[投票功能](User-Poll-Feature.md)** - 频道投票配置指南
 - **[WebUI 管理面板](User-WebUI-Guide.md)** - Web 管理界面使用指南
+- **[Sakura Guard 智能群管](User-Sakura-Guard.md)** - 群聊规则与入群验证
 - **[行为准则](Code-of-Conduct.md)** - 社区贡献行为准则
 
 ### 👨‍💻 开发者文档
@@ -33,6 +34,7 @@
 - **[查询改写增强](Developer-Query-Rewrite-Enhancement.md)** - QA 引擎查询改写功能说明
 - **[Ruff 脚本指南](Developer-Ruff-Script-Guide.md)** - 代码质量工具
 - **[CI/CD 工作流](Developer-Workflow-Improvements.md)** - 持续集成配置
+- **[文档站维护与部署](Developer-Documentation-Site.md)** - 本地预览与推送自动发布
 
 ---
 

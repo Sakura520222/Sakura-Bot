@@ -10,7 +10,7 @@
 
 > **An intelligent Telegram channel management tool powered by AI** 🤖✨
 
-[中文文档](README.md) | [Documentation](wiki) | [Report Bug](https://github.com/Sakura520222/Sakura-Bot/issues) | [Request Feature](https://github.com/Sakura520222/Sakura-Bot/issues)
+[中文文档](README.md) | [Documentation](https://sakura-bot.pyabunny.com/) | [Wiki sources](wiki/Home.md) | [Report Bug](https://github.com/Sakura520222/Sakura-Bot/issues) | [Request Feature](https://github.com/Sakura520222/Sakura-Bot/issues)
 
 ---
 

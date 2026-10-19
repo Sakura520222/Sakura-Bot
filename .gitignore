@@ -200,6 +200,11 @@ web/dist/
 web/.vite/
 *.tsbuildinfo
 
+# Documentation site
+wiki/node_modules/
+wiki/.vitepress/cache/
+wiki/.vitepress/dist/
+
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

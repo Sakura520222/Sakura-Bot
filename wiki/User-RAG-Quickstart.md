@@ -155,7 +155,7 @@ RERANKER_FINAL=3
 
 ## 八、下一步
 
-- 📖 阅读 [RAG功能详细文档](./RAG_FEATURE_V3.md)
+- 📖 阅读 [RAG功能详细文档](Developer-RAG-Feature-V3.md)
 - 🔧 调整检索参数优化性能
 - 📊 监控日志了解检索过程
 - 🚀 开始使用自然语言查询历史总结
