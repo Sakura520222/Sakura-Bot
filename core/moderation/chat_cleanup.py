@@ -22,6 +22,10 @@ class ChatCleanupError(ValueError):
 
 
 class ChatCleanup:
+    operation = "退出会话"
+    success_status = "left"
+    audit_action = "guard.chat.leave"
+
     def __init__(self, directory, authorized):
         self.directory = directory
         self.authorized = authorized
@@ -32,8 +36,8 @@ class ChatCleanup:
         self._stopped = False
 
     def preview(self, actor):
-        if self._stopped or (self.task and not self.task.done()):
-            raise ChatCleanupError("正在退出会话，请等待执行结束")
+        if self._stopped or self.directory.mutating:
+            raise ChatCleanupError("正在处理会话，请等待执行结束")
         snapshot = self.directory.snapshot()
         if snapshot["discovering"] or not self.directory.last_scan:
             raise ChatCleanupError("正在核实会话，请等待列表刷新完成后预览")
@@ -42,7 +46,7 @@ class ChatCleanup:
         if time.monotonic() - self.directory.last_scan > 300:
             self.directory.refresh(force=True)
             raise ChatCleanupError("会话列表已过期，请等待刷新完成后重新预览")
-        candidates = [row for row in snapshot["chats"] if self.directory.can_leave(row)]
+        candidates = self._candidates(snapshot)
         token = secrets.token_urlsafe(32)
         now = time.monotonic()
         self.previews = {
@@ -71,6 +75,9 @@ class ChatCleanup:
             ),
         }
 
+    def _candidates(self, snapshot):
+        return [row for row in snapshot["chats"] if self.directory.can_leave(row)]
+
     def start(self, token, actor, *, audit=None):
         # 请求重试返回同一任务，不重复执行已经确认的退出操作。
         if token == self._token and self.job and actor == self.job["actor"]:
@@ -84,8 +91,8 @@ class ChatCleanup:
             or preview["expires"] <= time.monotonic()
         ):
             raise ChatCleanupError("预览已失效，请重新预览并确认")
-        if self.task and not self.task.done():
-            raise ChatCleanupError("已有退出任务正在执行，请等待完成")
+        if self.directory.mutating:
+            raise ChatCleanupError("已有会话处理任务正在执行，请等待完成")
         if self.directory.task and not self.directory.task.done():
             raise ChatCleanupError("正在刷新会话，请等待刷新完成后确认")
         self.previews.pop(token)
@@ -105,7 +112,7 @@ class ChatCleanup:
     def status(self):
         return deepcopy(self.job)
 
-    async def _leave(self, chat_id):
+    async def _process(self, chat_id):
         chat = await self.directory.check(chat_id)
         entry = self.directory.entries[chat_id]
         if not entry["is_standalone"]:
@@ -137,27 +144,27 @@ class ChatCleanup:
                     self.job["error"] = "操作者权限或机器人身份已变化，剩余会话未处理"
                     break
                 try:
-                    status, message = await self._leave(row["chat_id"])
+                    status, message = await self._process(row["chat_id"])
                 except FloodWaitError as error:
                     status, message = "failed", f"Telegram 限流，请 {error.seconds} 秒后重新预览"
                     self.job["error"] = message
                 except Exception as error:
                     status, message = (
                         "failed",
-                        f"退出失败：{type(error).__name__}，请刷新核实后重试",
+                        f"{self.operation}失败：{type(error).__name__}，请刷新核实后重试",
                     )
                     logger.warning(
-                        "Bot 退出会话失败 chat=%s error=%s", row["chat_id"], type(error).__name__
+                        "Bot 会话处理失败 chat=%s error=%s", row["chat_id"], type(error).__name__
                     )
                 result = {**row, "status": status, "message": message}
                 self.job["results"].append(result)
                 self.job["checked"] += 1
                 if audit:
                     await audit(
-                        action="guard.chat.leave",
+                        action=self.audit_action,
                         actor=str(actor),
                         target=str(row["chat_id"]),
-                        success=status == "left",
+                        success=status == self.success_status,
                         message=message,
                     )
                 if self.job["error"]:
@@ -166,8 +173,8 @@ class ChatCleanup:
             self.job["error"] = "服务已停止，未完成的会话请刷新核实后重新预览"
             raise
         except Exception:
-            self.job["error"] = "退出任务中断，请刷新会话核实结果后重新预览"
-            logger.exception("Bot 会话退出任务中断")
+            self.job["error"] = f"{self.operation}任务中断，请刷新会话核实结果后重新预览"
+            logger.exception("Bot 会话处理任务中断")
         finally:
             self.directory.mutating = False
             self.job["status"] = "interrupted" if self.job["error"] else "completed"
@@ -181,6 +188,6 @@ class ChatCleanup:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        self.directory.mutating = False
         if self.job and self.job["status"] == "running":
+            self.directory.mutating = False
             self.job.update(status="interrupted", error="服务已停止，请刷新核实后重新预览")

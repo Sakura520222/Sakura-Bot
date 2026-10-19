@@ -93,7 +93,7 @@ async def test_direct_messages_are_never_left_even_when_parent_is_unknown(parent
     client.get_permissions = AsyncMock()
     directory = GroupDirectory(client, lambda: [], lambda: 999)
     service = ChatCleanup(directory, lambda actor: True)
-    result = await service._leave(DM)
+    result = await service._process(DM)
     assert result[0] == "skipped" and "频道私信" in result[1]
     assert not client.requests
     client.get_permissions.assert_not_awaited()
@@ -147,7 +147,7 @@ async def test_entity_identity_mismatch_never_checks_permissions_or_leaves(inval
     client.get_permissions = AsyncMock()
     directory = GroupDirectory(client, lambda: [], lambda: 999)
     service = ChatCleanup(directory, lambda actor: True)
-    result = await service._leave(utils.get_peer_id(parent))
+    result = await service._process(utils.get_peer_id(parent))
     row = directory.entries[PARENT]
     assert result[0] == "skipped"
     assert row["error"] == "ChatIdentityMismatch"

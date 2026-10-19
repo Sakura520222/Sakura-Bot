@@ -69,7 +69,7 @@ class LeaveChatsRequest(BaseModel):
     @model_validator(mode="after")
     def require_confirmation(self):
         if self.confirmed is not True:
-            raise ValueError("请先预览并确认退出名单")
+            raise ValueError("请先预览并确认操作名单")
         return self
 
 
@@ -142,7 +142,11 @@ async def joined_groups(refresh: bool = False, context=GUARD_ADMIN):
 async def joined_chats(refresh: bool = False, context=GUARD_ADMIN):
     service, _ = context
     service.directory.refresh(force=refresh)
-    return {**service.directory.snapshot(), "cleanup": service.chat_cleanup.status()}
+    return {
+        **service.directory.snapshot(),
+        "cleanup": service.chat_cleanup.status(),
+        "history_cleanup": service.history_cleanup.status(),
+    }
 
 
 @router.post("/chats/leave-preview")
@@ -159,6 +163,24 @@ async def leave_chats(body: LeaveChatsRequest, context=GUARD_ADMIN):
     service, actor = context
     try:
         return service.chat_cleanup.start(body.token, actor, audit=record_system_audit)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@router.post("/chats/history-cleanup-preview")
+async def preview_clean_chat_history(context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        return service.history_cleanup.preview(actor)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@router.post("/chats/history-cleanup")
+async def clean_chat_history(body: LeaveChatsRequest, context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        return service.history_cleanup.start(body.token, actor, audit=record_system_audit)
     except ChatCleanupError as error:
         raise HTTPException(409, str(error)) from error
 
