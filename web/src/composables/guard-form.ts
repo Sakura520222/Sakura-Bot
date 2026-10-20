@@ -7,7 +7,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   block_bot_messages: "拦截机器人发言", share_global_blacklist: "共享全局永久黑名单",
   ban_any_traditional: "拦截任何繁体昵称（默认关闭）", allow_group_admin_review: "授权本群管理员审核",
   verification_timeout: "验证超时", join_requests: "入群申请流程", message_action: "消息关键词命中动作",
-  mute_seconds: "禁言时长", nickname_keywords: "昵称关键词", message_keywords: "消息与链接关键词",
+  mute_seconds: "禁言时长", message_keywords: "消息与链接关键词",
   rules: "自定义规则", trusted_bot_ids: "受信任 Bot", reviewer_ids: "审核用户", notification_ids: "通知收件人",
   review_chat_id: "审核群 ID",
   verification_max_attempts: "最多答错次数", verification_timeout_action: "验证超时动作",
@@ -23,7 +23,7 @@ export const guardSwitches: GuardSwitch[] = [
   "notification_enabled", "verification_notice_cleanup",
 ];
 export const immediateGuardFields: (keyof GuardGroup)[] = [
-  ...guardSwitches, "nickname_keywords", "message_keywords", "trusted_bot_ids", "reviewer_ids",
+  ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",
   "notification_ids", "join_requests", "message_action",
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
@@ -34,12 +34,17 @@ export function integerError(value: unknown, min: number, max: number) {
     ? `请输入 ${min}–${max} 范围内的整数` : undefined;
 }
 
+export function validateNicknameKeywords(value: string[]): string | undefined {
+  if (value.length > 50000 || value.some(word => !word.trim() || [...word].length > 128)) return "关键词不可为空，每项最多 128 字符，最多 50000 项";
+  return undefined;
+}
+
 export function validateGuardField(field: keyof GuardGroup, value: unknown): string | undefined {
   if (field === "verification_timeout") return integerError(value, 30, 600);
   if (field === "verification_max_attempts") return integerError(value, 1, 10);
   if (field === "mute_seconds") return integerError(value, 30, 2592000);
   if (field === "review_chat_id") return value === null ? undefined : integerError(value, -Number.MAX_SAFE_INTEGER, -1);
-  if (field === "nickname_keywords" || field === "message_keywords") {
+  if (field === "message_keywords") {
     const words = value as string[];
     if (words.length > 100 || words.some(word => !word.trim() || word.length > 128)) return "关键词不可为空，每项最多 128 字符，最多 100 项";
   }

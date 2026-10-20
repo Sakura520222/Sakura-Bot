@@ -27,7 +27,6 @@ export interface GuardGroup {
   message_filter: boolean;
   block_bot_messages: boolean;
   bot_message_action: GuardAction;
-  nickname_keywords: string[];
   message_keywords: string[];
   message_action: GuardAction;
   mute_seconds: number;
@@ -93,7 +92,7 @@ export interface GuardRecord {
   };
 }
 export async function getGuardConfig() {
-  return (await api.get<{ config: { groups: Record<string, GuardGroup>; retention_days: number }; defaults: GuardGroup }>("/guard/config")).data;
+  return (await api.get<{ config: { nickname_keywords: string[]; groups: Record<string, GuardGroup>; retention_days: number }; defaults: GuardGroup }>("/guard/config")).data;
 }
 export async function saveGuardGroup(chat: string, group: GuardGroup) {
   return (await api.put(`/guard/groups/${chat}`, group)).data;
@@ -107,6 +106,10 @@ export async function saveGuardSettings(chat: string, changes: Partial<GuardGrou
 export async function saveGuardRetention(retention_days: number, previous: number) {
   const result = (await api.patch<{ success: boolean; retention_days: number }>("/guard/retention", { retention_days, previous })).data;
   return { retention_days: result.retention_days };
+}
+export async function saveGuardNicknameKeywords(nickname_keywords: string[], previous: string[]) {
+  const result = (await api.patch<{ success: boolean; nickname_keywords: string[] }>("/guard/nickname-keywords", { nickname_keywords, previous })).data;
+  return { nickname_keywords: result.nickname_keywords };
 }
 export interface GuardChat {
   chat_id: number;

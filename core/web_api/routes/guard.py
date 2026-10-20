@@ -7,7 +7,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from core.commands.guard_commands import save_group
 from core.config import read_config, save_config_changes
@@ -15,7 +15,13 @@ from core.config.persistence import ConfigConflictError, ConfigPersistenceError,
 from core.i18n.i18n import t
 from core.moderation import get_guard
 from core.moderation.chat_cleanup import ChatCleanupError
-from core.moderation.config import GuardConfig, GuardGroup
+from core.moderation.config import (
+    GuardConfig,
+    GuardGroup,
+    NicknameKeywords,
+    migrate_nickname_keywords,
+    validate_words,
+)
 from core.moderation.moderator import GuardError
 from core.moderation.repository import ACTIVE_VERIFICATIONS
 from core.web_api.deps import record_system_audit
@@ -54,6 +60,17 @@ class WhitelistRequest(BaseModel):
 
 class RetentionRequest(BaseModel):
     retention_days: int = Field(ge=7, le=3650)
+
+
+class NicknameKeywordsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nickname_keywords: NicknameKeywords
+    previous: NicknameKeywords
+
+    @field_validator("nickname_keywords", "previous")
+    @classmethod
+    def validate_keywords(cls, values):
+        return validate_words(values)
 
 
 class AddGroupRequest(BaseModel):
@@ -191,12 +208,14 @@ async def add_group(body: AddGroupRequest, context=GUARD_ADMIN):
     service, _ = context
     # 立即提交完整配置快照，不等待 Telegram；重复添加不覆盖已有群设置。
     snapshot = read_config()
+    migrated = migrate_nickname_keywords(snapshot)
     groups = snapshot.setdefault("sakura_guard", {}).setdefault("groups", {})
     key = str(body.chat_id)
     created = key not in groups
     if created:
         groups[key] = GuardGroup().model_dump()
         GuardConfig.model_validate(snapshot["sakura_guard"])
+    if created or migrated:
         save_config_changes(snapshot)
     service.reload(read_config())
     service.directory.remember(body.chat_id)
@@ -229,6 +248,7 @@ async def update_group_switch(chat_id: int, body: GroupSwitchRequest, context=GU
     try:
         # 校验前读取基线，只提交指定字段；并发写入由配置存储合并或拒绝。
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.get("sakura_guard", {})
         group = section.get("groups", {}).get(str(chat_id))
         if group is None:
@@ -258,6 +278,7 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
     previous = body.previous.model_dump(include=fields)
     try:
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.get("sakura_guard", {})
         group = section.get("groups", {}).get(str(chat_id))
         if group is None:
@@ -283,7 +304,8 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
         latest = read_config().get("sakura_guard", {}).get("groups", {}).get(str(chat_id))
         if latest is None:
             raise HTTPException(404, t("guard.group_not_found")) from error
-        raise settings_conflict(GuardGroup.model_validate(latest).model_dump(), fields) from error
+        latest = GuardConfig.model_validate({"groups": {str(chat_id): latest}}).groups[str(chat_id)]
+        raise settings_conflict(latest.model_dump(), fields) from error
     except ConfigPersistenceError as error:
         raise HTTPException(503, str(error)) from error
     except ValidationError as error:
@@ -293,11 +315,35 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
     return {"success": True, "group": service.group(chat_id).model_dump()}
 
 
+@router.patch("/nickname-keywords")
+async def update_nickname_keywords(body: NicknameKeywordsRequest, context=GUARD_ADMIN):
+    service, _ = context
+    try:
+        snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
+        section = snapshot["sakura_guard"]
+        current = section["nickname_keywords"]
+        if current != body.previous and current != body.nickname_keywords:
+            raise settings_conflict({"nickname_keywords": current}, ["nickname_keywords"])
+        section["nickname_keywords"] = body.nickname_keywords
+        save_config_changes(snapshot)
+        service.reload(read_config())
+    except ConfigConflictError as error:
+        current = GuardConfig.model_validate(
+            read_config().get("sakura_guard", {})
+        ).nickname_keywords
+        raise settings_conflict({"nickname_keywords": current}, ["nickname_keywords"]) from error
+    except ConfigPersistenceError as error:
+        raise HTTPException(503, str(error)) from error
+    return {"success": True, "nickname_keywords": service.config.nickname_keywords}
+
+
 @router.patch("/retention")
 async def update_retention(body: RetentionPatchRequest, context=GUARD_ADMIN):
     service, _ = context
     try:
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.setdefault("sakura_guard", {})
         current = section.get("retention_days", GuardConfig().retention_days)
         if current not in {body.previous, body.retention_days}:
@@ -322,6 +368,7 @@ async def update_retention(body: RetentionPatchRequest, context=GUARD_ADMIN):
 async def retention(body: RetentionRequest, context=GUARD_ADMIN):
     service, _ = context
     snapshot = read_config()
+    migrate_nickname_keywords(snapshot)
     snapshot.setdefault("sakura_guard", {})["retention_days"] = body.retention_days
     GuardConfig.model_validate(snapshot["sakura_guard"])
     save_config_changes(snapshot)

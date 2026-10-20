@@ -8,6 +8,22 @@
       </n-alert>
     </n-card>
 
+    <n-card title="全局昵称关键词" :segmented="{ content: true }">
+      <n-space v-if="nicknameEditor" vertical :size="12">
+        <n-text depth="3">所有受管群共用这份词表，同时检查昵称和用户名。各群需开启“昵称及用户名过滤”，命中后执行该群配置的动作。新增、删除后自动保存，清空则停用关键词匹配。</n-text>
+        <div @compositionstart="nicknameEditor.setComposing(true)" @compositionend="endNicknameComposition" @focusout="nicknameEditor?.flush()">
+          <n-dynamic-tags v-model:value="nicknameEditor.values.nickname_keywords" :disabled="loading" />
+        </div>
+        <n-space align="center">
+          <n-text depth="3">{{ nicknameEditor.values.nickname_keywords.length }} 个关键词</n-text>
+          <n-text role="status" aria-live="polite">{{ autosaveStatus(nicknameEditor) }}</n-text>
+          <n-text v-if="nicknameEditor.states.nickname_keywords.error" type="warning">{{ nicknameEditor.states.nickname_keywords.error }}</n-text>
+          <n-button v-if="nicknameEditor.states.nickname_keywords.status === 'error'" size="small" @click="nicknameEditor.flush(true)">重试自动保存</n-button>
+        </n-space>
+      </n-space>
+      <n-text v-else depth="3">正在加载全局词表…</n-text>
+    </n-card>
+
     <n-card title="群组设置" :segmented="{ content: true }">
       <n-space align="center" class="toolbar">
         <n-select v-model:value="selectedId" :options="groupOptions" :disabled="loading || adding" placeholder="选择受管群组" style="width: 280px" />
@@ -51,7 +67,6 @@
           <n-form-item label="消息关键词命中动作"><n-select v-model:value="form.message_action" :options="actions" /></n-form-item>
           <n-form-item label="禁言时长（秒）"><n-input-number v-model:value="form.mute_seconds" :min="30" :max="2592000" /></n-form-item>
         </div>
-        <n-form-item label="昵称关键词（包括用户名；动作见上方配置）"><n-dynamic-tags v-model:value="form.nickname_keywords" /></n-form-item>
         <n-form-item label="消息与链接关键词"><n-dynamic-tags v-model:value="form.message_keywords" /></n-form-item>
         <div class="switch-grid">
           <n-form-item v-for="field in idFields" :key="field.key" :label="field.label">
@@ -149,11 +164,11 @@ import {
 } from "naive-ui";
 import {
   addGuardGroup, getGuardJoinedGroups, getGuardConfig, getGuardRecords, removeGuardBlacklist, retryGuardCase,
-  reviewGuardCase, saveGuardSettings, saveGuardRetention, setGuardWhitelist,
+  reviewGuardCase, saveGuardSettings, saveGuardRetention, saveGuardNicknameKeywords, setGuardWhitelist,
   type GuardChat, type GuardGroup, type GuardRecord, type GuardTable,
 } from "@/api/guard";
 import { createAutosave, type Autosave, saveError } from "@/composables/autosave";
-import { guardLabels, guardSwitches, immediateGuardFields, integerError, validateGuardField } from "@/composables/guard-form";
+import { guardLabels, guardSwitches, immediateGuardFields, integerError, validateGuardField, validateNicknameKeywords } from "@/composables/guard-form";
 
 const message = useMessage();
 const dialog = useDialog();
@@ -161,6 +176,7 @@ const loading = ref(false), recordsLoading = ref(false), adding = ref(false), co
 const switchFields = guardSwitches.map(key => ({ key, label: guardLabels[key] }));
 const editors = new Map<string, Autosave<GuardGroup>>();
 const retentionEditor = shallowRef<Autosave<{ retention_days: number }> | null>(null);
+const nicknameEditor = shallowRef<Autosave<{ nickname_keywords: string[] }> | null>(null);
 let composingEditor: Autosave<GuardGroup> | undefined;
 const groups = ref<Record<string, GuardGroup>>({});
 const groupMetadata = ref<Record<string, GuardChat>>({}), joinedGroups = ref<GuardChat[]>([]);
@@ -261,12 +277,17 @@ async function endComposition() {
   editor?.setComposing(false);
   if (composingEditor === editor) { composing.value = false; composingEditor = undefined; }
 }
+async function endNicknameComposition() {
+  await nextTick();
+  nicknameEditor.value?.setComposing(false);
+}
 async function flushAll() {
   const results = await Promise.all([...editors.values()].map(editor => editor.flush()));
   if (retentionEditor.value) results.push(await retentionEditor.value.flush());
+  if (nicknameEditor.value) results.push(await nicknameEditor.value.flush());
   return results.every(Boolean);
 }
-function hasUnsaved() { return composing.value || [...editors.values()].some(editor => editor.hasUnsaved()) || retentionEditor.value?.hasUnsaved(); }
+function hasUnsaved() { return composing.value || [...editors.values()].some(editor => editor.hasUnsaved()) || retentionEditor.value?.hasUnsaved() || nicknameEditor.value?.hasUnsaved(); }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } }
 function flushHidden() { if (document.visibilityState === "hidden") void flushAll(); }
 watch(selectedId, (_, previous) => { if (previous) void editors.get(previous)?.flush(); });
@@ -328,6 +349,11 @@ async function reload() {
     editors.clear();
     groups.value = {};
     for (const [chatId, group] of Object.entries(data.config.groups)) registerGroup(chatId, group);
+    nicknameEditor.value?.stop();
+    nicknameEditor.value = createAutosave({ nickname_keywords: data.config.nickname_keywords }, {
+      save: (changes, previous) => saveGuardNicknameKeywords(changes.nickname_keywords!, previous.nickname_keywords!),
+      validate: (_, value) => validateNicknameKeywords(value), immediate: ["nickname_keywords"],
+    });
     retentionEditor.value?.stop();
     retentionEditor.value = createAutosave({ retention_days: data.config.retention_days }, {
       save: (changes, previous) => saveGuardRetention(changes.retention_days!, previous.retention_days!),
@@ -416,6 +442,7 @@ onUnmounted(() => {
   if (discoveryTimer) clearTimeout(discoveryTimer);
   for (const editor of editors.values()) editor.stop();
   retentionEditor.value?.stop();
+  nicknameEditor.value?.stop();
   window.removeEventListener("beforeunload", beforeUnload);
   document.removeEventListener("visibilitychange", flushHidden);
 });

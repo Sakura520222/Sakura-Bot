@@ -1,6 +1,6 @@
 # Sakura Guard 智能群管
 
-Sakura Guard 使用主 Bot 的 Telethon 客户端、MySQL 和现有 WebUI，独立于 QA Bot、UserBot。自动群管在所有群组默认关闭；成员举报在主 Bot 担任管理员的群中可用。历史配置不需要迁移设置。启动会幂等创建 `core/moderation/schema.sql` 中的 InnoDB 表，不修改既有业务表。
+Sakura Guard 使用主 Bot 的 Telethon 客户端、MySQL 和现有 WebUI，独立于 QA Bot、UserBot。自动群管在所有群组默认关闭；成员举报在主 Bot 担任管理员的群中可用。历史配置会自动兼容，已有各群昵称关键词在升级时合并去重为全局词表。启动会幂等创建 `core/moderation/schema.sql` 中的 InnoDB 表，不修改既有业务表。
 
 ## 启用
 
@@ -10,6 +10,14 @@ Sakura Guard 使用主 Bot 的 Telethon 客户端、MySQL 和现有 WebUI，独�
 4. 在 **WebUI → Sakura Guard** 选择或输入负数 Telegram 群组 ID 添加，点击开关立即保存并生效；也可由授权管理员在群内执行 `/guard_on`，私聊执行 `/guard_on -1001234567890`。
 
 开启时默认检查昵称、验证新成员，消息过滤和全局黑名单共享默认关闭。所有成员处理默认通知管理员。停用群管或入群验证后，未执行的自动处理会取消并恢复原权限；已确认的封禁仍需单独复核解除。仅在明确配置“踢出”时执行 ban/unban 补偿，默认验证失败采用保留封禁。
+
+## 全局昵称关键词
+
+在 **WebUI → Sakura Guard → 全局昵称关键词** 统一管理昵称及用户名关键词，新增、删除后自动保存并热更新到所有群。升级首次合并各群已有词表并去重，保留全部原词；迁移只改变词表存储位置。全局词表清空后保持为空，不会在重启或添加群组时恢复旧词。每个词最多 128 字符。
+
+各群仍单独控制“昵称及用户名过滤”和命中动作；群管关闭的群不处理，管理员、受信任 Bot 和本群白名单继续豁免。消息与链接关键词、自定义规则仍按群配置。原先空词表的群在开启昵称过滤时也会使用全局列表。
+
+系统管理员可在主 Bot 私聊执行 `/guard_addword 关键词`、`/guard_delword 关键词`；旧命令中的可选群 ID 仍可使用，修改范围为全局。群审核员及普通群管理员不能修改全局词表。并发编辑同一词表时会提示冲突，保留页面草稿，确认后可点击重试。
 
 ## 成员引用举报
 
@@ -153,7 +161,7 @@ MySQL 按用户的连接级锁串行化跨群操作；首次有效审核先持�
 
 ## 管理入口
 
-群内可省略群 ID，私聊必须填写：
+群级命令在群内可省略群 ID，私聊需要填写；全局关键词命令无需群 ID，仅系统管理员可用：
 
 ```text
 /guard [群ID]
@@ -161,8 +169,8 @@ MySQL 按用户的连接级锁串行化跨群操作；首次有效审核先持�
 /guard_off [群ID]
 /guard_verify [群ID] on|off
 /guard_bots [群ID] on|off
-/guard_addword [群ID] 关键词
-/guard_delword [群ID] 关键词
+/guard_addword 关键词
+/guard_delword 关键词
 /guard_whitelist [群ID] add|remove 用户ID
 /guard_logs [群ID]
 /guard_unban [群ID] 案件ID

@@ -41,13 +41,13 @@ def config_store(tmp_path, monkeypatch):
 async def test_guard_config_save_preserves_other_settings_and_backups(guard, config_store):
     persistence, original = config_store
     await guard_commands.save_group(
-        guard, CHAT, GuardGroup(enabled=True, nickname_keywords=["custom"])
+        guard, CHAT, GuardGroup(enabled=True, message_keywords=["custom"])
     )
     saved = persistence.read()
     for key, value in original.items():
         assert saved[key] == value
     assert persistence.backup_path.exists()
-    assert guard.group(CHAT).nickname_keywords == ["custom"]
+    assert guard.group(CHAT).message_keywords == ["custom"]
 
 
 async def test_invalid_configuration_is_rejected_without_mutating_live_settings(
@@ -71,13 +71,13 @@ async def test_hot_reload_updates_rules_and_missing_section_disables_every_group
         ConfigChangedEvent(
             config={
                 "sakura_guard": {
-                    "groups": {str(CHAT): {"enabled": True, "nickname_keywords": ["new-word"]}}
+                    "groups": {str(CHAT): {"enabled": True, "message_keywords": ["new-word"]}}
                 }
             },
             version=1,
         )
     )
-    assert guard.group(CHAT).nickname_keywords == ["new-word"]
+    assert guard.group(CHAT).message_keywords == ["new-word"]
     await bus.publish(ConfigChangedEvent(config={}, version=2))
     assert not guard.group(CHAT).enabled
     await initializer.shutdown()
@@ -138,7 +138,6 @@ def test_group_switch_saves_immediately_without_overwriting_other_settings(
     persistence, original = config_store
     group = GuardGroup(
         enabled=True,
-        nickname_keywords=["已保存关键词"],
         message_keywords=["已保存消息词"],
         verification_timeout=180,
         trusted_bot_ids=[67890],
@@ -166,8 +165,8 @@ def test_group_switch_saves_immediately_without_overwriting_other_settings(
         {"field": "enabled", "value": None},
         {"field": "enabled"},
         {"field": "unknown", "value": True},
-        {"field": "nickname_keywords", "value": True},
-        {"field": "enabled", "value": True, "nickname_keywords": ["未保存草稿"]},
+        {"field": "message_keywords", "value": True},
+        {"field": "enabled", "value": True, "message_keywords": ["未保存草稿"]},
     ],
 )
 def test_group_switch_rejects_untyped_or_unrelated_fields(api, config_store, body):
@@ -240,7 +239,7 @@ def test_group_switch_merges_concurrent_changes_during_permission_check(
 
     async def concurrent_edit(chat_id, group):
         snapshot = persistence.read()
-        snapshot["sakura_guard"]["groups"][str(CHAT)]["nickname_keywords"] = ["并发保存"]
+        snapshot["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] = ["并发保存"]
         snapshot["custom"]["nested"] = [3, 4]
         persistence.save_changes(snapshot)
 
@@ -250,16 +249,15 @@ def test_group_switch_merges_concurrent_changes_during_permission_check(
     )
     assert response.status_code == 200
     saved = persistence.read()
-    assert saved["sakura_guard"]["groups"][str(CHAT)]["nickname_keywords"] == ["并发保存"]
+    assert saved["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] == ["并发保存"]
     assert saved["custom"]["nested"] == [3, 4]
     assert guard.group(CHAT).block_bot_messages is True
-    assert guard.group(CHAT).nickname_keywords == ["并发保存"]
+    assert guard.group(CHAT).message_keywords == ["并发保存"]
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("nickname_keywords", ["新增昵称词"]),
         ("message_keywords", ["新增消息词"]),
         ("verification_timeout", 180),
         ("join_requests", "approve"),
@@ -320,7 +318,7 @@ def test_field_autosave_persists_only_edited_setting(api, guard, config_store, f
         {"changes": {}, "previous": {}},
         {"changes": {"enabled": True}, "previous": {}},
         {"changes": {"enabled": True}, "previous": {"verify_join": False}},
-        {"changes": {"nickname_keywords": [""]}, "previous": {"nickname_keywords": []}},
+        {"changes": {"message_keywords": [""]}, "previous": {"message_keywords": []}},
         {"changes": {"trusted_bot_ids": ["123"]}, "previous": {"trusted_bot_ids": []}},
         {"changes": {"verification_timeout": None}, "previous": {"verification_timeout": 120}},
         {"changes": {"verification_timeout": 3}, "previous": {"verification_timeout": 120}},
@@ -343,26 +341,26 @@ def test_invalid_autosave_preserves_configuration(api, config_store, body):
 def test_autosave_rejects_stale_field_then_accepts_explicit_retry(api, guard, config_store):
     persistence, _ = config_store
     assert api.post("/api/guard/groups", json={"chat_id": CHAT}).status_code == 200
-    previous = guard.group(CHAT).nickname_keywords
+    previous = guard.group(CHAT).message_keywords
     changed = persistence.read()
-    changed["sakura_guard"]["groups"][str(CHAT)]["nickname_keywords"] = ["其他入口保存"]
+    changed["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] = ["其他入口保存"]
     persistence.save_changes(changed)
     body = {
-        "changes": {"nickname_keywords": ["页面草稿"]},
-        "previous": {"nickname_keywords": previous},
+        "changes": {"message_keywords": ["页面草稿"]},
+        "previous": {"message_keywords": previous},
     }
     response = api.patch(f"/api/guard/groups/{CHAT}/settings", json=body)
     assert response.status_code == 409
     conflict = response.json()["detail"]
-    assert conflict["fields"] == ["nickname_keywords"]
-    assert conflict["current"]["nickname_keywords"] == ["其他入口保存"]
-    assert persistence.read()["sakura_guard"]["groups"][str(CHAT)]["nickname_keywords"] == [
+    assert conflict["fields"] == ["message_keywords"]
+    assert conflict["current"]["message_keywords"] == ["其他入口保存"]
+    assert persistence.read()["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] == [
         "其他入口保存"
     ]
-    body["previous"]["nickname_keywords"] = conflict["current"]["nickname_keywords"]
+    body["previous"]["message_keywords"] = conflict["current"]["message_keywords"]
     response = api.patch(f"/api/guard/groups/{CHAT}/settings", json=body)
     assert response.status_code == 200
-    assert guard.group(CHAT).nickname_keywords == ["页面草稿"]
+    assert guard.group(CHAT).message_keywords == ["页面草稿"]
 
 
 def test_autosave_merges_unrelated_concurrent_updates_but_rejects_same_field(
@@ -374,35 +372,35 @@ def test_autosave_merges_unrelated_concurrent_updates_but_rejects_same_field(
 
     async def concurrent_edit(chat_id, updated):
         snapshot = persistence.read()
-        snapshot["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] = ["并发消息词"]
+        snapshot["sakura_guard"]["groups"][str(CHAT)]["notification_ids"] = [23456]
         persistence.save_changes(snapshot)
 
     monkeypatch.setattr(guard, "validate_group", concurrent_edit)
     response = api.patch(
         f"/api/guard/groups/{CHAT}/settings",
         json={
-            "changes": {"nickname_keywords": ["昵称新词"]},
-            "previous": {"nickname_keywords": group["nickname_keywords"]},
+            "changes": {"message_keywords": ["昵称新词"]},
+            "previous": {"message_keywords": group["message_keywords"]},
         },
     )
     assert response.status_code == 200
-    assert guard.group(CHAT).message_keywords == ["并发消息词"]
+    assert guard.group(CHAT).notification_ids == [23456]
 
     async def conflicting_edit(chat_id, updated):
         snapshot = persistence.read()
-        snapshot["sakura_guard"]["groups"][str(CHAT)]["nickname_keywords"] = ["同时保存"]
+        snapshot["sakura_guard"]["groups"][str(CHAT)]["message_keywords"] = ["同时保存"]
         persistence.save_changes(snapshot)
 
     monkeypatch.setattr(guard, "validate_group", conflicting_edit)
     response = api.patch(
         f"/api/guard/groups/{CHAT}/settings",
         json={
-            "changes": {"nickname_keywords": ["第二次编辑"]},
-            "previous": {"nickname_keywords": ["昵称新词"]},
+            "changes": {"message_keywords": ["第二次编辑"]},
+            "previous": {"message_keywords": ["昵称新词"]},
         },
     )
     assert response.status_code == 409
-    assert response.json()["detail"]["current"]["nickname_keywords"] == ["同时保存"]
+    assert response.json()["detail"]["current"]["message_keywords"] == ["同时保存"]
 
 
 def test_autosave_requires_existing_group_and_current_administrator(api, guard, config_store):
@@ -426,14 +424,14 @@ def test_autosave_failure_does_not_reload_uncommitted_draft(api, guard, config_s
     persistence, _ = config_store
     assert api.post("/api/guard/groups", json={"chat_id": CHAT}).status_code == 200
     before = persistence.read()
-    previous = guard.group(CHAT).nickname_keywords
+    previous = guard.group(CHAT).message_keywords
     monkeypatch.setattr(
         guard, "validate_group", AsyncMock(side_effect=GuardError("guard.permissions_required"))
     )
-    body = {"changes": {"nickname_keywords": ["草稿"]}, "previous": {"nickname_keywords": previous}}
+    body = {"changes": {"message_keywords": ["草稿"]}, "previous": {"message_keywords": previous}}
     assert api.patch(f"/api/guard/groups/{CHAT}/settings", json=body).status_code == 409
     assert persistence.read() == before
-    assert guard.group(CHAT).nickname_keywords == previous
+    assert guard.group(CHAT).message_keywords == previous
     monkeypatch.setattr(guard, "validate_group", AsyncMock())
 
     def reject_write(snapshot):
@@ -442,7 +440,7 @@ def test_autosave_failure_does_not_reload_uncommitted_draft(api, guard, config_s
     monkeypatch.setattr(routes, "save_config_changes", reject_write)
     assert api.patch(f"/api/guard/groups/{CHAT}/settings", json=body).status_code == 503
     assert persistence.read() == before
-    assert guard.group(CHAT).nickname_keywords == previous
+    assert guard.group(CHAT).message_keywords == previous
 
 
 def test_retention_autosave_preserves_other_settings_and_checks_baseline(api, guard, config_store):
@@ -600,7 +598,7 @@ def test_add_group_is_saved_immediately_and_survives_reload(api, guard, config_s
 
 def test_duplicate_add_never_overwrites_existing_group_settings(api, guard, config_store):
     persistence, _ = config_store
-    group = GuardGroup(enabled=True, block_bot_messages=True, nickname_keywords=["自定义"])
+    group = GuardGroup(enabled=True, block_bot_messages=True, message_keywords=["自定义"])
     assert api.put(f"/api/guard/groups/{CHAT}", json=group.model_dump()).status_code == 200
     response = api.post("/api/guard/groups", json={"chat_id": CHAT})
     assert response.status_code == 200 and not response.json()["created"]

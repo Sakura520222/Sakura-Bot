@@ -5,10 +5,11 @@
 
 import logging
 
-from core.config import ConfigChangedEvent, read_config
+from core.config import ConfigChangedEvent, read_config, save_config_changes
 from core.config.persistence import ConfigPersistenceError
 from core.moderation import set_guard
 from core.moderation.appeals import AppealWorkflow
+from core.moderation.config import migrate_nickname_keywords
 from core.moderation.moderator import Moderator
 from core.moderation.repository import GuardRepository
 
@@ -31,6 +32,16 @@ class ModerationInitializer:
             except ConfigPersistenceError:
                 logger.warning("Guard 未读取到有效配置，保持全部群组关闭")
                 config = {}
+            else:
+                try:
+                    if "sakura_guard" in config and migrate_nickname_keywords(config):
+                        save_config_changes(config)
+                        config = read_config()
+                except ConfigPersistenceError:
+                    # 词表已在内存完成合并；保存失败不应关闭原本有效的群管。
+                    logger.warning(
+                        "Guard 全局昵称词表迁移尚未保存，将继续使用有效配置", exc_info=True
+                    )
             self.service.reload(config)
             await self.service.start()
         except Exception:

@@ -190,7 +190,7 @@ class Moderator:
             )
         if await store.whitelisted(chat_id, user.id):
             return None
-        matcher = Matcher(config)
+        matcher = Matcher(config, self.config.nickname_keywords)
         nickname = matcher.nickname(user)
         if nickname:
             return nickname

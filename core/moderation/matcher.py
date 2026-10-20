@@ -14,7 +14,7 @@ import regex
 from opencc import OpenCC
 from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
 
-from .config import GuardGroup
+from .config import DEFAULT_WORDS, GuardGroup
 
 logger = logging.getLogger(__name__)
 _converter = OpenCC("t2s")
@@ -86,8 +86,9 @@ def extract_links(message) -> list[str]:
 
 
 class Matcher:
-    def __init__(self, config: GuardGroup):
+    def __init__(self, config: GuardGroup, nickname_keywords: list[str] | None = None):
         self.config = config
+        self.nickname_keywords = DEFAULT_WORDS if nickname_keywords is None else nickname_keywords
         self.regex_remaining = 0.025
         self._budget_logged = False
 
@@ -157,7 +158,7 @@ class Matcher:
         username = getattr(user, "username", None) or ""
         for target, value in (("nickname", name), ("username", username)):
             matched = self._match(
-                target, value, self.config.nickname_keywords, self.config.nickname_action
+                target, value, self.nickname_keywords, self.config.nickname_action
             )
             if matched:
                 return matched
