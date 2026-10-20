@@ -1,4 +1,37 @@
 -- Sakura Guard v1. Only additive, idempotent MySQL/InnoDB tables.
+CREATE TABLE IF NOT EXISTS moderation_deleted_cleanup_jobs (
+    id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    bot_id BIGINT NOT NULL,
+    request_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    active_key BIGINT NULL UNIQUE,
+    actor VARCHAR(64) NOT NULL,
+    trigger_type VARCHAR(16) NOT NULL,
+    status VARCHAR(24) NOT NULL,
+    payload JSON NOT NULL,
+    error VARCHAR(256) NULL,
+    retry_at DATETIME(6) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    UNIQUE KEY idx_deleted_cleanup_request (bot_id, request_id),
+    INDEX idx_deleted_cleanup_history (bot_id, created_at),
+    INDEX idx_deleted_cleanup_schedule (bot_id, trigger_type, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS moderation_deleted_cleanup_items (
+    job_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    access_hash BIGINT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    message VARCHAR(256) NOT NULL DEFAULT '',
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (job_id, chat_id, user_id),
+    INDEX idx_deleted_cleanup_pending (job_id, chat_id, status),
+    CONSTRAINT fk_deleted_cleanup_job FOREIGN KEY (job_id)
+        REFERENCES moderation_deleted_cleanup_jobs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS moderation_cleaned_chat_history (
     bot_id BIGINT NOT NULL,
     chat_id BIGINT NOT NULL,

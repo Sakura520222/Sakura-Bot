@@ -477,3 +477,8 @@ class GuardRepository:
                 "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','admin_kick_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
                 (cutoff,),
             )
+            await store.execute(
+                """DELETE FROM moderation_deleted_cleanup_jobs WHERE updated_at<%s
+                AND active_key IS NULL AND status IN ('completed','partial','cancelled') LIMIT 100""",
+                (cutoff,),
+            )

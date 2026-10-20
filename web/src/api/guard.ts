@@ -133,6 +133,35 @@ export interface BotChatCleanup {
   error: string | null;
   results: (BotChat & { status: "left" | "skipped" | "failed"; message: string })[];
 }
+export interface DeletedCleanupSettings { enabled: boolean; interval_hours: number }
+export interface DeletedCleanupGroup {
+  chat_id: number; title: string; status: string; scanned: number; offset: number; error: string | null;
+}
+export interface DeletedCleanupJob {
+  id: string; actor: string; trigger_type: "manual" | "scheduled";
+  status: "running" | "waiting" | "completed" | "partial" | "cancelled";
+  groups: DeletedCleanupGroup[]; checked_groups: number; error: string | null;
+  counts: Partial<Record<"pending" | "removing" | "removed" | "skipped" | "failed", number>>;
+  results: { chat_id: number; user_id: number; status: string; message: string; updated_at: string }[];
+  created_at: string; updated_at: string; retry_at: string;
+}
+export interface DeletedCleanupState {
+  available: boolean; settings: DeletedCleanupSettings; job: DeletedCleanupJob | null;
+  history: { id: string; status: string; trigger_type: string; created_at: string }[];
+  next_run_at: string | null;
+}
+export async function getDeletedCleanup() {
+  return (await api.get<DeletedCleanupState>("/guard/chats/deleted-users")).data;
+}
+export async function startDeletedCleanup(request_id: string, chat_ids: number[] | null) {
+  return (await api.post<DeletedCleanupJob>("/guard/chats/deleted-users", { request_id, chat_ids, confirmed: true })).data;
+}
+export async function getDeletedCleanupJob(job_id: string) {
+  return (await api.get<DeletedCleanupJob>(`/guard/chats/deleted-users/jobs/${job_id}`)).data;
+}
+export async function saveDeletedCleanupSettings(changes: Partial<DeletedCleanupSettings>, previous: Partial<DeletedCleanupSettings>) {
+  return (await api.patch<DeletedCleanupSettings>("/guard/chats/deleted-users/settings", { changes, previous })).data;
+}
 export interface BotChatPreview {
   token: string;
   expires_in_seconds: number;

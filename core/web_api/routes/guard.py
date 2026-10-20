@@ -16,6 +16,7 @@ from core.i18n.i18n import t
 from core.moderation import get_guard
 from core.moderation.chat_cleanup import ChatCleanupError
 from core.moderation.config import (
+    DeletedUserCleanupSettings,
     GuardConfig,
     GuardGroup,
     NicknameKeywords,
@@ -87,6 +88,41 @@ class LeaveChatsRequest(BaseModel):
     def require_confirmation(self):
         if self.confirmed is not True:
             raise ValueError("请先预览并确认操作名单")
+        return self
+
+
+class DeletedCleanupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    chat_ids: list[int] | None = Field(default=None, min_length=1, max_length=5000)
+    confirmed: bool
+
+    @field_validator("chat_ids")
+    @classmethod
+    def valid_groups(cls, values):
+        if values is not None and any(not -(2**63) < value < 0 for value in values):
+            raise ValueError("群组 ID 必须为负整数")
+        return sorted(set(values)) if values is not None else None
+
+    @model_validator(mode="after")
+    def confirmed_request(self):
+        if self.confirmed is not True:
+            raise ValueError("请确认清理已销号成员")
+        return self
+
+
+class DeletedCleanupSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    changes: DeletedUserCleanupSettings
+    previous: DeletedUserCleanupSettings
+
+    @model_validator(mode="after")
+    def matching_fields(self):
+        if (
+            not self.changes.model_fields_set
+            or self.changes.model_fields_set != self.previous.model_fields_set
+        ):
+            raise ValueError("请提供修改字段及其原值")
         return self
 
 
@@ -174,6 +210,71 @@ async def preview_leave_chats(context=GUARD_ADMIN):
         return service.chat_cleanup.preview(actor)
     except ChatCleanupError as error:
         raise HTTPException(409, str(error)) from error
+
+
+@router.get("/chats/deleted-users")
+async def deleted_cleanup_status(context=GUARD_ADMIN):
+    service, _ = context
+    return await service.deleted_cleanup.status()
+
+
+@router.post("/chats/deleted-users")
+async def start_deleted_cleanup(body: DeletedCleanupRequest, context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        result = await service.deleted_cleanup.start(actor, body.request_id, body.chat_ids)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
+    await record_system_audit(
+        action="guard.deleted_cleanup.start",
+        actor=str(actor),
+        target=result["id"],
+        success=True,
+        message="已受理已销号成员清理",
+    )
+    return result
+
+
+@router.get("/chats/deleted-users/jobs/{job_id}")
+async def deleted_cleanup_job(job_id: str, context=GUARD_ADMIN):
+    service, _ = context
+    result = await service.deleted_cleanup.job(job_id)
+    if result is None:
+        raise HTTPException(404, "清理任务不存在")
+    return result
+
+
+@router.patch("/chats/deleted-users/settings")
+async def update_deleted_cleanup_settings(body: DeletedCleanupSettingsRequest, context=GUARD_ADMIN):
+    service, actor = context
+    fields = body.changes.model_fields_set
+    changes = body.changes.model_dump(include=fields)
+    previous = body.previous.model_dump(include=fields)
+    try:
+        snapshot = read_config()
+        section = snapshot.setdefault("sakura_guard", {})
+        migrate_nickname_keywords(snapshot)
+        current = GuardConfig.model_validate(section).deleted_user_cleanup.model_dump()
+        if any(current[key] != previous[key] and current[key] != changes[key] for key in fields):
+            raise settings_conflict(current, fields)
+        section.setdefault("deleted_user_cleanup", {}).update(changes)
+        GuardConfig.model_validate(section)
+        save_config_changes(snapshot)
+        service.reload(read_config())
+    except ConfigConflictError as error:
+        current = GuardConfig.model_validate(
+            read_config().get("sakura_guard", {})
+        ).deleted_user_cleanup.model_dump()
+        raise settings_conflict(current, fields) from error
+    except ConfigPersistenceError as error:
+        raise HTTPException(503, str(error)) from error
+    await record_system_audit(
+        action="guard.deleted_cleanup.settings",
+        actor=str(actor),
+        success=True,
+        message="已更新已销号成员定期清理设置",
+    )
+    return service.config.deleted_user_cleanup.model_dump()
 
 
 @router.post("/chats/leave")

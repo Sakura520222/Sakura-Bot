@@ -133,9 +133,18 @@ class GuardGroup(BaseModel):
         return self
 
 
+class DeletedUserCleanupSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool = False
+    interval_hours: int = Field(default=24, ge=1, le=720)
+
+
 class GuardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     nickname_keywords: NicknameKeywords = Field(default_factory=lambda: DEFAULT_WORDS.copy())
+    deleted_user_cleanup: DeletedUserCleanupSettings = Field(
+        default_factory=DeletedUserCleanupSettings
+    )
     groups: dict[str, GuardGroup] = Field(default_factory=dict, max_length=500)
     retention_days: int = Field(default=90, ge=7, le=3650)
 

@@ -24,6 +24,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 
 from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
+from .deleted_cleanup import DeletedUserCleanup
 from .groups import GroupDirectory
 from .history_cleanup import HistoryCleanup
 from .matcher import Match, Matcher, normalize
@@ -60,6 +61,7 @@ class Moderator:
         self.history_cleanup = HistoryCleanup(
             self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
         )
+        self.deleted_cleanup = DeletedUserCleanup(self)
         from .report_handler import ReportHandler
         from .review_handler import ReviewHandler
         from .verification import Verification
@@ -80,6 +82,7 @@ class Moderator:
     def reload(self, config):
         # 先校验完整快照，再整体替换，避免半更新的规则集。
         self.config = GuardConfig.model_validate(config.get("sakura_guard", {}))
+        self.deleted_cleanup.wake()
         if self.appeals:
             self.appeals.routing_changed()
         self._wake.set()
@@ -109,6 +112,7 @@ class Moderator:
         if self.appeals:
             await self.appeals.start()
         self.directory.refresh(force=True)
+        await self.deleted_cleanup.start_worker()
 
     async def stop(self):
         if self.appeals:
@@ -118,6 +122,7 @@ class Moderator:
         self._handlers.clear()
         await self.chat_cleanup.stop()
         await self.history_cleanup.stop()
+        await self.deleted_cleanup.stop()
         await self.directory.stop()
         if self._worker:
             self._worker.cancel()
