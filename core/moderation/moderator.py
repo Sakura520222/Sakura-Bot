@@ -50,6 +50,7 @@ class Moderator:
         self._handlers = []
         self._worker = None
         self._wake = asyncio.Event()
+        self.appeals = None
         self.directory = GroupDirectory(
             client, lambda: self.config.groups, lambda: self.bot_id, repository
         )
@@ -79,6 +80,8 @@ class Moderator:
     def reload(self, config):
         # 先校验完整快照，再整体替换，避免半更新的规则集。
         self.config = GuardConfig.model_validate(config.get("sakura_guard", {}))
+        if self.appeals:
+            self.appeals.routing_changed()
         self._wake.set()
 
     async def start(self):
@@ -103,9 +106,13 @@ class Moderator:
             self.client.add_event_handler(callback, builder)
             self._handlers.append((callback, builder))
         self._worker = asyncio.create_task(self._run(), name="sakura-guard-recovery")
+        if self.appeals:
+            await self.appeals.start()
         self.directory.refresh(force=True)
 
     async def stop(self):
+        if self.appeals:
+            await self.appeals.stop()
         for callback, builder in self._handlers:
             self.client.remove_event_handler(callback, builder)
         self._handlers.clear()

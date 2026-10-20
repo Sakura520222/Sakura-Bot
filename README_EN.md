@@ -482,6 +482,11 @@ The QA Bot is a standalone Q&A bot (requires a separate `QA_BOT_TOKEN`) and supp
 | `/status`       | View current quota usage and session status                |
 | `/clear`        | Clear current conversation history and start a new session |
 | `/view_persona` | View the current QA bot persona                            |
+| `/appeal`       | Submit a ban appeal in private                             |
+| `/appeals`      | View your appeals and progress                             |
+| `/cancel_appeal` | Cancel current appeal or review input                     |
+
+The assistant's Ban appeal button supports reasons, attachments, additional evidence, withdrawal and progress checks. Sakura Guard in the main Bot verifies review permissions and applies decisions asynchronously, reusing its existing blacklist and per-group whitelist. No additional bot or token is required, and appeals do not consume Q&A quota. Users and reviewers must first start the assistant in private. See the [Guard workflow guide](wiki/User-Sakura-Guard.md#自助封禁申诉).
 
 #### Subscription Management
 

@@ -8,6 +8,8 @@ QA Bot Telegram 底部键盘构建工具。
 
 from telegram import ReplyKeyboardMarkup
 
+from core.i18n.i18n import t
+
 QA_MENU_ASK = "🔎 指定频道查询"
 QA_MENU_CHANNELS = "📚 可订阅频道"
 QA_MENU_SUBSCRIPTIONS = "⭐ 我的订阅"
@@ -15,6 +17,7 @@ QA_MENU_SUBMIT = "📝 投稿"
 QA_MENU_STATUS = "📊 状态"
 QA_MENU_CLEAR = "🧹 清除记忆"
 QA_MENU_HELP = "❓ 帮助"
+QA_MENU_APPEAL = t("appeal.menu")
 
 SUBMIT_MENU_CANCEL = "❌ 取消投稿"
 SUBMIT_MENU_SKIP_CONTENT = "⏭ 跳过正文"
@@ -31,6 +34,7 @@ def build_qa_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             [QA_MENU_ASK, QA_MENU_SUBMIT],
             [QA_MENU_CHANNELS, QA_MENU_SUBSCRIPTIONS],
+            [QA_MENU_APPEAL],
             [QA_MENU_STATUS, QA_MENU_CLEAR, QA_MENU_HELP],
         ],
         resize_keyboard=True,

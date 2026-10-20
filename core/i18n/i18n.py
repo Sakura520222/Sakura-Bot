@@ -18,6 +18,8 @@
 import logging
 from typing import Optional
 
+from .appeals import APPEAL_EN_US, APPEAL_ZH_CN
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 中文翻译（简体中文）
 MESSAGE_ZH_CN = {
+    **APPEAL_ZH_CN,
     "help.section_guard": "🛡 Sakura Guard 智能群管",
     "cmd.guard": "/guard - 群管状态与帮助",
     "cmd.guard_on": "/guard_on - 启用指定群管",
@@ -941,6 +944,7 @@ MESSAGE_ZH_CN = {
 
 # 英文翻译
 MESSAGE_EN_US = {
+    **APPEAL_EN_US,
     "help.section_guard": "🛡 Sakura Guard moderation",
     "cmd.guard": "/guard - Moderation status and help",
     "cmd.guard_on": "/guard_on - Enable moderation for a group",

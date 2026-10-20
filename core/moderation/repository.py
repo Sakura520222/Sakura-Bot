@@ -470,7 +470,7 @@ class GuardRepository:
             store = GuardStore(connection)
             # 永久名单、待审核和待恢复操作不随审计留存期限删除。
             await store.execute(
-                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' LIMIT 500",
+                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.case_id=moderation_cases.id) LIMIT 500",
                 (cutoff,),
             )
             await store.execute(

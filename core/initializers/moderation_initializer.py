@@ -8,6 +8,7 @@ import logging
 from core.config import ConfigChangedEvent, read_config
 from core.config.persistence import ConfigPersistenceError
 from core.moderation import set_guard
+from core.moderation.appeals import AppealWorkflow
 from core.moderation.moderator import Moderator
 from core.moderation.repository import GuardRepository
 
@@ -24,6 +25,7 @@ class ModerationInitializer:
             repository = GuardRepository(database.pool)
             await repository.initialize()
             self.service = Moderator(client, repository)
+            self.service.appeals = AppealWorkflow(self.service)
             try:
                 config = read_config()
             except ConfigPersistenceError:

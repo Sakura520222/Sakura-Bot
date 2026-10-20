@@ -22,6 +22,7 @@ import time
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -941,6 +942,10 @@ class QABot:
             # 初始化数据库连接
             await self.initialize_database()
 
+            from core.infrastructure.database.manager import get_db_manager
+
+            await appeal_handler.initialize(get_db_manager().pool)
+
             logger.info("注册问答Bot命令菜单...")
             commands = [
                 BotCommand("start", "查看欢迎信息"),
@@ -956,6 +961,9 @@ class QABot:
                 BotCommand("submit", "投稿"),
                 BotCommand("cancel_submit", "取消投稿"),
                 BotCommand("view_persona", "查看当前助手人格设定"),
+                BotCommand("appeal", get_text("appeal.command")),
+                BotCommand("appeals", get_text("appeal.command_history")),
+                BotCommand("cancel_appeal", get_text("appeal.command_cancel")),
             ]
 
             try:
@@ -966,6 +974,21 @@ class QABot:
 
         # 将命令注册添加到post_init回调
         self.application.post_init = register_commands
+
+        from core.handlers.appeal_handler import AppealHandler
+
+        def submission_active(actor):
+            from core.handlers.submission_handler import get_submission_handler
+
+            return get_submission_handler().get_user_state(actor) is not None
+
+        # 优先接管申诉输入，阻止材料进入投稿会话或 AI 问答；草稿存储在 MySQL。
+        appeal_handler = AppealHandler(submission_active=submission_active)
+        self.application.add_handler(
+            CallbackQueryHandler(appeal_handler.callback, pattern=r"^ap:"), group=-1
+        )
+        self.application.add_handler(MessageHandler(filters.ALL, appeal_handler.message), group=-1)
+        self.application.job_queue.run_repeating(appeal_handler.deliver, interval=5, first=5)
 
         # 投稿处理器（ConversationHandler）—— 必须在 /start 之前注册，
         # 以便深链接 /start submit 能被 ConversationHandler 的入口点捕获
