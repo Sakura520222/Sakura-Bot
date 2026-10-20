@@ -518,7 +518,7 @@ async def test_admin_reason_submits_directly_and_supplement_reuses_input_card(se
     )
     assert len(env.bot.sent) == sent_before
     prompt = env.bot.messages[ADMIN, admin_notice["message_id"]]["text"]
-    assert "发送后直接提交" in prompt and "附件" not in prompt
+    assert "发送后直接提交" in prompt and "附件" not in prompt and "申诉：" in prompt
     await text_update(env, "请补一张截图", actor=ADMIN)
     assert await env.repository.input(ADMIN) is None
     await env.workflow.recover_once()

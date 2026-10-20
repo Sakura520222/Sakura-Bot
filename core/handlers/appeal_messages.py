@@ -90,7 +90,11 @@ class AppealMessages:
                 source[1] if source[0] == actor else None
             )
             message_id = await edit_or_send(
-                bot, actor, input_prompt(current), input_buttons(current), message_id
+                bot,
+                actor,
+                card(appeal, reviewer=True) + "\n\n" + input_prompt(current),
+                input_buttons(current),
+                message_id,
             )
             await store.input_message(actor, current["token"], message_id)
 
