@@ -28,7 +28,7 @@ features:
     linkText: 管理面板指南
   - icon: 🛡️
     title: Sakura Guard
-    details: 配置群聊规则、入群验证、管理员通知与黑白名单。
+    details: 配置群聊规则、入群验证、管理员通知、黑白名单与封禁申诉。
     link: /User-Sakura-Guard
     linkText: 智能群管指南
   - icon: 💬

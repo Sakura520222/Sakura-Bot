@@ -28,7 +28,7 @@
 |------|------|------|
 | **[投票功能](User-Poll-Feature.md)** | 频道投票配置指南 | ⭐⭐ |
 | **[WebUI 管理面板](User-WebUI-Guide.md)** | Web 管理界面使用指南 | ⭐⭐ |
-| **[Sakura Guard 智能群管](User-Sakura-Guard.md)** | 群聊规则、入群验证与黑白名单 | ⭐⭐ |
+| **[Sakura Guard 智能群管](User-Sakura-Guard.md)** | 群聊规则、入群验证、黑白名单与封禁申诉 | ⭐⭐ |
 
 ### 📜 社区规范
 
@@ -144,6 +144,10 @@ Sakura-Bot 提供以下核心功能：
 ### 如何使用 WebUI 管理数据库或转发？
 
 参考 [WebUI 管理面板](User-WebUI-Guide.md)。数据库管理和系统操作属于高危功能，请仅在可信网络和管理员账号下使用。
+
+### 被群管封禁了，如何申诉？
+
+私聊问答 Bot 发送 `/appeal` 或点击「🚫 封禁申诉」按钮提交申诉，完整流程见 [Sakura Guard 智能群管 › 自助封禁申诉](User-Sakura-Guard.md#自助封禁申诉)。
 
 ---
 
