@@ -195,10 +195,12 @@ async def test_active_appeal_text_stops_before_qa_or_submission_handlers():
     repository = SimpleNamespace(input=AsyncMock(return_value=entry))
     handler = AppealHandler(repository)
     handler.inbox.append = AsyncMock(return_value=entry)
+    handler.show_input = AsyncMock()
     context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     with pytest.raises(ApplicationHandlerStop):
         await handler.message(make_update("这是我的申诉材料，请管理员核实。"), context)
     handler.inbox.append.assert_awaited_once()
+    handler.show_input.assert_awaited_once()
 
 
 async def test_normal_private_question_still_reaches_qa():

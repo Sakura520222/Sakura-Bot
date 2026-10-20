@@ -7,17 +7,18 @@ import asyncio
 import logging
 import re
 from datetime import timedelta
-from html import escape
+from html import escape, unescape
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest, TelegramError
+from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop
 
+from core.handlers.appeal_messages import AppealMessages, edit_or_send
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 from core.moderation.appeal_inbox import AppealInbox
-from core.moderation.appeal_repository import AppealRepository
-from core.moderation.appeal_ui import button, buttons, card, input_buttons, input_prompt
+from core.moderation.appeal_repository import REVIEW_ACTIONS, AppealRepository
+from core.moderation.appeal_ui import button, buttons, card, user_alert
 from core.moderation.moderator import GuardError
 from core.moderation.repository import GuardRepository, encode
 from core.telegram.keyboards import (
@@ -29,7 +30,6 @@ from core.telegram.keyboards import (
     QA_MENU_STATUS,
     QA_MENU_SUBMIT,
     QA_MENU_SUBSCRIPTIONS,
-    build_qa_main_menu_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ class AppealHandler:
     def __init__(self, repository=None, submission_active=None):
         self.repository = repository
         self.inbox = AppealInbox(repository) if repository else None
+        self.messages = AppealMessages(repository) if repository else None
         self.submission_active = submission_active or (lambda actor: False)
 
     async def initialize(self, pool):
@@ -46,6 +47,7 @@ class AppealHandler:
         await guard.initialize()
         self.repository = AppealRepository(guard)
         self.inbox = AppealInbox(self.repository)
+        self.messages = AppealMessages(self.repository)
 
     @staticmethod
     def private(update):
@@ -80,10 +82,8 @@ class AppealHandler:
             if entry_command and self.submission_active(actor):
                 raise GuardError("appeal.submission_busy")
             if command == "/cancel_appeal":
-                await self.inbox.cancel(actor)
-                await message.reply_text(
-                    t("appeal.cancelled"), reply_markup=build_qa_main_menu_keyboard()
-                )
+                cancelled = await self.inbox.cancel(actor)
+                await self.messages.finish_input(context.bot, actor, cancelled, cancelled=True)
             elif deep and re.fullmatch(r"appeal_[0-9a-f]{32}", parts[1]):
                 appeal = await self.inbox.begin(actor, parts[1][7:])
                 await self.show_user(context.bot, actor, appeal)
@@ -115,7 +115,11 @@ class AppealHandler:
                     entry = await self.inbox.append(
                         actor, text or (message.caption or "").strip(), media, message.message_id
                     )
-                    await self.show_input(context.bot, actor, entry)
+                    if entry["mode"] == "review":
+                        await self.inbox.submit(actor, entry["token"])
+                        await self.messages.finish_input(context.bot, actor, entry)
+                    else:
+                        await self.show_input(context.bot, actor, entry)
         except GuardError as error:
             await message.reply_text(t(str(error)))
         except Exception:
@@ -142,29 +146,21 @@ class AppealHandler:
                 }
         return None
 
-    async def show_input(self, bot, actor, entry):
-        await bot.send_message(
-            actor, input_prompt(entry), parse_mode="HTML", reply_markup=input_buttons(entry)
-        )
+    async def show_input(self, bot, actor, entry, origin=None):
+        await self.messages.input(bot, actor, entry, origin)
 
-    async def show_user(self, bot, actor, appeal):
+    async def show_user(self, bot, actor, appeal, origin=None):
         self.inbox.own(appeal, actor)
-        entry = await self.repository.input(actor)
-        if entry and entry["appeal_id"] == appeal["id"] and appeal["status"] == "draft":
-            await self.show_input(bot, actor, entry)
-        else:
-            await bot.send_message(
-                actor,
-                card(appeal),
-                parse_mode="HTML",
-                reply_markup=buttons(appeal),
-                disable_web_page_preview=True,
-            )
+        await self.messages.user(bot, actor, appeal["id"], origin)
 
-    async def list_rows(self, bot, actor, kind, offset=0):
+    async def list_rows(self, bot, actor, kind, offset=0, origin=None):
         if kind not in {"cases", "history"} or offset < 0 or offset > 10000:
             raise GuardError("guard.invalid_callback")
         rows = await self.repository.user_rows(actor, cases=kind == "cases", offset=offset)
+        if len(rows) == 1 and offset == 0:
+            appeal = await self.inbox.begin(actor, rows[0]["id"]) if kind == "cases" else rows[0]
+            await self.show_user(bot, actor, appeal, origin)
+            return
         items = []
         for row in rows[:5]:
             payload = row["payload"] if kind == "cases" else row["payload"]["source"]["payload"]
@@ -194,17 +190,23 @@ class AppealHandler:
                 )
             ]
         )
-        await bot.send_message(
-            actor,
-            t(
-                "appeal.choose"
-                if rows and kind == "cases"
-                else "appeal.history_title"
-                if rows
-                else "appeal.empty"
-            ),
-            reply_markup=InlineKeyboardMarkup(items),
+        text = t(
+            "appeal.choose"
+            if rows and kind == "cases"
+            else "appeal.history_title"
+            if rows
+            else "appeal.empty"
         )
+        async with self.repository.lock(actor) as store:
+            message_id = origin[1] if origin and origin[0] == actor else None
+            if message_id:
+                await store.guard.execute(
+                    """UPDATE moderation_appeal_notifications n JOIN moderation_appeals a ON a.id=n.appeal_id
+                    SET n.message_id=NULL,n.synced_revision=a.revision
+                    WHERE n.target_id=%s AND n.kind='user' AND n.message_id=%s""",
+                    (actor, message_id),
+                )
+            await edit_or_send(bot, actor, text, InlineKeyboardMarkup(items), message_id)
 
     async def callback(self, update, context):
         query = update.callback_query
@@ -216,15 +218,31 @@ class AppealHandler:
             if len(parts) < 3 or parts[0] != "ap":
                 raise GuardError("guard.invalid_callback")
             action = parts[1]
+            origin = (query.message.chat.id, query.message.message_id)
             if action in {"review", "new", "supp"} and self.submission_active(actor):
                 raise GuardError("appeal.submission_busy")
+            if action in {"options", "admin", "check"}:
+                if len(parts) != (5 if action == "check" else 4):
+                    raise GuardError("guard.invalid_callback")
+                await self.messages.review(
+                    context.bot,
+                    actor,
+                    parts[2],
+                    int(parts[3]),
+                    origin,
+                    expanded=action == "options",
+                    confirm=parts[4] if action == "check" else None,
+                )
+                await query.answer()
+                return
             if action in {"review", "read"}:
                 if len(parts) != 5 or not re.fullmatch(r"[0-9a-f]{32}", parts[2]):
                     raise GuardError("guard.invalid_callback")
                 revision = int(parts[3])
-                origin = (query.message.chat.id, query.message.message_id)
                 if action == "read":
                     await self.inbox.read_request(actor, parts[2], revision, origin, parts[4])
+                elif parts[4] in {"approve", "allow", "global"}:
+                    await self.inbox.quick_review(actor, parts[2], revision, origin, parts[4])
                 else:
                     entry = await self.inbox.review_input(
                         actor, parts[2], revision, origin, parts[4]
@@ -235,41 +253,41 @@ class AppealHandler:
                         await query.answer(t("appeal.open_private"), show_alert=True)
                         return
                 await query.answer(
-                    t("appeal.queued" if action == "read" else "appeal.review_private"),
-                    show_alert=True,
+                    t("appeal.review_private")
+                    if action == "review" and parts[4] in {"reject", "more"}
+                    else t("appeal.queued")
                 )
                 return
             if not self.private(update):
                 raise GuardError("appeal.private_only")
             if action == "list" and len(parts) == 4:
-                await self.list_rows(context.bot, actor, parts[2], int(parts[3]))
+                await self.list_rows(context.bot, actor, parts[2], int(parts[3]), origin)
             elif action == "new" and len(parts) == 3:
                 if self.submission_active(actor):
                     raise GuardError("appeal.submission_busy")
                 appeal = await self.inbox.begin(actor, parts[2])
-                await self.show_user(context.bot, actor, appeal)
+                await self.show_user(context.bot, actor, appeal, origin)
             elif action == "view" and len(parts) == 3:
-                await self.show_user(context.bot, actor, await self.repository.get(parts[2]))
+                await self.show_user(
+                    context.bot, actor, await self.repository.get(parts[2]), origin
+                )
             elif action == "supp" and len(parts) == 4:
                 entry = await self.inbox.supplement(actor, parts[2], int(parts[3]))
-                await self.show_input(context.bot, actor, entry)
+                await self.show_input(context.bot, actor, entry, origin)
             elif action == "withdraw" and len(parts) == 4:
                 appeal = await self.inbox.withdraw(actor, parts[2], int(parts[3]))
-                await self.show_user(context.bot, actor, appeal)
+                await self.show_user(context.bot, actor, appeal, origin)
             elif action == "input" and len(parts) == 4:
                 if parts[3] == "cancel":
-                    await self.inbox.cancel(actor, parts[2])
-                    await context.bot.send_message(
-                        actor, t("appeal.cancelled"), reply_markup=build_qa_main_menu_keyboard()
-                    )
+                    entry = await self.inbox.cancel(actor, parts[2])
+                    await self.messages.finish_input(context.bot, actor, entry, cancelled=True)
                 elif parts[3] == "submit":
+                    entry = await self.repository.input(actor)
                     appeal = await self.inbox.submit(actor, parts[2])
                     if appeal:
-                        await self.show_user(context.bot, actor, appeal)
+                        await self.show_user(context.bot, actor, appeal, origin)
                     else:
-                        await context.bot.send_message(
-                            actor, t("appeal.queued"), reply_markup=build_qa_main_menu_keyboard()
-                        )
+                        await self.messages.finish_input(context.bot, actor, entry)
                 else:
                     raise GuardError("guard.invalid_callback")
             else:
@@ -313,48 +331,32 @@ class AppealHandler:
             ):
                 return
             try:
-                kwargs = {
-                    "text": card(appeal, reviewer=notice["kind"] == "reviewer"),
-                    "parse_mode": "HTML",
-                    "reply_markup": buttons(appeal, reviewer=notice["kind"] == "reviewer"),
-                    "disable_web_page_preview": True,
-                }
-                message_id = notice["message_id"]
-                if notice["kind"] == "user" or appeal["status"] == "pending":
-                    message_id = None
-                if message_id:
-                    try:
-                        await asyncio.wait_for(
-                            bot.edit_message_text(
-                                chat_id=notice["target_id"], message_id=message_id, **kwargs
+                message_id = await edit_or_send(
+                    bot,
+                    notice["target_id"],
+                    card(appeal, reviewer=notice["kind"] == "reviewer"),
+                    buttons(appeal, reviewer=notice["kind"] == "reviewer"),
+                    notice["message_id"],
+                )
+                alert = (
+                    user_alert(appeal)
+                    if notice["kind"] == "user" and notice["message_id"]
+                    else None
+                )
+                if alert:
+                    await asyncio.wait_for(
+                        bot.send_message(
+                            chat_id=notice["target_id"],
+                            text=alert,
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup(
+                                [[button("refresh", f"ap:view:{appeal['id']}")]]
                             ),
-                            timeout=25,
-                        )
-                    except BadRequest as error:
-                        if "not modified" not in str(error).lower():
-                            if (
-                                "not found" not in str(error).lower()
-                                and "can't be edited" not in str(error).lower()
-                            ):
-                                raise
-                            message_id = None
-                if not message_id:
-                    sent = await asyncio.wait_for(
-                        bot.send_message(chat_id=notice["target_id"], **kwargs), timeout=25
-                    )
-                    message_id = sent.message_id
-                async with store.atomic():
-                    await store.guard.execute(
-                        """UPDATE moderation_appeal_notifications SET message_id=%s,synced_revision=%s,
-                        error=NULL,attempts=0,retry_at=%s WHERE appeal_id=%s AND target_id=%s""",
-                        (
-                            message_id,
-                            appeal["revision"],
-                            utc_now_naive(),
-                            appeal["id"],
-                            notice["target_id"],
                         ),
+                        timeout=25,
                     )
+                async with store.atomic():
+                    await store.save_notice(appeal, notice["target_id"], message_id, notice["kind"])
                     await store.event(
                         appeal,
                         "assistant",
@@ -397,12 +399,40 @@ class AppealHandler:
             )
             if current["notified"]:
                 return
+            if current["status"] == "done" and current["action"] in REVIEW_ACTIONS:
+                # 审核结果已经原地同步到审核卡片，不再发送重复成功回执。
+                await store.guard.execute(
+                    "UPDATE moderation_appeal_requests SET notified=TRUE WHERE id=%s",
+                    (current["id"],),
+                )
+                return
             payload = current["payload"]
             items = []
             if current.get("error"):
-                items.append(
-                    ("text", t("appeal.request_failed", error=escape(t(current["error"]))))
+                failure = t("appeal.request_failed", error=escape(t(current["error"])))
+                notice = next(
+                    (
+                        row
+                        for row in await store.notices(appeal["id"])
+                        if row["kind"] == "reviewer"
+                        and row["target_id"] == current["actor_id"]
+                        and (row["target_id"], row["message_id"])
+                        == (current["origin_chat_id"], current["origin_message_id"])
+                    ),
+                    None,
                 )
+                if notice:
+                    latest = await store.get(appeal["id"])
+                    message_id = await edit_or_send(
+                        bot,
+                        current["actor_id"],
+                        card(latest, reviewer=True) + "\n\n" + failure,
+                        buttons(latest, reviewer=True),
+                        notice["message_id"],
+                    )
+                    await store.save_notice(latest, current["actor_id"], message_id, "reviewer")
+                else:
+                    items.append(("text", failure))
             elif "evidence" in payload:
                 source = payload.get("source", {})
                 original = source.get("payload", {})
@@ -475,6 +505,15 @@ class AppealHandler:
                         ),
                     )
                 )
+            grouped = []
+            for kind, value in items:
+                if kind == "text" and grouped and grouped[-1][0] == "text":
+                    combined = grouped[-1][1] + "\n\n" + value
+                    if len(unescape(re.sub(r"<[^>]+>", "", combined))) <= 3500:
+                        grouped[-1] = ("text", combined)
+                        continue
+                grouped.append((kind, value))
+            items = grouped
             try:
                 for index, (kind, value) in enumerate(items):
                     if index < payload.get("delivery_cursor", 0):

@@ -156,6 +156,33 @@ class AppealStore:
             "SELECT * FROM moderation_appeal_notifications WHERE appeal_id=%s", (appeal_id,)
         )
 
+    async def save_notice(self, appeal, target_id, message_id, kind):
+        await self.guard.execute(
+            """INSERT INTO moderation_appeal_notifications
+            (appeal_id,target_id,kind,message_id,synced_revision,retry_at)
+            VALUES (%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE
+            message_id=VALUES(message_id),synced_revision=VALUES(synced_revision),
+            error=NULL,attempts=0,retry_at=VALUES(retry_at)""",
+            (appeal["id"], target_id, kind, message_id, appeal["revision"], utc_now_naive()),
+        )
+
+    async def bind_user_card(self, appeal, message_id):
+        # 翻页复用同一消息时，旧申诉不再持有该消息，避免异步更新覆盖当前页面。
+        await self.guard.execute(
+            """UPDATE moderation_appeal_notifications n JOIN moderation_appeals a ON a.id=n.appeal_id
+            SET n.message_id=NULL,n.synced_revision=a.revision
+            WHERE n.target_id=%s AND n.kind='user' AND n.message_id=%s AND n.appeal_id<>%s""",
+            (appeal["user_id"], message_id, appeal["id"]),
+        )
+        await self.save_notice(appeal, appeal["user_id"], message_id, "user")
+
+    async def input_message(self, actor_id, token, message_id):
+        await self.guard.execute(
+            """UPDATE moderation_appeal_inputs SET payload=JSON_SET(payload,'$.ui_message_id',%s)
+            WHERE actor_id=%s AND token=%s""",
+            (message_id, actor_id, token),
+        )
+
     async def publish(self, appeal, reviewers):
         targets = list(dict.fromkeys([appeal["user_id"], *reviewers]))
         async with self.atomic():

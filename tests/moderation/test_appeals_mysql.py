@@ -5,10 +5,12 @@
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import aiomysql
 import pytest
-from telegram.error import Forbidden
+from telegram.error import BadRequest, Forbidden
+from telegram.ext import ApplicationHandlerStop
 
 from core.handlers.appeal_handler import AppealHandler
 from core.infrastructure.database.mysql import utc_now_naive
@@ -36,16 +38,26 @@ class AssistantBot:
         self.sent = []
         self.fail = set()
         self.media = []
+        self.messages = {}
+        self.edits = []
 
     async def send_message(self, chat_id, text, **kwargs):
         if chat_id in self.fail:
             raise Forbidden("test: bot blocked")
         self.sent.append((chat_id, text, kwargs))
-        return SimpleNamespace(message_id=len(self.sent))
+        message_id = len(self.sent)
+        self.messages[chat_id, message_id] = {"text": text, **kwargs}
+        return SimpleNamespace(message_id=message_id)
 
     async def edit_message_text(self, chat_id, message_id, **kwargs):
         if chat_id in self.fail:
             raise Forbidden("test: bot blocked")
+        if (chat_id, message_id) not in self.messages:
+            raise BadRequest("Message to edit not found")
+        if self.messages[chat_id, message_id] == kwargs:
+            raise BadRequest("Message is not modified")
+        self.messages[chat_id, message_id] = kwargs
+        self.edits.append((chat_id, message_id))
         return True
 
     async def send_photo(self, chat_id, photo):
@@ -406,3 +418,200 @@ async def test_unsubmitted_cancelled_draft_does_not_notify_reviewers(setup_appea
     await env.handler.deliver(SimpleNamespace(bot=env.bot))
     assert [item[0] for item in env.bot.sent] == [USER]
     assert "私人草稿" not in env.bot.sent[0][1]
+
+
+async def text_update(env, text, actor=USER, message_id=100):
+    async def reply(value, **kwargs):
+        return await env.bot.send_message(actor, value, **kwargs)
+
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=actor, is_bot=False),
+        effective_chat=SimpleNamespace(id=actor, type="private"),
+        message=SimpleNamespace(
+            text=text,
+            caption=None,
+            message_id=message_id,
+            photo=None,
+            video=None,
+            document=None,
+            reply_text=reply,
+        ),
+    )
+    with pytest.raises(ApplicationHandlerStop):
+        await env.handler.message(update, SimpleNamespace(bot=env.bot))
+
+
+async def callback_update(env, data, actor, message_id, chat_id=None):
+    target = actor if chat_id is None else chat_id
+    chat = SimpleNamespace(id=target, type="private" if target == actor else "supergroup")
+    answer = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=actor, is_bot=False),
+        effective_chat=chat,
+        callback_query=SimpleNamespace(
+            data=data, message=SimpleNamespace(chat=chat, message_id=message_id), answer=answer
+        ),
+    )
+    with pytest.raises(ApplicationHandlerStop):
+        await env.handler.callback(update, SimpleNamespace(bot=env.bot))
+    return answer
+
+
+async def notice_for(env, appeal, target):
+    async with env.repository.reader() as store:
+        return next(row for row in await store.notices(appeal["id"]) if row["target_id"] == target)
+
+
+async def test_full_user_and_admin_flow_reuses_cards_with_one_result_alert(setup_appeal):
+    env = setup_appeal
+    await text_update(env, "/start appeal")
+    appeal = (await env.repository.user_rows(USER))[0]
+    notice = await notice_for(env, appeal, USER)
+    assert len(env.bot.sent) == 1 and "提交申诉" in env.bot.sent[0][1]
+    await text_update(env, "我连续打错了三次", message_id=101)
+    entry = await env.repository.input(USER)
+    assert len(env.bot.sent) == 1 and len(entry["payload"]["text"]) < 10
+    await callback_update(env, f"ap:input:{entry['token']}:submit", USER, notice["message_id"])
+    await env.workflow.recover_once()
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    appeal = await env.repository.get(appeal["id"])
+    assert appeal["status"] == "pending"
+    for _ in range(3):
+        await callback_update(env, f"ap:view:{appeal['id']}", USER, notice["message_id"])
+    await callback_update(env, "ap:list:history:0", USER, notice["message_id"])
+    assert len([row for row in env.bot.sent if row[0] == USER]) == 1
+    admin_notice = await notice_for(env, appeal, ADMIN)
+    for _ in range(2):
+        await callback_update(
+            env,
+            f"ap:review:{appeal['id']}:{appeal['revision']}:approve",
+            ADMIN,
+            admin_notice["message_id"],
+        )
+    assert await env.repository.input(ADMIN) is None
+    async with env.repository.reader() as store:
+        requests = await store.guard.all(
+            "SELECT * FROM moderation_appeal_requests WHERE appeal_id=%s", (appeal["id"],)
+        )
+        assert len(requests) == 1
+    await env.workflow.recover_once()
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    assert (await env.repository.get(appeal["id"]))["status"] == "approved"
+    user_messages = [row for row in env.bot.sent if row[0] == USER]
+    assert len(user_messages) == 2 and "封禁已解除" in user_messages[-1][1]
+    assert len([row for row in env.bot.sent if row[0] == ADMIN]) == 1
+    assert "已完成解封" in env.bot.messages[ADMIN, admin_notice["message_id"]]["text"]
+
+
+async def test_admin_reason_submits_directly_and_supplement_reuses_input_card(setup_appeal):
+    env = setup_appeal
+    appeal = await submitted(env)
+    admin_notice = await notice_for(env, appeal, ADMIN)
+    user_notice = await notice_for(env, appeal, USER)
+    sent_before = len(env.bot.sent)
+    await callback_update(
+        env,
+        f"ap:review:{appeal['id']}:{appeal['revision']}:more",
+        ADMIN,
+        admin_notice["message_id"],
+    )
+    assert len(env.bot.sent) == sent_before
+    prompt = env.bot.messages[ADMIN, admin_notice["message_id"]]["text"]
+    assert "发送后直接提交" in prompt and "附件" not in prompt
+    await text_update(env, "请补一张截图", actor=ADMIN)
+    assert await env.repository.input(ADMIN) is None
+    await env.workflow.recover_once()
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    current = await env.repository.get(appeal["id"])
+    assert current["status"] == "need_info"
+    assert len([row for row in env.bot.sent if row[0] == ADMIN]) == 1
+    await callback_update(
+        env, f"ap:supp:{current['id']}:{current['revision']}", USER, user_notice["message_id"]
+    )
+    await text_update(env, "已改", message_id=102)
+    entry = await env.repository.input(USER)
+    await callback_update(env, f"ap:input:{entry['token']}:submit", USER, user_notice["message_id"])
+    await env.workflow.recover_once()
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    assert (await env.repository.get(appeal["id"]))["status"] == "pending"
+    assert len([row for row in env.bot.sent if row[0] == USER]) == 2
+    assert len([row for row in env.bot.sent if row[0] == ADMIN]) == 1
+    assert "补充：已改" in env.bot.messages[ADMIN, admin_notice["message_id"]]["text"]
+
+
+async def test_deleted_card_is_recreated_once_and_then_edited(setup_appeal):
+    env = setup_appeal
+    await text_update(env, "/appeal")
+    appeal = (await env.repository.user_rows(USER))[0]
+    notice = await notice_for(env, appeal, USER)
+    env.bot.messages.pop((USER, notice["message_id"]))
+    await text_update(env, "连续答错", message_id=101)
+    replacement = await notice_for(env, appeal, USER)
+    assert replacement["message_id"] != notice["message_id"]
+    await text_update(env, "三次", message_id=102)
+    assert len(env.bot.sent) == 2
+    assert (await notice_for(env, appeal, USER))["message_id"] == replacement["message_id"]
+
+
+async def test_advanced_action_confirmation_stays_on_admin_card(setup_appeal):
+    env = setup_appeal
+    appeal = await submitted(env)
+    notice = await notice_for(env, appeal, ADMIN)
+    sent_before = len(env.bot.sent)
+    await callback_update(
+        env, f"ap:options:{appeal['id']}:{appeal['revision']}", ADMIN, notice["message_id"]
+    )
+    await callback_update(
+        env, f"ap:check:{appeal['id']}:{appeal['revision']}:allow", ADMIN, notice["message_id"]
+    )
+    assert "确认解除本群封禁" in env.bot.messages[ADMIN, notice["message_id"]]["text"]
+    assert len(env.bot.sent) == sent_before and await env.repository.input(ADMIN) is None
+    await callback_update(
+        env, f"ap:review:{appeal['id']}:{appeal['revision']}:allow", ADMIN, notice["message_id"]
+    )
+    await env.workflow.recover_once()
+    async with env.repository.reader() as store:
+        assert await store.guard.whitelisted(CHAT, USER)
+
+
+async def test_private_permission_denial_updates_card_without_extra_receipt(setup_appeal):
+    env = setup_appeal
+    env.guard.group(CHAT).notification_ids = [99]
+    appeal = await submitted(env)
+    observer_notice = await notice_for(env, appeal, 99)
+    sent_before = len(env.bot.sent)
+    await callback_update(
+        env,
+        f"ap:review:{appeal['id']}:{appeal['revision']}:approve",
+        99,
+        observer_notice["message_id"],
+    )
+    await env.workflow.recover_once()
+    await env.handler.deliver(SimpleNamespace(bot=env.bot))
+    assert (await env.repository.get(appeal["id"]))["status"] == "pending"
+    assert len(env.bot.sent) == sent_before
+    assert "未执行" in env.bot.messages[99, observer_notice["message_id"]]["text"]
+    env.guard.group(CHAT).reviewer_ids = [99]
+    await callback_update(
+        env,
+        f"ap:review:{appeal['id']}:{appeal['revision']}:approve",
+        99,
+        observer_notice["message_id"],
+    )
+    await env.workflow.recover_once()
+    assert (await env.repository.get(appeal["id"]))["status"] == "approved"
+
+
+async def test_history_navigation_cannot_be_overwritten_by_other_appeal_updates(setup_appeal):
+    env = setup_appeal
+    appeal = await submitted(env)
+    user_notice = await notice_for(env, appeal, USER)
+    async with env.repository.lock(USER) as store:
+        other_chat = CHAT - 1
+        case = {**env.case, "id": "b" * 32, "chat_id": other_chat, "event_key": "b" * 64}
+        await store.guard.create_case(case)
+    other = await env.inbox.begin(USER, case["id"])
+    await env.handler.show_user(env.bot, USER, other, (USER, user_notice["message_id"]))
+    assert (await notice_for(env, appeal, USER))["message_id"] is None
+    assert (await notice_for(env, other, USER))["message_id"] == user_notice["message_id"]

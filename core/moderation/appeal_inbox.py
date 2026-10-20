@@ -3,6 +3,7 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 """助手 Bot 的持久化输入边界。身份只能由 Telegram update 提供。"""
 
+import hashlib
 import uuid
 
 from core.i18n.i18n import t
@@ -138,7 +139,7 @@ class AppealInbox:
                     await store.clear_input(actor_id, token)
                 return None
             self.own(appeal, actor_id)
-            if not 10 <= len(payload.get("text", "").strip()) <= 2000:
+            if not 1 <= len(payload.get("text", "").strip()) <= 2000:
                 raise GuardError("appeal.text_required")
             if entry["mode"] == "draft" and await store.submission_count(actor_id) >= 3:
                 raise GuardError("appeal.cooldown")
@@ -195,6 +196,7 @@ class AppealInbox:
                         appeal, "withdrawn", f"telegram:{actor_id}", "withdrawn"
                     )
                 await store.clear_input(actor_id, entry["token"])
+            return entry
 
     async def review_input(self, actor_id, appeal_id, revision, origin, action):
         if action not in REVIEW_ACTIONS:
@@ -204,8 +206,16 @@ class AppealInbox:
             await self.check_origin(store, appeal, actor_id, revision, origin)
             if appeal["status"] != "pending":
                 raise GuardError("appeal.stale")
-            if await store.input(actor_id):
-                raise GuardError("appeal.input_busy")
+            existing = await store.input(actor_id)
+            if existing:
+                if existing["mode"] != "review" or existing["appeal_id"] != appeal_id:
+                    raise GuardError("appeal.input_busy")
+                if (
+                    existing["payload"].get("action"),
+                    existing["payload"].get("revision"),
+                    existing["payload"].get("origin"),
+                ) == (action, revision, list(origin)):
+                    return existing
             return await store.save_input(
                 actor_id,
                 appeal_id,
@@ -217,6 +227,41 @@ class AppealInbox:
                     "text": "",
                 },
             )
+
+    async def quick_review(self, actor_id, appeal_id, revision, origin, action):
+        if action not in {"approve", "allow", "global"}:
+            raise GuardError("guard.invalid_callback")
+        async with self.repository.lock(actor_id) as store:
+            appeal = await store.get(appeal_id)
+            await self.check_origin(store, appeal, actor_id, revision, origin)
+            if appeal["status"] != "pending":
+                raise GuardError("appeal.stale")
+            entry = await store.input(actor_id)
+            if entry and (entry["mode"] != "review" or entry["appeal_id"] != appeal_id):
+                raise GuardError("appeal.input_busy")
+            latest = await store.guard.one(
+                """SELECT id,status FROM moderation_appeal_requests
+                WHERE appeal_id=%s AND actor_id=%s AND revision=%s AND action=%s
+                ORDER BY created_at DESC,id DESC LIMIT 1""",
+                (appeal_id, actor_id, revision, action),
+            )
+            if latest and latest["status"] != "failed":
+                return
+            request_id = hashlib.sha256(
+                f"review:{appeal_id}:{actor_id}:{revision}:{origin}:{action}:{latest['id'] if latest else ''}".encode()
+            ).hexdigest()
+            async with store.atomic():
+                await store.queue_request(
+                    appeal_id,
+                    actor_id,
+                    action,
+                    revision,
+                    origin,
+                    t("appeal.default_approve"),
+                    request_id,
+                )
+                if entry:
+                    await store.clear_input(actor_id, entry["token"])
 
     @staticmethod
     async def check_origin(store, appeal, actor_id, revision, origin):
