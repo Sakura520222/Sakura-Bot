@@ -13,7 +13,7 @@
         <n-text v-if="discovering" role="status">正在核实 {{ checked }}/{{ total }} 个会话…</n-text>
         <n-text v-else depth="3">已加入 {{ joinedCount }} · 管理员 {{ adminCount }} · 非管理员 {{ memberCount }} · 权限待核实 {{ unknownCount }} · 频道私信 {{ relatedCount }}（随频道管理）</n-text>
       </n-space>
-      <deleted-users-cleanup-panel ref="deletedCleanupPanel" :groups="managedGroups" :blocked="discovering || leaving || cleaning || previewLoading || confirming" @busy="deletedBusy = $event" @changed="loadChats(true)" />
+      <deleted-users-cleanup-panel ref="deletedCleanupPanel" :groups="managedGroups" :blocked="discovering || leaving || cleaning || previewLoading || confirming" @busy="deletedBusy = $event" @changed="loadChats()" />
       <n-space align="center">
         <n-input v-model:value="search" clearable placeholder="搜索名称、用户名或 ID" style="width: 260px" />
         <n-select v-model:value="kind" :options="kindOptions" style="width: 150px" />

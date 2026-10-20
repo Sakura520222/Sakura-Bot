@@ -10,7 +10,17 @@ from telethon.errors import UserNotParticipantError
 from telethon.tl.functions.channels import EditBannedRequest, GetParticipantsRequest
 from telethon.tl.functions.messages import DeleteChatUserRequest, GetFullChatRequest
 from telethon.tl.functions.users import GetUsersRequest
-from telethon.tl.types import Channel, Chat, User, UserStatusEmpty
+from telethon.tl.types import (
+    Channel,
+    ChannelParticipant,
+    ChannelParticipantBanned,
+    Chat,
+    ChatBannedRights,
+    ChatParticipant,
+    PeerUser,
+    User,
+    UserStatusEmpty,
+)
 
 from core.infrastructure.database.mysql import utc_now_naive
 
@@ -67,6 +77,7 @@ class DeletedClient(FakeTelegram):
         self.bot_admin = True
         self.ban_users = True
         self.page_size = 200
+        self.restricted = {201, 203}
         self.partial = False
         self.requests = []
         self.removals = []
@@ -81,7 +92,11 @@ class DeletedClient(FakeTelegram):
 
     async def get_permissions(self, chat_id, user_id):
         chat_id = chat_id if isinstance(chat_id, int) else utils.get_peer_id(chat_id)
-        user_id = user_id if isinstance(user_id, int) else getattr(user_id, "user_id", user_id.id)
+        user_id = (
+            user_id
+            if isinstance(user_id, int)
+            else getattr(user_id, "user_id", None) or getattr(user_id, "id", None)
+        )
         if user_id not in self.members[chat_id]:
             raise UserNotParticipantError(request=None)
         admin = self.bot_admin if user_id == 999 else user_id in self.admins
@@ -107,7 +122,17 @@ class DeletedClient(FakeTelegram):
             if self.partial and request.offset:
                 ids = []
             return SimpleNamespace(
-                participants=[SimpleNamespace(user_id=user_id) for user_id in ids],
+                participants=[
+                    ChannelParticipantBanned(
+                        PeerUser(user_id),
+                        999,
+                        utc_now_naive(),
+                        ChatBannedRights(until_date=None, send_messages=True),
+                    )
+                    if user_id in self.restricted
+                    else ChannelParticipant(user_id, utc_now_naive())
+                    for user_id in ids
+                ],
                 users=[deepcopy(self.users[user_id]) for user_id in ids],
                 count=len(members),
             )
@@ -116,7 +141,9 @@ class DeletedClient(FakeTelegram):
             return SimpleNamespace(
                 full_chat=SimpleNamespace(
                     participants=SimpleNamespace(
-                        participants=[SimpleNamespace(user_id=user_id) for user_id in ids]
+                        participants=[
+                            ChatParticipant(user_id, 999, utc_now_naive()) for user_id in ids
+                        ]
                     )
                 ),
                 users=[deepcopy(self.users[user_id]) for user_id in ids],

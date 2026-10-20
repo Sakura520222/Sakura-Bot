@@ -20,6 +20,7 @@ from telethon.tl.types import (
     ChatBannedRights,
     InputPeerUser,
     InputUser,
+    PeerUser,
     User,
 )
 
@@ -29,6 +30,22 @@ from .chat_cleanup import ChatCleanupError
 from .deleted_cleanup_repository import DeletedCleanupRepository
 
 logger = logging.getLogger(__name__)
+
+
+def participant_user_id(participant):
+    """普通成员使用 user_id，受限成员使用 peer；已离群、被封禁及频道身份不处理。"""
+    if (
+        isinstance(participant, ChannelParticipantLeft)
+        or getattr(participant, "left", False)
+        or getattr(getattr(participant, "banned_rights", None), "view_messages", False)
+    ):
+        return None
+    peer = getattr(participant, "peer", None)
+    if peer is not None:
+        user_id = peer.user_id if isinstance(peer, PeerUser) else None
+    else:
+        user_id = getattr(participant, "user_id", None)
+    return user_id if type(user_id) is int and 0 < user_id < 2**63 else None
 
 
 class DeletedUserCleanup:
@@ -267,7 +284,10 @@ class DeletedUserCleanup:
                 )
                 job["payload"]["group_index"] += 1
                 logger.warning(
-                    "已销号清理跳过群组 chat=%s error=%s", group["chat_id"], type(error).__name__
+                    "已销号清理跳过群组 chat=%s error=%s",
+                    group["chat_id"],
+                    type(error).__name__,
+                    exc_info=not isinstance(error, ChatCleanupError),
                 )
             await store.save(job)
 
@@ -311,7 +331,7 @@ class DeletedUserCleanup:
                 GetParticipantsRequest(chat, ChannelParticipantsSearch(""), group["offset"], 200, 0)
             )
             participants, total = response.participants, response.count
-        ids = {row.user_id for row in participants if not getattr(row, "left", False)}
+        ids = {user_id for row in participants if (user_id := participant_user_id(row)) is not None}
         candidates = [
             user
             for user in response.users
@@ -360,7 +380,11 @@ class DeletedUserCleanup:
                     return
                 try:
                     permissions = await asyncio.wait_for(
-                        self.guard.client.get_permissions(chat, user), 15
+                        self.guard.client.get_permissions(
+                            chat,
+                            InputPeerUser(user.id, user.access_hash or item["access_hash"] or 0),
+                        ),
+                        15,
                     )
                 except UserNotParticipantError:
                     await store.item(

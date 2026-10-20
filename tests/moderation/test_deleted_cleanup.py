@@ -8,10 +8,21 @@ import pytest
 from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import EditBannedRequest, GetParticipantsRequest
 from telethon.tl.functions.users import GetUsersRequest
+from telethon.tl.types import (
+    ChannelParticipant,
+    ChannelParticipantBanned,
+    ChannelParticipantCreator,
+    ChannelParticipantLeft,
+    ChatAdminRights,
+    ChatBannedRights,
+    InputPeerUser,
+    PeerChannel,
+    PeerUser,
+)
 
 from core.infrastructure.database.mysql import utc_now_naive
 from core.moderation.chat_cleanup import ChatCleanupError
-from core.moderation.deleted_cleanup import DeletedUserCleanup
+from core.moderation.deleted_cleanup import DeletedUserCleanup, participant_user_id
 
 from .conftest import ADMIN, CHAT, USER
 from .deleted_cleanup_fakes import BASIC, CHANNEL, DeletedClient, MemoryCleanupRepository
@@ -209,3 +220,55 @@ async def test_repeated_profile_timeouts_are_bounded_and_reported(deleted):
     assert result["status"] == "partial"
     assert result["counts"]["failed"] == 2
     assert not deleted.guard.client.removals
+
+
+@pytest.mark.parametrize(
+    "participant,expected",
+    [
+        (ChannelParticipant(201, None), 201),
+        (ChannelParticipantCreator(202, ChatAdminRights()), 202),
+        (
+            ChannelParticipantBanned(
+                PeerUser(201), 999, None, ChatBannedRights(until_date=None, send_messages=True)
+            ),
+            201,
+        ),
+        (
+            ChannelParticipantBanned(
+                PeerUser(201), 999, None, ChatBannedRights(until_date=None, view_messages=True)
+            ),
+            None,
+        ),
+        (
+            ChannelParticipantBanned(
+                PeerUser(201), 999, None, ChatBannedRights(until_date=None), left=True
+            ),
+            None,
+        ),
+        (
+            ChannelParticipantBanned(
+                PeerChannel(201), 999, None, ChatBannedRights(until_date=None, send_messages=True)
+            ),
+            None,
+        ),
+        (ChannelParticipantLeft(PeerUser(201)), None),
+    ],
+)
+def test_telegram_participant_constructors_and_restricted_member_peers(participant, expected):
+    assert participant_user_id(participant) == expected
+
+
+async def test_deleted_user_without_hash_can_be_checked_without_entity_cache(deleted, monkeypatch):
+    original = deleted.guard.client.get_permissions
+    checked = []
+
+    async def permissions(chat, user):
+        if isinstance(user, InputPeerUser):
+            checked.append(user)
+        return await original(chat, user)
+
+    monkeypatch.setattr(deleted.guard.client, "get_permissions", permissions)
+    await deleted.start(ADMIN, uuid.uuid4().hex, [CHAT])
+    result = await drain(deleted)
+    assert result["status"] == "completed" and result["counts"]["removed"] == 1
+    assert any(row.user_id == 201 and row.access_hash == 0 for row in checked)
