@@ -32,9 +32,8 @@ def build_qa_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """构建 QA Bot 常驻主菜单键盘。"""
     return ReplyKeyboardMarkup(
         [
-            [QA_MENU_ASK, QA_MENU_SUBMIT],
+            [QA_MENU_SUBMIT, QA_MENU_APPEAL],
             [QA_MENU_CHANNELS, QA_MENU_SUBSCRIPTIONS],
-            [QA_MENU_APPEAL],
             [QA_MENU_STATUS, QA_MENU_CLEAR, QA_MENU_HELP],
         ],
         resize_keyboard=True,
