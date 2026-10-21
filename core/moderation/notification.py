@@ -16,11 +16,12 @@ from telethon.tl.types import InputMessageEntityMentionName, MessageEntityTextUr
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .ban_history import history_cleanup_text
 from .telegram import TelegramActionError, call
 
 logger = logging.getLogger(__name__)
 RETIRED_NOTICES = {"deleting", "removed"}
-REPORT_CONTROLS_VERSION = 1
+REPORT_CONTROLS_VERSION = 2
 CONTROLS_VERSION = 2
 
 
@@ -65,6 +66,7 @@ def review_buttons(case, config=None):
         and type(message_id) is int
         and 0 < message_id < 2**31
         and deletion.get("status") != "deleted"
+        and case["payload"].get("ban_message_cleanup", {}).get("status") != "deleted"
     ):
         key = (
             "guard.report_delete_retry_button"
@@ -220,6 +222,8 @@ def notification_text(case, *, link_profile=False):
                 escaped = escape(link)
                 values[key] = values[key].replace(escaped, f'<a href="{escaped}">{escaped}</a>')
     text = t("guard.report_notification" if reported else "guard.notification", **values)
+    if reported and case["status"] == "pending" and not is_ban_case(case):
+        text += "\n" + t("guard.report_ban_cleanup_hint")
     deletion = payload.get("report_message_deletion") if reported else None
     if deletion:
         error = deletion.get("error") or "—"
@@ -244,6 +248,8 @@ def notification_text(case, *, link_profile=False):
         if link_profile:
             details = {key: escape(str(value)) for key, value in details.items()}
         text += "\n" + t("guard.report_delete_details", **details)
+    if payload.get("ban_message_cleanup"):
+        text += "\n" + history_cleanup_text(payload["ban_message_cleanup"])
     return text
 
 
@@ -463,6 +469,7 @@ class Notifier:
             )
             or case["payload"].get("kick_button_enabled", True) != config.kick_button_enabled
             or case["payload"].get("report_notice_dirty")
+            or case["payload"].get("ban_message_cleanup_dirty")
         ):
             # 先使原通知待同步，再清除标记；任一步失败均可恢复，复用原消息 ID。
             for notice in await store.notices(case["id"]):
@@ -484,6 +491,7 @@ class Notifier:
                 if case["action"] == "report"
                 else case["payload"].get("report_controls_version"),
                 report_notice_dirty=False,
+                ban_message_cleanup_dirty=False,
             )
         if case["action"] == "verify_start":
             current = await store.case(case["id"])

@@ -523,6 +523,12 @@ async def retry(case_id: str, context=GUARD_ADMIN):
         raise HTTPException(404, t("guard.invalid_callback"))
     async with service.repository.lock(case["user_id"]) as store:
         case = await store.case(case_id)
+        cleanup = case["payload"].get("ban_message_cleanup", {})
+        if cleanup.get("status") == "pending" and case["status"] != "execution_failed":
+            await service.ban_history.resume(store, case, force=True)
+            result = await store.case(case_id)
+            await service.notifier.sync(store, result, service.group(case["chat_id"]))
+            return {"success": True, "case": result}
         if case["status"] != "execution_failed":
             raise HTTPException(409, t("guard.already_processing"))
         await store.update_case(case_id, "executing")

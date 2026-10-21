@@ -80,6 +80,15 @@ export interface GuardRecord {
     report_link?: string;
     message_date?: string;
     has_media?: boolean;
+    ban_message_cleanup?: {
+      status: "pending" | "deleted" | "cancelled";
+      actor: string;
+      requested_at: string;
+      completed_at?: string;
+      retry_at?: string | null;
+      attempts?: number;
+      error?: string | null;
+    };
     report_message_deletion?: {
       status: "pending" | "deleted";
       actor: string;

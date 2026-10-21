@@ -7,7 +7,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon import utils
@@ -427,6 +427,7 @@ def guard():
     config = GuardConfig(groups={str(CHAT): GuardGroup(enabled=True, verify_join=False)})
     service = Moderator(client, repository, config, default_admins=lambda: [ADMIN, 11])
     service.bot_id = 999
+    service.ban_history.revoke = AsyncMock(return_value=True)
     return service
 
 

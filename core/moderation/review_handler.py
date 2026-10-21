@@ -296,6 +296,7 @@ class ReviewHandler:
                     raise GuardError("guard.verification_target_protected")
                 # 复核现有禁令，未跨群执行任何批量封禁。
                 await self.service.actions.ban(case["chat_id"], case["user_id"])
+                await self.service.ban_history.prepare(store, case)
                 session = await store.verification(case["chat_id"], case["user_id"])
                 if session and session["status"] in set(ACTIVE_VERIFICATIONS) | {
                     "passed",

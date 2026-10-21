@@ -22,6 +22,7 @@ from telethon.tl.types import (
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .ban_history import BanHistoryCleanup
 from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
 from .deleted_cleanup import DeletedUserCleanup
@@ -69,6 +70,7 @@ class Moderator:
         self.reviews = ReviewHandler(self)
         self.reports = ReportHandler(self)
         self.verification = Verification(self)
+        self.ban_history = BanHistoryCleanup(self)
 
     @staticmethod
     def _default_admins():
@@ -537,6 +539,7 @@ class Moderator:
                 return
             if action == "ban":
                 await self.actions.ban(chat_id, user_id)
+                await self.ban_history.prepare(store, case)
                 session = await store.verification(chat_id, user_id)
                 if session and session["status"] in ACTIVE_VERIFICATIONS:
                     session["status"] = "blocked"
@@ -623,6 +626,7 @@ class Moderator:
                     elif case["status"].startswith("reviewing_"):
                         await self.reviews.resume(store, case)
                     await self.reviews.resume_message_deletion(store, await store.case(case["id"]))
+                    await self.ban_history.resume(store, await store.case(case["id"]))
                     await self.notifier.sync(
                         store, await store.case(case["id"]), self.group(case["chat_id"])
                     )

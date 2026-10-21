@@ -14,7 +14,7 @@ from telethon.tl.functions.messages import (
     HideChatJoinRequestRequest,
     SendMessageRequest,
 )
-from telethon.tl.types import ChatBannedRights, PeerUser
+from telethon.tl.types import ChatBannedRights, PeerChat, PeerUser
 
 VERIFICATION_RESTRICTIONS = (
     "send_messages",
@@ -128,6 +128,9 @@ class TelegramActions:
         await mutate(self.client(EditBannedRequest(chat_id, user_id, rights_object(values))))
 
     async def ban(self, chat_id, user_id):
+        if utils.resolve_id(chat_id)[1] is PeerChat:
+            await self.kick_basic_group(chat_id, user_id)
+            return
         await mutate(self.client.edit_permissions(chat_id, user_id, view_messages=False))
 
     async def unban(self, chat_id, user_id):
