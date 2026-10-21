@@ -17,10 +17,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from core.ai.ai_client import client_llm
+from core.ai.ai_client import get_ai_runtime
 from core.config import normalize_channel_id
 from core.infrastructure.database import get_db_manager
-from core.settings import get_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +72,9 @@ class MemoryManager:
 
 只返回JSON，不要其他内容。"""
 
-            response = client_llm.chat.completions.create(
-                model=get_llm_model(),
+            client, model = get_ai_runtime()
+            response = client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": "你是一个专业的文本分析助手，擅长提取关键信息。"},
                     {"role": "user", "content": prompt},

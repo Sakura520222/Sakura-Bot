@@ -13,9 +13,10 @@
 """
 
 import logging
-import os
 from typing import Any
 
+from core.config.qa_quota import QAQuotaSettings, effective_qa_quota
+from core.config.runtime import runtime_config
 from core.infrastructure.database import get_db_manager
 from core.infrastructure.utils.auth import is_admin as _strict_is_admin
 
@@ -28,29 +29,16 @@ class QuotaManager:
     def __init__(self):
         """初始化配额管理器"""
         self.db = get_db_manager()
-        self.daily_limit = self._get_daily_limit()
-        self.total_daily_limit = self._get_total_daily_limit()
+        self._refresh_limits()
         logger.info(
             f"配额管理器初始化完成: 用户限额={self.daily_limit}, 总限额={self.total_daily_limit}"
         )
 
-    def _get_daily_limit(self) -> int:
-        """获取每用户每日限额"""
-        try:
-            limit = int(os.getenv("QA_BOT_USER_LIMIT", "3"))
-            return max(1, limit)  # 至少1次
-        except ValueError:
-            logger.warning("QA_BOT_USER_LIMIT 配置无效，使用默认值3")
-            return 3
-
-    def _get_total_daily_limit(self) -> int:
-        """获取每日总限额"""
-        try:
-            limit = int(os.getenv("QA_BOT_DAILY_LIMIT", "200"))
-            return max(10, limit)  # 至少10次
-        except ValueError:
-            logger.warning("QA_BOT_DAILY_LIMIT 配置无效，使用默认值200")
-            return 200
+    def _refresh_limits(self) -> QAQuotaSettings:
+        settings = effective_qa_quota(runtime_config.read())
+        self.daily_limit = settings.user_daily_limit
+        self.total_daily_limit = settings.total_daily_limit
+        return settings
 
     def is_admin(self, user_id: int) -> bool:
         """检查用户是否为管理员（严格模式，fail-closed）。
@@ -78,30 +66,31 @@ class QuotaManager:
             }
         """
         try:
+            limits = self._refresh_limits()
             # 检查是否为管理员
             is_admin = self.is_admin(user_id)
 
             # 检查每日总限额
             total_used_today = await self.db.get_total_daily_usage()
-            if total_used_today >= self.total_daily_limit and not is_admin:
-                logger.warning(f"今日总配额已用尽: {total_used_today}/{self.total_daily_limit}")
+            if total_used_today >= limits.total_daily_limit and not is_admin:
+                logger.warning(f"今日总配额已用尽: {total_used_today}/{limits.total_daily_limit}")
                 return {
                     "allowed": False,
                     "remaining": 0,
                     "used": 0,
-                    "daily_limit": self.daily_limit,
+                    "daily_limit": limits.user_daily_limit,
                     "is_admin": False,
                     "message": f"⏰ **今日配额已用完**\n\n系统今日已处理 {total_used_today} 次查询。\n请在明日配额重置后继续使用。\n\n🌙 **重置时间：每日00:00**",
                 }
 
             # 检查并增加用户配额
             result = await self.db.check_and_increment_quota(
-                user_id=user_id, daily_limit=self.daily_limit, is_admin=is_admin
+                user_id=user_id, daily_limit=limits.user_daily_limit, is_admin=is_admin
             )
 
             if not result.get("allowed", False):
                 used = result.get("used", 0)
-                daily_limit = result.get("daily_limit", self.daily_limit)
+                daily_limit = result.get("daily_limit", limits.user_daily_limit)
                 logger.info(f"用户 {user_id} 配额已用尽: {used}/{daily_limit}")
                 return {
                     "allowed": False,
@@ -116,19 +105,21 @@ class QuotaManager:
             remaining = result.get("remaining", 0)
             used = result.get("used", 0)
 
-            logger.info(f"用户 {user_id} 配额检查通过: {used}/{self.daily_limit} (剩余{remaining})")
+            logger.info(
+                f"用户 {user_id} 配额检查通过: {used}/{limits.user_daily_limit} (剩余{remaining})"
+            )
 
             if is_admin:
                 message = "🌟 **管理员权限**\n\n你拥有无限制访问的特权。"
             else:
-                total_remaining = self.total_daily_limit - total_used_today - 1
-                message = f"✅ **查询成功**\n\n💡 今日剩余次数：{remaining}/{self.daily_limit}\n📊 系统总剩余：{total_remaining}次"
+                total_remaining = limits.total_daily_limit - total_used_today - 1
+                message = f"✅ **查询成功**\n\n💡 今日剩余次数：{remaining}/{limits.user_daily_limit}\n📊 系统总剩余：{total_remaining}次"
 
             return {
                 "allowed": True,
                 "remaining": remaining,
                 "used": used,
-                "daily_limit": self.daily_limit,
+                "daily_limit": limits.user_daily_limit,
                 "is_admin": is_admin,
                 "message": message,
             }
@@ -182,6 +173,7 @@ class QuotaManager:
             使用状态信息
         """
         try:
+            limits = self._refresh_limits()
             is_admin = self.is_admin(user_id)
             quota = await self.db.get_quota_usage(user_id)
             total_used = await self.db.get_total_daily_usage()
@@ -193,13 +185,13 @@ class QuotaManager:
                     "used_today": 0,
                     "remaining": -1,  # -1表示无限制
                     "total_used_today": total_used,
-                    "total_limit": self.total_daily_limit,
+                    "total_limit": limits.total_daily_limit,
                     "message": f"🌟 **管理员状态**\n\n你拥有无限制访问的特权。\n\n📊 今日总使用：{total_used}次",
                 }
 
             used = quota.get("usage_count", 0)
-            remaining = max(0, self.daily_limit - used)
-            total_remaining = max(0, self.total_daily_limit - total_used)
+            remaining = max(0, limits.user_daily_limit - used)
+            total_remaining = max(0, limits.total_daily_limit - total_used)
 
             return {
                 "user_id": user_id,
@@ -207,7 +199,7 @@ class QuotaManager:
                 "used_today": used,
                 "remaining": remaining,
                 "total_used_today": total_used,
-                "total_limit": self.total_daily_limit,
+                "total_limit": limits.total_daily_limit,
                 "message": f"📊 **使用状态**\n\n📚 今日已使用：{used}次\n💡 今日剩余：{remaining}次\n📊 系统总剩余：{total_remaining}次",
             }
 
@@ -223,15 +215,16 @@ class QuotaManager:
             系统状态信息
         """
         try:
+            limits = self._refresh_limits()
             total_used = await self.db.get_total_daily_usage()
-            total_remaining = max(0, self.total_daily_limit - total_used)
+            total_remaining = max(0, limits.total_daily_limit - total_used)
 
             return {
-                "daily_limit": self.total_daily_limit,
+                "daily_limit": limits.total_daily_limit,
                 "used_today": total_used,
                 "remaining": total_remaining,
-                "user_limit": self.daily_limit,
-                "utilization": f"{total_used / self.total_daily_limit * 100:.1f}%",
+                "user_limit": limits.user_daily_limit,
+                "utilization": f"{total_used / limits.total_daily_limit * 100:.1f}%",
             }
 
         except Exception as e:

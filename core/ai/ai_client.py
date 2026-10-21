@@ -9,12 +9,13 @@
 # 许可证全文：参见 LICENSE 文件
 
 import logging
+import threading
 
 from openai import AsyncOpenAI, OpenAI
 
+from core.config.ai_runtime import effective_ai_config
 from core.i18n.i18n import get_text
 from core.infrastructure.config.poll_prompt_manager import load_poll_prompt
-from core.settings import get_llm_api_key, get_llm_base_url, get_llm_model
 from core.system.error_handler import record_error, retry_with_backoff
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,12 @@ logger = logging.getLogger(__name__)
 logger.info("开始初始化AI客户端...")
 
 # 获取 AI 配置
-api_key = get_llm_api_key()
-base_url = get_llm_base_url()
-model = get_llm_model()
+_initial_config = effective_ai_config()
+api_key = _initial_config.api_key
+base_url = _initial_config.base_url
+model = _initial_config.model
+_client_connection = (api_key, base_url)
+_client_lock = threading.RLock()
 
 logger.debug(
     f"AI客户端配置: Base URL={base_url}, Model={model}, API Key={'***' if api_key else '未设置'}"
@@ -48,17 +52,37 @@ def reinitialize_ai_clients(new_api_key: str, new_base_url: str) -> None:
         new_api_key: 新的 API Key
         new_base_url: 新的 Base URL
     """
-    global client_llm, async_client_llm
+    global client_llm, async_client_llm, _client_connection
 
-    try:
-        client_llm = OpenAI(api_key=new_api_key, base_url=new_base_url)
-        async_client_llm = AsyncOpenAI(api_key=new_api_key, base_url=new_base_url)
-        logger.info(
-            f"✅ AI 客户端已热重载: Base URL={new_base_url}, "
-            f"API Key={'***' if new_api_key else '未设置'}"
-        )
-    except Exception as e:
-        logger.error(f"❌ AI 客户端热重载失败: {type(e).__name__}: {e}", exc_info=True)
+    with _client_lock:
+        connection = (new_api_key, new_base_url)
+        if connection == _client_connection:
+            return
+        # 两个客户端均构造成功后再替换；旧请求持有的客户端继续完成请求。
+        sync_client = OpenAI(api_key=new_api_key, base_url=new_base_url)
+        async_client = AsyncOpenAI(api_key=new_api_key, base_url=new_base_url)
+        client_llm, async_client_llm = sync_client, async_client
+        _client_connection = connection
+        logger.info("AI 客户端已热重载")
+
+
+def get_ai_runtime():
+    """为一次请求固定客户端与模型，兼容助手独立进程。"""
+    config = effective_ai_config()
+    with _client_lock:
+        reinitialize_ai_clients(config.api_key, config.base_url)
+        return client_llm, config.model
+
+
+def get_async_ai_runtime():
+    config = effective_ai_config()
+    with _client_lock:
+        reinitialize_ai_clients(config.api_key, config.base_url)
+        return async_client_llm, config.model
+
+
+def get_llm_model() -> str:
+    return effective_ai_config().model
 
 
 @retry_with_backoff(
@@ -92,7 +116,7 @@ async def analyze_with_ai(messages, current_prompt):
     context_text = "\n\n---\n\n".join(messages)
     prompt = f"{current_prompt}{context_text}"
 
-    model = get_llm_model()
+    client, model = get_async_ai_runtime()
     logger.debug(
         f"AI请求配置: 模型={model}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符"
     )
@@ -101,7 +125,7 @@ async def analyze_with_ai(messages, current_prompt):
     from datetime import datetime
 
     start_time = datetime.now()
-    response = await async_client_llm.chat.completions.create(
+    response = await client.chat.completions.create(
         model=model,
         messages=[
             {
@@ -158,7 +182,7 @@ async def generate_poll_from_summary(summary_text):
     poll_prompt_template = load_poll_prompt()
     prompt = poll_prompt_template.format(summary_text=summary_text)
 
-    model = get_llm_model()
+    client, model = get_async_ai_runtime()
     logger.debug(f"投票生成请求配置: 模型={model}, 提示词长度={len(prompt)}字符")
 
     try:
@@ -167,7 +191,7 @@ async def generate_poll_from_summary(summary_text):
         from datetime import datetime
 
         start_time = datetime.now()
-        response = await async_client_llm.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=[
                 {

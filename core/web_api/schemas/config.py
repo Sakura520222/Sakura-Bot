@@ -12,7 +12,7 @@
 AI 配置相关的请求/响应模型
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AIConfigResponse(BaseModel):
@@ -44,3 +44,15 @@ class AIConfigUpdateRequest(BaseModel):
     base_url: str | None = Field(default=None, description="LLM API 基础 URL")
     model: str | None = Field(default=None, description="LLM 模型名称")
     api_key: str | None = Field(default=None, description="LLM API Key")
+
+    @field_validator("base_url", "model", "api_key", mode="before")
+    @classmethod
+    def trim_optional_value(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
+
+
+class QAQuotaUpdateRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    user_daily_limit: int | None = Field(default=None, ge=1, le=2147483647)
+    total_daily_limit: int | None = Field(default=None, ge=10, le=2147483647)

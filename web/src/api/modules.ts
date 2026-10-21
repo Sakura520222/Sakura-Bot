@@ -73,6 +73,21 @@ export async function updateAIConfig(data: Partial<AIConfig & { api_key?: string
   return res.data;
 }
 
+export interface QAQuotaSettings {
+  user_daily_limit: number;
+  total_daily_limit: number;
+}
+
+export async function getQAQuota() {
+  const res = await apiClient.get<{ success: boolean; data: QAQuotaSettings }>("/ai/qa-quota");
+  return res.data;
+}
+
+export async function updateQAQuota(data: QAQuotaSettings) {
+  const res = await apiClient.put<{ success: boolean; data: QAQuotaSettings; message: string }>("/ai/qa-quota", data);
+  return res.data;
+}
+
 export async function getPrompts() {
   const res = await apiClient.get("/ai/prompts");
   return res.data;

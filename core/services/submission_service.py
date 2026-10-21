@@ -11,7 +11,7 @@
 import logging
 from typing import Any
 
-from core.ai.ai_client import async_client_llm, get_llm_model
+from core.ai.ai_client import get_async_ai_runtime
 from core.infrastructure.database.submission_repo import get_submission_repo
 
 logger = logging.getLogger(__name__)
@@ -94,8 +94,8 @@ class SubmissionService:
             title = submission["title"]
 
             # 调用 AI 服务
-            model = get_llm_model()
-            response = await async_client_llm.chat.completions.create(
+            client, model = get_async_ai_runtime()
+            response = await client.chat.completions.create(
                 model=model,
                 messages=[
                     {

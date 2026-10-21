@@ -94,6 +94,18 @@ class ConfigValidator:
                     error="Sakura Guard 配置无效，请检查群组 ID、规则、动作及超时范围",
                     config_path=str(file_path),
                 )
+        if "qa_bot_quota" in config:
+            from pydantic import ValidationError
+
+            from core.config.qa_quota import QAQuotaSettings
+
+            try:
+                QAQuotaSettings.model_validate(config["qa_bot_quota"])
+            except (ValidationError, ValueError, TypeError):
+                return ConfigValidationErrorEvent(
+                    error="助手 Bot 配额必须为整数，每人每日不少于 1 次、全站每日不少于 10 次",
+                    config_path=str(file_path),
+                )
         return ConfigValidator._validate_business_logic(config, file_path)
 
     @staticmethod

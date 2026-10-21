@@ -21,6 +21,12 @@ from core.ai.ai_client import (
 def skip_retry_waits(monkeypatch):
     """重试次数仍按真实逻辑验证，只移除测试中的退避等待。"""
     monkeypatch.setattr("core.system.error_handler.asyncio.sleep", AsyncMock())
+    # 此模块验证 AI 响应/重试；运行时配置与真实 SDK 切换由 HTTP 回归覆盖。
+    import core.ai.ai_client as ai_module
+
+    monkeypatch.setattr(
+        ai_module, "get_async_ai_runtime", lambda: (async_client_llm, ai_module.get_llm_model())
+    )
 
 
 @pytest.mark.unit

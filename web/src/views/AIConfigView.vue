@@ -17,7 +17,10 @@
                 :placeholder="aiConfig.api_key_set ? '已配置 (留空保持不变)' : '请输入 API Key'" />
             </n-form-item>
             <n-form-item>
-              <n-button type="primary" :loading="saving" @click="saveAIConfig">保存配置</n-button>
+              <n-space vertical>
+                <n-button type="primary" :loading="saving" :disabled="!aiLoaded" @click="saveAIConfig">保存配置</n-button>
+                <n-text depth="3">保存后立即生效，主机器人和助手 Bot 的后续请求使用新配置。</n-text>
+              </n-space>
             </n-form-item>
           </n-form>
         </n-card>
@@ -40,6 +43,7 @@
           </n-tabs>
         </n-card>
       </n-gi>
+      <n-gi span="2"><QAQuotaPanel /></n-gi>
     </n-grid>
   </div>
   </n-spin>
@@ -49,10 +53,13 @@
 import { ref, reactive, onMounted } from "vue";
 import { useMessage } from "naive-ui";
 import { getAIConfig, updateAIConfig, getPrompts, updatePrompt, resetPrompt } from "@/api/modules";
+import QAQuotaPanel from "@/components/QAQuotaPanel.vue";
+import { saveError } from "@/composables/autosave";
 
 const message = useMessage();
 const loading = ref(true);
 const saving = ref(false);
+const aiLoaded = ref(false);
 const aiConfig = reactive({ base_url: "", model: "", api_key: "", api_key_set: false });
 const prompts = ref<Array<{ prompt_type: string; content: string; is_default: boolean }>>([]);
 
@@ -69,6 +76,7 @@ async function loadData() {
     if (configRes.success) {
       Object.assign(aiConfig, configRes.data);
       aiConfig.api_key = "";
+      aiLoaded.value = true;
     }
     if (promptsRes.success) {
       prompts.value = promptsRes.data;
@@ -81,6 +89,7 @@ async function loadData() {
 }
 
 async function saveAIConfig() {
+  if (!aiLoaded.value || saving.value) return;
   saving.value = true;
   try {
     const data: Record<string, string> = {};
@@ -90,8 +99,12 @@ async function saveAIConfig() {
 
     const res = await updateAIConfig(data);
     message[res.success ? "success" : "error"](res.message);
-  } catch {
-    message.error("保存失败");
+    if (res.success) {
+      if (aiConfig.api_key) aiConfig.api_key_set = true;
+      aiConfig.api_key = "";
+    }
+  } catch (problem) {
+    message.error(saveError(problem));
   } finally {
     saving.value = false;
   }

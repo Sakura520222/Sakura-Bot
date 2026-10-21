@@ -21,6 +21,7 @@ from fastapi import APIRouter
 
 from core import __version__
 from core.config import get_bot_state
+from core.config.ai_runtime import effective_ai_config
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def get_dashboard():
                 "total_summaries": total_summaries,
                 "log_level": settings.log.log_level,
                 "uptime_seconds": round(uptime_seconds, 1),
-                "ai_model": settings.ai.model,
+                "ai_model": effective_ai_config(config).model,
                 "qa_bot_username": settings.telegram.bot_token and "configured",
             },
         }

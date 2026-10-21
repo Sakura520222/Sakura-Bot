@@ -550,8 +550,8 @@ ENABLE_POLL=True
 # ===== 问答Bot配置（可选） =====
 QA_BOT_ENABLED=True
 QA_BOT_TOKEN=your_qa_bot_token_here  # 从@BotFather获取，必须与主Bot不同
-QA_BOT_USER_LIMIT=3                  # 每个用户每日限额（默认3次）
-QA_BOT_DAILY_LIMIT=200               # 每日总限额（默认200次）
+QA_BOT_USER_LIMIT=3                  # 每个普通用户每日默认限额（可在 WebUI「AI 配置」中修改）
+QA_BOT_DAILY_LIMIT=200               # 普通用户每日总限额（可在 WebUI「AI 配置」中修改）
 
 # 问答Bot人格配置（三选一，优先级从高到低）
 # 方式1：直接填写人格描述（最高优先级）
