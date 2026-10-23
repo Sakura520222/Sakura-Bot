@@ -2,6 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 """封禁后的本群用户历史清理；先记录意图，独立重试，不追溯旧封禁。"""
 
+import logging
 from datetime import datetime, timedelta
 
 from telegram import Bot
@@ -14,6 +15,17 @@ from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
 from .telegram import call
+
+logger = logging.getLogger(__name__)
+
+
+def ban_generation(member):
+    participant = getattr(member, "participant", None)
+    date = getattr(participant, "date", None)
+    return {
+        "actor": getattr(participant, "kicked_by", None),
+        "date": date.isoformat() if isinstance(date, datetime) else None,
+    }
 
 
 class BotIdentityMismatch(ValueError):
@@ -55,6 +67,14 @@ class BanHistoryCleanup:
         # 只由确认成功的永久封禁路径调用；旧案件不会因升级生成清理任务。
         if case["payload"].get("ban_message_cleanup"):
             return
+        source_ban = None
+        try:
+            member = await self.service.actions.permissions(case["chat_id"], case["user_id"])
+            if getattr(getattr(member.participant, "banned_rights", None), "view_messages", False):
+                source_ban = ban_generation(member)
+        except Exception:
+            # 封禁已成功；身份查询失败仍保留清理意图，由恢复任务重新核验。
+            pass
         await self.save(
             store,
             case,
@@ -68,8 +88,18 @@ class BanHistoryCleanup:
                 "attempts": 0,
                 "error": None,
                 "retry_at": None,
+                "source_ban": source_ban,
             },
         )
+
+    async def finish(self, store, case):
+        """封禁终态落盘后立即清理，再发送最终通知；失败仍由持久化队列恢复。"""
+        try:
+            current = await store.case(case["id"])
+            if current:
+                await self.resume(store, current)
+        except Exception:
+            logger.warning("Guard 封禁消息清理待恢复 case=%s", case["id"], exc_info=True)
 
     async def revoke(self, chat_id, user_id, bot_id):
         # MTProto 的 deleteParticipantHistory 仅限用户帐号；复用主 Bot Token 调用 Bot API。
@@ -150,7 +180,12 @@ class BanHistoryCleanup:
                 member.is_admin
                 or member.is_creator
                 or not getattr(getattr(participant, "banned_rights", None), "view_messages", False)
-                or getattr(participant, "kicked_by", self.service.bot_id) != self.service.bot_id
+                or (
+                    ban_generation(member) != cleanup["source_ban"]
+                    if cleanup.get("source_ban") is not None
+                    else getattr(participant, "kicked_by", self.service.bot_id)
+                    != self.service.bot_id
+                )
             ):
                 await self.cancel(store, case, cleanup)
                 return

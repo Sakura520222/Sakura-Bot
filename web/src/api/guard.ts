@@ -26,6 +26,10 @@ export interface GuardGroup {
   nickname_action: Exclude<GuardAction, "delete">;
   message_filter: boolean;
   block_bot_messages: boolean;
+  block_button_messages: boolean;
+  button_message_action: GuardAction;
+  block_forwarded_messages: boolean;
+  forwarded_message_action: GuardAction;
   bot_message_action: GuardAction;
   message_keywords: string[];
   message_action: GuardAction;

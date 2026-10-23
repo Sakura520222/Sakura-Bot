@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
+from copy import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from telethon.tl.types import (
     UpdateChannel,
     UpdateChannelParticipant,
     UpdateChatParticipantAdmin,
+    UpdateUserName,
 )
 
 from core.i18n.i18n import t
@@ -25,7 +27,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 from .ban_history import BanHistoryCleanup
 from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
-from .deleted_cleanup import DeletedUserCleanup
+from .deleted_cleanup import DeletedUserCleanup, participant_user_id
 from .groups import GroupDirectory
 from .history_cleanup import HistoryCleanup
 from .matcher import Match, Matcher, normalize
@@ -95,11 +97,12 @@ class Moderator:
         from telethon.tl.types import UpdateBotChatInviteRequester
 
         for callback, builder in (
-            (self.reports.handle, events.NewMessage(incoming=True)),
             (self.handle_message, events.NewMessage(incoming=True)),
+            (self.reports.handle, events.NewMessage(incoming=True)),
             (self.handle_message, events.MessageEdited(incoming=True)),
             (self.handle_join, events.ChatAction()),
             (self.handle_join_request, events.Raw(types=UpdateBotChatInviteRequester)),
+            (self.handle_profile_update, events.Raw(types=UpdateUserName)),
             (
                 self.handle_membership_update,
                 events.Raw(
@@ -255,8 +258,8 @@ class Moderator:
             if await self.protected(
                 chat_id,
                 user,
-                allow_nonmember=self.group(chat_id).block_bot_messages
-                and bool(getattr(user, "bot", False)),
+                # 能发送当前消息的访客仍需检测昵称；明确非成员不等于管理员。
+                allow_nonmember=True,
             ):
                 return
             async with self.repository.lock(user.id) as store:
@@ -276,6 +279,26 @@ class Moderator:
     async def handle_membership_update(self, update):
         if isinstance(update, (UpdateChannelParticipant, UpdateChatParticipantAdmin)):
             if update.user_id != self.bot_id:
+                if isinstance(update, UpdateChannelParticipant):
+                    previous, current = update.prev_participant, update.new_participant
+                    was_absent = participant_user_id(previous) is None
+                    is_present = participant_user_id(current) == update.user_id
+                    if was_absent and is_present:
+                        chat_id = utils.get_peer_id(PeerChannel(update.channel_id))
+                        if self.group(chat_id).enabled:
+                            try:
+                                user = await call(self.client.get_entity(update.user_id))
+                                await self.process_join(
+                                    chat_id,
+                                    user,
+                                    f"participant:{update.channel_id}:{update.user_id}:{update.date}",
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Guard 成员加入检测失败 chat=%s user=%s",
+                                    chat_id,
+                                    update.user_id,
+                                )
                 return
         chat_id = (
             -update.chat_id
@@ -284,6 +307,48 @@ class Moderator:
         )
         self.directory.invalidate(chat_id)
         self.directory.refresh()
+
+    async def handle_profile_update(self, update):
+        try:
+            user = copy(await call(self.client.get_entity(update.user_id)))
+            user.first_name, user.last_name = update.first_name, update.last_name
+            user.usernames = update.usernames
+            user.username = next((item.username for item in update.usernames if item.active), "")
+            for key, config in list(self.config.groups.items()):
+                if not config.enabled or not Matcher(
+                    config, self.config.nickname_keywords
+                ).nickname(user):
+                    continue
+                chat_id = int(key)
+                try:
+                    member = await self.actions.permissions(chat_id, user.id)
+                except UserNotParticipantError:
+                    continue
+                except Exception:
+                    logger.warning(
+                        "Guard 改名检测无法确认成员权限 chat=%s user=%s", chat_id, user.id
+                    )
+                    continue
+                if (
+                    member.is_admin
+                    or member.is_creator
+                    or getattr(
+                        getattr(member.participant, "banned_rights", None), "view_messages", False
+                    )
+                ):
+                    continue
+                if await self.protected(chat_id, user):
+                    continue
+                async with self.repository.lock(user.id) as store:
+                    current = self.group(chat_id)
+                    if current.enabled:
+                        match = await self.match(store, current, chat_id, user)
+                        if match:
+                            await self.punish(
+                                store, chat_id, user, match, f"profile:{uuid.uuid4().hex}"
+                            )
+        except Exception:
+            logger.exception("Guard 昵称变更检测失败 user=%s", update.user_id)
 
     async def handle_join(self, event):
         chat_id = event.chat_id
@@ -475,8 +540,31 @@ class Moderator:
             existing = await store.active_ban(chat_id, user.id)
             if existing:
                 if existing["status"] == "pending":
-                    await self.actions.ban(chat_id, user.id)
-                return existing
+                    try:
+                        member = await self.actions.permissions(chat_id, user.id)
+                    except UserNotParticipantError:
+                        member = None
+                    banned = getattr(
+                        getattr(getattr(member, "participant", None), "banned_rights", None),
+                        "view_messages",
+                        False,
+                    )
+                    if banned:
+                        await self.ban_history.finish(store, existing)
+                        return await store.case(existing["id"])
+                    # 管理员在 Telegram 直接解封后，旧案件/旧清理不能吞掉本次新违规。
+                    await store.update_case(
+                        existing["id"],
+                        "cancelled",
+                        payload={
+                            **existing["payload"],
+                            "external_unban_detected_at": utc_now_naive().isoformat(),
+                        },
+                    )
+                else:
+                    if existing["status"] == "executing":
+                        await self.execute_case(store, existing)
+                    return await store.case(existing["id"])
         payload = await self.snapshot(chat_id, user, match, message)
         case = {
             "id": uuid.uuid4().hex,
@@ -522,6 +610,15 @@ class Moderator:
             return
         action, payload = case["action"], case["payload"]
         bot_message = payload.get("evidence", {}).get("target") == "bot_message"
+        structural_switch = {
+            "button_message": "block_button_messages",
+            "forwarded_message": "block_forwarded_messages",
+        }.get(payload.get("evidence", {}).get("target"))
+        if structural_switch and (
+            not getattr(config, structural_switch) or await store.whitelisted(chat_id, user_id)
+        ):
+            await store.update_case(case["id"], "cancelled")
+            return
         if bot_message and (
             not config.block_bot_messages or await store.whitelisted(chat_id, user_id)
         ):
@@ -590,6 +687,7 @@ class Moderator:
                 case["id"],
                 "pending" if action == "ban" else "manual" if action == "manual" else "done",
             )
+        await self.ban_history.finish(store, case)
         await self.notifier.sync(store, await store.case(case["id"]), config)
 
     async def handle_callback(self, event):

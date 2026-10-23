@@ -64,6 +64,8 @@
           <n-form-item label="验证管理按钮（仅踢出由上方独立开关控制）"><n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏封禁、拉黑和跳过按钮" /></n-form-item>
           <n-form-item label="昵称及用户名关键词命中动作"><n-select v-model:value="form.nickname_action" :options="memberActions" /></n-form-item>
           <n-form-item label="机器人发言命中动作"><n-select v-model:value="form.bot_message_action" :options="actions" /></n-form-item>
+          <n-form-item label="带按钮消息命中动作"><n-select v-model:value="form.button_message_action" :options="actions" /></n-form-item>
+          <n-form-item label="转发消息命中动作"><n-select v-model:value="form.forwarded_message_action" :options="actions" /></n-form-item>
           <n-form-item label="消息关键词命中动作"><n-select v-model:value="form.message_action" :options="actions" /></n-form-item>
           <n-form-item label="禁言时长（秒）"><n-input-number v-model:value="form.mute_seconds" :min="30" :max="2592000" /></n-form-item>
         </div>
@@ -78,7 +80,7 @@
         <n-text depth="3">通知收件人留空时复用 REPORT_ADMIN_IDS；可按事件关闭通知。验证管理按钮仅群主、具有封禁成员权限的管理员及 REPORT_ADMIN_IDS 可操作。跳过验证不会加入白名单或解除其他规则的限制。</n-text>
         <n-alert type="warning" :bordered="false" class="toolbar">
           通知目标不自动获得审核权限。审核用户列表为空时复用 REPORT_ADMIN_IDS；其他群只在启用共享后拦截永久黑名单。
-          机器人发言处理独立于消息关键词过滤；管理员、受信任 Bot 和本群白名单继续豁免，原有昵称及共享黑名单规则仍生效。
+          机器人发言、带按钮消息和转发消息各自独立于消息关键词过滤；管理员、受信任 Bot 和本群白名单继续豁免，原有昵称及共享黑名单规则仍生效。
           要接收其他机器人的普通消息，需在 BotFather 为主 Bot 开启 Bot-to-Bot Communication Mode，并确保主 Bot 是群管理员。
         </n-alert>
         <n-divider title-placement="left">自定义规则（按顺序匹配）</n-divider>

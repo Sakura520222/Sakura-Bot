@@ -236,6 +236,21 @@ class AppealInbox:
             await self.check_origin(store, appeal, actor_id, revision, origin)
             if appeal["status"] != "pending":
                 raise GuardError("appeal.stale")
+            if action == "global":
+                from core.infrastructure.utils.auth import is_admin
+
+                if not is_admin(actor_id):
+                    raise GuardError("appeal.global_admin_required")
+            elif await store.guard.blacklist(appeal["user_id"]):
+                # 拦截结果直接返回点击提示，不把注定失败的操作显示为“正在处理”。
+                await store.event(
+                    appeal,
+                    f"telegram:{actor_id}",
+                    "request_denied",
+                    appeal["status"],
+                    {"action": action, "error": "guard.blacklist_conflict"},
+                )
+                raise GuardError("guard.blacklist_conflict")
             entry = await store.input(actor_id)
             if entry and (entry["mode"] != "review" or entry["appeal_id"] != appeal_id):
                 raise GuardError("appeal.input_busy")

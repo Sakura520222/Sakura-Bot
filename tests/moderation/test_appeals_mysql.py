@@ -462,6 +462,51 @@ async def notice_for(env, appeal, target):
         return next(row for row in await store.notices(appeal["id"]) if row["target_id"] == target)
 
 
+async def test_blacklisted_ordinary_unban_returns_immediate_failure_without_queued_processing(
+    setup_appeal,
+):
+    env = setup_appeal
+    await env.guard.reviews.review(env.case["id"], "blacklist", ADMIN)
+    appeal = await submitted(env)
+    notice = await notice_for(env, appeal, ADMIN)
+    answer = await callback_update(
+        env, f"ap:review:{appeal['id']}:{appeal['revision']}:approve", ADMIN, notice["message_id"]
+    )
+    assert "全局永久黑名单" in answer.await_args.args[0]
+    assert answer.await_args.kwargs["show_alert"]
+    async with env.repository.reader() as store:
+        assert not await store.guard.all(
+            "SELECT id FROM moderation_appeal_requests WHERE appeal_id=%s", (appeal["id"],)
+        )
+        assert await store.guard.blacklist(USER)
+    assert env.guard.client.member_rights[CHAT, USER]["view_messages"]
+
+
+async def test_explicit_global_confirmation_and_approval_are_available_to_system_administrator(
+    setup_appeal, monkeypatch
+):
+    import core.infrastructure.utils.auth as auth
+
+    env = setup_appeal
+    monkeypatch.setattr(auth, "ADMIN_LIST", [ADMIN])
+    await env.guard.reviews.review(env.case["id"], "blacklist", ADMIN)
+    appeal = await submitted(env)
+    notice = await notice_for(env, appeal, ADMIN)
+    await callback_update(
+        env, f"ap:check:{appeal['id']}:{appeal['revision']}:global", ADMIN, notice["message_id"]
+    )
+    assert "确认移除" in env.bot.messages[ADMIN, notice["message_id"]]["text"]
+    await callback_update(
+        env, f"ap:review:{appeal['id']}:{appeal['revision']}:global", ADMIN, notice["message_id"]
+    )
+    await env.workflow.recover_once()
+    assert (await env.repository.get(appeal["id"]))["status"] == "approved"
+    async with env.repository.reader() as store:
+        assert not await store.guard.blacklist(USER)
+        assert not await store.guard.whitelisted(CHAT, USER)
+    assert not env.guard.client.member_rights[CHAT, USER]["view_messages"]
+
+
 async def test_full_user_and_admin_flow_reuses_cards_with_one_result_alert(setup_appeal):
     env = setup_appeal
     await text_update(env, "/start appeal")

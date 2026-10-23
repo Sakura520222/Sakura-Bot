@@ -136,6 +136,8 @@ class GroupSwitchRequest(BaseModel):
         "nickname_filter",
         "message_filter",
         "block_bot_messages",
+        "block_button_messages",
+        "block_forwarded_messages",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",

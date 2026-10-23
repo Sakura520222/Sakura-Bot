@@ -2,6 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 import json
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from telegram import Bot as TelegramBot
@@ -21,7 +22,9 @@ from .test_reports import report_case, send
 
 async def reviewed_ban(guard, store, action="ban"):
     await send(guard)
-    return await guard.reviews.review(report_case(store)["id"], action, ADMIN)
+    # 模拟清理前进程被中断，验证持久化恢复；即时路径由 test_guard_incidents 覆盖。
+    with patch.object(guard.ban_history, "finish", AsyncMock()):
+        return await guard.reviews.review(report_case(store)["id"], action, ADMIN)
 
 
 @pytest.mark.parametrize("action", ["ban", "blacklist"])
@@ -74,7 +77,7 @@ async def test_automatic_ban_prepares_the_same_cleanup_but_warn_mute_and_delete_
         case = await guard.punish(
             locked, CHAT, user, Match("nickname", "bad", "bad", "bad", "bad"), "auto-ban"
         )
-    assert case["payload"]["ban_message_cleanup"]["status"] == "pending"
+    assert case["payload"]["ban_message_cleanup"]["status"] == "deleted"
     await guard.recover_once()
     guard.ban_history.revoke.assert_awaited_once_with(CHAT, USER, guard.bot_id)
 
@@ -189,15 +192,15 @@ async def test_basic_group_removed_user_history_is_queued(guard, store, monkeypa
 
     chat = -42
     await send(guard, chat_id=chat)
-    case = await guard.reviews.review(report_case(store)["id"], "ban", ADMIN)
     permissions = guard.client.get_permissions
 
     async def after_removal(chat_id, user_id):
-        if (chat_id, user_id) == (chat, USER):
+        if (chat_id, user_id) == (chat, USER) and ("kick", chat, USER) in guard.client.calls:
             raise UserNotParticipantError(request=None)
         return await permissions(chat_id, user_id)
 
     monkeypatch.setattr(guard.client, "get_permissions", after_removal)
+    case = await guard.reviews.review(report_case(store)["id"], "ban", ADMIN)
     await guard.ban_history.resume(store, case)
     guard.ban_history.revoke.assert_awaited_once_with(chat, USER, guard.bot_id)
     assert (await store.case(case["id"]))["payload"]["ban_message_cleanup"]["status"] == "deleted"

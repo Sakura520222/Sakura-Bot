@@ -1,7 +1,7 @@
 # Copyright 2026 Sakura-Bot
 # 本项目采用 AGPL-3.0 许可
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -24,7 +24,9 @@ async def ban(guard, repository, action="ban"):
     guard.repository = repository
     await send(guard)
     case = (await repository.query("cases"))["rows"][0]
-    return await guard.reviews.review(case["id"], action, ADMIN)
+    # 模拟提交终态后尚未来得及即时清理即退出，覆盖持久化恢复路径。
+    with patch.object(guard.ban_history, "finish", AsyncMock()):
+        return await guard.reviews.review(case["id"], action, ADMIN)
 
 
 @pytest.mark.parametrize("action", ["ban", "blacklist"])

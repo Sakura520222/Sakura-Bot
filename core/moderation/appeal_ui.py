@@ -29,6 +29,8 @@ def card(appeal, *, reviewer=False):
         "files": sum(len(item.get("files", [])) for item in evidence),
         "rounds": len(evidence),
     }
+    if appeal["status"] == "pending" and payload.get("blacklisted"):
+        values["status"] = t("appeal.status_blacklisted")
     text = t("appeal.reviewer_card" if reviewer else "appeal.user_card", **values)
     if len(evidence) > 1:
         text += "\n\n" + t("appeal.latest_evidence", text=escape(evidence[-1]["text"][:700]))
@@ -65,7 +67,7 @@ def buttons(appeal, *, reviewer=False, expanded=False, confirm=None):
                     [button("back", f"ap:admin:{key}:{revision}")],
                 ]
             elif expanded:
-                actions = ["allow", *(["global"] if appeal["payload"].get("blacklisted") else [])]
+                actions = ["global"] if appeal["payload"].get("blacklisted") else ["allow"]
                 rows = [
                     [button(f"action_{action}", f"ap:check:{key}:{revision}:{action}")]
                     for action in actions
@@ -74,7 +76,9 @@ def buttons(appeal, *, reviewer=False, expanded=False, confirm=None):
             else:
                 rows = [
                     [
-                        button("action_approve", f"ap:review:{key}:{revision}:approve"),
+                        button("action_global_short", f"ap:check:{key}:{revision}:global")
+                        if appeal["payload"].get("blacklisted")
+                        else button("action_approve", f"ap:review:{key}:{revision}:approve"),
                         button("action_reject", f"ap:review:{key}:{revision}:reject"),
                     ],
                     [

@@ -171,9 +171,46 @@ class Matcher:
                     normalize(value)[:2048],
                     self.config.nickname_action,
                 )
+        for alias in getattr(user, "usernames", None) or []:
+            if getattr(alias, "active", False):
+                matched = self._match(
+                    "username", alias.username, self.nickname_keywords, self.config.nickname_action
+                )
+                if matched:
+                    return matched
         return None
 
     def message(self, message):
+        # 结构过滤独立于正文关键词开关；隐藏转发来源也保留 fwd_from。
+        has_buttons = any(
+            getattr(row, "buttons", None)
+            for row in getattr(getattr(message, "reply_markup", None), "rows", None) or []
+        )
+        for blocked, target, action in (
+            (
+                self.config.block_button_messages and has_buttons,
+                "button_message",
+                self.config.button_message_action,
+            ),
+            (
+                self.config.block_forwarded_messages
+                and getattr(message, "fwd_from", None) is not None,
+                "forwarded_message",
+                self.config.forwarded_message_action,
+            ),
+        ):
+            if blocked:
+                from core.i18n.i18n import t
+
+                original = (getattr(message, "message", "") or "")[:2048]
+                return Match(
+                    target,
+                    target.replace("_", "-"),
+                    t(f"guard.{target}_reason"),
+                    original,
+                    normalize(original),
+                    action,
+                )
         if not self.config.message_filter:
             return None
         matched = self._match(

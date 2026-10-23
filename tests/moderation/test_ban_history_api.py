@@ -30,9 +30,9 @@ async def test_history_retry_after_unban_cancels_without_rebanning(api, guard, s
 
     case = await reviewed_ban(guard, store)
     await guard.reviews.review(case["id"], "unban", ADMIN)
+    assert (await store.case(case["id"]))["payload"]["ban_message_cleanup"]["status"] == "cancelled"
     before = list(guard.client.calls)
     result = api.post(f"/api/guard/cases/{case['id']}/retry")
-    assert result.status_code == 200
-    assert result.json()["case"]["payload"]["ban_message_cleanup"]["status"] == "cancelled"
+    assert result.status_code == 409
     assert guard.client.calls == before
     guard.ban_history.revoke.assert_not_awaited()

@@ -113,6 +113,11 @@ class AppealMessages:
             if confirm:
                 if confirm not in {"allow", "global"}:
                     raise GuardError("guard.invalid_callback")
+                if confirm == "global":
+                    from core.infrastructure.utils.auth import is_admin
+
+                    if not is_admin(actor):
+                        raise GuardError("appeal.global_admin_required")
                 text += "\n\n" + t(f"appeal.confirm_{confirm}")
             message_id = await edit_or_send(
                 bot,

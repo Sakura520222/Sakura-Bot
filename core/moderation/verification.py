@@ -605,6 +605,8 @@ class Verification:
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
 
+        await self.service.ban_history.finish(store, case)
+
     async def tick(self, store, session):
         config = self.service.group(session["chat_id"])
         try:
@@ -1033,6 +1035,8 @@ class Verification:
                 "executing",
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+
+        await self.service.ban_history.finish(store, case)
 
     async def callback(self, event):
         admin = re.fullmatch(rb"sg:v:([0-9a-f]{32}):([bxjs])", event.data)

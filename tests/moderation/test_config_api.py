@@ -582,6 +582,32 @@ async def test_bot_message_switch_command_rejects_ordinary_members(guard, monkey
     assert "没有权限" in event.reply.await_args.args[0]
 
 
+@pytest.mark.parametrize("kind", ["button", "forwarded"])
+def test_structural_filter_settings_roundtrip_and_hot_reload(api, guard, config_store, kind):
+    persistence, original = config_store
+    assert api.post("/api/guard/groups", json={"chat_id": CHAT}).status_code == 200
+    switch, action = f"block_{kind}_messages", f"{kind}_message_action"
+    response = api.patch(
+        f"/api/guard/groups/{CHAT}/settings",
+        json={
+            "changes": {switch: True, action: "ban"},
+            "previous": {switch: False, action: "delete"},
+        },
+    )
+    assert response.status_code == 200
+    assert getattr(guard.group(CHAT), switch) is True
+    assert getattr(guard.group(CHAT), action) == "ban"
+    saved = persistence.read()
+    assert saved["sakura_guard"]["groups"][str(CHAT)][switch] is True
+    for key, value in original.items():
+        assert saved[key] == value
+    assert (
+        api.patch(f"/api/guard/groups/{CHAT}", json={"field": switch, "value": False}).status_code
+        == 200
+    )
+    assert getattr(guard.group(CHAT), switch) is False
+
+
 def test_add_group_is_saved_immediately_and_survives_reload(api, guard, config_store):
     persistence, original = config_store
     chat_id = CHAT - 10

@@ -358,6 +358,7 @@ async def test_shared_global_match_updates_last_seen_and_overrides_local_whiteli
 
 
 async def test_retention_preserves_pending_cases_and_permanent_blacklist(guard, mysql_repository):
+    guard.client.admins.add(guard.bot_id)
     case = await create_ban(guard, mysql_repository)
     await guard.reviews.review(case["id"], "blacklist", ADMIN)
     # 封禁后消息清理完成，结束案件才可按留存期限删除。

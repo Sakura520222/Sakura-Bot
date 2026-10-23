@@ -166,6 +166,22 @@ def test_cards_escape_untrusted_material_and_use_bounded_callbacks(appeal_bounda
     assert APPEAL_EN_US.keys() == APPEAL_ZH_CN.keys()
 
 
+def test_blacklisted_card_exposes_explicit_global_confirmation_instead_of_failing_unban(
+    appeal_boundary,
+):
+    _, _, _, appeal = appeal_boundary
+    appeal["status"] = "pending"
+    appeal["payload"]["blacklisted"] = True
+    assert "待系统管理员解除全局黑名单" in card(appeal, reviewer=True)
+    callbacks = [
+        button.callback_data
+        for row in buttons(appeal, reviewer=True).inline_keyboard
+        for button in row
+    ]
+    assert any(value.endswith(":global") and value.startswith("ap:check:") for value in callbacks)
+    assert not any(value.endswith((":approve", ":allow")) for value in callbacks)
+
+
 def make_update(text, *, private=True):
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=USER, is_bot=False),

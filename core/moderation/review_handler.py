@@ -314,6 +314,7 @@ class ReviewHandler:
                 case["status"],
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+        await self.service.ban_history.finish(store, case)
 
     async def check_kick_conflicts(self, store, case):
         if await store.blacklist(case["user_id"]):

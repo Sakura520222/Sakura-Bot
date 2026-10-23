@@ -85,6 +85,10 @@ class GuardGroup(BaseModel):
     message_filter: bool = False
     block_bot_messages: bool = False
     bot_message_action: Action = "delete"
+    block_button_messages: bool = False
+    button_message_action: Action = "delete"
+    block_forwarded_messages: bool = False
+    forwarded_message_action: Action = "delete"
     message_keywords: list[str] = Field(default_factory=list, max_length=100)
     message_action: Action = "delete"
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
