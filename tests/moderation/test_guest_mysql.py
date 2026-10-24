@@ -4,9 +4,11 @@
 
 import uuid
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
+from core.moderation.appeals import AppealWorkflow, eligible, source_signature
 from core.moderation.deleted_cleanup import DeletedUserCleanup
 from core.moderation.guest_messages import GuestMessages
 from core.moderation.matcher import Match
@@ -79,7 +81,8 @@ async def test_mysql_global_guest_intent_commits_with_source_and_recovers(guard,
     audit = await mysql_repository.get_case(parent["payload"]["guest_ban"]["case_id"])
     async with mysql_repository.lock(CALLER) as store:
         row = await store.blacklist(CALLER)
-    assert row["case_id"] == audit["id"] and audit["status"] == "blacklisted"
+    assert row["case_id"] == audit["id"] and audit["status"] == "done"
+    assert audit["action"] == "guest_blacklist" and not eligible(audit)
     assert audit["payload"]["guest_blacklist_authorization"]["actor"] == f"telegram:{ADMIN}"
     assert row["reviewer_actor"] == "system:guest_message"
     assert not parent["payload"]["guest_ban_pending"]
@@ -94,7 +97,7 @@ async def test_mysql_global_guest_case_and_blacklist_roll_back_together(
 
     async def fail_after_update(self, case_id, status, **kwargs):
         await update(self, case_id, status, **kwargs)
-        if case_id == key[:32] and status == "blacklisted":
+        if case_id == key[:32] and status == "done":
             raise ConnectionError("after audit and blacklist writes")
 
     with monkeypatch.context() as context:
@@ -179,3 +182,23 @@ async def test_mysql_guest_replay_cannot_restore_a_removed_global_blacklist(
     assert guard.client.calls == calls
     parent = await mysql_repository.get_case(parent["id"])
     assert parent["payload"]["guest_ban"]["status"] == "skipped"
+
+
+async def test_mysql_global_link_audit_does_not_block_review_of_the_actual_ban(
+    guard, mysql_repository
+):
+    parent = await blacklisted_source(guard, mysql_repository)
+    await guard.guest_messages.resume(parent["id"])
+    parent = await mysql_repository.get_case(parent["id"])
+    audit = await mysql_repository.get_case(parent["payload"]["guest_ban"]["case_id"])
+    case = await mysql_repository.get_case(audit["payload"]["guest_ban_case"])
+    appeal = {
+        "case_id": case["id"],
+        "chat_id": CHAT,
+        "user_id": CALLER,
+        "payload": {"source_signature": source_signature(case)},
+    }
+    async with mysql_repository.lock(CALLER) as store:
+        assert (await AppealWorkflow(guard).check_source(SimpleNamespace(guard=store), appeal))[
+            "id"
+        ] == case["id"]

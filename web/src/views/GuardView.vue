@@ -221,6 +221,7 @@ const verificationAdminActions = [{ label: "一键封禁", value: "ban" }, { lab
 const requestMatchActions = [{ label: "拒绝申请（默认）", value: "reject" }, { label: "保持待审，通知管理员", value: "manual" }, { label: "批准后继续按入群规则处理", value: "approve" }];
 const notificationEvents = [{ label: "过滤、举报及处罚", value: "moderation" }, { label: "验证开始", value: "verification_start" }, { label: "验证通过 / 取消", value: "verification_end" }, { label: "验证失败处理", value: "verification_fail" }, { label: "管理员验证操作", value: "admin_action" }, { label: "入群申请处理", value: "join_request" }, { label: "白名单操作", value: "whitelist" }, { label: "黑名单操作", value: "blacklist" }];
 const recordActionNames: Record<string, string> = { report: "用户举报", verify_skip: "管理员跳过验证", verify_hold: "保持验证禁言，等待管理员", verify_allow: "历史配置放行", verify_start: "开始入群验证", verify_pass: "入群验证通过", verify_cancel: "结束 / 取消验证", whitelist_add: "添加白名单", whitelist_remove: "移除白名单", blacklist_remove: "撤销永久黑名单", approve: "批准入群申请", reject: "拒绝入群申请", manual: "保留申请待审" };
+recordActionNames.guest_blacklist = "访客调用者全局拉黑";
 const joinOptions = [{ label: "保持待审，由管理员处理", value: "manual" }, { label: "规则通过后批准；开启验证时入群后验证", value: "approve" }];
 const targets = [{ label: "昵称", value: "nickname" }, { label: "用户名", value: "username" }, { label: "消息 / 媒体说明", value: "message" }, { label: "链接", value: "link" }];
 const kinds = [{ label: "关键词", value: "keyword" }, { label: "正则", value: "regex" }];

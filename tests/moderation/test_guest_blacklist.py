@@ -8,6 +8,7 @@ from copy import deepcopy
 import pytest
 from telethon.tl.types import PeerUser
 
+from core.moderation.appeals import eligible
 from core.moderation.guest_messages import blacklist_task
 from core.moderation.notification import notification_text
 
@@ -40,7 +41,12 @@ async def test_blacklist_links_caller_with_independent_authorized_audit(guard, s
     parent = await store.case(parent["id"])
     assert parent["payload"]["guest_ban"]["status"] == "blacklisted"
     audit = await store.case(parent["payload"]["guest_ban"]["case_id"])
-    assert audit["status"] == "blacklisted" and CALLER in store.black
+    assert (
+        audit["status"] == "done" and audit["action"] == "guest_blacklist" and CALLER in store.black
+    )
+    assert not eligible(audit)
+    ban_case = await store.case(audit["payload"]["guest_ban_case"])
+    assert eligible(ban_case) and (await store.active_ban(CHAT, CALLER))["id"] == ban_case["id"]
     assert audit["reviewer_actor"] == "system:guest_message"
     assert audit["payload"]["guest_blacklist_authorization"]["actor"] == f"telegram:{ADMIN}"
     assert audit["payload"]["guest_source_case"] == parent["id"]

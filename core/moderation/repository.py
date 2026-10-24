@@ -253,7 +253,9 @@ class GuardStore:
                 payload["review_generation"] = payload.get("review_generation", 0) + 1
             await self.update_case(
                 case["id"],
-                {
+                "done"
+                if guest_parent
+                else {
                     "allow": "allowed",
                     "blacklist": "blacklisted",
                     "unban": unban_status,
