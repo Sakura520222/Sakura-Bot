@@ -12,6 +12,8 @@ from telethon import events
 
 from core.i18n.i18n import t
 
+from .ai_report_repository import atomic
+from .ai_reports import message_snapshot
 from .matcher import Match, normalize
 from .moderator import GuardError
 from .telegram import call
@@ -110,6 +112,7 @@ class ReportHandler:
             )
             payload = await self.service.snapshot(chat_id, user, evidence, original)
             payload.update(
+                reported_message=message_snapshot(original),
                 reporter={
                     "user_id": reporter.id,
                     "name": " ".join(
@@ -138,7 +141,12 @@ class ReportHandler:
                 "status": "pending",
                 "payload": payload,
             }
-            await store.create_case(case)
+            if self.service.ai_reports.enabled(case):
+                async with atomic(store):
+                    await store.create_case(case)
+                    await self.service.ai_reports.enqueue(store, case)
+            else:
+                await store.create_case(case)
             case = await store.case(case["id"])
             await self.service.notifier.sync(store, case, self.service.group(chat_id))
             return case, True

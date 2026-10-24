@@ -145,6 +145,26 @@ async def test_restart_after_removal_with_lost_response_reconciles_without_secon
     assert deleted.guard.client.removals == [(CHAT, 201)]
 
 
+async def test_deleted_removal_immediately_cleans_all_messages_and_retries_after_network_failure(
+    deleted,
+):
+    from telegram.error import NetworkError
+
+    deleted.guard.ban_history.revoke.side_effect = [NetworkError("temporary"), True]
+    await deleted.start(ADMIN, uuid.uuid4().hex, [CHAT])
+    await deleted.step()
+    await deleted.step()
+    assert (await deleted.status())["job"]["status"] == "waiting"
+    assert deleted.guard.client.removals == [(CHAT, 201)]
+    await deleted.stop()
+    restarted = DeletedUserCleanup(deleted.guard, deleted.repository)
+    result = await drain(restarted)
+    assert result["counts"]["removed"] == 1
+    assert deleted.guard.client.removals == [(CHAT, 201)]
+    assert deleted.guard.ban_history.revoke.await_count == 2
+    assert any("清理全部消息" in row["message"] for row in result["results"])
+
+
 async def test_only_one_job_and_repeated_request_id_is_idempotent(deleted):
     request = uuid.uuid4().hex
     first = await deleted.start(ADMIN, request, [CHAT])

@@ -74,6 +74,19 @@ class DeletedCleanupStore:
                 now,
             ),
         )
+        # 旧清理记录里的已移除销号账号仍可有遗留消息；仅复用同 Bot、同群的审计身份，
+        # 新任务再次核验 deleted 标记后才删除，不改写旧任务或黑白名单。
+        for group in groups:
+            await self.store.execute(
+                """INSERT IGNORE INTO moderation_deleted_cleanup_items
+                (job_id,chat_id,user_id,access_hash,status,updated_at)
+                SELECT %s,i.chat_id,i.user_id,MAX(i.access_hash),'removing',%s
+                FROM moderation_deleted_cleanup_items i
+                JOIN moderation_deleted_cleanup_jobs j ON j.id=i.job_id
+                WHERE j.bot_id=%s AND i.chat_id=%s AND i.status='removed' AND i.job_id<>%s
+                GROUP BY i.chat_id,i.user_id""",
+                (job["id"], now, bot_id, group["chat_id"], job["id"]),
+            )
         return job
 
     async def save(self, job):

@@ -91,6 +91,9 @@ class GuardGroup(BaseModel):
     forwarded_message_action: Action = "delete"
     message_keywords: list[str] = Field(default_factory=list, max_length=100)
     message_action: Action = "delete"
+    ai_report_review_enabled: bool = False
+    ai_report_review_delay_minutes: int = Field(default=10, ge=1, le=1440)
+    ai_report_review_action: Action = "ban"
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
     rules: list[GuardRule] = Field(default_factory=list, max_length=100)
     ban_any_traditional: bool = False

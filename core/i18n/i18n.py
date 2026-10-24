@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 # 中文翻译（简体中文）
 MESSAGE_ZH_CN = {
+    "guard.ai_report_applied": "已按规则自动处罚",
+    "guard.ai_report_queued": "等待管理员；超时后启动 AI 复核",
+    "guard.ai_report_executing": "正在执行处罚",
+    "guard.ai_report_manual": "继续等待管理员",
+    "guard.ai_report_no_decision": "未取得可自动执行的明确结论，案件保持人工审核。",
+    "guard.ai_report_result": "🤖 AI 超时审核：{state}\n依据：{reason}\n模型：{model}",
     **APPEAL_ZH_CN,
     "help.section_guard": "🛡 Sakura Guard 智能群管",
     "cmd.guard": "/guard - 群管状态与帮助",
@@ -951,6 +957,12 @@ MESSAGE_ZH_CN = {
 
 # 英文翻译
 MESSAGE_EN_US = {
+    "guard.ai_report_applied": "Rule-based action applied",
+    "guard.ai_report_queued": "Waiting for an administrator; AI review starts after timeout",
+    "guard.ai_report_executing": "Applying moderation action",
+    "guard.ai_report_manual": "Waiting for an administrator",
+    "guard.ai_report_no_decision": "No actionable decision; the report remains open for manual review.",
+    "guard.ai_report_result": "🤖 AI timeout review: {state}\nReason: {reason}\nModel: {model}",
     **APPEAL_EN_US,
     "help.section_guard": "🛡 Sakura Guard moderation",
     "cmd.guard": "/guard - Moderation status and help",

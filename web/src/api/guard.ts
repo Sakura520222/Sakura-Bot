@@ -33,6 +33,9 @@ export interface GuardGroup {
   bot_message_action: GuardAction;
   message_keywords: string[];
   message_action: GuardAction;
+  ai_report_review_enabled: boolean;
+  ai_report_review_delay_minutes: number;
+  ai_report_review_action: GuardAction;
   mute_seconds: number;
   rules: GuardRule[];
   ban_any_traditional: boolean;
@@ -72,6 +75,11 @@ export interface GuardRecord {
   last_seen_at?: string;
   error?: string;
   payload?: {
+    ai_report_review?: {
+      state: string; model?: string; action?: string; error?: string; updated_at?: string;
+      verdict?: { verdict: string; confidence: number; category: string; reason: string; evidence: { source: string; quote: string }[] };
+      input?: { profile: { nickname: string; usernames: string[]; bio: string | null; bio_error: string | null }; message: { text: string }; rule_match: { rule_id: string; reason: string; action: string } | null; blacklist: { matched: boolean; shared: boolean } };
+    };
     name?: string;
     username?: string;
     chat_title?: string;

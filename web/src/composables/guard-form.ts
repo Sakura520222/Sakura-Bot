@@ -18,12 +18,16 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   nickname_action: "昵称及用户名命中动作", bot_message_action: "机器人发言命中动作",
   notification_enabled: "通知管理员", notification_events: "通知事件",
   verification_notice_cleanup: "结果通知送达后删除验证开始通知",
+  ai_report_review_enabled: "举报超时 AI 自动审核",
+  ai_report_review_delay_minutes: "AI 审核等待时间",
+  ai_report_review_action: "AI 明确违规默认动作",
 };
 export const guardSwitches: GuardSwitch[] = [
   "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
   "block_button_messages", "block_forwarded_messages",
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
+  "ai_report_review_enabled",
 ];
 export const immediateGuardFields: (keyof GuardGroup)[] = [
   ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",
@@ -31,6 +35,7 @@ export const immediateGuardFields: (keyof GuardGroup)[] = [
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
   "button_message_action", "forwarded_message_action",
+  "ai_report_review_action",
 ];
 
 export function integerError(value: unknown, min: number, max: number) {
@@ -45,6 +50,7 @@ export function validateNicknameKeywords(value: string[]): string | undefined {
 
 export function validateGuardField(field: keyof GuardGroup, value: unknown): string | undefined {
   if (field === "verification_timeout") return integerError(value, 30, 600);
+  if (field === "ai_report_review_delay_minutes") return integerError(value, 1, 1440);
   if (field === "verification_max_attempts") return integerError(value, 1, 10);
   if (field === "mute_seconds") return integerError(value, 30, 2592000);
   if (field === "review_chat_id") return value === null ? undefined : integerError(value, -Number.MAX_SAFE_INTEGER, -1);

@@ -1,14 +1,14 @@
 <template>
   <n-card title="已销号成员清理" size="small" :segmented="{ content: true }">
     <n-space vertical :size="12">
-      <n-text depth="3">一键清理全部管理群组，也可使用列表中的单群清理按钮。仅移除 Telegram 标记为已销号的账号，逐项复核权限；保留消息历史和黑白名单。</n-text>
+      <n-text depth="3">一键清理全部管理群组，也可使用列表中的单群清理按钮。逐项确认 Telegram 已销号标记与权限后移除，并删除该账号在本群的全部消息；也会复核旧清理记录中的已移除账号以清理遗留消息。黑白名单保留。</n-text>
       <n-space align="center">
         <n-button type="warning" :loading="starting" :disabled="blocked || busy || !state?.available || !groups.length" @click="clean(null)">一键清理全部管理群组（{{ groups.length }}）</n-button>
         <n-button :loading="loading" @click="load">刷新清理状态</n-button>
         <n-text v-if="!state?.available" depth="3">{{ error || '清理服务正在加载…' }}</n-text>
       </n-space>
       <n-space v-if="editor" align="center">
-        <n-text>定期清理全部管理群组</n-text>
+        <n-text>定时清理销号账号及全部消息</n-text>
         <n-switch v-model:value="editor.values.enabled" :loading="editor.active.value === 'enabled'" :disabled="editor.active.value === 'enabled' || !state?.available" aria-label="定期清理已销号成员" />
         <n-text>每</n-text>
         <n-input-number v-model:value="editor.values.interval_hours" :min="1" :max="720" style="width: 110px" @blur="editor?.flush()" />

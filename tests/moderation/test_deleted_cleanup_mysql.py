@@ -29,6 +29,21 @@ def attach(deleted, mysql_repository):
     deleted.repository = DeletedCleanupRepository(mysql_repository.pool)
 
 
+async def test_mysql_next_job_rechecks_removed_deleted_users_and_clears_legacy_messages(
+    deleted, mysql_repository
+):
+    attach(deleted, mysql_repository)
+    await deleted.start(ADMIN, uuid.uuid4().hex, [CHAT])
+    first = await drain(deleted)
+    assert first["counts"]["removed"] == 1
+    deleted.guard.ban_history.revoke.reset_mock()
+    await deleted.start(ADMIN, uuid.uuid4().hex, [CHAT])
+    second = await drain(deleted)
+    assert second["counts"]["removed"] == 1
+    assert deleted.guard.client.removals == [(CHAT, 201)]
+    deleted.guard.ban_history.revoke.assert_awaited_once_with(CHAT, 201, 999)
+
+
 async def test_mysql_schema_idempotence_pagination_and_persisted_audit(deleted, mysql_repository):
     attach(deleted, mysql_repository)
     await mysql_repository.initialize()

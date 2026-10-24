@@ -138,6 +138,7 @@ class GroupSwitchRequest(BaseModel):
         "block_bot_messages",
         "block_button_messages",
         "block_forwarded_messages",
+        "ai_report_review_enabled",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",
@@ -184,7 +185,16 @@ def business_error(error):
 @router.get("/config")
 async def config(context=GUARD_ADMIN):
     service, _ = context
-    return {"config": service.config.model_dump(), "defaults": GuardGroup().model_dump()}
+    worker = getattr(getattr(service, "ai_reports", None), "worker", None)
+    observer = getattr(service, "bot_observer", None)
+    return {
+        "config": service.config.model_dump(),
+        "defaults": GuardGroup().model_dump(),
+        "runtime": {
+            "ai_report_worker_running": bool(worker and not worker.done()),
+            "bot_message_observer_active": bool(observer and observer.client),
+        },
+    }
 
 
 @router.get("/groups")

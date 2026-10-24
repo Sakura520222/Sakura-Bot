@@ -24,7 +24,9 @@ from telethon.tl.types import (
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .ai_reports import AIReportReview
 from .ban_history import BanHistoryCleanup
+from .bot_observer import BotMessageObserver
 from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
 from .deleted_cleanup import DeletedUserCleanup, participant_user_id
@@ -73,6 +75,8 @@ class Moderator:
         self.reports = ReportHandler(self)
         self.verification = Verification(self)
         self.ban_history = BanHistoryCleanup(self)
+        self.ai_reports = AIReportReview(self)
+        self.bot_observer = BotMessageObserver(self)
 
     @staticmethod
     def _default_admins():
@@ -87,6 +91,7 @@ class Moderator:
         # 先校验完整快照，再整体替换，避免半更新的规则集。
         self.config = GuardConfig.model_validate(config.get("sakura_guard", {}))
         self.deleted_cleanup.wake()
+        self.ai_reports.wake_event.set()
         if self.appeals:
             self.appeals.routing_changed()
         self._wake.set()
@@ -118,8 +123,11 @@ class Moderator:
             await self.appeals.start()
         self.directory.refresh(force=True)
         await self.deleted_cleanup.start_worker()
+        await self.ai_reports.start()
 
     async def stop(self):
+        self.bot_observer.detach()
+        await self.ai_reports.stop()
         if self.appeals:
             await self.appeals.stop()
         for callback, builder in self._handlers:
@@ -204,6 +212,10 @@ class Moderator:
         nickname = matcher.nickname(user)
         if nickname:
             return nickname
+        message_match = matcher.message(message) if message is not None else None
+        # 明确配置的按钮/转发动作优先于泛化的“机器人发言”动作。
+        if message_match and message_match.target in {"button_message", "forwarded_message"}:
+            return message_match
         if message is not None and config.block_bot_messages and getattr(user, "bot", False):
             original = (getattr(message, "message", "") or "")[:2048]
             return Match(
@@ -214,7 +226,7 @@ class Moderator:
                 normalize(original)[:2048],
                 config.bot_message_action,
             )
-        return matcher.message(message) if message is not None else None
+        return message_match
 
     async def snapshot(self, chat_id, user, evidence, message=None):
         chat = await call(self.client.get_entity(chat_id))
@@ -604,6 +616,8 @@ class Moderator:
             else:
                 await store.update_case(case["id"], "done")
             await self.notifier.sync(store, await store.case(case["id"]), config)
+            return
+        if not await self.ai_reports.execution_allowed(store, case):
             return
         if not config.enabled:
             await store.update_case(case["id"], "cancelled")

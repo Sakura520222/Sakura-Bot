@@ -109,6 +109,21 @@ CREATE TABLE IF NOT EXISTS moderation_notifications (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Ban appeals share Guard's user lock, case history and lists. No new bot identity.
+CREATE TABLE IF NOT EXISTS moderation_ai_reports (
+    case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    token CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    payload JSON NOT NULL,
+    error VARCHAR(128) NULL,
+    retry_at DATETIME(6) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_report_work (status, retry_at),
+    CONSTRAINT fk_ai_report_case FOREIGN KEY (case_id) REFERENCES moderation_cases(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS moderation_appeals (
     id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

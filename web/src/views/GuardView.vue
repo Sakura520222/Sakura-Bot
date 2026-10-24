@@ -68,7 +68,10 @@
           <n-form-item label="转发消息命中动作"><n-select v-model:value="form.forwarded_message_action" :options="actions" /></n-form-item>
           <n-form-item label="消息关键词命中动作"><n-select v-model:value="form.message_action" :options="actions" /></n-form-item>
           <n-form-item label="禁言时长（秒）"><n-input-number v-model:value="form.mute_seconds" :min="30" :max="2592000" /></n-form-item>
+          <n-form-item label="AI 审核等待时间（分钟）"><n-input-number v-model:value="form.ai_report_review_delay_minutes" :min="1" :max="1440" /></n-form-item>
+          <n-form-item label="AI 明确违规默认动作"><n-select v-model:value="form.ai_report_review_action" :options="actions" /></n-form-item>
         </div>
+        <n-alert type="info" :bordered="false" class="toolbar">举报超时 AI 审核需同时启用本群群管与上方开关，仅处理启用后的新举报。默认等待 10 分钟；管理员先处理即停止 AI 审核。复用“AI 配置”中的模型，核对被举报消息、昵称、用户名、简介及现有规则和黑名单。命中现有规则时执行该规则动作；其他明确违规执行默认动作。不确定、证据变化或调用失败则继续等待管理员。AI 不修改全局黑名单或白名单，封禁后立即清理该用户在本群的全部消息。</n-alert>
         <n-form-item label="消息与链接关键词"><n-dynamic-tags v-model:value="form.message_keywords" /></n-form-item>
         <div class="switch-grid">
           <n-form-item v-for="field in idFields" :key="field.key" :label="field.label">
@@ -146,6 +149,16 @@
           <span v-else>{{ detail.payload?.message_id || '—' }}</span>
         </n-descriptions-item>
         <n-descriptions-item label="状态">{{ recordStatus(detail) }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.ai_report_review" label="AI 超时审核">
+          {{ detail.payload.ai_report_review.state === 'applied' ? '已自动处罚' : detail.payload.ai_report_review.state === 'executing' ? '正在执行处罚' : '继续等待管理员' }}
+          · {{ detail.payload.ai_report_review.model || '—' }} · {{ detail.payload.ai_report_review.action || '—' }}
+          <div v-if="detail.payload.ai_report_review.verdict">{{ detail.payload.ai_report_review.verdict.reason }}（置信度 {{ Math.round(detail.payload.ai_report_review.verdict.confidence * 100) }}%）</div>
+          <div v-if="detail.payload.ai_report_review.error">{{ detail.payload.ai_report_review.error }}</div>
+          <div v-if="detail.payload.ai_report_review.input" class="evidence">资料：{{ detail.payload.ai_report_review.input.profile.nickname }} · {{ detail.payload.ai_report_review.input.profile.usernames.join(' / ') }}
+简介：{{ detail.payload.ai_report_review.input.profile.bio ?? '无法获取' }}
+规则：{{ detail.payload.ai_report_review.input.rule_match?.reason || '未直接命中' }} · 黑名单：{{ detail.payload.ai_report_review.input.blacklist.matched ? '命中' : '未命中' }}</div>
+          <div v-for="(item, index) in detail.payload.ai_report_review.verdict?.evidence || []" :key="index" class="evidence">{{ item.source }}：{{ item.quote }}</div>
+        </n-descriptions-item>
         <n-descriptions-item v-if="detail.payload?.ban_message_cleanup" label="封禁后消息清理">{{ banHistoryStatus(detail) }} · {{ detail.payload.ban_message_cleanup.actor }} · {{ detail.payload.ban_message_cleanup.completed_at || detail.payload.ban_message_cleanup.requested_at }} UTC<span v-if="detail.payload.ban_message_cleanup.error"> · {{ detail.payload.ban_message_cleanup.error }}</span></n-descriptions-item>
         <n-descriptions-item v-if="detail.payload?.report_message_deletion" label="原消息删除">{{ detail.payload.report_message_deletion.status === 'deleted' ? '已删除或已不存在' : '待确认删除，后台自动重试' }} · {{ detail.payload.report_message_deletion.actor }} · {{ detail.payload.report_message_deletion.completed_at || detail.payload.report_message_deletion.requested_at }} UTC<span v-if="detail.payload.report_message_deletion.error"> · {{ deletionError(detail.payload.report_message_deletion.error) }}</span></n-descriptions-item>
         <n-descriptions-item label="审核人 / UTC 时间">{{ detail.reviewer_actor || detail.reviewer_id || '—' }} / {{ detail.reviewed_at || '—' }}</n-descriptions-item>

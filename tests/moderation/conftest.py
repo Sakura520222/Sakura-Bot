@@ -286,6 +286,7 @@ class FakeTelegram:
         self.remove_event_handler = MagicMock()
 
     async def get_entity(self, identifier):
+        identifier = getattr(identifier, "user_id", identifier)
         if identifier < 0:
             bare_id, peer_type = utils.resolve_id(identifier)
             if peer_type is PeerChat:

@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import timedelta
 
+from telegram.error import NetworkError, RetryAfter
 from telethon import utils
 from telethon.errors import FloodWaitError, UserNotParticipantError
 from telethon.tl.functions.channels import EditBannedRequest, GetParticipantsRequest
@@ -28,6 +29,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 
 from .chat_cleanup import ChatCleanupError
 from .deleted_cleanup_repository import DeletedCleanupRepository
+from .telegram import call
 
 logger = logging.getLogger(__name__)
 
@@ -259,11 +261,13 @@ class DeletedUserCleanup:
                         group["status"] = "partial" if group["error"] else "completed"
                         job["payload"]["group_index"] += 1
                 group.pop("failures", None)
-            except FloodWaitError as error:
+            except (FloodWaitError, RetryAfter) as error:
+                wait = error.seconds if isinstance(error, FloodWaitError) else error.retry_after
+                seconds = wait.total_seconds() if isinstance(wait, timedelta) else wait
                 job.update(
                     status="waiting",
-                    error=f"Telegram 限流，等待 {error.seconds} 秒后继续",
-                    retry_at=utc_now_naive() + timedelta(seconds=max(1, error.seconds)),
+                    error=f"Telegram 限流，等待 {seconds} 秒后继续",
+                    retry_at=utc_now_naive() + timedelta(seconds=max(1, seconds)),
                 )
             except (TimeoutError, ConnectionError, OSError) as error:
                 group["failures"] = group.get("failures", 0) + 1
@@ -311,9 +315,13 @@ class DeletedUserCleanup:
         if not (
             permissions.is_creator is True
             or (isinstance(chat, Chat) and permissions.is_admin is True)
-            or (permissions.is_admin is True and getattr(rights, "ban_users", None) is True)
+            or (
+                permissions.is_admin is True
+                and getattr(rights, "ban_users", None) is True
+                and getattr(rights, "delete_messages", None) is True
+            )
         ):
-            raise ChatCleanupError("机器人缺少移除成员权限，本群已跳过")
+            raise ChatCleanupError("机器人缺少移除成员或删除消息权限，本群已跳过")
         return chat
 
     async def _rpc(self, request):
@@ -387,10 +395,14 @@ class DeletedUserCleanup:
                         15,
                     )
                 except UserNotParticipantError:
+                    if item["status"] == "removing":
+                        await self._delete_history(job, item, chat)
                     await store.item(
                         item,
                         "removed" if item["status"] == "removing" else "skipped",
-                        "已确认不在群内",
+                        "已移除并清理全部消息"
+                        if item["status"] == "removing"
+                        else "已确认不在群内",
                     )
                     return
                 participant = getattr(permissions, "participant", None)
@@ -399,10 +411,14 @@ class DeletedUserCleanup:
                     or getattr(participant, "left", False)
                     or getattr(getattr(participant, "banned_rights", None), "view_messages", False)
                 ):
+                    if item["status"] == "removing":
+                        await self._delete_history(job, item, chat)
                     await store.item(
                         item,
                         "removed" if item["status"] == "removing" else "skipped",
-                        "已确认不在群内",
+                        "已移除并清理全部消息"
+                        if item["status"] == "removing"
+                        else "已确认不在群内",
                     )
                     return
                 if permissions.is_admin is not False or permissions.is_creator is not False:
@@ -426,7 +442,7 @@ class DeletedUserCleanup:
                 if not permitted or self.guard.bot_id != job["bot_id"]:
                     raise ChatCleanupError("操作者权限或机器人身份已变化，剩余成员未处理")
                 request = (
-                    DeleteChatUserRequest(chat.id, utils.get_input_user(user), revoke_history=False)
+                    DeleteChatUserRequest(chat.id, utils.get_input_user(user), revoke_history=True)
                     if isinstance(chat, Chat)
                     else EditBannedRequest(
                         chat,
@@ -434,12 +450,16 @@ class DeletedUserCleanup:
                         ChatBannedRights(until_date=None, view_messages=True),
                     )
                 )
-                # 只移除已销号账号，不进行 ban/unban 补偿，不解除原有封禁，不删除消息历史。
+                # 移除意图已落盘；销号与权限每次重试都复核，绝不进行解封补偿。
                 await self._rpc(request)
-                await store.item(item, "removed", "已移除已销号成员")
-        except FloodWaitError:
+                if not isinstance(chat, Chat):
+                    await self._delete_history(job, item, chat)
+                await store.item(item, "removed", "已移除并清理全部消息")
+        except (FloodWaitError, RetryAfter):
             await store.attempt(item, -1)
             raise
+        except NetworkError as error:
+            raise ConnectionError("DeletedHistoryRetry") from error
         except (TimeoutError, ConnectionError, OSError):
             raise
         except ChatCleanupError:
@@ -448,6 +468,28 @@ class DeletedUserCleanup:
             await store.item(item, "failed", f"{type(error).__name__}，未确认移除")
             job["payload"]["groups"][job["payload"]["group_index"]]["error"] = (
                 "部分成员核实或移除失败"
+            )
+
+    async def _delete_history(self, job, item, chat):
+        await self._group(item["chat_id"])
+        permitted = (
+            self.settings.enabled
+            if job["trigger_type"] == "scheduled"
+            else self.authorized(job["actor"])
+        )
+        if not permitted or self.guard.bot_id != job["bot_id"]:
+            raise ChatCleanupError("清理已关闭或操作者权限已撤销，未删除消息")
+        if isinstance(chat, Chat):
+            await self._rpc(
+                DeleteChatUserRequest(
+                    chat.id,
+                    InputUser(item["user_id"], item["access_hash"] or 0),
+                    revoke_history=True,
+                )
+            )
+        else:
+            await call(
+                self.guard.ban_history.revoke(item["chat_id"], item["user_id"], self.guard.bot_id)
             )
 
     def _release_directory(self):

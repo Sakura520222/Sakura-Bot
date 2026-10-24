@@ -104,7 +104,9 @@ class DeletedClient(FakeTelegram):
             is_admin=admin,
             is_creator=False,
             participant=SimpleNamespace(
-                admin_rights=SimpleNamespace(ban_users=self.ban_users) if admin else None,
+                admin_rights=SimpleNamespace(ban_users=self.ban_users, delete_messages=True)
+                if admin
+                else None,
                 left=False,
                 banned_rights=None,
             ),
@@ -159,7 +161,7 @@ class DeletedClient(FakeTelegram):
                 assert request.banned_rights.view_messages is True
             else:
                 chat_id, user_id = -request.chat_id, request.user_id.user_id
-                assert request.revoke_history is False
+                assert request.revoke_history is True
             self.members[chat_id].discard(user_id)
             self.removals.append((chat_id, user_id))
             if self.fail_after_remove:

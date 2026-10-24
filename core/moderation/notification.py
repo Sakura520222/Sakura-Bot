@@ -192,7 +192,9 @@ def notification_text(case, *, link_profile=False):
         reviewed_at=str(case.get("reviewed_at") or "—"),
         error=case.get("error") or "—",
     )
-    reported = case["action"] == "report"
+    reported = case["action"] == "report" or bool(
+        payload.get("ai_report_review") and payload.get("reporter")
+    )
     if reported:
         reporter = payload.get("reporter", {})
         original = evidence.get("original", "")
@@ -218,7 +220,7 @@ def notification_text(case, *, link_profile=False):
             )
         for key in ("chat_link", "evidence_link", "report_link"):
             link = payload.get(key)
-            if link and link.startswith("https://t.me/"):
+            if key in values and link and link.startswith("https://t.me/"):
                 escaped = escape(link)
                 values[key] = values[key].replace(escaped, f'<a href="{escaped}">{escaped}</a>')
     text = t("guard.report_notification" if reported else "guard.notification", **values)
@@ -250,6 +252,25 @@ def notification_text(case, *, link_profile=False):
         text += "\n" + t("guard.report_delete_details", **details)
     if payload.get("ban_message_cleanup"):
         text += "\n" + history_cleanup_text(payload["ban_message_cleanup"])
+    ai = payload.get("ai_report_review")
+    if ai:
+        verdict = ai.get("verdict", {})
+        details = {
+            "state": t(
+                "guard.ai_report_applied"
+                if ai.get("state") == "applied"
+                else "guard.ai_report_executing"
+                if ai.get("state") == "executing"
+                else "guard.ai_report_queued"
+                if ai.get("state") == "queued"
+                else "guard.ai_report_manual"
+            ),
+            "reason": (verdict.get("reason") or t("guard.ai_report_no_decision"))[:300],
+            "model": ai.get("model") or "—",
+        }
+        if link_profile:
+            details = {key: escape(str(value)) for key, value in details.items()}
+        text += "\n" + t("guard.ai_report_result", **details)
     return text
 
 
