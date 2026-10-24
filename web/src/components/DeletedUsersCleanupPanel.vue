@@ -29,7 +29,7 @@
         <n-alert :type="job.status === 'partial' || job.status === 'waiting' ? 'warning' : job.status === 'completed' ? 'success' : 'info'" :bordered="false" role="status">
           {{ statusNames[job.status] }} · {{ job.trigger_type === 'scheduled' ? '定期清理' : '手动清理' }}
           · 群组 {{ job.checked_groups }}/{{ job.groups.length }} · 已扫描 {{ scanned }} 个成员
-          · 已移除 {{ job.counts.removed || 0 }} · 已保留 {{ job.counts.skipped || 0 }} · 失败 {{ job.counts.failed || 0 }}
+          · 已完成账号 {{ job.counts.removed || 0 }} · 已保留 {{ job.counts.skipped || 0 }} · 失败 {{ job.counts.failed || 0 }}
           · 待处理 {{ (job.counts.pending || 0) + (job.counts.removing || 0) + (job.counts.history_pending || 0) }}
           <div v-if="historyScanned">历史消息已核验 {{ historyScanned }} 条 · 已删除 {{ historyDeleted }} 条</div>
           <div v-if="job.error">{{ job.error }}<span v-if="job.status === 'waiting'">（预计 {{ date(job.retry_at) }} 继续）</span></div>
