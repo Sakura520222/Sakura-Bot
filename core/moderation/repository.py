@@ -13,6 +13,8 @@ import aiomysql
 
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .guest_messages import blacklist_task, current_blacklist_task
+
 ACTIVE_VERIFICATIONS = (
     "preparing",
     "waiting",
@@ -172,7 +174,7 @@ class GuardStore:
             )
         )
 
-    async def finish_review(self, case, action):
+    async def finish_review(self, case, action, *, guest_parent=None):
         # Telegram 成功之后，名单和终态在同一个数据库事务提交。
         payload = dict(case["payload"])
         payload["review_history"] = [
@@ -183,8 +185,27 @@ class GuardStore:
                 "at": utc_now_naive().isoformat(),
             },
         ]
+        if action == "blacklist":
+            payload = blacklist_task(payload, case.get("reviewer_id"), case.get("reviewer_actor"))
         await self.connection.begin()
         try:
+            if guest_parent is not None:
+                parent_id, operation_id = guest_parent
+                parent = await self.one(
+                    "SELECT * FROM moderation_cases WHERE id=%s FOR UPDATE", (parent_id,)
+                )
+                if not current_blacklist_task(parent, operation_id) or not await self.blacklist(
+                    parent["user_id"]
+                ):
+                    raise ValueError("guest_source_decision_changed")
+                source = parent["payload"].get("guest_actor", {})
+                if (
+                    source != case["payload"].get("guest_source")
+                    or source.get("user_id") != case["user_id"]
+                    or parent["chat_id"] != case["chat_id"]
+                ):
+                    raise ValueError("guest_source_binding_changed")
+                await self.create_case(case)
             if action == "allow":
                 if await self.blacklist(case["user_id"]):
                     raise ValueError("global_blacklist_conflict")
@@ -194,6 +215,9 @@ class GuardStore:
                     case["reviewer_id"],
                     reviewer_actor=case.get("reviewer_actor"),
                 )
+            elif action == "blacklist" and guest_parent and await self.blacklist(case["user_id"]):
+                # 既有全局决定保留原审核人及证据，联动另存关联审计。
+                await self.touch_blacklist(case["user_id"])
             elif action == "blacklist":
                 await self.execute(
                     """INSERT INTO moderation_blacklist

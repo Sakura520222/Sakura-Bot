@@ -201,6 +201,16 @@ class Moderator:
             return True
 
     async def match(self, store, config, chat_id, user, message=None):
+        caller = guest_actor(message)
+        if config.share_global_blacklist and caller and await store.blacklist(caller):
+            await store.touch_blacklist(caller)
+            return Match(
+                "global_blacklist",
+                "global-guest-caller-id",
+                t("guard.guest_blacklist_reason"),
+                str(caller),
+                str(caller),
+            )
         if config.share_global_blacklist and await store.blacklist(user.id):
             await store.touch_blacklist(user.id)
             return Match(

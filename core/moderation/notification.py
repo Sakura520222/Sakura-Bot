@@ -255,6 +255,8 @@ def notification_text(case, *, link_profile=False):
     if payload.get("guest_actor"):
         guest = payload["guest_actor"]
         state = payload.get("guest_ban", {}).get("status", "recorded")
+        if state == "pending" and payload["guest_ban"].get("action") == "blacklist":
+            state = "blacklist_pending"
         text += "\n" + t(
             "guard.guest_ban_notice", user_id=guest["user_id"], state=t(f"guard.guest_ban_{state}")
         )

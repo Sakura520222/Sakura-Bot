@@ -125,6 +125,21 @@ class ReviewHandler:
                 "unmuted",
                 "ignored",
             } and not (action == "kick" and case["action"] == "report"):
+                if action == "blacklist" and case["status"] == "blacklisted":
+                    actor = (
+                        "webui:admin"
+                        if web and reviewer_id == "admin"
+                        else f"telegram:{reviewer_id}"
+                    )
+                    await self.service.guest_messages.prepare(
+                        store,
+                        case,
+                        blacklist_by=(None if actor == "webui:admin" else reviewer_id, actor),
+                    )
+                    case = await store.case(case_id)
+                    await self.service.notifier.sync(
+                        store, case, self.service.group(case["chat_id"])
+                    )
                 return case
             if action == "ban" and is_ban_case(case):
                 return case

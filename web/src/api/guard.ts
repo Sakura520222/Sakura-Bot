@@ -76,7 +76,7 @@ export interface GuardRecord {
   error?: string;
   payload?: {
     guest_actor?: { user_id: number; bot_id: number; chat_id: number; message_id: number; source: string };
-    guest_ban?: { status: string; case_id?: string; error?: string };
+    guest_ban?: { status: string; action?: "blacklist"; case_id?: string; error?: string };
     ai_report_review?: {
       state: string; model?: string; action?: string; error?: string; updated_at?: string;
       verdict?: { verdict: string; confidence: number; category: string; reason: string; evidence: { source: string; quote: string }[] };

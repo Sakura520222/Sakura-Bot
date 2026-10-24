@@ -149,7 +149,7 @@
           <span v-else>{{ detail.payload?.message_id || '—' }}</span>
         </n-descriptions-item>
         <n-descriptions-item label="状态">{{ recordStatus(detail) }}</n-descriptions-item>
-        <n-descriptions-item v-if="detail.payload?.guest_actor" label="访客机器人调用者">{{ detail.payload.guest_actor.user_id }} · {{ detail.payload.guest_ban?.status === 'banned' ? '已联动封禁' : detail.payload.guest_ban?.status === 'skipped' ? '已按权限或豁免规则跳过' : detail.payload.guest_ban ? '联动封禁待处理' : '仅记录来源' }}<span v-if="detail.payload.guest_ban?.error"> · {{ detail.payload.guest_ban.error }}</span><div v-if="detail.payload.guest_ban?.case_id">关联案件：{{ detail.payload.guest_ban.case_id }}</div></n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.guest_actor" label="访客机器人调用者">{{ detail.payload.guest_actor.user_id }} · {{ detail.payload.guest_ban?.status === 'blacklisted' ? '已联动封禁并加入全局黑名单' : detail.payload.guest_ban?.status === 'banned' ? '已联动封禁' : detail.payload.guest_ban?.status === 'skipped' ? '已按权限或豁免规则跳过' : detail.payload.guest_ban?.action === 'blacklist' ? '联动封禁及全局拉黑待处理' : detail.payload.guest_ban ? '联动封禁待处理' : '仅记录来源' }}<span v-if="detail.payload.guest_ban?.error"> · {{ detail.payload.guest_ban.error }}</span><div v-if="detail.payload.guest_ban?.case_id">关联案件：{{ detail.payload.guest_ban.case_id }}</div></n-descriptions-item>
         <n-descriptions-item v-if="detail.payload?.ai_report_review" label="AI 超时审核">
           {{ detail.payload.ai_report_review.state === 'applied' ? '已自动处罚' : detail.payload.ai_report_review.state === 'executing' ? '正在执行处罚' : '继续等待管理员' }}
           · {{ detail.payload.ai_report_review.model || '—' }} · {{ detail.payload.ai_report_review.action || '—' }}
