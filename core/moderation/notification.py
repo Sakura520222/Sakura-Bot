@@ -226,7 +226,7 @@ def notification_text(case, *, link_profile=False):
     text = t("guard.report_notification" if reported else "guard.notification", **values)
     if reported and case["status"] == "pending" and not is_ban_case(case):
         text += "\n" + t("guard.report_ban_cleanup_hint")
-    deletion = payload.get("report_message_deletion") if reported else None
+    deletion = payload.get("report_message_deletion")
     if deletion:
         error = deletion.get("error") or "—"
         if error.startswith("guard."):
@@ -252,6 +252,12 @@ def notification_text(case, *, link_profile=False):
         text += "\n" + t("guard.report_delete_details", **details)
     if payload.get("ban_message_cleanup"):
         text += "\n" + history_cleanup_text(payload["ban_message_cleanup"])
+    if payload.get("guest_actor"):
+        guest = payload["guest_actor"]
+        state = payload.get("guest_ban", {}).get("status", "pending")
+        text += "\n" + t(
+            "guard.guest_ban_notice", user_id=guest["user_id"], state=t(f"guard.guest_ban_{state}")
+        )
     ai = payload.get("ai_report_review")
     if ai:
         verdict = ai.get("verdict", {})

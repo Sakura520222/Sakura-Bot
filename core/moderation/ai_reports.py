@@ -188,9 +188,24 @@ class AIReportReview:
             self.service.client.get_messages(case["chat_id"], ids=case["payload"]["message_id"])
         )
         snapshot = case["payload"].get("reported_message")
+        deletion = case["payload"].get("report_message_deletion", {})
+        own_deletion = (
+            case["status"] == "executing"
+            and case["action"] == "ban"
+            and case.get("reviewer_actor") == AI_ACTOR
+            and deletion.get("automatic")
+            and deletion.get("status") == "deleted"
+            and (deletion.get("chat_id"), deletion.get("user_id"), deletion.get("message_id"))
+            == (case["chat_id"], user.id, case["payload"]["message_id"])
+        )
+        if snapshot and not message and own_deletion:
+            message = SimpleNamespace(sender_id=user.id)
+            current_snapshot = snapshot
+        else:
+            current_snapshot = message_snapshot(message) if message else None
         if not snapshot or not message or getattr(message, "sender_id", None) != user.id:
             raise ValueError("ReportEvidenceUnavailable")
-        if message_snapshot(message) != snapshot:
+        if current_snapshot != snapshot:
             raise ValueError("ReportMessageChanged")
         hit = await self.service.match(
             store, config, case["chat_id"], user, match_message(snapshot)

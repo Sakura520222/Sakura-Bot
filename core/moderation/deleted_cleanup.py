@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import timedelta
 
-from telegram.error import NetworkError, RetryAfter
+from telegram.error import BadRequest, NetworkError, RetryAfter
 from telethon import utils
 from telethon.errors import FloodWaitError, UserNotParticipantError
 from telethon.tl.functions.channels import EditBannedRequest, GetParticipantsRequest
@@ -29,6 +29,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 
 from .chat_cleanup import ChatCleanupError
 from .deleted_cleanup_repository import DeletedCleanupRepository
+from .deleted_history import DeletedHistory
 from .telegram import call
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class DeletedUserCleanup:
         self._wake = asyncio.Event()
         self._stopped = False
         self._owns_directory = False
+        self.history = DeletedHistory(self)
 
     @property
     def settings(self):
@@ -253,13 +255,20 @@ class DeletedUserCleanup:
                 chat = await self._group(group["chat_id"])
                 if group["status"] == "scanning":
                     await self._scan(store, job, group, chat)
+                elif group["status"] == "history_scanning":
+                    await self.history.page(store, job, group, chat)
                 else:
                     item = await store.pending(job["id"], group["chat_id"])
                     if item:
                         await self._remove(store, job, item, chat)
                     else:
-                        group["status"] = "partial" if group["error"] else "completed"
-                        job["payload"]["group_index"] += 1
+                        if group.get("history_targets") or await store.history_pending(
+                            job["id"], group["chat_id"]
+                        ):
+                            group["status"] = "history_scanning"
+                        else:
+                            group["status"] = "partial" if group["error"] else "completed"
+                            job["payload"]["group_index"] += 1
                 group.pop("failures", None)
             except (FloodWaitError, RetryAfter) as error:
                 wait = error.seconds if isinstance(error, FloodWaitError) else error.retry_after
@@ -458,6 +467,26 @@ class DeletedUserCleanup:
         except (FloodWaitError, RetryAfter):
             await store.attempt(item, -1)
             raise
+        except BadRequest as error:
+            reason = str(error).lower().replace(" ", "_")
+            if reason in {
+                "participant_id_invalid",
+                "user_id_invalid",
+                "user_deactivated",
+                "user_is_deactivated",
+            }:
+                group = job["payload"]["groups"][job["payload"]["group_index"]]
+                group.setdefault("history_targets", {})[str(item["user_id"])] = (
+                    utc_now_naive().isoformat()
+                )
+                await store.item(
+                    item, "history_pending", "账号已销号且已离群，等待逐页清理遗留消息"
+                )
+            else:
+                await store.item(item, "failed", "Telegram 拒绝清理消息（BadRequest），请检查权限")
+                job["payload"]["groups"][job["payload"]["group_index"]]["error"] = (
+                    "部分账号消息清理失败"
+                )
         except NetworkError as error:
             raise ConnectionError("DeletedHistoryRetry") from error
         except (TimeoutError, ConnectionError, OSError):

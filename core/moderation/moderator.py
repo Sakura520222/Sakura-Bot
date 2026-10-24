@@ -14,7 +14,9 @@ from types import SimpleNamespace
 from telethon import events, utils
 from telethon.errors import UserNotParticipantError
 from telethon.tl.types import (
+    InputPeerUser,
     PeerChannel,
+    PeerUser,
     UpdateChannel,
     UpdateChannelParticipant,
     UpdateChatParticipantAdmin,
@@ -31,6 +33,7 @@ from .chat_cleanup import ChatCleanup
 from .config import GuardConfig, GuardGroup
 from .deleted_cleanup import DeletedUserCleanup, participant_user_id
 from .groups import GroupDirectory
+from .guest_messages import GuestMessages, guest_actor, guest_source
 from .history_cleanup import HistoryCleanup
 from .matcher import Match, Matcher, normalize
 from .notification import Notifier, stable_random_id
@@ -77,6 +80,7 @@ class Moderator:
         self.ban_history = BanHistoryCleanup(self)
         self.ai_reports = AIReportReview(self)
         self.bot_observer = BotMessageObserver(self)
+        self.guest_messages = GuestMessages(self)
 
     @staticmethod
     def _default_admins():
@@ -251,7 +255,28 @@ class Moderator:
             "evidence": evidence.evidence(),
             "message_id": message_id,
             "evidence_link": f"{link}/{message_id}" if link and message_id else "",
+            "guest_actor": guest_source(message),
         }
+
+    async def load_message_user(self, user_id, message=None):
+        try:
+            return await call(self.client.get_entity(user_id))
+        except (KeyError, ValueError):
+            try:
+                return await call(self.client.get_entity(InputPeerUser(user_id, 0)))
+            except (KeyError, ValueError):
+                pass
+            # 访客机器人销号后 GetUsers 可返回空列表；消息仍有 Telegram 绑定的真实作者 ID。
+            if not guest_actor(message) or getattr(message, "sender_id", None) != user_id:
+                raise
+            return SimpleNamespace(
+                id=user_id,
+                first_name=str(user_id),
+                last_name=None,
+                username=None,
+                bot=True,
+                unavailable=True,
+            )
 
     async def handle_message(self, event):
         chat_id = event.chat_id
@@ -266,7 +291,7 @@ class Moderator:
             return
         try:
             # get_entity 重新获取用户快照，不依赖可能过时的 event.sender 缓存。
-            user = await call(self.client.get_entity(event.sender_id))
+            user = await self.load_message_user(event.sender_id, event.message)
             if await self.protected(
                 chat_id,
                 user,
@@ -539,7 +564,7 @@ class Moderator:
         await self.notifier.sync(store, case, self.group(chat_id))
         return case
 
-    async def punish(self, store, chat_id, user, match, token, message=None):
+    async def punish(self, store, chat_id, user, match, token, message=None, *, extra_payload=None):
         if not self.group(chat_id).enabled:
             return None
         event_key = hashlib.sha256(
@@ -548,7 +573,7 @@ class Moderator:
         existing = await store.case_for_event(event_key)
         if existing:
             return existing
-        if match.action == "ban":
+        if match.action == "ban" and not guest_actor(message):
             existing = await store.active_ban(chat_id, user.id)
             if existing:
                 if existing["status"] == "pending":
@@ -578,6 +603,7 @@ class Moderator:
                         await self.execute_case(store, existing)
                     return await store.case(existing["id"])
         payload = await self.snapshot(chat_id, user, match, message)
+        payload.update(extra_payload or {})
         case = {
             "id": uuid.uuid4().hex,
             "event_key": event_key,
@@ -587,6 +613,8 @@ class Moderator:
             "status": "executing",
             "payload": payload,
         }
+        if payload.get("guest_source_case"):
+            case.update(reviewer_actor="system:guest_message", reviewed_at=utc_now_naive())
         if match.action == "mute":
             payload["restriction_started_at"] = utc_now_naive().isoformat()
             payload["original_rights"] = await self.actions.rights(chat_id, user.id)
@@ -596,6 +624,7 @@ class Moderator:
                 ).timestamp()
             )
         await store.create_case(case)
+        await self.guest_messages.prepare(store, await store.case(case["id"]))
         await self.execute_case(store, await store.case(case["id"]))
         return await store.case(case["id"])
 
@@ -639,7 +668,13 @@ class Moderator:
             await store.update_case(case["id"], "cancelled")
             return
         try:
-            user = await call(self.client.get_entity(user_id))
+            binding = payload.get("guest_actor")
+            bound_message = (
+                SimpleNamespace(sender_id=user_id, guestchat_via_from=PeerUser(binding["user_id"]))
+                if binding
+                else None
+            )
+            user = await self.load_message_user(user_id, bound_message)
             if await self.protected(
                 chat_id,
                 user,
@@ -649,6 +684,27 @@ class Moderator:
                 await store.update_case(case["id"], "cancelled")
                 return
             if action == "ban":
+                await self.guest_messages.prepare(store, case)
+                case = await store.case(case["id"])
+                payload = case["payload"]
+                if payload.get("message_id"):
+                    await self.reviews.request_message_deletion(store, case, None, automatic=True)
+                    case = await store.case(case["id"])
+                    if (
+                        case["payload"].get("report_message_deletion", {}).get("status")
+                        == "cancelled"
+                    ):
+                        await store.update_case(case["id"], "cancelled")
+                        return
+                if payload.get("guest_source_case"):
+                    parent = await store.case(payload["guest_source_case"])
+                    if (
+                        not parent
+                        or parent["status"] not in {"pending", "blacklisted", "execution_failed"}
+                        or parent["payload"].get("guest_actor", {}).get("user_id") != user_id
+                    ):
+                        await store.update_case(case["id"], "cancelled")
+                        return
                 await self.actions.ban(chat_id, user_id)
                 await self.ban_history.prepare(store, case)
                 session = await store.verification(chat_id, user_id)
@@ -744,6 +800,10 @@ class Moderator:
                     )
             except Exception:
                 logger.exception("Guard 案件恢复失败 case=%s", candidate["id"])
+            try:
+                await self.guest_messages.resume(candidate["id"])
+            except Exception:
+                logger.exception("Guard 访客调用者封禁待恢复 case=%s", candidate["id"])
         for candidate in sessions:
             try:
                 async with self.repository.lock(candidate["user_id"]) as store:

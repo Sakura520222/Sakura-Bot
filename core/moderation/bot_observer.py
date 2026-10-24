@@ -8,6 +8,7 @@ import logging
 from telethon import events
 from telethon.tl.types import InputPeerUser
 
+from .guest_messages import guest_actor
 from .telegram import call
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,9 @@ class BotMessageObserver:
         ):
             return
         try:
+            if guest_actor(event.message):
+                await guard.handle_message(event)
+                return
             sender = await call(event.get_sender())
             if not sender or sender.id != event.sender_id or not getattr(sender, "bot", False):
                 return

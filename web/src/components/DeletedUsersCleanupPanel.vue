@@ -1,7 +1,7 @@
 <template>
   <n-card title="已销号成员清理" size="small" :segmented="{ content: true }">
     <n-space vertical :size="12">
-      <n-text depth="3">一键清理全部管理群组，也可使用列表中的单群清理按钮。逐项确认 Telegram 已销号标记与权限后移除，并删除该账号在本群的全部消息；也会复核旧清理记录中的已移除账号以清理遗留消息。黑白名单保留。</n-text>
+      <n-text depth="3">逐项确认 Telegram 已销号标记与权限后移除，并清理该账号消息；也复核旧记录中的遗留消息。Telegram 无法解析销号账号时，由现有 UserBot 扫描本群可见历史，主 Bot 逐条核对作者后删除，进度保存在后台。黑白名单保留。</n-text>
       <n-space align="center">
         <n-button type="warning" :loading="starting" :disabled="blocked || busy || !state?.available || !groups.length" @click="clean(null)">一键清理全部管理群组（{{ groups.length }}）</n-button>
         <n-button :loading="loading" @click="load">刷新清理状态</n-button>
@@ -30,7 +30,8 @@
           {{ statusNames[job.status] }} · {{ job.trigger_type === 'scheduled' ? '定期清理' : '手动清理' }}
           · 群组 {{ job.checked_groups }}/{{ job.groups.length }} · 已扫描 {{ scanned }} 个成员
           · 已移除 {{ job.counts.removed || 0 }} · 已保留 {{ job.counts.skipped || 0 }} · 失败 {{ job.counts.failed || 0 }}
-          · 待处理 {{ (job.counts.pending || 0) + (job.counts.removing || 0) }}
+          · 待处理 {{ (job.counts.pending || 0) + (job.counts.removing || 0) + (job.counts.history_pending || 0) }}
+          <div v-if="historyScanned">历史消息已核验 {{ historyScanned }} 条 · 已删除 {{ historyDeleted }} 条</div>
           <div v-if="job.error">{{ job.error }}<span v-if="job.status === 'waiting'">（预计 {{ date(job.retry_at) }} 继续）</span></div>
         </n-alert>
         <n-data-table :columns="groupColumns" :data="job.groups" :row-key="row => row.chat_id" :pagination="{ pageSize: 5 }" :bordered="false" :scroll-x="700" />
@@ -61,12 +62,14 @@ const selectedJob = ref<string | null>(null), loading = ref(false), starting = r
 const busy = computed(() => starting.value || ["running", "waiting"].includes(state.value?.job?.status || ""));
 const issues = computed(() => editor.value ? Object.values(editor.value.states).flatMap(field => field.error ? [field.error] : []) : []);
 const scanned = computed(() => job.value?.groups.reduce((total, group) => total + group.scanned, 0) || 0);
+const historyScanned = computed(() => job.value?.groups.reduce((total, group) => total + (group.history_scanned || 0), 0) || 0);
+const historyDeleted = computed(() => job.value?.groups.reduce((total, group) => total + (group.history_deleted || 0), 0) || 0);
 const statusNames: Record<string, string> = { running: "正在清理", waiting: "等待重试", completed: "清理完成", partial: "部分完成，请查看群组结果", cancelled: "清理已停止", scanning: "扫描成员", removing: "移除已销号成员", failed: "未完成", removed: "已移除", skipped: "已保留" };
 const date = (value?: string | null) => value ? new Date(/Z$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).toLocaleString("zh-CN", { hour12: false }) : "等待检查";
 const historyOptions = computed(() => state.value?.history.map(row => ({ label: `${date(row.created_at)} · ${row.trigger_type === 'scheduled' ? '定期' : '手动'} · ${statusNames[row.status] || row.status}`, value: row.id })) || []);
 const groupColumns: DataTableColumns<DeletedCleanupGroup> = [
   { title: "群组", key: "title", minWidth: 180, render: row => `${row.title}（${row.chat_id}）` },
-  { title: "进度", key: "status", width: 170, render: row => statusNames[row.status] || row.status },
+  { title: "进度", key: "status", width: 170, render: row => row.status === 'history_scanning' ? '扫描并清理历史消息' : statusNames[row.status] || row.status },
   { title: "已扫描", key: "scanned", width: 90 },
   { title: "说明", key: "error", minWidth: 260, render: row => row.error || "—" },
 ];

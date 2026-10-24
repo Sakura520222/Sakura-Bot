@@ -261,6 +261,17 @@ class MemoryCleanupStore:
         ]
         return deepcopy(min(rows, key=lambda row: row["user_id"])) if rows else None
 
+    async def history_pending(self, job_id, chat_id):
+        return deepcopy(
+            [
+                r
+                for r in self.items.values()
+                if r["job_id"] == job_id
+                and r["chat_id"] == chat_id
+                and r["status"] == "history_pending"
+            ]
+        )
+
     async def item(self, row, status, message=""):
         self.items[row["job_id"], row["chat_id"], row["user_id"]].update(
             status=status, message=message

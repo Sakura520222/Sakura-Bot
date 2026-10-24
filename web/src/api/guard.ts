@@ -75,6 +75,8 @@ export interface GuardRecord {
   last_seen_at?: string;
   error?: string;
   payload?: {
+    guest_actor?: { user_id: number; bot_id: number; chat_id: number; message_id: number; source: string };
+    guest_ban?: { status: string; case_id?: string; error?: string };
     ai_report_review?: {
       state: string; model?: string; action?: string; error?: string; updated_at?: string;
       verdict?: { verdict: string; confidence: number; category: string; reason: string; evidence: { source: string; quote: string }[] };
@@ -156,13 +158,14 @@ export interface BotChatCleanup {
 }
 export interface DeletedCleanupSettings { enabled: boolean; interval_hours: number }
 export interface DeletedCleanupGroup {
+  history_scanned?: number; history_deleted?: number;
   chat_id: number; title: string; status: string; scanned: number; offset: number; error: string | null;
 }
 export interface DeletedCleanupJob {
   id: string; actor: string; trigger_type: "manual" | "scheduled";
   status: "running" | "waiting" | "completed" | "partial" | "cancelled";
   groups: DeletedCleanupGroup[]; checked_groups: number; error: string | null;
-  counts: Partial<Record<"pending" | "removing" | "removed" | "skipped" | "failed", number>>;
+  counts: Partial<Record<"pending" | "removing" | "removed" | "skipped" | "failed" | "history_pending", number>>;
   results: { chat_id: number; user_id: number; status: string; message: string; updated_at: string }[];
   created_at: string; updated_at: string; retry_at: string;
 }

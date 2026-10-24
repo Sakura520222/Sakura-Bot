@@ -335,7 +335,8 @@ async def test_administrator_can_dismiss_ban_or_blacklist_a_report(guard, store,
         assert [row[0].text for row in review_buttons(result)] == ["仅踢出", "删除被举报消息"]
         assert "已忽略" in case_status(result)
     else:
-        assert guard.client.calls == [("ban", CHAT, USER)]
+        assert guard.client.calls == [("delete", CHAT, (42,)), ("ban", CHAT, USER)]
+        assert result["payload"]["report_message_deletion"]["status"] == "deleted"
         assert bool(store.black) == (action == "blacklist")
         if action == "ban":
             assert result["payload"]["review_generation"] == 1

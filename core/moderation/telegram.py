@@ -14,7 +14,7 @@ from telethon.tl.functions.messages import (
     HideChatJoinRequestRequest,
     SendMessageRequest,
 )
-from telethon.tl.types import ChatBannedRights, PeerChat, PeerUser
+from telethon.tl.types import ChatBannedRights, InputPeerUser, PeerChat, PeerUser
 
 VERIFICATION_RESTRICTIONS = (
     "send_messages",
@@ -118,7 +118,12 @@ class TelegramActions:
         self.client = client
 
     async def permissions(self, chat_id, user_id):
-        return await call(self.client.get_permissions(chat_id, user_id))
+        try:
+            return await call(self.client.get_permissions(chat_id, user_id))
+        except (KeyError, ValueError):
+            if type(user_id) is not int or user_id <= 0:
+                raise
+            return await call(self.client.get_permissions(chat_id, InputPeerUser(user_id, 0)))
 
     async def rights(self, chat_id, user_id):
         permissions = await self.permissions(chat_id, user_id)

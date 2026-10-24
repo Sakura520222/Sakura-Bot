@@ -448,14 +448,16 @@ class GuardRepository:
                 OR (c.action='report' AND c.status='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_controls_version')),'0')<>'2')
                 OR (((c.action IN ('ban','mute','warn','report') AND (c.status='pending' OR (c.status='done' AND c.action IN ('mute','warn')) OR (c.action='report' AND c.status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))) OR (c.action='verify_skip' AND c.status='done') OR (JSON_EXTRACT(c.payload,'$.verification_failure') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_result'))='held') OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_state')) IN ('waiting','passing','cancelling','held','passed','admin_skipped'))) AND (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.controls_version')),'0')<>'2' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.kick_button_enabled')),'true')<>COALESCE(JSON_UNQUOTE(JSON_EXTRACT(%s,CONCAT('$."',c.chat_id,'"'))),'true')))
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_notice_dirty'))='true'
+                OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban_pending'))='true' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup_dirty'))='true'
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.status'))='pending' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
-                OR (c.action='report' AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.status'))='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.retry_at')),'1970-01-01T00:00:00')<=%s))
+                OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.status'))='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.retry_at')),'1970-01-01T00:00:00')<=%s))
                 ORDER BY c.updated_at ASC LIMIT 50""",
                 (
                     utc_now_naive(),
                     utc_now_naive().isoformat(timespec="seconds"),
                     encode(control_policy or {}),
+                    utc_now_naive().isoformat(),
                     utc_now_naive().isoformat(),
                     utc_now_naive().isoformat(),
                 ),
@@ -473,7 +475,7 @@ class GuardRepository:
             store = GuardStore(connection)
             # 永久名单、待审核和待恢复操作不随审计留存期限删除。
             await store.execute(
-                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup_dirty')),'false')<>'true' AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.case_id=moderation_cases.id) LIMIT 500",
+                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.guest_ban_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup_dirty')),'false')<>'true' AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.case_id=moderation_cases.id) LIMIT 500",
                 (cutoff,),
             )
             await store.execute(

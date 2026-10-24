@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 # 中文翻译（简体中文）
 MESSAGE_ZH_CN = {
+    "guard.guest_ban_reason": "通过访客机器人发送违规消息，联动封禁真实调用者",
+    "guard.guest_ban_notice": "访客调用者：{user_id} · {state}",
+    "guard.guest_ban_pending": "联动封禁待处理",
+    "guard.guest_ban_banned": "已联动封禁",
+    "guard.guest_ban_skipped": "受权限或豁免规则保护，未联动封禁",
     "guard.ai_report_applied": "已按规则自动处罚",
     "guard.ai_report_queued": "等待管理员；超时后启动 AI 复核",
     "guard.ai_report_executing": "正在执行处罚",
@@ -957,6 +962,11 @@ MESSAGE_ZH_CN = {
 
 # 英文翻译
 MESSAGE_EN_US = {
+    "guard.guest_ban_reason": "Invoked a guest bot to post a violating message",
+    "guard.guest_ban_notice": "Guest caller: {user_id} · {state}",
+    "guard.guest_ban_pending": "Linked ban pending",
+    "guard.guest_ban_banned": "Caller banned",
+    "guard.guest_ban_skipped": "Skipped due to authorization or exemption rules",
     "guard.ai_report_applied": "Rule-based action applied",
     "guard.ai_report_queued": "Waiting for an administrator; AI review starts after timeout",
     "guard.ai_report_executing": "Applying moderation action",

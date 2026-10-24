@@ -83,7 +83,7 @@ class DeletedCleanupStore:
                 SELECT %s,i.chat_id,i.user_id,MAX(i.access_hash),'removing',%s
                 FROM moderation_deleted_cleanup_items i
                 JOIN moderation_deleted_cleanup_jobs j ON j.id=i.job_id
-                WHERE j.bot_id=%s AND i.chat_id=%s AND i.status='removed' AND i.job_id<>%s
+                WHERE j.bot_id=%s AND i.chat_id=%s AND i.status IN ('removed','failed') AND i.job_id<>%s
                 GROUP BY i.chat_id,i.user_id""",
                 (job["id"], now, bot_id, group["chat_id"], job["id"]),
             )
@@ -116,6 +116,12 @@ class DeletedCleanupStore:
         return await self.store.one(
             """SELECT * FROM moderation_deleted_cleanup_items WHERE job_id=%s AND chat_id=%s
             AND status IN ('pending','removing') ORDER BY user_id LIMIT 1""",
+            (job_id, chat_id),
+        )
+
+    async def history_pending(self, job_id, chat_id):
+        return await self.store.all(
+            "SELECT * FROM moderation_deleted_cleanup_items WHERE job_id=%s AND chat_id=%s AND status='history_pending'",
             (job_id, chat_id),
         )
 
