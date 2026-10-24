@@ -279,7 +279,12 @@ class GuestMessages:
                                 parent["chat_id"],
                                 user,
                                 match,
-                                f"guest:{case_id}:{user_id}",
+                                f"guest:{case_id}:{user_id}"
+                                + (
+                                    f":blacklist:{task['operation_id']}"
+                                    if task.get("action") == "blacklist"
+                                    else ""
+                                ),
                                 extra_payload={
                                     "guest_source_case": case_id,
                                     "guest_source": source,

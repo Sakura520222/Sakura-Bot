@@ -68,6 +68,18 @@ async def test_later_blacklist_upgrades_completed_local_ban(guard, store):
     assert sum(c[0] == "ban" and c[2] == CALLER for c in guard.client.calls) == 1
 
 
+async def test_new_explicit_blacklist_rechecks_an_external_unban(guard, store):
+    parent = await source_case(guard, store)
+    await guard.guest_messages.resume(parent["id"])
+    parent = await store.case(parent["id"])
+    old_id = parent["payload"]["guest_ban"]["case_id"]
+    await guard.actions.unban(CHAT, CALLER)  # Telegram 人工解封，旧数据库案件尚未变化。
+    await blacklist(guard, parent)
+    await guard.guest_messages.resume(parent["id"])
+    assert CALLER in store.black and (await store.case(old_id))["status"] == "cancelled"
+    assert sum(c[0] == "ban" and c[2] == CALLER for c in guard.client.calls) == 2
+
+
 async def test_old_blacklisted_source_can_explicitly_complete_the_new_link_once(guard, store):
     parent = await source_case(guard, store)
     await guard.guest_messages.resume(parent["id"])
