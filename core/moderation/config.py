@@ -89,6 +89,8 @@ class GuardGroup(BaseModel):
     button_message_action: Action = "delete"
     block_forwarded_messages: bool = False
     forwarded_message_action: Action = "delete"
+    block_contact_messages: bool = False
+    contact_message_action: Action = "ban"
     message_keywords: list[str] = Field(default_factory=list, max_length=100)
     message_action: Action = "delete"
     ai_report_review_enabled: bool = False

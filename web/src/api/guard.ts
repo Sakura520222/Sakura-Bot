@@ -30,6 +30,8 @@ export interface GuardGroup {
   button_message_action: GuardAction;
   block_forwarded_messages: boolean;
   forwarded_message_action: GuardAction;
+  block_contact_messages: boolean;
+  contact_message_action: GuardAction;
   bot_message_action: GuardAction;
   message_keywords: string[];
   message_action: GuardAction;

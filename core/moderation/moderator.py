@@ -227,8 +227,12 @@ class Moderator:
         if nickname:
             return nickname
         message_match = matcher.message(message) if message is not None else None
-        # 明确配置的按钮/转发动作优先于泛化的“机器人发言”动作。
-        if message_match and message_match.target in {"button_message", "forwarded_message"}:
+        # 明确配置的联系人/按钮/转发动作优先于泛化的“机器人发言”动作。
+        if message_match and message_match.target in {
+            "button_message",
+            "forwarded_message",
+            "contact_message",
+        }:
             return message_match
         if message is not None and config.block_bot_messages and getattr(user, "bot", False):
             original = (getattr(message, "message", "") or "")[:2048]
@@ -666,6 +670,7 @@ class Moderator:
         structural_switch = {
             "button_message": "block_button_messages",
             "forwarded_message": "block_forwarded_messages",
+            "contact_message": "block_contact_messages",
         }.get(payload.get("evidence", {}).get("target"))
         if structural_switch and (
             not getattr(config, structural_switch) or await store.whitelisted(chat_id, user_id)

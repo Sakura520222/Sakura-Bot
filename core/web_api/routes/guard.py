@@ -138,6 +138,7 @@ class GroupSwitchRequest(BaseModel):
         "block_bot_messages",
         "block_button_messages",
         "block_forwarded_messages",
+        "block_contact_messages",
         "ai_report_review_enabled",
         "share_global_blacklist",
         "ban_any_traditional",

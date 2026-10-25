@@ -7,6 +7,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   block_bot_messages: "拦截机器人发言", share_global_blacklist: "共享全局永久黑名单",
   block_button_messages: "带按钮消息过滤", button_message_action: "带按钮消息命中动作",
   block_forwarded_messages: "转发消息过滤", forwarded_message_action: "转发消息命中动作",
+  block_contact_messages: "联系人消息过滤", contact_message_action: "联系人消息命中动作",
   ban_any_traditional: "拦截任何繁体昵称（默认关闭）", allow_group_admin_review: "授权本群管理员审核",
   verification_timeout: "验证超时", join_requests: "入群申请流程", message_action: "消息关键词命中动作",
   mute_seconds: "禁言时长", message_keywords: "消息与链接关键词",
@@ -24,7 +25,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
 };
 export const guardSwitches: GuardSwitch[] = [
   "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
-  "block_button_messages", "block_forwarded_messages",
+  "block_button_messages", "block_forwarded_messages", "block_contact_messages",
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
   "ai_report_review_enabled",
@@ -34,7 +35,7 @@ export const immediateGuardFields: (keyof GuardGroup)[] = [
   "notification_ids", "join_requests", "message_action",
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
-  "button_message_action", "forwarded_message_action",
+  "button_message_action", "forwarded_message_action", "contact_message_action",
   "ai_report_review_action",
 ];
 

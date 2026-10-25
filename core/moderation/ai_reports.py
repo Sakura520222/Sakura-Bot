@@ -11,7 +11,7 @@ from datetime import UTC, timedelta
 from types import SimpleNamespace
 
 from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import MessageEntityTextUrl
+from telethon.tl.types import MessageEntityTextUrl, MessageMediaContact
 
 from core.infrastructure.database.mysql import utc_now_naive
 
@@ -43,7 +43,7 @@ def message_snapshot(message):
         for row in getattr(getattr(message, "reply_markup", None), "rows", None) or []
         for button in getattr(row, "buttons", None) or []
     ][:20]
-    return {
+    snapshot = {
         "text": (getattr(message, "message", "") or "")[:16384],
         "links": [url[:2048] for url in extract_links(message)[:20]],
         "buttons": buttons,
@@ -51,6 +51,12 @@ def message_snapshot(message):
         "has_media": bool(getattr(message, "media", None)),
         "edit_date": str(getattr(message, "edit_date", "") or ""),
     }
+    if isinstance(getattr(message, "media", None), MessageMediaContact):
+        snapshot["contact"] = {
+            "first_name": (message.media.first_name or "")[:256],
+            "last_name": (message.media.last_name or "")[:256],
+        }
+    return snapshot
 
 
 def match_message(snapshot):
@@ -61,6 +67,15 @@ def match_message(snapshot):
         if snapshot["buttons"]
         else None,
         fwd_from=True if snapshot["forwarded"] else None,
+        media=MessageMediaContact(
+            phone_number="",
+            first_name=snapshot["contact"]["first_name"],
+            last_name=snapshot["contact"]["last_name"],
+            vcard="",
+            user_id=0,
+        )
+        if "contact" in snapshot
+        else None,
     )
 
 
@@ -231,6 +246,8 @@ class AIReportReview:
                 "block_bot_messages": config.block_bot_messages,
                 "block_button_messages": config.block_button_messages,
                 "block_forwarded_messages": config.block_forwarded_messages,
+                "block_contact_messages": config.block_contact_messages,
+                "contact_message_action": config.contact_message_action,
                 "fallback_action": config.ai_report_review_action,
             },
         }

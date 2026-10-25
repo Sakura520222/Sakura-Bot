@@ -125,6 +125,7 @@ def test_api_config_validates_types_and_preserves_existing_fields(api, config_st
         "nickname_filter",
         "message_filter",
         "block_bot_messages",
+        "block_contact_messages",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",
@@ -582,7 +583,7 @@ async def test_bot_message_switch_command_rejects_ordinary_members(guard, monkey
     assert "没有权限" in event.reply.await_args.args[0]
 
 
-@pytest.mark.parametrize("kind", ["button", "forwarded"])
+@pytest.mark.parametrize("kind", ["button", "forwarded", "contact"])
 def test_structural_filter_settings_roundtrip_and_hot_reload(api, guard, config_store, kind):
     persistence, original = config_store
     assert api.post("/api/guard/groups", json={"chat_id": CHAT}).status_code == 200
@@ -591,7 +592,7 @@ def test_structural_filter_settings_roundtrip_and_hot_reload(api, guard, config_
         f"/api/guard/groups/{CHAT}/settings",
         json={
             "changes": {switch: True, action: "ban"},
-            "previous": {switch: False, action: "delete"},
+            "previous": {switch: False, action: getattr(GuardGroup(), action)},
         },
     )
     assert response.status_code == 200

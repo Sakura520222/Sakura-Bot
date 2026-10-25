@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 import regex
 from opencc import OpenCC
-from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
+from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl, MessageMediaContact
 
 from .config import DEFAULT_WORDS, GuardGroup
 
@@ -188,6 +188,12 @@ class Matcher:
         )
         for blocked, target, action in (
             (
+                self.config.block_contact_messages
+                and isinstance(getattr(message, "media", None), MessageMediaContact),
+                "contact_message",
+                self.config.contact_message_action,
+            ),
+            (
                 self.config.block_button_messages and has_buttons,
                 "button_message",
                 self.config.button_message_action,
@@ -203,6 +209,12 @@ class Matcher:
                 from core.i18n.i18n import t
 
                 original = (getattr(message, "message", "") or "")[:2048]
+                if target == "contact_message":
+                    contact = message.media
+                    name = " ".join(
+                        value[:256] for value in (contact.first_name, contact.last_name) if value
+                    )
+                    original = t("guard.contact_message_evidence", name=name or "—")
                 return Match(
                     target,
                     target.replace("_", "-"),
