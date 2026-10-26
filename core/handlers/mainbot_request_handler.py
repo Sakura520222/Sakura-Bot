@@ -16,8 +16,6 @@
 import logging
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 from telethon import Button
 
 from core.config import ADMIN_LIST
@@ -35,15 +33,12 @@ class MainBotRequestHandler:
         self.pending_requests_cache = {}  # 缓存pending请求
         logger.info("主Bot请求处理器初始化完成")
 
-    async def check_requests(
-        self, context: ContextTypes.DEFAULT_TYPE = None, telethon_client=None
-    ) -> None:
+    async def check_requests(self, telethon_client=None) -> None:
         """
         定期检查并处理新的总结请求
 
         Args:
-            context: Telegram Bot上下文（可选，用于 PTB）
-            telethon_client: Telethon 客户端实例（可选，用于 Telethon）
+            telethon_client: Telethon 客户端实例
         """
         try:
             # 检查数据库是否已初始化
@@ -62,11 +57,7 @@ class MainBotRequestHandler:
             logger.info(f"发现 {len(pending_requests)} 个待处理请求")
 
             for request in pending_requests:
-                # 优先使用 Telethon 客户端
-                if telethon_client:
-                    await self._notify_admin_with_telethon(request, telethon_client)
-                else:
-                    await self._notify_admin_request(request, context)
+                await self._notify_admin_with_telethon(request, telethon_client)
 
         except Exception as e:
             logger.error(f"检查请求失败: {type(e).__name__}: {e}", exc_info=True)
@@ -108,54 +99,6 @@ class MainBotRequestHandler:
 请确认是否为该频道生成总结？"""
 
         return message
-
-    async def _notify_admin_request(
-        self, request: dict[str, Any], context: ContextTypes.DEFAULT_TYPE = None
-    ) -> None:
-        """
-        通知管理员有新的总结请求（使用 PTB context）
-
-        Args:
-            request: 请求信息字典
-            context: Telegram Bot上下文
-        """
-        try:
-            request_id = request.get("id")
-            request.get("target_channel")
-            # 更新状态为processing
-            await self.db.update_request_status(request_id, "processing")
-
-            # 构建消息
-            message = await self._build_admin_message(request)
-
-            # 创建确认按钮
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "✅ 确认生成", callback_data=f"confirm_summary_{request_id}"
-                    ),
-                    InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_summary_{request_id}"),
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            # 通知所有管理员
-            for admin_id in ADMIN_LIST:
-                if context:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=admin_id,
-                            text=message,
-                            parse_mode="Markdown",
-                            reply_markup=reply_markup,
-                        )
-                    except Exception as e:
-                        logger.error(f"通知管理员失败 admin_id={admin_id}: {e}")
-
-        except Exception as e:
-            logger.error(f"通知管理员失败: {type(e).__name__}: {e}", exc_info=True)
-            # 恢复请求状态
-            await self.db.update_request_status(request["id"], "pending")
 
     async def _notify_admin_with_telethon(self, request: dict[str, Any], client) -> None:
         """

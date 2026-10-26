@@ -2,14 +2,9 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
-
-from telegram import Bot
 
 from core.config.events import ConfigChangedEvent, ConfigValidationErrorEvent
-
-if TYPE_CHECKING:
-    pass
+from core.infrastructure.telegram_bot_api import send_message as bot_api_send_message
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +22,6 @@ class ConfigErrorNotifier:
     async def on_config_validation_error(self, event: ConfigValidationErrorEvent):
         """处理配置验证失败事件（非阻塞发送通知）"""
         try:
-            bot = Bot(token=self._bot_token)
-
             # 构建增强的错误消息
             if event.rolled_back:
                 message = f"""🚨 *配置验证失败并已自动回滚*
@@ -46,7 +39,7 @@ class ConfigErrorNotifier:
 📝 *建议*：请立即检查并手动修复配置文件"""
 
             # 非阻塞发送：作为后台任务启动，不阻塞事件链
-            asyncio.create_task(self._safe_send(bot, self._admin_chat_id, message))
+            asyncio.create_task(self._safe_send(self._bot_token, self._admin_chat_id, message))
 
         except Exception as e:
             logger.error(f"创建配置回滚通知任务失败: {e}", exc_info=True)
@@ -54,8 +47,6 @@ class ConfigErrorNotifier:
     async def on_config_changed(self, event: ConfigChangedEvent):
         """处理配置变更成功事件 - 非阻塞发送 Telegram 通知"""
         try:
-            bot = Bot(token=self._bot_token)
-
             # 按配置分组
             grouped = self._group_changes(event.changed_fields) if event.changed_fields else {}
 
@@ -71,22 +62,23 @@ class ConfigErrorNotifier:
 💡 提示: 配置已即时生效，无需重启"""
 
             # 非阻塞发送：作为后台任务启动，不阻塞事件链
-            asyncio.create_task(self._safe_send(bot, self._admin_chat_id, message))
+            asyncio.create_task(self._safe_send(self._bot_token, self._admin_chat_id, message))
 
         except Exception as e:
             logger.error(f"创建配置变更通知任务失败: {e}", exc_info=True)
 
-    async def _safe_send(self, bot: Bot, chat_id: str, text: str):
+    async def _safe_send(self, bot_token: str, chat_id: str, text: str):
         """安全发送消息（带超时保护，不阻塞调用者）
 
         Args:
-            bot: Telegram Bot 实例
+            bot_token: Bot 令牌
             chat_id: 目标聊天 ID
             text: 消息文本
         """
         try:
             await asyncio.wait_for(
-                bot.send_message(
+                bot_api_send_message(
+                    token=bot_token,
                     chat_id=chat_id,
                     text=text,
                     parse_mode="Markdown",

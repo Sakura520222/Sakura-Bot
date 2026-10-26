@@ -24,7 +24,6 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-import aiohttp
 from packaging import version
 
 from core.docker_runtime import record_runtime_state
@@ -64,6 +63,9 @@ def get_local_version():
 
 async def get_remote_version():
     """从 GitHub Release API 获取最新版本"""
+    # 惰性导入：版本检查很少运行，避免主进程常驻 aiohttp（约 3-5MB）
+    import aiohttp
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(

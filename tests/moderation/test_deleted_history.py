@@ -6,8 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from telegram.error import BadRequest
 from telethon.tl.types import PeerChannel, PeerUser
+
+from core.infrastructure.telegram_bot_api import BadRequestError
 
 from .conftest import ADMIN, CHAT
 from .test_deleted_cleanup import deleted as deleted
@@ -44,7 +45,7 @@ def history(deleted):
             return await rpc(request, **kwargs)
 
     deleted.guard.bot_observer.client = Reader()
-    deleted.guard.ban_history.revoke.side_effect = BadRequest("Participant_id_invalid")
+    deleted.guard.ban_history.revoke.side_effect = BadRequestError("Participant_id_invalid")
     originals = {m.id: m for m in rows}
 
     async def get_messages(chat_id, *, ids):

@@ -5,11 +5,9 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from telegram import Bot as TelegramBot
-from telegram.error import RetryAfter
-from telegram.request import BaseRequest
 
 from core.infrastructure.database.mysql import utc_now_naive
+from core.infrastructure.telegram_bot_api import RetryAfterError
 from core.moderation import ban_history
 from core.moderation.ban_history import BanHistoryCleanup, BotIdentityMismatch
 from core.moderation.matcher import Match
@@ -84,13 +82,13 @@ async def test_automatic_ban_prepares_the_same_cleanup_but_warn_mute_and_delete_
 
 async def test_api_failure_preserves_ban_and_is_retried_after_deadline(guard, store):
     case = await reviewed_ban(guard, store)
-    guard.ban_history.revoke.side_effect = RetryAfter(75)
+    guard.ban_history.revoke.side_effect = RetryAfterError("Too Many Requests: retry after 75", 75)
     before = utc_now_naive()
     await guard.recover_once()
     current = await store.case(case["id"])
     cleanup = current["payload"]["ban_message_cleanup"]
     assert current["status"] == "pending" and cleanup["status"] == "pending"
-    assert cleanup["attempts"] == 1 and cleanup["error"] == "RetryAfter"
+    assert cleanup["attempts"] == 1 and cleanup["error"] == "RetryAfterError"
     assert datetime.fromisoformat(cleanup["retry_at"]) >= before + timedelta(seconds=75)
     assert guard.client.member_rights[CHAT, USER]["view_messages"]
     await guard.recover_once()
@@ -206,57 +204,33 @@ async def test_basic_group_removed_user_history_is_queued(guard, store, monkeypa
     assert (await store.case(case["id"]))["payload"]["ban_message_cleanup"]["status"] == "deleted"
 
 
-class BotAPIRequest(BaseRequest):
-    def __init__(self, identity=999, result=True):
-        self.identity, self.result = identity, result
-        self.calls = []
-        self.closed = False
-
-    @property
-    def read_timeout(self):
-        return 5
-
-    async def initialize(self):
-        pass
-
-    async def shutdown(self):
-        self.closed = True
-
-    async def do_request(self, url, method, request_data=None, **kwargs):
-        name = url.rsplit("/", 1)[-1]
-        self.calls.append((name, request_data.json_parameters if request_data else {}))
-        result = (
-            {"id": self.identity, "is_bot": True, "first_name": "Main"}
-            if name == "getMe"
-            else self.result
-        )
-        return 200, json.dumps({"ok": True, "result": result}).encode()
-
-
 @pytest.mark.parametrize("identity,answer", [(999, True), (998, True), (999, False)])
-async def test_real_bot_api_adapter_revokes_all_messages_and_checks_bot_identity(
+async def test_bot_api_adapter_revokes_all_messages_and_checks_bot_identity(
     guard, monkeypatch, identity, answer
 ):
-    request = BotAPIRequest(identity, answer)
-    monkeypatch.setattr(
-        ban_history,
-        "Bot",
-        lambda token: TelegramBot(
-            "123456:DUMMY", request=request, get_updates_request=BotAPIRequest()
-        ),
-    )
+    """身份从 token 前缀解析（无 getMe 往返）；撤销必须带 revoke_messages=True"""
+
+    calls = []
+
+    async def fake_ban_chat_member(
+        token, chat_id, user_id, *, revoke_messages=False, timeout=None
+    ):
+        calls.append((token, chat_id, user_id, revoke_messages))
+        return answer
+
+    monkeypatch.setattr(ban_history, "bot_id_from_token", lambda token: identity)
+    monkeypatch.setattr(ban_history, "ban_chat_member", fake_ban_chat_member)
     cleanup = BanHistoryCleanup(guard)
     if identity != 999:
         with pytest.raises(BotIdentityMismatch):
             await cleanup.revoke(CHAT, USER, 999)
-        assert [name for name, _ in request.calls] == ["getMe"]
+        assert calls == []
     elif not answer:
         with pytest.raises(ValueError, match="HistoryDeletionUnconfirmed"):
             await cleanup.revoke(CHAT, USER, 999)
+        assert len(calls) == 1
     else:
         await cleanup.revoke(CHAT, USER, 999)
-        name, params = request.calls[-1]
-        assert name == "banChatMember"
-        assert json.loads(params["revoke_messages"]) is True
-        assert int(params["chat_id"]) == CHAT and int(params["user_id"]) == USER
-    assert request.closed
+        _, chat_id, user_id, revoke_messages = calls[-1]
+        assert revoke_messages is True
+        assert chat_id == CHAT and user_id == USER
