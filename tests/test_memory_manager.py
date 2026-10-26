@@ -11,6 +11,13 @@ import pytest
 from core.ai.memory_manager import MemoryManager, get_memory_manager
 
 
+@pytest.fixture(autouse=True)
+def offline_ai(monkeypatch):
+    monkeypatch.setattr(
+        "core.ai.memory_manager.get_ai_runtime", MagicMock(side_effect=RuntimeError("offline"))
+    )
+
+
 @pytest.mark.unit
 class TestMemoryManagerInit:
     """初始化测试"""
@@ -30,14 +37,14 @@ class TestMemoryManagerInit:
 class TestExtractMetadata:
     """提取元数据测试"""
 
-    @patch("core.ai.memory_manager.client_llm")
-    @patch("core.ai.memory_manager.get_llm_model")
+    @patch("core.ai.memory_manager.get_ai_runtime")
     @patch("core.ai.memory_manager.get_db_manager")
-    def test_extract_metadata_success(self, mock_get_db, mock_model, mock_client):
+    def test_extract_metadata_success(self, mock_get_db, mock_runtime):
         """测试成功提取元数据"""
         mock_db = MagicMock()
         mock_get_db.return_value = mock_db
-        mock_model.return_value = "test-model"
+        mock_client = MagicMock()
+        mock_runtime.return_value = (mock_client, "test-model")
 
         mock_response = MagicMock()
         mock_response.choices[0].message.content.strip.return_value = """

@@ -130,7 +130,7 @@ async def test_mysql_old_report_notifications_are_selected_for_control_refresh(
     assert case["id"] in {row["id"] for row in cases}
     await guard.recover_once()
     current = await mysql_repository.get_case(case["id"])
-    assert current["payload"]["report_controls_version"] == 1
+    assert current["payload"]["report_controls_version"] == 2
     async with mysql_repository.lock(USER) as store:
         assert {(row["target_id"], row["message_id"]) for row in before} == {
             (row["target_id"], row["message_id"]) for row in await store.notices(case["id"])
@@ -358,8 +358,15 @@ async def test_shared_global_match_updates_last_seen_and_overrides_local_whiteli
 
 
 async def test_retention_preserves_pending_cases_and_permanent_blacklist(guard, mysql_repository):
+    guard.client.admins.add(guard.bot_id)
     case = await create_ban(guard, mysql_repository)
     await guard.reviews.review(case["id"], "blacklist", ADMIN)
+    # 封禁后消息清理完成，结束案件才可按留存期限删除。
+    guard.client.admins.add(guard.bot_id)
+    await guard.recover_once()
+    assert (await mysql_repository.get_case(case["id"]))["payload"]["ban_message_cleanup"][
+        "status"
+    ] == "deleted"
     pending_id = uuid.uuid4().hex
     async with mysql_repository.lock(USER) as store:
         await store.create_case(

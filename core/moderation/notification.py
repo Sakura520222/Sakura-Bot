@@ -16,11 +16,12 @@ from telethon.tl.types import InputMessageEntityMentionName, MessageEntityTextUr
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .ban_history import history_cleanup_text
 from .telegram import TelegramActionError, call
 
 logger = logging.getLogger(__name__)
 RETIRED_NOTICES = {"deleting", "removed"}
-REPORT_CONTROLS_VERSION = 1
+REPORT_CONTROLS_VERSION = 2
 CONTROLS_VERSION = 2
 
 
@@ -65,6 +66,7 @@ def review_buttons(case, config=None):
         and type(message_id) is int
         and 0 < message_id < 2**31
         and deletion.get("status") != "deleted"
+        and case["payload"].get("ban_message_cleanup", {}).get("status") != "deleted"
     ):
         key = (
             "guard.report_delete_retry_button"
@@ -190,7 +192,9 @@ def notification_text(case, *, link_profile=False):
         reviewed_at=str(case.get("reviewed_at") or "—"),
         error=case.get("error") or "—",
     )
-    reported = case["action"] == "report"
+    reported = case["action"] == "report" or bool(
+        payload.get("ai_report_review") and payload.get("reporter")
+    )
     if reported:
         reporter = payload.get("reporter", {})
         original = evidence.get("original", "")
@@ -216,11 +220,13 @@ def notification_text(case, *, link_profile=False):
             )
         for key in ("chat_link", "evidence_link", "report_link"):
             link = payload.get(key)
-            if link and link.startswith("https://t.me/"):
+            if key in values and link and link.startswith("https://t.me/"):
                 escaped = escape(link)
                 values[key] = values[key].replace(escaped, f'<a href="{escaped}">{escaped}</a>')
     text = t("guard.report_notification" if reported else "guard.notification", **values)
-    deletion = payload.get("report_message_deletion") if reported else None
+    if reported and case["status"] == "pending" and not is_ban_case(case):
+        text += "\n" + t("guard.report_ban_cleanup_hint")
+    deletion = payload.get("report_message_deletion")
     if deletion:
         error = deletion.get("error") or "—"
         if error.startswith("guard."):
@@ -244,6 +250,35 @@ def notification_text(case, *, link_profile=False):
         if link_profile:
             details = {key: escape(str(value)) for key, value in details.items()}
         text += "\n" + t("guard.report_delete_details", **details)
+    if payload.get("ban_message_cleanup"):
+        text += "\n" + history_cleanup_text(payload["ban_message_cleanup"])
+    if payload.get("guest_actor"):
+        guest = payload["guest_actor"]
+        state = payload.get("guest_ban", {}).get("status", "recorded")
+        if state == "pending" and payload["guest_ban"].get("action") == "blacklist":
+            state = "blacklist_pending"
+        text += "\n" + t(
+            "guard.guest_ban_notice", user_id=guest["user_id"], state=t(f"guard.guest_ban_{state}")
+        )
+    ai = payload.get("ai_report_review")
+    if ai:
+        verdict = ai.get("verdict", {})
+        details = {
+            "state": t(
+                "guard.ai_report_applied"
+                if ai.get("state") == "applied"
+                else "guard.ai_report_executing"
+                if ai.get("state") == "executing"
+                else "guard.ai_report_queued"
+                if ai.get("state") == "queued"
+                else "guard.ai_report_manual"
+            ),
+            "reason": (verdict.get("reason") or t("guard.ai_report_no_decision"))[:300],
+            "model": ai.get("model") or "—",
+        }
+        if link_profile:
+            details = {key: escape(str(value)) for key, value in details.items()}
+        text += "\n" + t("guard.ai_report_result", **details)
     return text
 
 
@@ -463,6 +498,7 @@ class Notifier:
             )
             or case["payload"].get("kick_button_enabled", True) != config.kick_button_enabled
             or case["payload"].get("report_notice_dirty")
+            or case["payload"].get("ban_message_cleanup_dirty")
         ):
             # 先使原通知待同步，再清除标记；任一步失败均可恢复，复用原消息 ID。
             for notice in await store.notices(case["id"]):
@@ -484,6 +520,7 @@ class Notifier:
                 if case["action"] == "report"
                 else case["payload"].get("report_controls_version"),
                 report_notice_dirty=False,
+                ban_message_cleanup_dirty=False,
             )
         if case["action"] == "verify_start":
             current = await store.case(case["id"])

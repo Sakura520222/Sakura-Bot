@@ -9,7 +9,7 @@ import uuid
 from core.config import read_config, save_config_changes
 from core.i18n.i18n import t
 from core.moderation import get_guard
-from core.moderation.config import GuardConfig, GuardGroup
+from core.moderation.config import GuardConfig, GuardGroup, migrate_nickname_keywords
 from core.moderation.moderator import GuardError
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 async def save_group(service, chat_id, group):
     await service.validate_group(chat_id, group)
     snapshot = read_config()
+    migrate_nickname_keywords(snapshot)
     section = snapshot.setdefault("sakura_guard", {})
     section.setdefault("groups", {})[str(chat_id)] = group.model_dump()
     GuardConfig.model_validate(section)
@@ -36,6 +37,28 @@ async def handle_guard(event):
         chat_id = getattr(event, "chat_id", None)
         if parts and parts[0].startswith("-"):
             chat_id = int(parts.pop(0))
+        if command in {"/guard_addword", "/guard_delword"}:
+            if event.sender_id not in service.default_admins():
+                raise GuardError("error.permission_denied")
+            word = " ".join(parts)
+            if not word:
+                raise GuardError("guard.help")
+            snapshot = read_config()
+            migrate_nickname_keywords(snapshot)
+            section = snapshot["sakura_guard"]
+            words = section["nickname_keywords"]
+            section["nickname_keywords"] = (
+                list(dict.fromkeys([*words, word]))
+                if command == "/guard_addword"
+                else [value for value in words if value != word]
+            )
+            GuardConfig.model_validate(section)
+            save_config_changes(snapshot)
+            service.reload(read_config())
+            await event.reply(
+                t("guard.global_keywords_saved", count=len(service.config.nickname_keywords))
+            )
+            return
         if not chat_id or chat_id >= 0:
             if event.sender_id not in service.default_admins():
                 raise GuardError("error.permission_denied")
@@ -63,16 +86,6 @@ async def handle_guard(event):
             if len(parts) != 1 or parts[0] not in {"on", "off"}:
                 raise GuardError("guard.help")
             group.block_bot_messages = parts[0] == "on"
-        elif command in {"/guard_addword", "/guard_delword"}:
-            word = " ".join(parts)
-            if not word:
-                raise GuardError("guard.help")
-            if command == "/guard_addword":
-                group.nickname_keywords = list(dict.fromkeys([*group.nickname_keywords, word]))
-            else:
-                group.nickname_keywords = [
-                    value for value in group.nickname_keywords if value != word
-                ]
         elif command == "/guard_whitelist":
             if len(parts) != 2 or parts[0] not in {"add", "remove"}:
                 raise GuardError("guard.help")

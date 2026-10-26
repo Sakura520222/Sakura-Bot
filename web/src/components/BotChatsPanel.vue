@@ -13,6 +13,7 @@
         <n-text v-if="discovering" role="status">正在核实 {{ checked }}/{{ total }} 个会话…</n-text>
         <n-text v-else depth="3">已加入 {{ joinedCount }} · 管理员 {{ adminCount }} · 非管理员 {{ memberCount }} · 权限待核实 {{ unknownCount }} · 频道私信 {{ relatedCount }}（随频道管理）</n-text>
       </n-space>
+      <deleted-users-cleanup-panel ref="deletedCleanupPanel" :groups="managedGroups" :blocked="discovering || leaving || cleaning || previewLoading || confirming" @busy="deletedBusy = $event" @changed="loadChats()" />
       <n-space align="center">
         <n-input v-model:value="search" clearable placeholder="搜索名称、用户名或 ID" style="width: 260px" />
         <n-select v-model:value="kind" :options="kindOptions" style="width: 150px" />
@@ -82,18 +83,21 @@ import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NDataTable, NInput, NModal, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from "naive-ui";
 import { cleanBotChatHistory, getGuardBotChats, leaveBotChats, previewCleanBotChatHistory, previewLeaveBotChats, type BotChat, type BotChatCleanup, type BotChatPreview, type BotHistoryCleanup } from "@/api/guard";
 import { saveError } from "@/composables/autosave";
+import DeletedUsersCleanupPanel from "@/components/DeletedUsersCleanupPanel.vue";
 
 const emit = defineEmits<{ changed: [] }>();
 const message = useMessage();
 const chats = ref<BotChat[]>([]), history = ref<BotChat[]>([]), job = ref<BotChatCleanup | null>(null);
 const historyJob = ref<BotHistoryCleanup | null>(null), historyCleanableCount = ref(0);
+const deletedCleanupPanel = ref<InstanceType<typeof DeletedUsersCleanupPanel> | null>(null), deletedBusy = ref(false);
 const previewMode = ref<"leave" | "history">("leave");
 const loading = ref(false), discovering = ref(false), previewLoading = ref(false), confirming = ref(false);
 const checked = ref(0), total = ref(0), relatedCount = ref(0), showPreview = ref(false), preview = ref<BotChatPreview | null>(null);
 const search = ref(""), kind = ref("all"), role = ref("all");
 const leaving = computed(() => job.value?.status === "running");
 const cleaning = computed(() => historyJob.value?.status === "running");
-const running = computed(() => leaving.value || cleaning.value);
+const running = computed(() => leaving.value || cleaning.value || deletedBusy.value);
+const managedGroups = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === true && chat.identity_verified && chat.is_standalone && !chat.error && ["group", "supergroup"].includes(chat.chat_type)));
 const joinedCount = computed(() => chats.value.filter(chat => chat.joined === true).length);
 const adminCount = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === true).length);
 const memberCount = computed(() => chats.value.filter(chat => chat.joined === true && chat.is_admin === false).length);
@@ -124,6 +128,7 @@ const columns: DataTableColumns<BotChat> = [
     type: row.is_admin === true ? "success" : row.is_admin === false ? "warning" : "default", size: "small",
   }, { default: () => row.joined === null ? "成员身份待核实" : row.role === "creator" ? "创建者" : row.is_admin === true ? "管理员" : row.is_admin === false ? "非管理员" : "权限待核实" }) },
   { title: "核实错误", key: "error", width: 170, ellipsis: { tooltip: true }, render: row => row.error || "—" },
+  { title: "成员清理", key: "deleted_cleanup", width: 150, render: row => managedGroups.value.some(group => group.chat_id === row.chat_id) ? h(NButton, { size: "small", type: "warning", disabled: running.value || discovering.value || previewLoading.value, onClick: () => deletedCleanupPanel.value?.cleanGroup(row.chat_id) }, { default: () => "清理已销号" }) : "—" },
 ];
 const resultColumns: DataTableColumns<BotChatCleanup["results"][number]> = [
   ...previewColumns.slice(0, 3),

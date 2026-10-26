@@ -173,11 +173,11 @@ async def test_nickname_default_and_per_rule_actions_are_configurable(guard):
     user.first_name = "主页"
     config = GuardGroup(nickname_action="warn")
     assert Matcher(config).nickname(user).action == "warn"
-    config.nickname_keywords = []
+    matcher = Matcher(config, [])
     config.rules = [GuardRule(id="custom", target="nickname", value="主页", action="mute")]
-    assert Matcher(config).nickname(user).action == "mute"
+    assert matcher.nickname(user).action == "mute"
     config.rules[0].action = "delete"
-    assert Matcher(config).nickname(user).action == "warn"
+    assert matcher.nickname(user).action == "warn"
 
 
 async def test_non_removing_nickname_action_does_not_bypass_join_verification(guard, store):

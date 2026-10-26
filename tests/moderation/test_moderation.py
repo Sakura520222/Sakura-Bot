@@ -246,10 +246,10 @@ async def test_join_request_match_rejects_instead_of_claiming_a_ban(guard, store
 async def test_start_stop_registers_main_bot_only_and_cleans_up(guard):
     guard.recover_once = AsyncMock()
     await guard.start()
-    assert guard.client.add_event_handler.call_count == 7
+    assert guard.client.add_event_handler.call_count == 8
     assert any(callback == guard.handle_membership_update for callback, _ in guard._handlers)
     await guard.stop()
-    assert guard.client.remove_event_handler.call_count == 7 and guard._worker is None
+    assert guard.client.remove_event_handler.call_count == 8 and guard._worker is None
 
 
 async def test_partial_message_kick_still_unbans_after_group_is_disabled(guard, store):

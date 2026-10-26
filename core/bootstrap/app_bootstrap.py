@@ -104,6 +104,8 @@ class AppBootstrap:
 
             # 第5步：初始化UserBot（可选）
             await self._initialize_userbot()
+            if self.moderation_initializer.service:
+                self.moderation_initializer.service.bot_observer.attach(self.userbot_client)
 
             # 第6步：初始化调度器
             await self._initialize_scheduler()

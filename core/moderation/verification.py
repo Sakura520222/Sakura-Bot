@@ -566,6 +566,7 @@ class Verification:
                     return
             if action == "ban":
                 await self.actions.ban(case["chat_id"], case["user_id"])
+                await self.service.ban_history.prepare(store, case)
             elif action == "kick":
                 await self.actions.ban(case["chat_id"], case["user_id"])
                 case["payload"]["kick_banned"] = True
@@ -603,6 +604,8 @@ class Verification:
                 "executing",
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+
+        await self.service.ban_history.finish(store, case)
 
     async def tick(self, store, session):
         config = self.service.group(session["chat_id"])
@@ -1017,6 +1020,7 @@ class Verification:
                     await store.update_case(case["id"], "cancelled", payload=payload)
                     return
                 await self.actions.ban(case["chat_id"], case["user_id"])
+                await self.service.ban_history.prepare(store, case)
                 if action == "blacklist":
                     # 封禁确认成功后，黑名单与案件终态复用现有原子事务。
                     await store.finish_review(case, "blacklist")
@@ -1031,6 +1035,8 @@ class Verification:
                 "executing",
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+
+        await self.service.ban_history.finish(store, case)
 
     async def callback(self, event):
         admin = re.fullmatch(rb"sg:v:([0-9a-f]{32}):([bxjs])", event.data)

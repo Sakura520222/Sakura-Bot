@@ -3,10 +3,10 @@
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 """群组配置与输入校验；历史配置缺省时不启用任何处罚。"""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 import regex
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 Action = Literal["delete", "warn", "mute", "kick", "ban"]
 MemberAction = Literal["warn", "mute", "kick", "ban", "allow"]
@@ -31,6 +31,18 @@ DEFAULT_NOTIFICATION_EVENTS = [
     "blacklist",
 ]
 DEFAULT_WORDS = ["主页", "看我", "头像", "小学生"]
+# 足以无损合并历史上最多 500 群、每群 100 词的配置。
+MAX_NICKNAME_KEYWORDS = 50000
+
+
+def validate_words(values):
+    if any(not value.strip() or len(value) > 128 for value in values):
+        raise ValueError("invalid guard keyword")
+    return list(dict.fromkeys(values))
+
+
+NicknameKeywords = Annotated[list[str], Field(max_length=MAX_NICKNAME_KEYWORDS)]
+_legacy_keywords = TypeAdapter(Annotated[list[str], Field(max_length=100)])
 
 
 class GuardRule(BaseModel):
@@ -73,11 +85,17 @@ class GuardGroup(BaseModel):
     message_filter: bool = False
     block_bot_messages: bool = False
     bot_message_action: Action = "delete"
-    nickname_keywords: list[str] = Field(
-        default_factory=lambda: DEFAULT_WORDS.copy(), max_length=100
-    )
+    block_button_messages: bool = False
+    button_message_action: Action = "delete"
+    block_forwarded_messages: bool = False
+    forwarded_message_action: Action = "delete"
+    block_contact_messages: bool = False
+    contact_message_action: Action = "ban"
     message_keywords: list[str] = Field(default_factory=list, max_length=100)
     message_action: Action = "delete"
+    ai_report_review_enabled: bool = False
+    ai_report_review_delay_minutes: int = Field(default=10, ge=1, le=1440)
+    ai_report_review_action: Action = "ban"
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
     rules: list[GuardRule] = Field(default_factory=list, max_length=100)
     ban_any_traditional: bool = False
@@ -93,12 +111,10 @@ class GuardGroup(BaseModel):
     review_chat_id: int | None = None
     allow_group_admin_review: bool = False
 
-    @field_validator("nickname_keywords", "message_keywords")
+    @field_validator("message_keywords")
     @classmethod
     def validate_words(cls, values):
-        if any(not value.strip() or len(value) > 128 for value in values):
-            raise ValueError("invalid guard keyword")
-        return list(dict.fromkeys(values))
+        return validate_words(values)
 
     @field_validator("trusted_bot_ids", "reviewer_ids", "notification_ids")
     @classmethod
@@ -126,10 +142,48 @@ class GuardGroup(BaseModel):
         return self
 
 
+class DeletedUserCleanupSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool = False
+    interval_hours: int = Field(default=24, ge=1, le=720)
+
+
 class GuardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+    nickname_keywords: NicknameKeywords = Field(default_factory=lambda: DEFAULT_WORDS.copy())
+    deleted_user_cleanup: DeletedUserCleanupSettings = Field(
+        default_factory=DeletedUserCleanupSettings
+    )
     groups: dict[str, GuardGroup] = Field(default_factory=dict, max_length=500)
     retention_days: int = Field(default=90, ge=7, le=3650)
+
+    @model_validator(mode="before")
+    @classmethod
+    def share_legacy_keywords(cls, data):
+        if not isinstance(data, dict) or not isinstance(data.get("groups", {}), dict):
+            return data
+        result = dict(data)
+        groups = {}
+        words = []
+        for chat_id, group in data.get("groups", {}).items():
+            if isinstance(group, dict):
+                group = dict(group)
+                legacy = group.pop("nickname_keywords", DEFAULT_WORDS)
+                words.extend(validate_words(_legacy_keywords.validate_python(legacy, strict=True)))
+            else:
+                words.extend(DEFAULT_WORDS)
+            groups[chat_id] = group
+        result["groups"] = groups
+        if "nickname_keywords" not in result:
+            result["nickname_keywords"] = (
+                list(dict.fromkeys(words)) if groups else DEFAULT_WORDS.copy()
+            )
+        return result
+
+    @field_validator("nickname_keywords")
+    @classmethod
+    def validate_nickname_keywords(cls, values):
+        return validate_words(values)
 
     @field_validator("groups")
     @classmethod
@@ -142,3 +196,17 @@ class GuardConfig(BaseModel):
             if str(chat_id) != key or chat_id >= 0 or chat_id < -(2**63) + 1:
                 raise ValueError("group keys must be canonical negative Telegram chat IDs")
         return groups
+
+
+def migrate_nickname_keywords(snapshot: dict) -> bool:
+    """仅迁移词表路径；调用方通过带基线的配置存储原子提交。显式空全局列表优先。"""
+    section = snapshot.setdefault("sakura_guard", {})
+    config = GuardConfig.model_validate(section)
+    changed = section.get("nickname_keywords") != config.nickname_keywords
+    if changed:
+        section["nickname_keywords"] = config.nickname_keywords
+    for group in section.get("groups", {}).values():
+        if "nickname_keywords" in group:
+            del group["nickname_keywords"]
+            changed = True
+    return changed

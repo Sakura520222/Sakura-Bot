@@ -6,14 +6,14 @@
 import hashlib
 import logging
 import re
-import time
 import uuid
-from collections import OrderedDict
 
 from telethon import events
 
 from core.i18n.i18n import t
 
+from .ai_report_repository import atomic
+from .ai_reports import message_snapshot
 from .matcher import Match, normalize
 from .moderator import GuardError
 from .telegram import call
@@ -25,7 +25,6 @@ REPORT_PATTERN = re.compile(r"\s*@admin\s+举报(?:\s+(.*?))?\s*", re.IGNORECASE
 class ReportHandler:
     def __init__(self, service):
         self.service = service
-        self._cooldowns = OrderedDict()
 
     async def handle(self, event):
         text = getattr(getattr(event, "message", None), "message", "") or ""
@@ -101,62 +100,53 @@ class ReportHandler:
             if existing:
                 await self.service.notifier.sync(store, existing, self.service.group(chat_id))
                 return existing, False
-            cooldown_key = (chat_id, reporter.id)
-            now = time.monotonic()
-            if self._cooldowns.get(cooldown_key, 0) > now:
-                raise GuardError("guard.report_rate_limited")
-            # 在下一次 await 前预留，阻止同一举报人并发举报不同成员。
-            deadline = now + 60
-            self._cooldowns[cooldown_key] = deadline
-            self._cooldowns.move_to_end(cooldown_key)
-            while len(self._cooldowns) > 4096:
-                self._cooldowns.popitem(last=False)
-            try:
-                user = await call(self.service.client.get_entity(original.sender_id))
-                text = (getattr(original, "message", "") or "")[:2048]
-                evidence = Match(
-                    "report",
-                    "user-report",
-                    reason or t("guard.report_reason"),
-                    text,
-                    normalize(text)[:2048],
-                    "report",
-                )
-                payload = await self.service.snapshot(chat_id, user, evidence, original)
-                payload.update(
-                    reporter={
-                        "user_id": reporter.id,
-                        "name": " ".join(
-                            value
-                            for value in (
-                                getattr(reporter, "first_name", None),
-                                getattr(reporter, "last_name", None),
-                            )
-                            if value
-                        )[:256],
-                        "username": getattr(reporter, "username", None),
-                    },
-                    report_message_id=report_message_id,
-                    report_link=f"{payload['chat_link']}/{report_message_id}"
-                    if payload["chat_link"]
-                    else "",
-                    has_media=bool(getattr(original, "media", None)),
-                    message_date=str(getattr(original, "date", "") or ""),
-                )
-                case = {
-                    "id": uuid.uuid4().hex,
-                    "event_key": event_key,
-                    "chat_id": chat_id,
-                    "user_id": user.id,
-                    "action": "report",
-                    "status": "pending",
-                    "payload": payload,
-                }
+            user = await call(self.service.client.get_entity(original.sender_id))
+            text = (getattr(original, "message", "") or "")[:2048]
+            evidence = Match(
+                "report",
+                "user-report",
+                reason or t("guard.report_reason"),
+                text,
+                normalize(text)[:2048],
+                "report",
+            )
+            payload = await self.service.snapshot(chat_id, user, evidence, original)
+            payload.update(
+                reported_message=message_snapshot(original),
+                reporter={
+                    "user_id": reporter.id,
+                    "name": " ".join(
+                        value
+                        for value in (
+                            getattr(reporter, "first_name", None),
+                            getattr(reporter, "last_name", None),
+                        )
+                        if value
+                    )[:256],
+                    "username": getattr(reporter, "username", None),
+                },
+                report_message_id=report_message_id,
+                report_link=f"{payload['chat_link']}/{report_message_id}"
+                if payload["chat_link"]
+                else "",
+                has_media=bool(getattr(original, "media", None)),
+                message_date=str(getattr(original, "date", "") or ""),
+            )
+            case = {
+                "id": uuid.uuid4().hex,
+                "event_key": event_key,
+                "chat_id": chat_id,
+                "user_id": user.id,
+                "action": "report",
+                "status": "pending",
+                "payload": payload,
+            }
+            if self.service.ai_reports.enabled(case):
+                async with atomic(store):
+                    await store.create_case(case)
+                    await self.service.ai_reports.enqueue(store, case)
+            else:
                 await store.create_case(case)
-            except BaseException:
-                if self._cooldowns.get(cooldown_key) == deadline:
-                    self._cooldowns.pop(cooldown_key, None)
-                raise
             case = await store.case(case["id"])
             await self.service.notifier.sync(store, case, self.service.group(chat_id))
             return case, True

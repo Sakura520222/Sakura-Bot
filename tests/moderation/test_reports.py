@@ -239,27 +239,18 @@ async def test_duplicate_original_message_is_idempotent_across_concurrent_events
     )
 
 
-async def test_rate_limit_is_per_reporter_and_group_and_does_not_block_duplicates(
-    guard, store, monkeypatch
-):
-    await send(guard)
-    limited = await send(guard, message_id=43)
-    assert len(store.cases) == 1 and "60 秒" in limited.reply.call_args.args[0]
-    await send(guard)  # 同一消息仍可查询案件 ID。
+async def test_reports_have_no_cooldown_and_keep_duplicate_message_deduplication(guard, store):
+    events = [report_event(guard, message_id=message_id) for message_id in range(42, 52)]
+    await asyncio.gather(*(send(guard, event) for event in events))
+    assert len(store.cases) == 10
+    assert all("已提交管理员审核" in event.reply.call_args.args[0] for event in events)
+    duplicate = await send(guard, message_id=42)
+    assert len(store.cases) == 10 and "已有举报" in duplicate.reply.call_args.args[0]
     await send(guard, message_id=43, reporter=REPORTER + 1)
-    await send(guard, chat_id=CHAT - 1, message_id=44)
-    assert len(store.cases) == 3
-    deadline = guard.reports._cooldowns[CHAT, REPORTER]
-    monkeypatch.setattr(
-        "core.moderation.report_handler.time", SimpleNamespace(monotonic=lambda: deadline + 1)
-    )
-    await send(guard, message_id=45)
-    assert len(store.cases) == 4
+    assert len(store.cases) == 10
 
 
-async def test_database_failure_does_not_send_notices_or_consume_cooldown(
-    guard, store, monkeypatch
-):
+async def test_database_failure_does_not_send_notices_or_block_a_retry(guard, store, monkeypatch):
     create = store.create_case
     monkeypatch.setattr(
         store, "create_case", AsyncMock(side_effect=ConnectionError("database offline"))
@@ -344,7 +335,8 @@ async def test_administrator_can_dismiss_ban_or_blacklist_a_report(guard, store,
         assert [row[0].text for row in review_buttons(result)] == ["仅踢出", "删除被举报消息"]
         assert "已忽略" in case_status(result)
     else:
-        assert guard.client.calls == [("ban", CHAT, USER)]
+        assert guard.client.calls == [("delete", CHAT, (42,)), ("ban", CHAT, USER)]
+        assert result["payload"]["report_message_deletion"]["status"] == "deleted"
         assert bool(store.black) == (action == "blacklist")
         if action == "ban":
             assert result["payload"]["review_generation"] == 1

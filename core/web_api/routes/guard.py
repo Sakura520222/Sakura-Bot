@@ -7,7 +7,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from core.commands.guard_commands import save_group
 from core.config import read_config, save_config_changes
@@ -15,7 +15,14 @@ from core.config.persistence import ConfigConflictError, ConfigPersistenceError,
 from core.i18n.i18n import t
 from core.moderation import get_guard
 from core.moderation.chat_cleanup import ChatCleanupError
-from core.moderation.config import GuardConfig, GuardGroup
+from core.moderation.config import (
+    DeletedUserCleanupSettings,
+    GuardConfig,
+    GuardGroup,
+    NicknameKeywords,
+    migrate_nickname_keywords,
+    validate_words,
+)
 from core.moderation.moderator import GuardError
 from core.moderation.repository import ACTIVE_VERIFICATIONS
 from core.web_api.deps import record_system_audit
@@ -56,6 +63,17 @@ class RetentionRequest(BaseModel):
     retention_days: int = Field(ge=7, le=3650)
 
 
+class NicknameKeywordsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nickname_keywords: NicknameKeywords
+    previous: NicknameKeywords
+
+    @field_validator("nickname_keywords", "previous")
+    @classmethod
+    def validate_keywords(cls, values):
+        return validate_words(values)
+
+
 class AddGroupRequest(BaseModel):
     chat_id: int = Field(lt=0, gt=-(2**63))
 
@@ -73,6 +91,41 @@ class LeaveChatsRequest(BaseModel):
         return self
 
 
+class DeletedCleanupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    chat_ids: list[int] | None = Field(default=None, min_length=1, max_length=5000)
+    confirmed: bool
+
+    @field_validator("chat_ids")
+    @classmethod
+    def valid_groups(cls, values):
+        if values is not None and any(not -(2**63) < value < 0 for value in values):
+            raise ValueError("群组 ID 必须为负整数")
+        return sorted(set(values)) if values is not None else None
+
+    @model_validator(mode="after")
+    def confirmed_request(self):
+        if self.confirmed is not True:
+            raise ValueError("请确认清理已销号成员")
+        return self
+
+
+class DeletedCleanupSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    changes: DeletedUserCleanupSettings
+    previous: DeletedUserCleanupSettings
+
+    @model_validator(mode="after")
+    def matching_fields(self):
+        if (
+            not self.changes.model_fields_set
+            or self.changes.model_fields_set != self.previous.model_fields_set
+        ):
+            raise ValueError("请提供修改字段及其原值")
+        return self
+
+
 class GroupSwitchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -83,6 +136,10 @@ class GroupSwitchRequest(BaseModel):
         "nickname_filter",
         "message_filter",
         "block_bot_messages",
+        "block_button_messages",
+        "block_forwarded_messages",
+        "block_contact_messages",
+        "ai_report_review_enabled",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",
@@ -129,7 +186,16 @@ def business_error(error):
 @router.get("/config")
 async def config(context=GUARD_ADMIN):
     service, _ = context
-    return {"config": service.config.model_dump(), "defaults": GuardGroup().model_dump()}
+    worker = getattr(getattr(service, "ai_reports", None), "worker", None)
+    observer = getattr(service, "bot_observer", None)
+    return {
+        "config": service.config.model_dump(),
+        "defaults": GuardGroup().model_dump(),
+        "runtime": {
+            "ai_report_worker_running": bool(worker and not worker.done()),
+            "bot_message_observer_active": bool(observer and observer.client),
+        },
+    }
 
 
 @router.get("/groups")
@@ -157,6 +223,71 @@ async def preview_leave_chats(context=GUARD_ADMIN):
         return service.chat_cleanup.preview(actor)
     except ChatCleanupError as error:
         raise HTTPException(409, str(error)) from error
+
+
+@router.get("/chats/deleted-users")
+async def deleted_cleanup_status(context=GUARD_ADMIN):
+    service, _ = context
+    return await service.deleted_cleanup.status()
+
+
+@router.post("/chats/deleted-users")
+async def start_deleted_cleanup(body: DeletedCleanupRequest, context=GUARD_ADMIN):
+    service, actor = context
+    try:
+        result = await service.deleted_cleanup.start(actor, body.request_id, body.chat_ids)
+    except ChatCleanupError as error:
+        raise HTTPException(409, str(error)) from error
+    await record_system_audit(
+        action="guard.deleted_cleanup.start",
+        actor=str(actor),
+        target=result["id"],
+        success=True,
+        message="已受理已销号成员清理",
+    )
+    return result
+
+
+@router.get("/chats/deleted-users/jobs/{job_id}")
+async def deleted_cleanup_job(job_id: str, context=GUARD_ADMIN):
+    service, _ = context
+    result = await service.deleted_cleanup.job(job_id)
+    if result is None:
+        raise HTTPException(404, "清理任务不存在")
+    return result
+
+
+@router.patch("/chats/deleted-users/settings")
+async def update_deleted_cleanup_settings(body: DeletedCleanupSettingsRequest, context=GUARD_ADMIN):
+    service, actor = context
+    fields = body.changes.model_fields_set
+    changes = body.changes.model_dump(include=fields)
+    previous = body.previous.model_dump(include=fields)
+    try:
+        snapshot = read_config()
+        section = snapshot.setdefault("sakura_guard", {})
+        migrate_nickname_keywords(snapshot)
+        current = GuardConfig.model_validate(section).deleted_user_cleanup.model_dump()
+        if any(current[key] != previous[key] and current[key] != changes[key] for key in fields):
+            raise settings_conflict(current, fields)
+        section.setdefault("deleted_user_cleanup", {}).update(changes)
+        GuardConfig.model_validate(section)
+        save_config_changes(snapshot)
+        service.reload(read_config())
+    except ConfigConflictError as error:
+        current = GuardConfig.model_validate(
+            read_config().get("sakura_guard", {})
+        ).deleted_user_cleanup.model_dump()
+        raise settings_conflict(current, fields) from error
+    except ConfigPersistenceError as error:
+        raise HTTPException(503, str(error)) from error
+    await record_system_audit(
+        action="guard.deleted_cleanup.settings",
+        actor=str(actor),
+        success=True,
+        message="已更新已销号成员定期清理设置",
+    )
+    return service.config.deleted_user_cleanup.model_dump()
 
 
 @router.post("/chats/leave")
@@ -191,12 +322,14 @@ async def add_group(body: AddGroupRequest, context=GUARD_ADMIN):
     service, _ = context
     # 立即提交完整配置快照，不等待 Telegram；重复添加不覆盖已有群设置。
     snapshot = read_config()
+    migrated = migrate_nickname_keywords(snapshot)
     groups = snapshot.setdefault("sakura_guard", {}).setdefault("groups", {})
     key = str(body.chat_id)
     created = key not in groups
     if created:
         groups[key] = GuardGroup().model_dump()
         GuardConfig.model_validate(snapshot["sakura_guard"])
+    if created or migrated:
         save_config_changes(snapshot)
     service.reload(read_config())
     service.directory.remember(body.chat_id)
@@ -229,6 +362,7 @@ async def update_group_switch(chat_id: int, body: GroupSwitchRequest, context=GU
     try:
         # 校验前读取基线，只提交指定字段；并发写入由配置存储合并或拒绝。
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.get("sakura_guard", {})
         group = section.get("groups", {}).get(str(chat_id))
         if group is None:
@@ -258,6 +392,7 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
     previous = body.previous.model_dump(include=fields)
     try:
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.get("sakura_guard", {})
         group = section.get("groups", {}).get(str(chat_id))
         if group is None:
@@ -283,7 +418,8 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
         latest = read_config().get("sakura_guard", {}).get("groups", {}).get(str(chat_id))
         if latest is None:
             raise HTTPException(404, t("guard.group_not_found")) from error
-        raise settings_conflict(GuardGroup.model_validate(latest).model_dump(), fields) from error
+        latest = GuardConfig.model_validate({"groups": {str(chat_id): latest}}).groups[str(chat_id)]
+        raise settings_conflict(latest.model_dump(), fields) from error
     except ConfigPersistenceError as error:
         raise HTTPException(503, str(error)) from error
     except ValidationError as error:
@@ -293,11 +429,35 @@ async def update_group_settings(chat_id: int, body: GroupSettingsRequest, contex
     return {"success": True, "group": service.group(chat_id).model_dump()}
 
 
+@router.patch("/nickname-keywords")
+async def update_nickname_keywords(body: NicknameKeywordsRequest, context=GUARD_ADMIN):
+    service, _ = context
+    try:
+        snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
+        section = snapshot["sakura_guard"]
+        current = section["nickname_keywords"]
+        if current != body.previous and current != body.nickname_keywords:
+            raise settings_conflict({"nickname_keywords": current}, ["nickname_keywords"])
+        section["nickname_keywords"] = body.nickname_keywords
+        save_config_changes(snapshot)
+        service.reload(read_config())
+    except ConfigConflictError as error:
+        current = GuardConfig.model_validate(
+            read_config().get("sakura_guard", {})
+        ).nickname_keywords
+        raise settings_conflict({"nickname_keywords": current}, ["nickname_keywords"]) from error
+    except ConfigPersistenceError as error:
+        raise HTTPException(503, str(error)) from error
+    return {"success": True, "nickname_keywords": service.config.nickname_keywords}
+
+
 @router.patch("/retention")
 async def update_retention(body: RetentionPatchRequest, context=GUARD_ADMIN):
     service, _ = context
     try:
         snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
         section = snapshot.setdefault("sakura_guard", {})
         current = section.get("retention_days", GuardConfig().retention_days)
         if current not in {body.previous, body.retention_days}:
@@ -322,6 +482,7 @@ async def update_retention(body: RetentionPatchRequest, context=GUARD_ADMIN):
 async def retention(body: RetentionRequest, context=GUARD_ADMIN):
     service, _ = context
     snapshot = read_config()
+    migrate_nickname_keywords(snapshot)
     snapshot.setdefault("sakura_guard", {})["retention_days"] = body.retention_days
     GuardConfig.model_validate(snapshot["sakura_guard"])
     save_config_changes(snapshot)
@@ -375,6 +536,12 @@ async def retry(case_id: str, context=GUARD_ADMIN):
         raise HTTPException(404, t("guard.invalid_callback"))
     async with service.repository.lock(case["user_id"]) as store:
         case = await store.case(case_id)
+        cleanup = case["payload"].get("ban_message_cleanup", {})
+        if cleanup.get("status") == "pending" and case["status"] != "execution_failed":
+            await service.ban_history.resume(store, case, force=True)
+            result = await store.case(case_id)
+            await service.notifier.sync(store, result, service.group(case["chat_id"]))
+            return {"success": True, "case": result}
         if case["status"] != "execution_failed":
             raise HTTPException(409, t("guard.already_processing"))
         await store.update_case(case_id, "executing")

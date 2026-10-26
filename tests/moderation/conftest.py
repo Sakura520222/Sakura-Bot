@@ -7,7 +7,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon import utils
@@ -22,6 +22,7 @@ from telethon.tl.types import Channel, Chat, ChatBannedRights, PeerChat
 
 from core.infrastructure.database.mysql import utc_now_naive
 from core.moderation.config import GuardConfig, GuardGroup
+from core.moderation.guest_messages import blacklist_task, current_blacklist_task
 from core.moderation.moderator import Moderator
 from core.moderation.telegram import rights_dict, rights_object
 
@@ -153,15 +154,22 @@ class MemoryStore:
         )
         return True
 
-    async def finish_review(self, case, action):
+    async def finish_review(self, case, action, *, guest_parent=None):
         if self.fail_finish:
             self.fail_finish -= 1
             raise ConnectionError("injected transaction failure")
+        if guest_parent is not None:
+            parent = await self.case(guest_parent[0])
+            if not current_blacklist_task(parent, guest_parent[1]) or not await self.blacklist(
+                parent["user_id"]
+            ):
+                raise ValueError("guest_source_decision_changed")
+            await self.create_case(case)
         if action == "allow":
             if case["user_id"] in self.black:
                 raise ValueError("global_blacklist_conflict")
             self.white.add((case["chat_id"], case["user_id"]))
-        elif action == "blacklist":
+        elif action == "blacklist" and not (guest_parent and case["user_id"] in self.black):
             self.black[case["user_id"]] = deepcopy(case)
             self.white.discard((case["chat_id"], case["user_id"]))
         payload = deepcopy(case["payload"])
@@ -173,6 +181,8 @@ class MemoryStore:
                 "at": utc_now_naive().isoformat(),
             },
         ]
+        if action == "blacklist":
+            payload = blacklist_task(payload, case.get("reviewer_id"), case.get("reviewer_actor"))
         unban_status = (
             "unbanned"
             if case["action"] == "ban" or payload.get("review_ban_confirmed")
@@ -185,7 +195,9 @@ class MemoryStore:
             payload["review_generation"] = payload.get("review_generation", 0) + 1
         await self.update_case(
             case["id"],
-            {
+            "done"
+            if guest_parent
+            else {
                 "allow": "allowed",
                 "blacklist": "blacklisted",
                 "unban": unban_status,
@@ -286,6 +298,7 @@ class FakeTelegram:
         self.remove_event_handler = MagicMock()
 
     async def get_entity(self, identifier):
+        identifier = getattr(identifier, "user_id", identifier)
         if identifier < 0:
             bare_id, peer_type = utils.resolve_id(identifier)
             if peer_type is PeerChat:
@@ -427,6 +440,7 @@ def guard():
     config = GuardConfig(groups={str(CHAT): GuardGroup(enabled=True, verify_join=False)})
     service = Moderator(client, repository, config, default_admins=lambda: [ADMIN, 11])
     service.bot_id = 999
+    service.ban_history.revoke = AsyncMock(return_value=True)
     return service
 
 

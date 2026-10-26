@@ -15,16 +15,22 @@ AI 配置 API 路由
 """
 
 import logging
+from urllib.parse import urlsplit
 
 import aiofiles
 from fastapi import APIRouter, HTTPException
 
 from core.config import DEFAULT_POLL_PROMPT, DEFAULT_PROMPT, DEFAULT_QA_PERSONA
+from core.config.ai_runtime import effective_ai_config
+from core.config.persistence import ConfigConflictError, ConfigPersistenceError
+from core.config.qa_quota import effective_qa_quota
+from core.web_api.deps import get_config, write_config
 from core.web_api.schemas.config import (
     AIConfigResponse,
     AIConfigUpdateRequest,
     PromptResponse,
     PromptUpdateRequest,
+    QAQuotaUpdateRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,11 +56,8 @@ DEFAULT_PROMPTS = {
 async def get_ai_config():
     """获取 AI 配置信息"""
     try:
-        from core.settings import get_settings
-
-        settings = get_settings()
-
-        api_key = settings.ai.effective_api_key
+        settings = effective_ai_config(get_config())
+        api_key = settings.api_key
         api_key_preview = ""
         if api_key:
             api_key_preview = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "***"
@@ -62,8 +65,8 @@ async def get_ai_config():
         return {
             "success": True,
             "data": AIConfigResponse(
-                base_url=settings.ai.base_url,
-                model=settings.ai.model,
+                base_url=settings.base_url,
+                model=settings.model,
                 api_key_set=bool(api_key),
                 api_key_preview=api_key_preview,
             ).model_dump(),
@@ -77,51 +80,70 @@ async def get_ai_config():
 async def update_ai_config(request: AIConfigUpdateRequest):
     """更新 AI 配置"""
     try:
-        # 读取现有 .env
-        env_path = "data/.env"
-        env_lines: list[str] = []
+        updates = request.model_dump(exclude_none=True)
+        if any(any(ord(char) < 32 for char in value) for value in updates.values()):
+            raise HTTPException(status_code=400, detail="AI 配置不能包含换行或控制字符")
+        if "base_url" in updates:
+            try:
+                url = urlsplit(updates["base_url"])
+                valid = (
+                    url.scheme in {"http", "https"}
+                    and url.hostname
+                    and not (url.username or url.password or url.query or url.fragment)
+                )
+                _ = url.port
+            except ValueError:
+                valid = False
+            if not valid:
+                raise HTTPException(status_code=400, detail="API 地址必须为有效的 HTTP(S) 地址")
+        config = get_config()
+        config.update(updates)
+        write_config(config)
 
-        try:
-            async with aiofiles.open(env_path, encoding="utf-8") as f:
-                env_lines = await f.readlines()
-        except FileNotFoundError:
-            pass
+        # 主进程立即切换；助手进程在下一次请求时读取同一配置文件。
+        from core.ai.ai_client import get_async_ai_runtime
 
-        # 更新配置项
-        updates = {}
-        if request.base_url is not None:
-            updates["LLM_BASE_URL"] = request.base_url
-        if request.model is not None:
-            updates["LLM_MODEL"] = request.model
-        if request.api_key is not None:
-            updates["LLM_API_KEY"] = request.api_key
+        get_async_ai_runtime()
+        logger.info("已通过 WebUI 更新 AI 配置并立即生效")
+        return {"success": True, "message": "AI 配置已保存并立即生效，后续请求使用新配置"}
+    except HTTPException:
+        raise
+    except ConfigConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except ConfigPersistenceError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        # 不输出 SDK 异常原文，避免凭据或连接参数进入响应和日志。
+        logger.error("更新 AI 配置失败")
+        raise HTTPException(status_code=500, detail="AI 配置未能应用，请重试") from None
 
-        # 更新或添加配置行
-        for key, value in updates.items():
-            found = False
-            for i, line in enumerate(env_lines):
-                if line.strip().startswith(f"{key}="):
-                    env_lines[i] = f"{key}={value}\n"
-                    found = True
-                    break
-            if not found:
-                env_lines.append(f"{key}={value}\n")
 
-        # 写回 .env
-        async with aiofiles.open(env_path, "w", encoding="utf-8") as f:
-            await f.writelines(env_lines)
+@router.get("/qa-quota")
+async def get_qa_quota():
+    try:
+        return {"success": True, "data": effective_qa_quota(get_config()).model_dump()}
+    except ConfigPersistenceError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
-        # 重新加载 settings
-        from core.settings import reload_settings
 
-        reload_settings()
-
-        logger.info("已通过 WebUI 更新 AI 配置")
-        return {"success": True, "message": "AI 配置已更新，部分配置需要重启生效"}
-
-    except Exception as e:
-        logger.error(f"更新 AI 配置失败: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+@router.put("/qa-quota")
+async def update_qa_quota(request: QAQuotaUpdateRequest):
+    updates = request.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="请填写需要修改的每日次数")
+    try:
+        config = get_config()
+        config.setdefault("qa_bot_quota", {}).update(updates)
+        write_config(config)
+        return {
+            "success": True,
+            "data": effective_qa_quota(get_config()).model_dump(),
+            "message": "助手 Bot 每日次数已保存并立即生效，当天已用次数保持不变",
+        }
+    except ConfigConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except ConfigPersistenceError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
 
 @router.get("/prompts")

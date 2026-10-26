@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
 import { createAutosave } from "../src/composables/autosave.ts";
-import { validateGuardField } from "../src/composables/guard-form.ts";
+import { validateGuardField, validateNicknameKeywords } from "../src/composables/guard-form.ts";
 
 const clone = <T>(value: T): T => structuredClone(value);
 function deferred<T>() {
@@ -205,4 +205,31 @@ test("invalid integers remain drafts; correcting them resumes automatic saving",
     assert.equal(await editor.flush(), true);
     assert.deepEqual(calls, [{ verification_timeout: 300 }]);
   } finally { editor.stop(); }
+});
+
+test("global nickname edits persist independently of group drafts and clearing keeps an empty list", async () => {
+  const calls: unknown[] = [];
+  const global = createAutosave({ nickname_keywords: ["共享词"] }, {
+    delay: 10000,
+    validate: (_, value) => validateNicknameKeywords(value),
+    save: async (changes, previous) => {
+      calls.push({ changes, previous });
+      return { nickname_keywords: changes.nickname_keywords! };
+    },
+  });
+  const group = createAutosave({ rules: [] }, { delay: 10000, save: async changes => ({ rules: changes.rules! }) });
+  try {
+    global.values.nickname_keywords = [];
+    assert.equal(await global.flush(), true);
+    assert.deepEqual(calls, [{ changes: { nickname_keywords: [] }, previous: { nickname_keywords: ["共享词"] } }]);
+    assert.equal(group.hasUnsaved(), false);
+    global.values.nickname_keywords = [" "];
+    assert.equal(await global.flush(), false);
+    assert.equal(calls.length, 1);
+    global.values.nickname_keywords = ["新词"];
+    assert.equal(await global.flush(), true);
+    assert.deepEqual(calls[1], { changes: { nickname_keywords: ["新词"] }, previous: { nickname_keywords: [] } });
+    assert.equal(validateNicknameKeywords(["𠮷".repeat(128)]), undefined);
+    assert.ok(validateNicknameKeywords(["a".repeat(129)]));
+  } finally { global.stop(); group.stop(); }
 });

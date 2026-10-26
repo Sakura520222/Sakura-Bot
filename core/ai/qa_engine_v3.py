@@ -29,13 +29,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.ai.agent_tools import TOOL_SCHEMAS, ToolExecutor
-from core.ai.ai_client import client_llm
+from core.ai.ai_client import get_ai_runtime
 from core.ai.memory_manager import get_memory_manager
 from core.ai.reranker import get_reranker
 from core.ai.vector_store import get_vector_store
 from core.config import get_qa_bot_persona
 from core.infrastructure.database import get_db_manager
-from core.settings import get_llm_model
 
 from .conversation_manager import get_conversation_manager
 
@@ -299,6 +298,7 @@ class QAEngineV3:
         """
         # 每请求隔离的工具执行上下文
         tool_executor = ToolExecutor(self.vector_store, self.memory_manager, self.reranker)
+        client, model = get_ai_runtime()
         loop = asyncio.get_running_loop()
 
         system_prompt = await self._build_system_prompt(channel_hint=channel_hint)
@@ -313,8 +313,8 @@ class QAEngineV3:
 
             stream = await loop.run_in_executor(
                 None,
-                lambda: client_llm.chat.completions.create(
-                    model=get_llm_model(),
+                lambda: client.chat.completions.create(
+                    model=model,
                     messages=messages,
                     tools=TOOL_SCHEMAS,
                     tool_choice="auto",
@@ -385,8 +385,8 @@ class QAEngineV3:
 
             stream = await loop.run_in_executor(
                 None,
-                lambda: client_llm.chat.completions.create(
-                    model=get_llm_model(),
+                lambda: client.chat.completions.create(
+                    model=model,
                     messages=messages,
                     temperature=0.7,
                     stream=True,
@@ -407,6 +407,7 @@ class QAEngineV3:
         模型 API 不支持工具调用或工具链路异常时使用；保证普通对话仍能
         正常回答，不会误导为"未找到频道总结"。
         """
+        client, model = get_ai_runtime()
         system_prompt = await self._build_system_prompt(include_tools=False)
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(self._history_to_messages(conversation_history))
@@ -417,8 +418,8 @@ class QAEngineV3:
 
         stream = await loop.run_in_executor(
             None,
-            lambda: client_llm.chat.completions.create(
-                model=get_llm_model(),
+            lambda: client.chat.completions.create(
+                model=model,
                 messages=messages,
                 temperature=0.7,
                 stream=True,

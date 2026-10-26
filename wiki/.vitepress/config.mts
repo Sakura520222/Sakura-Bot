@@ -55,6 +55,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '快速开始', link: '/User-Getting-Started' },
+          { text: '命令参考', link: '/User-Commands' },
           { text: 'WebUI 管理面板', link: '/User-WebUI-Guide' },
           { text: 'Sakura Guard 智能群管', link: '/User-Sakura-Guard' },
           { text: '问答 Bot', link: '/User-QA-Bot-Guide' },

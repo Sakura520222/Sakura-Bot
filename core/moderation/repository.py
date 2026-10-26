@@ -13,6 +13,8 @@ import aiomysql
 
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .guest_messages import blacklist_task, current_blacklist_task
+
 ACTIVE_VERIFICATIONS = (
     "preparing",
     "waiting",
@@ -172,7 +174,7 @@ class GuardStore:
             )
         )
 
-    async def finish_review(self, case, action):
+    async def finish_review(self, case, action, *, guest_parent=None):
         # Telegram 成功之后，名单和终态在同一个数据库事务提交。
         payload = dict(case["payload"])
         payload["review_history"] = [
@@ -183,8 +185,27 @@ class GuardStore:
                 "at": utc_now_naive().isoformat(),
             },
         ]
+        if action == "blacklist":
+            payload = blacklist_task(payload, case.get("reviewer_id"), case.get("reviewer_actor"))
         await self.connection.begin()
         try:
+            if guest_parent is not None:
+                parent_id, operation_id = guest_parent
+                parent = await self.one(
+                    "SELECT * FROM moderation_cases WHERE id=%s FOR UPDATE", (parent_id,)
+                )
+                if not current_blacklist_task(parent, operation_id) or not await self.blacklist(
+                    parent["user_id"]
+                ):
+                    raise ValueError("guest_source_decision_changed")
+                source = parent["payload"].get("guest_actor", {})
+                if (
+                    source != case["payload"].get("guest_source")
+                    or source.get("user_id") != case["user_id"]
+                    or parent["chat_id"] != case["chat_id"]
+                ):
+                    raise ValueError("guest_source_binding_changed")
+                await self.create_case(case)
             if action == "allow":
                 if await self.blacklist(case["user_id"]):
                     raise ValueError("global_blacklist_conflict")
@@ -194,6 +215,9 @@ class GuardStore:
                     case["reviewer_id"],
                     reviewer_actor=case.get("reviewer_actor"),
                 )
+            elif action == "blacklist" and guest_parent and await self.blacklist(case["user_id"]):
+                # 既有全局决定保留原审核人及证据，联动另存关联审计。
+                await self.touch_blacklist(case["user_id"])
             elif action == "blacklist":
                 await self.execute(
                     """INSERT INTO moderation_blacklist
@@ -229,7 +253,9 @@ class GuardStore:
                 payload["review_generation"] = payload.get("review_generation", 0) + 1
             await self.update_case(
                 case["id"],
-                {
+                "done"
+                if guest_parent
+                else {
                     "allow": "allowed",
                     "blacklist": "blacklisted",
                     "unban": unban_status,
@@ -445,15 +471,20 @@ class GuardRepository:
                 AND (c.status IN ('executing','reviewing_allow','reviewing_blacklist','reviewing_unban','reviewing_ban','reviewing_kick')
                 OR n.case_id IS NULL OR ((n.synced_status IS NULL OR n.synced_status NOT IN ('deleting','removed')) AND (n.synced_status IS NULL OR n.synced_status<>c.status OR n.error IS NOT NULL) AND n.retry_at<=%s)
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_pending'))='true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_retry_at')),'1970-01-01T00:00:00')<=%s)
-                OR (c.action='report' AND c.status='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_controls_version')),'0')<>'1')
+                OR (c.action='report' AND c.status='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_controls_version')),'0')<>'2')
                 OR (((c.action IN ('ban','mute','warn','report') AND (c.status='pending' OR (c.status='done' AND c.action IN ('mute','warn')) OR (c.action='report' AND c.status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))) OR (c.action='verify_skip' AND c.status='done') OR (JSON_EXTRACT(c.payload,'$.verification_failure') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_result'))='held') OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_state')) IN ('waiting','passing','cancelling','held','passed','admin_skipped'))) AND (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.controls_version')),'0')<>'2' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.kick_button_enabled')),'true')<>COALESCE(JSON_UNQUOTE(JSON_EXTRACT(%s,CONCAT('$."',c.chat_id,'"'))),'true')))
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_notice_dirty'))='true'
-                OR (c.action='report' AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.status'))='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.retry_at')),'1970-01-01T00:00:00')<=%s))
+                OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban_pending'))='true' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
+                OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup_dirty'))='true'
+                OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.status'))='pending' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
+                OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.status'))='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_message_deletion.retry_at')),'1970-01-01T00:00:00')<=%s))
                 ORDER BY c.updated_at ASC LIMIT 50""",
                 (
                     utc_now_naive(),
                     utc_now_naive().isoformat(timespec="seconds"),
                     encode(control_policy or {}),
+                    utc_now_naive().isoformat(),
+                    utc_now_naive().isoformat(),
                     utc_now_naive().isoformat(),
                 ),
             )
@@ -470,10 +501,15 @@ class GuardRepository:
             store = GuardStore(connection)
             # 永久名单、待审核和待恢复操作不随审计留存期限删除。
             await store.execute(
-                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' LIMIT 500",
+                "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.guest_ban_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup_dirty')),'false')<>'true' AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.case_id=moderation_cases.id) LIMIT 500",
                 (cutoff,),
             )
             await store.execute(
                 "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','admin_kick_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
+                (cutoff,),
+            )
+            await store.execute(
+                """DELETE FROM moderation_deleted_cleanup_jobs WHERE updated_at<%s
+                AND active_key IS NULL AND status IN ('completed','partial','cancelled') LIMIT 100""",
                 (cutoff,),
             )

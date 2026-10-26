@@ -5,6 +5,7 @@
 
 import re
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from telethon import utils
 from telethon.errors import UserNotParticipantError
@@ -124,6 +125,21 @@ class ReviewHandler:
                 "unmuted",
                 "ignored",
             } and not (action == "kick" and case["action"] == "report"):
+                if action == "blacklist" and case["status"] == "blacklisted":
+                    actor = (
+                        "webui:admin"
+                        if web and reviewer_id == "admin"
+                        else f"telegram:{reviewer_id}"
+                    )
+                    await self.service.guest_messages.prepare(
+                        store,
+                        case,
+                        blacklist_by=(None if actor == "webui:admin" else reviewer_id, actor),
+                    )
+                    case = await store.case(case_id)
+                    await self.service.notifier.sync(
+                        store, case, self.service.group(case["chat_id"])
+                    )
                 return case
             if action == "ban" and is_ban_case(case):
                 return case
@@ -177,9 +193,15 @@ class ReviewHandler:
         )
         case["payload"] = payload
 
-    async def request_message_deletion(self, store, case, reviewer_id, *, web=False):
+    async def request_message_deletion(
+        self, store, case, reviewer_id, *, web=False, automatic=False
+    ):
         message_id = case["payload"].get("message_id")
-        if case["action"] != "report" or type(message_id) is not int or not 0 < message_id < 2**31:
+        if (
+            (case["action"] != "report" and not (automatic and case["action"] == "ban"))
+            or type(message_id) is not int
+            or not 0 < message_id < 2**31
+        ):
             raise GuardError("guard.invalid_callback")
         deletion = case["payload"].get("report_message_deletion")
         if deletion and deletion["status"] == "deleted":
@@ -194,7 +216,10 @@ class ReviewHandler:
                     "chat_id": case["chat_id"],
                     "user_id": case["user_id"],
                     "message_id": message_id,
-                    "actor": "webui:admin"
+                    "automatic": automatic,
+                    "actor": "system:auto_filter"
+                    if automatic
+                    else "webui:admin"
                     if web and reviewer_id == "admin"
                     else f"telegram:{reviewer_id}",
                     "requested_at": utc_now_naive().isoformat(),
@@ -205,7 +230,11 @@ class ReviewHandler:
 
     async def resume_message_deletion(self, store, case, *, force=False):
         deletion = case["payload"].get("report_message_deletion")
-        if case["action"] != "report" or not deletion or deletion["status"] != "pending":
+        if (
+            not deletion
+            or deletion["status"] != "pending"
+            or (case["action"] != "report" and not deletion.get("automatic"))
+        ):
             return
         if (
             not force
@@ -214,6 +243,35 @@ class ReviewHandler:
         ):
             return
         try:
+            if deletion.get("automatic"):
+                config = self.service.group(case["chat_id"])
+                exempt = await store.whitelisted(case["chat_id"], case["user_id"]) and not (
+                    config.share_global_blacklist and await store.blacklist(case["user_id"])
+                )
+                protected = await self.service.protected(
+                    case["chat_id"],
+                    SimpleNamespace(
+                        id=case["user_id"],
+                        bot=bool(
+                            case["payload"].get("guest_actor")
+                            or case["payload"].get("evidence", {}).get("target") == "bot_message"
+                        ),
+                    ),
+                    allow_nonmember=True,
+                )
+                if (
+                    not config.enabled
+                    or exempt
+                    or protected
+                    or case["status"]
+                    not in {"executing", "pending", "blacklisted", "execution_failed"}
+                ):
+                    await self.save_message_deletion(
+                        store,
+                        case,
+                        {**deletion, "status": "cancelled", "error": "guard.permissions_changed"},
+                    )
+                    return
             message_id = case["payload"].get("message_id")
             if type(message_id) is not int or not 0 < message_id < 2**31:
                 raise GuardError("guard.invalid_callback")
@@ -291,11 +349,30 @@ class ReviewHandler:
             elif action == "kick":
                 await self.kick_member(store, case)
             elif action in {"blacklist", "ban"}:
-                user = await call(self.service.client.get_entity(case["user_id"]))
+                binding = case["payload"].get("guest_actor")
+                from telethon.tl.types import PeerUser
+
+                message = (
+                    SimpleNamespace(
+                        sender_id=case["user_id"], guestchat_via_from=PeerUser(binding["user_id"])
+                    )
+                    if binding
+                    else None
+                )
+                user = await self.service.load_message_user(case["user_id"], message)
                 if await self.service.protected(case["chat_id"], user, applicant=True):
                     raise GuardError("guard.verification_target_protected")
+                if case["action"] == "report" and case["payload"].get("message_id"):
+                    await self.request_message_deletion(
+                        store,
+                        case,
+                        case.get("reviewer_id"),
+                        web=case.get("reviewer_actor") == "webui:admin",
+                    )
+                    case = await store.case(case["id"])
                 # 复核现有禁令，未跨群执行任何批量封禁。
                 await self.service.actions.ban(case["chat_id"], case["user_id"])
+                await self.service.ban_history.prepare(store, case)
                 session = await store.verification(case["chat_id"], case["user_id"])
                 if session and session["status"] in set(ACTIVE_VERIFICATIONS) | {
                     "passed",
@@ -307,12 +384,14 @@ class ReviewHandler:
             else:
                 raise GuardError("guard.invalid_callback")
             await store.finish_review(case, action)
+            await self.service.guest_messages.prepare(store, await store.case(case["id"]))
         except Exception as error:
             await store.update_case(
                 case["id"],
                 case["status"],
                 error=str(error) if isinstance(error, GuardError) else type(error).__name__,
             )
+        await self.service.ban_history.finish(store, case)
 
     async def check_kick_conflicts(self, store, case):
         if await store.blacklist(case["user_id"]):

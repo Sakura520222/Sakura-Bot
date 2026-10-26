@@ -5,9 +5,12 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   kick_button_enabled: "显示“仅踢出”管理按钮",
   nickname_filter: "昵称及用户名过滤", message_filter: "消息及编辑消息过滤",
   block_bot_messages: "拦截机器人发言", share_global_blacklist: "共享全局永久黑名单",
+  block_button_messages: "带按钮消息过滤", button_message_action: "带按钮消息命中动作",
+  block_forwarded_messages: "转发消息过滤", forwarded_message_action: "转发消息命中动作",
+  block_contact_messages: "联系人消息过滤", contact_message_action: "联系人消息命中动作",
   ban_any_traditional: "拦截任何繁体昵称（默认关闭）", allow_group_admin_review: "授权本群管理员审核",
   verification_timeout: "验证超时", join_requests: "入群申请流程", message_action: "消息关键词命中动作",
-  mute_seconds: "禁言时长", nickname_keywords: "昵称关键词", message_keywords: "消息与链接关键词",
+  mute_seconds: "禁言时长", message_keywords: "消息与链接关键词",
   rules: "自定义规则", trusted_bot_ids: "受信任 Bot", reviewer_ids: "审核用户", notification_ids: "通知收件人",
   review_chat_id: "审核群 ID",
   verification_max_attempts: "最多答错次数", verification_timeout_action: "验证超时动作",
@@ -16,17 +19,24 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   nickname_action: "昵称及用户名命中动作", bot_message_action: "机器人发言命中动作",
   notification_enabled: "通知管理员", notification_events: "通知事件",
   verification_notice_cleanup: "结果通知送达后删除验证开始通知",
+  ai_report_review_enabled: "举报超时 AI 自动审核",
+  ai_report_review_delay_minutes: "AI 审核等待时间",
+  ai_report_review_action: "AI 明确违规默认动作",
 };
 export const guardSwitches: GuardSwitch[] = [
   "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
+  "block_button_messages", "block_forwarded_messages", "block_contact_messages",
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
+  "ai_report_review_enabled",
 ];
 export const immediateGuardFields: (keyof GuardGroup)[] = [
-  ...guardSwitches, "nickname_keywords", "message_keywords", "trusted_bot_ids", "reviewer_ids",
+  ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",
   "notification_ids", "join_requests", "message_action",
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
+  "button_message_action", "forwarded_message_action", "contact_message_action",
+  "ai_report_review_action",
 ];
 
 export function integerError(value: unknown, min: number, max: number) {
@@ -34,12 +44,18 @@ export function integerError(value: unknown, min: number, max: number) {
     ? `请输入 ${min}–${max} 范围内的整数` : undefined;
 }
 
+export function validateNicknameKeywords(value: string[]): string | undefined {
+  if (value.length > 50000 || value.some(word => !word.trim() || [...word].length > 128)) return "关键词不可为空，每项最多 128 字符，最多 50000 项";
+  return undefined;
+}
+
 export function validateGuardField(field: keyof GuardGroup, value: unknown): string | undefined {
   if (field === "verification_timeout") return integerError(value, 30, 600);
+  if (field === "ai_report_review_delay_minutes") return integerError(value, 1, 1440);
   if (field === "verification_max_attempts") return integerError(value, 1, 10);
   if (field === "mute_seconds") return integerError(value, 30, 2592000);
   if (field === "review_chat_id") return value === null ? undefined : integerError(value, -Number.MAX_SAFE_INTEGER, -1);
-  if (field === "nickname_keywords" || field === "message_keywords") {
+  if (field === "message_keywords") {
     const words = value as string[];
     if (words.length > 100 || words.some(word => !word.trim() || word.length > 128)) return "关键词不可为空，每项最多 128 字符，最多 100 项";
   }

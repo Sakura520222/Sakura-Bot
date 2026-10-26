@@ -5,7 +5,7 @@
 > **分类**: 用户文档  
 > **类型**: 教程  
 > **难度**: ⭐  
-> **更新时间**: 2026-02-25
+> **更新时间**: 2026-10-26
 
 [← 返回用户文档](User-Guide.md) | [Wiki 首页](Home.md)
 
@@ -19,6 +19,7 @@
 - ✅ **Telegram Bot Token**（从 [@BotFather](https://t.me/BotFather) 获取）
 - ✅ **Telegram API 凭证**（从 [my.telegram.org](https://my.telegram.org) 获取）
 - ✅ **AI API Key**（推荐使用 [DeepSeek](https://platform.deepseek.com/) 或 [OpenAI](https://platform.openai.com/)）
+- ✅ **MySQL 数据库**（应用数据仅支持 MySQL，需要自行部署，Docker Compose 不包含 MySQL 服务）
 
 ---
 
@@ -69,7 +70,15 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 
 # ===== 管理员配置 =====
+# 未配置时所有管理命令与 WebUI 管理权限将被拒绝，请务必配置
 REPORT_ADMIN_IDS=your_telegram_user_id_here
+
+# ===== 数据库配置（MySQL 必需） =====
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=sakura_bot
+MYSQL_PASSWORD=your_secure_password
+MYSQL_DATABASE=sakura_bot_db
 ```
 
 **获取方式：**
@@ -77,6 +86,7 @@ REPORT_ADMIN_IDS=your_telegram_user_id_here
 - `TELEGRAM_BOT_TOKEN`：在 Telegram 中搜索 [@BotFather](https://t.me/BotFather)，使用 `/newbot` 创建
 - `LLM_API_KEY`：访问 [DeepSeek](https://platform.deepseek.com/) 或 [OpenAI](https://platform.openai.com/)
 - `REPORT_ADMIN_IDS`：您的 Telegram 用户 ID（可使用 [@userinfobot](https://t.me/userinfobot) 获取）
+- `MYSQL_*`：先在 MySQL 中建库：`CREATE DATABASE sakura_bot_db CHARACTER SET utf8mb4;`，建表和迁移由程序启动时自动完成
 
 ### 步骤 4：启动服务
 
@@ -108,6 +118,16 @@ docker-compose logs -f
 ### ✅ 完成！
 
 您已成功部署 Sakura-Bot！Bot 将按配置自动总结频道内容。
+
+### 更新与重建
+
+容器内向 Bot 发送 `/update` 会直接更新宿主机仓库，然后安装 Python 依赖、构建 WebUI 并重启。更新使用快进合并，保留本地配置；遇到冲突或分支分叉时会停止并提示处理。项目目录通过 `.:/app` 挂载，源码、前端构建产物和 `data/` 都保存在宿主机。
+
+涉及系统依赖或 Dockerfile 的更新，需要在宿主机执行一次重建：
+
+```bash
+docker compose up -d --build
+```
 
 ---
 
@@ -167,30 +187,16 @@ python main.py
 
 ## 🎮 基础使用
 
-### 查看帮助
+常用命令：
 
 ```
-/help
+/help          # 查看帮助
+/立即总结      # 立即生成总结
+/查看频道列表  # 查看配置的频道
+/暂停 /恢复    # 暂停/恢复定时任务
 ```
 
-### 立即生成总结
-
-```
-/立即总结
-```
-
-### 查看配置的频道
-
-```
-/查看频道列表
-```
-
-### 暂停/恢复定时任务
-
-```
-/暂停
-/恢复
-```
+完整命令列表见[命令参考](User-Commands.md)。
 
 ---
 
@@ -237,6 +243,28 @@ QA_BOT_DAILY_LIMIT=200
 ```
 
 详细说明请参考 [问答 Bot 指南](User-QA-Bot-Guide.md)。
+
+### 启用 WebUI 管理面板（可选）
+
+在浏览器中管理频道、转发规则、数据库和系统状态：
+
+```env
+WEBUI_ENABLED=true
+WEBUI_HOST=0.0.0.0
+WEBUI_PORT=8080
+```
+
+启动后访问 `http://localhost:8080`，使用管理员 Telegram ID 登录。详细说明请参考 [WebUI 管理面板](User-WebUI-Guide.md)。
+
+### 启用 UserBot（可选）
+
+UserBot 使用真实 Telegram 账号，可访问私有频道、抓取消息更稳定，首次启用需输入验证码登录：
+
+```env
+USERBOT_ENABLED=true
+USERBOT_PHONE_NUMBER=+8613800138000
+USERBOT_SESSION_PATH=data/sessions/user_session
+```
 
 ---
 

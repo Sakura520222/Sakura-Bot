@@ -55,7 +55,6 @@ def engine(monkeypatch):
     monkeypatch.setattr(qae, "get_reranker", lambda: MagicMock())
     monkeypatch.setattr(qae, "get_conversation_manager", lambda: conv)
     monkeypatch.setattr(qae, "get_qa_bot_persona", lambda: "测试人格")
-    monkeypatch.setattr(qae, "get_llm_model", lambda: "test-model")
 
     return QAEngineV3()
 
@@ -64,7 +63,7 @@ def install_llm(monkeypatch, create):
     """替换引擎使用的 LLM 客户端"""
     llm = MagicMock()
     llm.chat.completions.create = create
-    monkeypatch.setattr(qae, "client_llm", llm)
+    monkeypatch.setattr(qae, "get_ai_runtime", lambda: (llm, "test-model"))
     return llm
 
 

@@ -12,6 +12,7 @@
 
 - **[用户文档首页](User-Guide.md)** - 查看所有用户文档
 - **[快速开始](User-Getting-Started.md)** - 快速部署和开始使用
+- **[命令参考](User-Commands.md)** - 主 Bot 与问答 Bot 全部命令
 - **[问答 Bot 指南](User-QA-Bot-Guide.md)** - 智能问答功能使用指南
 - **[RAG 快速启动](User-RAG-Quickstart.md)** - 语义检索功能快速配置
 - **[多轮对话功能](User-Multi-Turn-Conversation.md)** - 上下文感知对话说明
@@ -48,6 +49,7 @@
 | **AI 功能** | [问答 Bot](User-QA-Bot-Guide.md) | [实施文档](Developer-QA-Bot-Implementation.md) |
 | **RAG 功能** | [快速启动](User-RAG-Quickstart.md) | [技术文档](Developer-RAG-Feature-V3.md) |
 | **投票功能** | [配置指南](User-Poll-Feature.md) | - |
+| **群管与申诉** | [Sakura Guard](User-Sakura-Guard.md) | - |
 | **WebUI 面板** | [WebUI 指南](User-WebUI-Guide.md) | - |
 | **转发管理** | [WebUI 指南](User-WebUI-Guide.md) | [架构设计](Developer-Architecture.md) |
 | **数据库管理** | [WebUI 指南](User-WebUI-Guide.md) | [架构设计](Developer-Architecture.md) |

@@ -214,6 +214,10 @@ async def test_delete_is_available_after_other_review_decisions(guard, store, ac
     await send(guard)
     case = report_case(store)
     reviewed = await guard.reviews.review(case["id"], action, ADMIN)
+    if action in {"ban", "blacklist"}:
+        assert reviewed["payload"]["ban_message_cleanup"]["status"] == "deleted"
+        assert not any(row[0].text == "删除被举报消息" for row in review_buttons(reviewed))
+        return
     assert any(row[0].text == "删除被举报消息" for row in review_buttons(reviewed))
     result = await guard.reviews.review(
         case["id"], "delete", "admin", web=True, expected_generation=0

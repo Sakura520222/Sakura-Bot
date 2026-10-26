@@ -12,9 +12,9 @@ from urllib.parse import unquote
 
 import regex
 from opencc import OpenCC
-from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
+from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl, MessageMediaContact
 
-from .config import GuardGroup
+from .config import DEFAULT_WORDS, GuardGroup
 
 logger = logging.getLogger(__name__)
 _converter = OpenCC("t2s")
@@ -86,8 +86,9 @@ def extract_links(message) -> list[str]:
 
 
 class Matcher:
-    def __init__(self, config: GuardGroup):
+    def __init__(self, config: GuardGroup, nickname_keywords: list[str] | None = None):
         self.config = config
+        self.nickname_keywords = DEFAULT_WORDS if nickname_keywords is None else nickname_keywords
         self.regex_remaining = 0.025
         self._budget_logged = False
 
@@ -157,7 +158,7 @@ class Matcher:
         username = getattr(user, "username", None) or ""
         for target, value in (("nickname", name), ("username", username)):
             matched = self._match(
-                target, value, self.config.nickname_keywords, self.config.nickname_action
+                target, value, self.nickname_keywords, self.config.nickname_action
             )
             if matched:
                 return matched
@@ -170,9 +171,58 @@ class Matcher:
                     normalize(value)[:2048],
                     self.config.nickname_action,
                 )
+        for alias in getattr(user, "usernames", None) or []:
+            if getattr(alias, "active", False):
+                matched = self._match(
+                    "username", alias.username, self.nickname_keywords, self.config.nickname_action
+                )
+                if matched:
+                    return matched
         return None
 
     def message(self, message):
+        # 结构过滤独立于正文关键词开关；隐藏转发来源也保留 fwd_from。
+        has_buttons = any(
+            getattr(row, "buttons", None)
+            for row in getattr(getattr(message, "reply_markup", None), "rows", None) or []
+        )
+        for blocked, target, action in (
+            (
+                self.config.block_contact_messages
+                and isinstance(getattr(message, "media", None), MessageMediaContact),
+                "contact_message",
+                self.config.contact_message_action,
+            ),
+            (
+                self.config.block_button_messages and has_buttons,
+                "button_message",
+                self.config.button_message_action,
+            ),
+            (
+                self.config.block_forwarded_messages
+                and getattr(message, "fwd_from", None) is not None,
+                "forwarded_message",
+                self.config.forwarded_message_action,
+            ),
+        ):
+            if blocked:
+                from core.i18n.i18n import t
+
+                original = (getattr(message, "message", "") or "")[:2048]
+                if target == "contact_message":
+                    contact = message.media
+                    name = " ".join(
+                        value[:256] for value in (contact.first_name, contact.last_name) if value
+                    )
+                    original = t("guard.contact_message_evidence", name=name or "—")
+                return Match(
+                    target,
+                    target.replace("_", "-"),
+                    t(f"guard.{target}_reason"),
+                    original,
+                    normalize(original),
+                    action,
+                )
         if not self.config.message_filter:
             return None
         matched = self._match(
