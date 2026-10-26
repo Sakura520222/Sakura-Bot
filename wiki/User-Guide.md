@@ -13,6 +13,7 @@
 | 文档 | 说明 | 难度 |
 |------|------|------|
 | **[快速开始](User-Getting-Started.md)** | 5 分钟快速部署 Sakura-Bot | ⭐ |
+| **[命令参考](User-Commands.md)** | 主 Bot 与问答 Bot 全部命令 | ⭐ |
 | **[RAG 快速启动](User-RAG-Quickstart.md)** | 启用语义检索功能 | ⭐ |
 
 ### 🤖 AI 功能

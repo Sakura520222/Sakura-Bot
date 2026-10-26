@@ -290,5 +290,5 @@ data/config.json.lock
 data/.config.json.*.tmp
 data/.config.json.last_valid.*.tmp
 data/.config-write-*/
-.codex
+.codex/
 .codegraph/

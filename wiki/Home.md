@@ -12,6 +12,7 @@
 
 - **[用户文档首页](User-Guide.md)** - 查看所有用户文档
 - **[快速开始](User-Getting-Started.md)** - 快速部署和开始使用
+- **[命令参考](User-Commands.md)** - 主 Bot 与问答 Bot 全部命令
 - **[问答 Bot 指南](User-QA-Bot-Guide.md)** - 智能问答功能使用指南
 - **[RAG 快速启动](User-RAG-Quickstart.md)** - 语义检索功能快速配置
 - **[多轮对话功能](User-Multi-Turn-Conversation.md)** - 上下文感知对话说明
