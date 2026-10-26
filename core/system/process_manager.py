@@ -25,15 +25,41 @@ logger = logging.getLogger(__name__)
 # 问答Bot进程引用
 _qa_bot_process = None
 _qa_bot_start_time = None
+# 本次启动实际使用的运行时（python|go），供状态接口与日志核对
+_qa_bot_runtime = "python"
+
+
+def _resolve_qa_binary() -> str | None:
+    """解析 Go 版问答Bot二进制路径
+
+    优先级：QA_BOT_BINARY（绝对路径，裸机/PM2 用）→ 容器内 /usr/local/bin/sakura-qa
+    → 仓库内 bin/sakura-qa-linux-amd64（随镜像交付的兜底位置）。
+
+    Returns:
+        str | None: 二进制路径；不存在返回 None
+    """
+    candidates = [
+        os.getenv("QA_BOT_BINARY"),
+        "/usr/local/bin/sakura-qa" if os.getenv("SAKURA_DOCKER") == "1" else None,
+        os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "bin", "sakura-qa-linux-amd64"),
+    ]
+    for binary in candidates:
+        if binary and os.path.isfile(binary) and os.access(binary, os.X_OK):
+            return binary
+    return None
 
 
 def start_qa_bot():
     """在后台启动问答Bot
 
+    通过 QA_BOT_RUNTIME 环境变量选择实现：python（默认，qa_bot.py 子进程）
+    或 go（sakura-qa 静态二进制）。go 二进制缺失时回退 python 并告警，
+    保证服务连续性。
+
     Returns:
         dict: 启动结果 {'success': bool, 'message': str, 'pid': int or None}
     """
-    global _qa_bot_process, _qa_bot_start_time
+    global _qa_bot_process, _qa_bot_start_time, _qa_bot_runtime
     try:
         # 检查是否已经运行
         if _qa_bot_process:
@@ -64,12 +90,34 @@ def start_qa_bot():
         env.setdefault("SAKURA_LOG_COMPONENT", "qa")
         env.setdefault("SAKURA_COMPONENT_LOG_FILE", "qa-bot.log")
 
-        # 使用subprocess在后台运行qa_bot.py
+        runtime = os.getenv("QA_BOT_RUNTIME", "python").strip().lower()
+        cwd = os.path.dirname(os.path.abspath(sys.argv[0]))
+
+        if runtime == "go":
+            binary = _resolve_qa_binary()
+            if binary:
+                # Go 版内存上限默认 96MiB（env 可调；二进制内也会读取该值）
+                env.setdefault("GOMEMLIMIT", "96MiB")
+                _qa_bot_process = subprocess.Popen([binary], cwd=cwd, env=env)
+                _qa_bot_runtime = "go"
+                _qa_bot_start_time = time.time()
+                logger.info(f"问答Bot(Go)已启动 (PID: {_qa_bot_process.pid}, binary: {binary})")
+                return {
+                    "success": True,
+                    "message": get_text("qabot.started", pid=_qa_bot_process.pid),
+                    "pid": _qa_bot_process.pid,
+                }
+            logger.warning(
+                "QA_BOT_RUNTIME=go 但未找到可执行二进制（QA_BOT_BINARY//usr/local/bin/sakura-qa/bin/sakura-qa-linux-amd64），回退 python"
+            )
+
+        # python 运行时（默认路径，行为与历史版本逐字一致）
         _qa_bot_process = subprocess.Popen(
             [sys.executable, "qa_bot.py"],
-            cwd=os.path.dirname(os.path.abspath(sys.argv[0])),
+            cwd=cwd,
             env=env,
         )
+        _qa_bot_runtime = "python"
         _qa_bot_start_time = time.time()
 
         logger.info(f"问答Bot已启动 (PID: {_qa_bot_process.pid})")
@@ -167,7 +215,8 @@ def get_qa_bot_status():
             'start_time': float or None,
             'uptime_seconds': float or None,
             'enabled': bool,
-            'token_configured': bool
+            'token_configured': bool,
+            'runtime': str  # 本次启动实际使用的实现：python|go
         }
     """
     global _qa_bot_process, _qa_bot_start_time
@@ -202,6 +251,7 @@ def get_qa_bot_status():
         "uptime_seconds": uptime,
         "enabled": qa_bot_enabled,
         "token_configured": bool(qa_bot_token),
+        "runtime": _qa_bot_runtime,
     }
 
 

@@ -6,6 +6,19 @@ RUN npm ci --include=dev --registry=https://registry.npmmirror.com
 COPY web/ ./
 RUN npm run build
 
+# ====== 阶段 1.5: 构建 QA Go 二进制（qa_bot.py 的 Go 移植，经 QA_BOT_RUNTIME=go 启用） ======
+FROM golang:1.27-alpine AS qa-builder
+ARG GOPROXY_URL=https://goproxy.cn
+ARG TARGETARCH=amd64
+ENV GOPROXY=${GOPROXY_URL}
+WORKDIR /src
+# 独立缓存层：仅 go.mod/go.sum 变化时重新下载
+COPY qa-bot-go/go.mod qa-bot-go/go.sum ./
+RUN go mod download
+COPY qa-bot-go/ ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/sakura-qa ./cmd/sakura-qa
+
 # ====== 阶段 2: 构建后端 ======
 FROM python:3.13-slim
 
@@ -41,6 +54,10 @@ COPY requirements.txt .
 
 # 安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Go 版问答Bot二进制：必须放 /app 之外（/app 被源码挂载遮蔽）
+COPY --from=qa-builder /out/sakura-qa /usr/local/bin/sakura-qa
+RUN chmod +x /usr/local/bin/sakura-qa
 
 # 复制应用代码和启动脚本
 COPY . .
