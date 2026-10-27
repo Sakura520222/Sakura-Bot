@@ -1056,8 +1056,8 @@ class QABot:
 
                 push_handler = get_mainbot_push_handler()
 
-                # 检查推送处理器是否初始化
-                if push_handler.qa_bot is None:
+                # 检查推送处理器是否初始化（token 存在即可发送）
+                if not push_handler.qa_bot_token:
                     logger.warning("⚠️ 问答Bot推送处理器未初始化，跳过通知检查")
                     return 0
 
