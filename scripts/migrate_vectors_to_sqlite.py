@@ -314,9 +314,14 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _verify_db(db_path: str, chroma_client, expected_dim: int) -> bool:
-    """校验 lite 库：行数 == chroma count()、逐行维度、抽样与源向量余弦一致"""
+    """校验 lite 库：行数 == chroma count()、逐行维度、抽样与源向量余弦一致
+
+    immutable=1：被校验文件此刻无其他写者（迁移停机窗口、写连接已关闭并
+    checkpoint），跳过锁与 -shm/-wal 会话文件——普通 mode=ro 连接会在 WAL 库上
+    重建伴生文件且关闭时不清理，恰好触发换名前的伴生文件断言。
+    """
     ok = True
-    uri = f"file:{Path(db_path).as_posix()}?mode=ro"
+    uri = f"file:{Path(db_path).as_posix()}?mode=ro&immutable=1"
     conn = sqlite3.connect(uri, uri=True)
     try:
         for label, table in TABLES.items():
@@ -415,6 +420,12 @@ def main() -> int:
     if not _verify_db(tmp_db, chroma_client, _expected_dim()):
         print(f"[终止] 校验未通过，源数据未动；请检查临时文件: {tmp_db}")
         return 1
+
+    # 校验连接即使留下会话伴生文件（不含任何已提交帧——提交帧在写入侧
+    # wal_checkpoint(TRUNCATE) 时已全部合并进主文件），也在此显式清掉，
+    # 让随后的断言保持"只拦真问题"的语义
+    for suffix in ("-wal", "-shm"):
+        _remove_file(tmp_db + suffix)
 
     # 换名前断言临时库无 WAL 残留（提交帧未合并则拒绝继续）
     _assert_no_companion_files(tmp_db)
