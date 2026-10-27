@@ -3,7 +3,7 @@
 -- 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 --
 -- - 署名：本文件自 core/moderation/schema.sql 原样拷贝（go:embed，保留原注释），
---   仅在文件头追加本 AGPL 头注释（不含分号，不影响按 ";" 切分执行）。
+--   仅在文件头追加本 AGPL 头注释（初始化会先剥离整行注释再按分号切分执行）。
 --
 -- 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 -- 许可证全文：参见 LICENSE 文件

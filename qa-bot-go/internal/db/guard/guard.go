@@ -50,8 +50,18 @@ func New(db *sql.DB) *Repository {
 
 // Initialize 幂等执行 schema.sql（repository.py:332-338：按 “;” 切分，
 // 跳过空语句；启动时调用一次，失败由 main 以非零码退出）。
+// 切分前先剥离整行 `--` 注释：注释文本可能合法包含分号（如本文件头的
+// AGPL 说明），裸切分会把注释残片当 SQL 执行（MySQL Error 1064）。
 func (r *Repository) Initialize(ctx context.Context) error {
-	for _, statement := range strings.Split(schemaSQL, ";") {
+	var lines []string
+	for _, line := range strings.Split(schemaSQL, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	for _, statement := range strings.Split(strings.Join(lines, "\n"), ";") {
 		if strings.TrimSpace(statement) == "" {
 			continue
 		}
