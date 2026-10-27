@@ -248,7 +248,11 @@ def _fetch_all_from_chroma(collection, label: str) -> dict:
         ids = batch.get("ids") or []
         if not ids:
             break
-        embeddings = batch.get("embeddings") or [None] * len(ids)
+        # 注意：chroma 返回的 embeddings 是 numpy ndarray，`or` 短路对其求真值会抛
+        # ValueError，必须显式判 None
+        embeddings = batch.get("embeddings")
+        if embeddings is None:
+            embeddings = [None] * len(ids)
         documents = batch.get("documents") or [None] * len(ids)
         metadatas = batch.get("metadatas") or [{}] * len(ids)
         # strict=False：embeddings/documents/metadatas 可能是补位兜底列表，长度可短于 ids
