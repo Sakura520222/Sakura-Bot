@@ -207,7 +207,10 @@ loop:
 				break loop // 流正常结束
 			}
 		case <-ctx.Done():
-			// 对齐 Python asyncio 取消异常路径
+			// Go 侧增强：取消时兜底编辑+退款。Python 的 asyncio.CancelledError 继承
+			// BaseException，不会被 _stream_and_edit / handle_message 的 except
+			// Exception 捕获（qa_bot.py:837-845、:677）——关停路径直接穿透：无错误
+			// 文案编辑、无最终 flush、不退款。
 			chunk = StreamChunk{Err: ctx.Err()}
 		}
 
