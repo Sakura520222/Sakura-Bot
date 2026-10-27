@@ -35,6 +35,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,10 @@ SCHEMA_VERSION = 1
 # WAL 会损坏，可将此常量回退为 "DELETE"。
 _JOURNAL_MODE = "WAL"
 _BUSY_TIMEOUT_MS = 5000
+
+# 单语句占位符上限：SQLite < 3.32 的 MAX_VARIABLE_NUMBER 默认 999，
+# WebUI 清空循环单次 delete 可达 1000 个 id，按块执行保证可移植性。
+_SQLITE_PARAM_CHUNK = 500
 
 # 与 scripts/migrate_vectors_to_sqlite.py 中的 DDL 保持一致（schema_version=1）
 _SCHEMA_STATEMENTS = (
@@ -108,11 +113,12 @@ class _CollectionState:
 class LiteEngine:
     """SQLite(WAL) + numpy 内存矩阵的轻量向量引擎（chroma 的进程内替代品）
 
-    主进程内单实例持有一个读写连接（RLock 串行化）；跨进程读者（QA 等）经 WAL
-    并发读取同一文件。所有公开方法同步阻塞；失败不锁存，每次操作重新尝试建连。
+    主进程内单实例持有一个读写连接（RLock 串行化）；跨进程读者（QA 等）以
+    readonly=True 构造，经 WAL 以 mode=ro 连接并发读取同一文件。所有公开方法
+    同步阻塞；失败不锁存，每次操作重新尝试建连。
     """
 
-    def __init__(self, db_path: str, expected_dim: int):
+    def __init__(self, db_path: str, expected_dim: int, readonly: bool = False):
         """初始化引擎
 
         构造只保存参数，不做任何磁盘 I/O；真正的连接/建表延迟到首次操作
@@ -121,6 +127,9 @@ class LiteEngine:
         Args:
             db_path: SQLite 数据库文件路径（含 lite_index.sqlite3 文件名）
             expected_dim: 向量维度（来自 EMBEDDING_DIMENSION），写入/加载/查询时校验
+            readonly: 纯读者模式（QA 等跨进程读者必须置 True）：以 mode=ro 打开、
+                绝不建目录/建表/写版本号，库缺失或未迁移时 is_ready() 返回 False
+                （降级语义，而非静默创建空库）
 
         Raises:
             RuntimeError: numpy 不可用时抛出（调用方降级为后端不可用）
@@ -129,6 +138,7 @@ class LiteEngine:
             raise RuntimeError("numpy 未安装，lite 向量后端不可用")
         self.db_path = db_path
         self.expected_dim = int(expected_dim)
+        self.readonly = bool(readonly)
         self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
         self._schema_ready = False
@@ -153,17 +163,28 @@ class LiteEngine:
         """确保连接可用；失败抛 sqlite3.Error，由重试框架决定是否重建重试"""
         if self._conn is not None:
             return self._conn
-        parent = os.path.dirname(os.path.abspath(self.db_path))
-        # chroma PersistentClient 同样会创建目录，保持等价行为
-        os.makedirs(parent, exist_ok=True)
-        conn = sqlite3.connect(
-            self.db_path, check_same_thread=False, timeout=_BUSY_TIMEOUT_MS / 1000
-        )
-        conn.isolation_level = None  # 关闭隐式事务，写事务用显式 BEGIN IMMEDIATE/COMMIT 管理
-        conn.execute(f"PRAGMA journal_mode={_JOURNAL_MODE}")
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA foreign_keys=OFF")
+        if self.readonly:
+            # 读者契约：mode=ro 只读连接。不建目录（库缺失即打开失败 → 未就绪），
+            # 不赋值 journal_mode/synchronous（库级 PRAGMA 在只读连接上直接报错）；
+            # busy_timeout 为连接级设置，保留以等待主进程写事务短暂持锁。
+            uri = f"file:{Path(self.db_path).as_posix()}?mode=ro"
+            conn = sqlite3.connect(
+                uri, uri=True, check_same_thread=False, timeout=_BUSY_TIMEOUT_MS / 1000
+            )
+            conn.isolation_level = None
+            conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        else:
+            parent = os.path.dirname(os.path.abspath(self.db_path))
+            # chroma PersistentClient 同样会创建目录，保持等价行为
+            os.makedirs(parent, exist_ok=True)
+            conn = sqlite3.connect(
+                self.db_path, check_same_thread=False, timeout=_BUSY_TIMEOUT_MS / 1000
+            )
+            conn.isolation_level = None  # 关闭隐式事务，写事务用显式 BEGIN IMMEDIATE/COMMIT 管理
+            conn.execute(f"PRAGMA journal_mode={_JOURNAL_MODE}")
+            conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=OFF")
         self._conn = conn
         self._schema_ready = False
         return conn
@@ -171,6 +192,19 @@ class LiteEngine:
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         """建表与初始化版本号（writer 首写建表；幂等，单连接生命周期内只执行一次）"""
         if self._schema_ready:
+            return
+        if self.readonly:
+            # 读者绝不执行 DDL：只做校验性查询，表/版本号缺失即抛错
+            # （→ is_ready() False，正是迁移完成前读者应有的降级语义，
+            #  而非静默建空库导致语义搜索无声返回空结果）
+            row = conn.execute(
+                "SELECT value FROM store_meta WHERE key = ?", ("schema_version",)
+            ).fetchone()
+            if row is None:
+                raise sqlite3.OperationalError(
+                    "store_meta 缺少 schema_version（库为空或迁移未完成，读者不可用）"
+                )
+            self._schema_ready = True
             return
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
@@ -342,7 +376,7 @@ class LiteEngine:
     # ── 对外操作（全部同步阻塞；锁仅覆盖 SQLite 操作段） ──────────────────
 
     def is_ready(self, table: str) -> bool:
-        """集合是否就绪（连接 + 建表 + 版本号可读）；失败不锁存，每次调用重新尝试"""
+        """集合是否就绪（连接 + schema 校验/建表 + 版本号可读）；失败不锁存，每次调用重新尝试"""
         try:
             with self._lock:
                 conn = self._ensure_connection()
@@ -510,9 +544,14 @@ class LiteEngine:
     def delete(self, table: str, ids: list[str]) -> int:
         """幂等删除（不校验存在性，复刻 chroma delete 语义）
 
+        id 列表按 _SQLITE_PARAM_CHUNK 分块，每块独立事务并各自 bump 版本号：
+        单语句占位符数受 SQLite MAX_VARIABLE_NUMBER（< 3.32 默认 999）约束，
+        WebUI 清空循环单次传入 1000 个 id 时不可单句直发。分块意味着后块失败时
+        前块已提交——delete 幂等，重试即可收敛，无半写损坏。
+
         Args:
             table: 表名常量
-            ids: 文档 id 列表（WebUI 清空循环一次可达 1000 个，单语句直发）
+            ids: 文档 id 列表（WebUI 清空循环一次可达 1000 个）
 
         Returns:
             实际删除行数
@@ -523,30 +562,34 @@ class LiteEngine:
         if not ids:
             return 0
         str_ids = [str(doc_id) for doc_id in ids]
+        total = 0
         with self._lock:
+            for start in range(0, len(str_ids), _SQLITE_PARAM_CHUNK):
+                chunk = str_ids[start : start + _SQLITE_PARAM_CHUNK]
 
-            def _op() -> int:
-                conn = self._ensure_connection()
-                self._ensure_schema(conn)
-                placeholders = ", ".join("?" for _ in str_ids)
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    cursor = conn.execute(
-                        f"DELETE FROM {table} WHERE id IN ({placeholders})", str_ids
+                def _op(chunk: list[str] = chunk) -> int:
+                    conn = self._ensure_connection()
+                    self._ensure_schema(conn)
+                    placeholders = ", ".join("?" for _ in chunk)
+                    conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        cursor = conn.execute(
+                            f"DELETE FROM {table} WHERE id IN ({placeholders})", chunk
+                        )
+                        deleted = int(cursor.rowcount)
+                        if deleted > 0:
+                            self._bump_version(conn, table)
+                        conn.execute("COMMIT")
+                    except Exception:
+                        self._safe_rollback(conn)
+                        raise
+                    self._sync_memory_after_write(
+                        table, conn, lambda state: self._memory_remove(state, set(chunk))
                     )
-                    deleted = int(cursor.rowcount)
-                    if deleted > 0:
-                        self._bump_version(conn, table)
-                    conn.execute("COMMIT")
-                except Exception:
-                    self._safe_rollback(conn)
-                    raise
-                self._sync_memory_after_write(
-                    table, conn, lambda state: self._memory_remove(state, set(str_ids))
-                )
-                return deleted
+                    return deleted
 
-            return self._run_with_retry(_op)
+                total += self._run_with_retry(_op)
+        return total
 
     def search(
         self,
@@ -620,7 +663,7 @@ class LiteEngine:
             return self._run_with_retry(_op)
 
 
-class _CollectionAdapter:
+class CollectionAdapter:
     """chroma collection 兼容适配器（仅覆盖 WebUI 路由实际使用的 count/get/delete）
 
     契约要点（对齐 core/web_api/routes/vector_store.py 的全部触点）：
@@ -673,3 +716,8 @@ class _CollectionAdapter:
     def delete(self, ids) -> None:
         """等价 chroma collection.delete(ids=...)（幂等，返回 None）"""
         self.engine.delete(self.table, [str(doc_id) for doc_id in ids])
+
+
+# 过渡别名：92dbf43 曾以私有名 _CollectionAdapter 被跨模块导入；
+# 统一公开名后保留别名一个过渡期，后续清理提交移除。
+_CollectionAdapter = CollectionAdapter

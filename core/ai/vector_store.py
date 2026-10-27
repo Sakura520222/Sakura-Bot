@@ -16,6 +16,10 @@
   因此 lite 模式绝不会加载 chromadb。
 - lite：SQLite(WAL) 单文件 + numpy 内存矩阵暴力余弦（实现见 core/ai/vector_lite.py）。
 
+纯读者进程（QA 等）设置 VECTOR_BACKEND_READER=1（或构造时传 reader=True）：
+lite 后端以 mode=ro 只读连接打开、绝不执行 DDL/写事务，库缺失或迁移未完成时
+is_available() 返回 False 降级，而非静默创建空库。
+
 本模块保持既有对外契约不变：VectorStore 类、get_vector_store() 懒加载单例、
 模块属性 vector_store 可被外部置 None（tests 依赖）、搜索结果形状逐字段兼容、
 collection/messages_collection 属性与 WebUI 路由的触点（count/get/delete）兼容。
@@ -27,20 +31,35 @@ import re
 from datetime import UTC
 from typing import Any
 
-from core.ai.vector_lite import TABLE_MESSAGES, TABLE_SUMMARIES, LiteEngine, _CollectionAdapter
+from core.ai.vector_lite import (
+    TABLE_MESSAGES,
+    TABLE_SUMMARIES,
+    CollectionAdapter,
+    LiteEngine,
+)
 
 logger = logging.getLogger(__name__)
 
 _VALID_BACKENDS = ("chroma", "lite")
 
+# 纯读者进程标记（QA 进程由 qa_bot.py 在启动时 setdefault 置 1）
+_READER_ENV = "VECTOR_BACKEND_READER"
+_READER_TRUTHY = {"1", "true", "yes", "on"}
+
 
 class VectorStore:
     """向量存储管理器"""
 
-    def __init__(self):
-        """初始化向量存储（构造永不抛异常，任何失败降级为不可用）"""
+    def __init__(self, reader: bool | None = None):
+        """初始化向量存储（构造永不抛异常，任何失败降级为不可用）
+
+        Args:
+            reader: 纯读者模式；None（缺省）时读环境变量 VECTOR_BACKEND_READER。
+                仅影响 lite 后端（mode=ro 只读连接、不执行 DDL/写事务）。
+        """
         self.backend = self._resolve_backend()
         self.embedding_dimension = self._resolve_embedding_dimension()
+        self.readonly = self._resolve_reader(reader)
 
         self.client = None
         self.collection = None
@@ -62,6 +81,13 @@ class VectorStore:
         return backend
 
     @staticmethod
+    def _resolve_reader(explicit: bool | None) -> bool:
+        """解析读者模式：显式参数优先，否则读 VECTOR_BACKEND_READER（真值 1/true/yes/on）"""
+        if explicit is not None:
+            return bool(explicit)
+        return os.getenv(_READER_ENV, "").strip().lower() in _READER_TRUTHY
+
+    @staticmethod
     def _resolve_embedding_dimension() -> int:
         """解析 EMBEDDING_DIMENSION（lite 后端用于写入/加载/查询的真实维度校验）"""
         try:
@@ -72,6 +98,9 @@ class VectorStore:
 
     def _init_chroma_backend(self) -> None:
         """chroma 后端初始化（chromadb 延迟至此才 import）"""
+        if self.readonly:
+            # chroma PersistentClient 无只读打开方式，reader 标志仅对 lite 后端生效
+            logger.info("chroma 后端不支持只读模式，reader 标志被忽略，按读写打开")
         try:
             import chromadb
 
@@ -102,16 +131,19 @@ class VectorStore:
             self.messages_collection = None
 
     def _init_lite_backend(self) -> None:
-        """lite 后端初始化（引擎构造不做磁盘 I/O；连接/建表延迟到首次操作）"""
+        """lite 后端初始化（引擎构造不做磁盘 I/O；连接/schema 校验延迟到首次操作）"""
         try:
             vector_db_path = os.getenv("VECTOR_DB_PATH", "data/vectors")
             db_path = os.path.join(vector_db_path, "lite_index.sqlite3")
-            engine = LiteEngine(db_path, self.embedding_dimension)
+            engine = LiteEngine(db_path, self.embedding_dimension, readonly=self.readonly)
             self._engine = engine
             self.client = engine
-            self.collection = _CollectionAdapter(engine, TABLE_SUMMARIES)
-            self.messages_collection = _CollectionAdapter(engine, TABLE_MESSAGES)
-            logger.info(f"向量存储初始化成功(lite): {db_path}")
+            self.collection = CollectionAdapter(engine, TABLE_SUMMARIES)
+            self.messages_collection = CollectionAdapter(engine, TABLE_MESSAGES)
+            logger.info(
+                f"向量存储初始化成功(lite): {db_path}"
+                + ("（只读读者模式）" if self.readonly else "")
+            )
         except Exception as e:
             logger.error(f"向量存储初始化失败: {type(e).__name__}: {e}")
             self.client = None
@@ -509,7 +541,7 @@ class VectorStore:
         通用 collection 搜索方法
 
         Args:
-            collection: chroma collection 实例（chroma 后端）或 _CollectionAdapter（lite 后端）
+            collection: chroma collection 实例（chroma 后端）或 CollectionAdapter（lite 后端）
             query: 查询文本
             top_k: 返回结果数量
             filter_metadata: 元数据过滤条件

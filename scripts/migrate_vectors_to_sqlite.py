@@ -15,13 +15,16 @@
     python scripts/migrate_vectors_to_sqlite.py --yes
 
 流程（防损坏顺序，不可调整）：
-    1. 分页读取 chroma 的 summaries/messages 两个 collection；
-    2. 全部写入 <VECTOR_DB_PATH>/lite_index.sqlite3.tmp；
-    3. 校验：行数 == chroma count() 实时值、逐行 dim == EMBEDDING_DIMENSION（默认 1024）、
+    1. 硬校验停机窗口（chroma 主库伴生文件/写锁探测，--assume-stopped 可跳过）；
+    2. 分页读取 chroma 的 summaries/messages 两个 collection（两表全空需 --allow-empty）；
+    3. 全部写入 <VECTOR_DB_PATH>/lite_index.sqlite3.tmp（synchronous=FULL，
+       COMMIT 后显式 wal_checkpoint(TRUNCATE) 确保提交帧全部合并进主文件）；
+    4. 校验：行数 == chroma count() 实时值、逐行 dim == EMBEDDING_DIMENSION（默认 1024）、
        每表抽样至多 10 条与 chroma 源向量余弦 > 0.999999；
-    4. 删除已存在的 lite_index.sqlite3 及其 -wal/-shm 伴生文件（避免旧 WAL 重放进新库）；
-    5. os.replace 原子改名 + fsync 目录（Windows 不支持目录 fsync，尽力而为）；
-    6. 写幂等标记 data/.vector_migration_done（存在即退出，--force 可重跑）。
+    5. 断言 .tmp-wal/.tmp-shm 伴生文件不存在（WAL 未合并即拒绝换名）；
+       删除已存在的 lite_index.sqlite3 及其 -wal/-shm 伴生文件（避免旧 WAL 重放进新库）；
+    6. os.replace 原子改名 + fsync 目录（Windows 不支持目录 fsync，尽力而为）；
+    7. 写幂等标记 data/.vector_migration_done（存在即退出，--force 可重跑）。
 
 本脚本独立运行：仅依赖 chromadb/numpy/标准库，不 import 业务 core 包。
 DDl 与 core/ai/vector_lite.py 的 schema 保持一致（schema_version=1）。
@@ -98,6 +101,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="忽略幂等标记强制重跑")
     parser.add_argument("--yes", action="store_true", help="跳过全停机确认提示")
     parser.add_argument(
+        "--assume-stopped",
+        action="store_true",
+        help="跳过停机窗口硬校验（伴生文件/写锁探测），自行确认主/QA 进程已停止",
+    )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="允许源 chroma 两个 collection 均为空时继续（防止 --vector-db-path 打错"
+        "时凭空建空库顶掉既有目标库）",
+    )
+    parser.add_argument(
         "--verify-only",
         action="store_true",
         help="仅对已存在的 lite 库执行校验（对照 chroma 源），不迁移",
@@ -147,11 +161,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 def _connect_sqlite(path: str) -> sqlite3.Connection:
-    """以 WAL 模式打开 SQLite 连接（显式事务管理）"""
+    """以 WAL 模式打开 SQLite 连接（显式事务管理）
+
+    synchronous=FULL：一次性关键路径，宁可慢也要保证提交帧落盘
+    （NORMAL 在断电时可能丢失最近事务，迁移不容许）。
+    """
     conn = sqlite3.connect(path)
     conn.isolation_level = None
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA synchronous=FULL")
     conn.execute("PRAGMA foreign_keys=OFF")
     return conn
 
@@ -159,6 +177,62 @@ def _connect_sqlite(path: str) -> sqlite3.Connection:
 def _get_chroma_collection(client, name: str):
     """获取（或创建）chroma collection，与主程序 get_or_create 语义一致"""
     return client.get_or_create_collection(name=name, metadata={"hnsw:space": "cosine"})
+
+
+def _assert_shutdown_window(vector_db_path: str, assume_stopped: bool) -> None:
+    """硬校验停机窗口（尽力而为）：chroma 主库不应有伴生文件/活动写锁
+
+    - 伴生文件探测：任一进程持有 chroma 库连接且发生过写访问时，chroma.sqlite3
+      的 -journal/-wal/-shm 伴生文件存在；全部进程干净退出后由 SQLite 删除。
+    - 写锁探测：以独立读写连接尝试 BEGIN IMMEDIATE 短暂占锁后立即回滚——
+      其他进程正在写时会因锁冲突超时失败。
+    两项均通过只能说明"当前没有进程活跃"，不能证明已停机；故保留 --assume-stopped
+    逃生口，命中时给出明确退出信息而非仅靠 y/N 提示。
+    """
+    chroma_db = os.path.join(vector_db_path, "chroma.sqlite3")
+    if not os.path.exists(chroma_db):
+        return
+    companions = [
+        suffix for suffix in ("-journal", "-wal", "-shm") if os.path.exists(chroma_db + suffix)
+    ]
+    if companions and not assume_stopped:
+        raise SystemExit(
+            f"[终止] 检测到 {chroma_db} 的伴生文件 {companions}，疑似仍有进程持有 chroma 库；"
+            "请先停止主/QA 进程（docker compose stop sakura-bot）再重试，"
+            "确认已停机可加 --assume-stopped 跳过该检查"
+        )
+    if not companions:
+        conn = None
+        try:
+            conn = sqlite3.connect(chroma_db, timeout=1.0)
+            conn.isolation_level = None
+            conn.execute("PRAGMA busy_timeout=1000")
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ROLLBACK")
+        except sqlite3.Error as e:
+            if not assume_stopped:
+                raise SystemExit(
+                    f"[终止] chroma 主库写锁探测失败（{type(e).__name__}: {e}），"
+                    "疑似仍有进程活跃；请先停止主/QA 进程再重试，"
+                    "确认已停机可加 --assume-stopped 跳过该检查"
+                ) from e
+            print(f"[警告] --assume-stopped：忽略写锁探测失败（{type(e).__name__}: {e}）")
+        finally:
+            if conn is not None:
+                conn.close()
+    if companions:
+        print(f"[警告] --assume-stopped：忽略伴生文件 {companions}（请自行确认全停机）")
+    print("[校验] 停机窗口检查通过（尽力而为，非绝对证明）")
+
+
+def _assert_no_companion_files(db_path: str) -> None:
+    """换名前断言 -wal/-shm 伴生文件不存在（存在即意味着提交帧尚未合并进主文件）"""
+    leftovers = [suffix for suffix in ("-wal", "-shm") if os.path.exists(db_path + suffix)]
+    if leftovers:
+        raise SystemExit(
+            f"[终止] {db_path} 换名前仍存在伴生文件 {leftovers}，WAL 可能未合并，"
+            "拒绝 os.replace 以避免丢失已提交数据"
+        )
 
 
 def _fetch_all_from_chroma(collection, label: str) -> dict:
@@ -219,6 +293,9 @@ def _write_tmp_db(tmp_path: str, expected_dim: int, tables_data: dict) -> None:
             )
             print(f"[迁移] {table}: 写入 {len(payload)} 行 -> {tmp_path}")
         conn.execute("COMMIT")
+        # 显式截断 checkpoint：close 的隐式 checkpoint 并非有保证行为，若提交帧
+        # 残留 .tmp-wal，后续 os.replace 只换主文件会丢掉 WAL 里已提交的行
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
         conn.execute("ROLLBACK")
         raise
@@ -291,13 +368,15 @@ def main() -> int:
         print(f"[退出] 幂等标记已存在: {args.marker}（如需重跑请加 --force）")
         return 0
 
-    chroma_client = chromadb.PersistentClient(path=args.vector_db_path)
-
     if args.verify_only:
+        chroma_client = chromadb.PersistentClient(path=args.vector_db_path)
         if not os.path.exists(final_db):
             print(f"[终止] lite 库不存在: {final_db}")
             return 1
         return 0 if _verify_db(final_db, chroma_client, _expected_dim()) else 1
+
+    # 停机窗口硬校验必须在脚本自身打开 chroma 之前执行，避免自身连接干扰判断
+    _assert_shutdown_window(args.vector_db_path, args.assume_stopped)
 
     if not args.yes:
         print("[警告] 本脚本必须在全停机窗口执行（docker compose stop sakura-bot）。")
@@ -306,11 +385,22 @@ def main() -> int:
             print("[退出] 已取消")
             return 1
 
+    chroma_client = chromadb.PersistentClient(path=args.vector_db_path)
+
     tables_data = {}
     for label in TABLES:
         tables_data[label] = _fetch_all_from_chroma(
             _get_chroma_collection(chroma_client, label), label
         )
+
+    # 空源守卫：--vector-db-path 打错时 PersistentClient 会凭空创建空 chroma 目录，
+    # 0==0 校验照样通过，空 lite 库换名后将顶掉既有目标库
+    if not any(tables_data.values()) and not args.allow_empty:
+        print(
+            "[终止] 源 chroma 两个 collection 均为 0 行：请确认 --vector-db-path 指向正确；"
+            "如确为空库迁移，请加 --allow-empty"
+        )
+        return 1
 
     tmp_db = final_db + ".tmp"
     for suffix in ("", "-wal", "-shm"):
@@ -320,6 +410,9 @@ def main() -> int:
     if not _verify_db(tmp_db, chroma_client, _expected_dim()):
         print(f"[终止] 校验未通过，源数据未动；请检查临时文件: {tmp_db}")
         return 1
+
+    # 换名前断言临时库无 WAL 残留（提交帧未合并则拒绝继续）
+    _assert_no_companion_files(tmp_db)
 
     # 关键顺序：先删旧库及 WAL 伴生文件（防旧 WAL 重放进新库），再原子换名 + fsync 目录
     for suffix in ("", "-wal", "-shm"):

@@ -58,6 +58,11 @@ from core.telegram.keyboards import (
     build_qa_main_menu_keyboard,
 )
 
+# QA 进程是向量库的纯读者（VECTOR_BACKEND=lite 时以 mode=ro 只读连接打开，
+# 绝不执行 DDL/写事务，迁移未完成时降级为不可用）。必须在 core.ai.vector_store
+# 单例首次构造（QABot.__init__ → get_qa_engine_v3）之前生效，故置于模块顶部。
+os.environ.setdefault("VECTOR_BACKEND_READER", "1")
+
 
 def _setup_qa_logging() -> None:
     """初始化 QA Bot 日志系统"""

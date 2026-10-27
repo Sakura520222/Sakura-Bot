@@ -14,7 +14,10 @@
 SQLite；执行本脚本回填后，任意时刻回滚到 chroma 后端都不会丢失数据。
 字段映射与正向迁移（scripts/migrate_vectors_to_sqlite.py）互逆：
     sqlite(id, embedding BLOB, document, metadata_json) -> chroma(ids, embeddings, documents, metadatas)
-写入使用 upsert（幂等，可重复执行）；--verify 抽样校验两侧余弦 > 0.999999。
+写入使用 upsert（幂等，可重复执行）；--verify-only 做全量 id 集合比对 + 抽样余弦 > 0.999999。
+
+注意：回填期间暂停主进程写入更佳——分页读取按 ORDER BY id + OFFSET 滑动，
+并发写入/删除可能造成窗口滑移与两侧集合漂移（verify 的全量集合比对可兜底发现）。
 
 用法：
     python scripts/backfill_sqlite_to_chroma.py --yes
@@ -111,17 +114,35 @@ def _backfill_table(conn: sqlite3.Connection, collection, table: str) -> int:
 
 
 def _verify_against_chroma(conn: sqlite3.Connection, chroma_client) -> bool:
-    """校验 chroma 与 lite 库一致：行数相等 + 抽样余弦 > 阈值"""
+    """校验 chroma 与 lite 库一致：全量 id 集合相等 + 抽样余弦 > 阈值
+
+    用集合比对而非"行数相等"判定：回填定位是 lite 运行期间执行，并发 DELETE 会使
+    OFFSET 分页窗口滑移跳行，若"chroma 多出的已删行"与"lite 有而 chroma 缺的跳过行"
+    数量恰好抵消，行数相等但集合不等，抽样几乎不可能命中——回滚安全网会静默漏数据。
+    """
     ok = True
     for label, table in TABLES.items():
         collection = _get_chroma_collection(chroma_client, label)
-        lite_count = _table_count(conn, table)
+        lite_ids = {row[0] for row in conn.execute(f"SELECT id FROM {table}").fetchall()}
         chroma_count = collection.count()
-        if lite_count != chroma_count:
-            print(f"[校验失败] {label}: chroma {chroma_count} 行 != lite {lite_count} 行")
+        chroma_ids: set = set()
+        if chroma_count:
+            chroma_ids = set(collection.get(include=[], limit=chroma_count).get("ids") or [])
+
+        missing = lite_ids - chroma_ids
+        extra = chroma_ids - lite_ids
+        if missing or extra:
             ok = False
+            print(
+                f"[校验失败] {label}: id 集合不一致"
+                f"（lite 有 chroma 缺 {len(missing)} 条, chroma 有 lite 缺 {len(extra)} 条）"
+            )
+            for doc_id in sorted(missing)[:5]:
+                print(f"[校验失败] {label}: lite 独有 id={doc_id}")
+            for doc_id in sorted(extra)[:5]:
+                print(f"[校验失败] {label}: chroma 独有 id={doc_id}")
         else:
-            print(f"[校验] {label}: 行数一致 = {lite_count}")
+            print(f"[校验] {label}: 全量 id 集合一致，共 {len(lite_ids)} 条")
 
         sample_rows = conn.execute(
             f"SELECT id, embedding FROM {table} ORDER BY RANDOM() LIMIT ?",
@@ -144,7 +165,7 @@ def _verify_against_chroma(conn: sqlite3.Connection, chroma_client) -> bool:
 
 
 def main() -> int:
-    """脚本入口：回填（可跟 --verify 抽样校验）或仅校验"""
+    """脚本入口：回填（完成后强制一致性校验）或仅校验（--verify-only）"""
     args = _parse_args()
     if chromadb is None:
         print("[终止] chromadb 未安装，无法写入目标库")
