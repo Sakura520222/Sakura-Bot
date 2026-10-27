@@ -108,9 +108,30 @@ golang 构建层，产物装 `/usr/local/bin/sakura-qa`（避开 `/app` 挂载�
 | Go 版配额保持非原子 SELECT+UPDATE | 串行分发下与 Python 等价；原子化属行为收紧，不混入 |
 | float32 舍入致 similarity 差 <1e-6 | 消费方 round(,3)，无感 |
 
-## 5. 实测对比
+## 5. 实测对比（2026-10-27 部署后，5 分钟稳定观察采样）
 
-（部署后填充：main.py / QA 进程 RSS、docker stats、swap 变化，及与基线表的对照。）
+| 指标 | 基线（10-26） | 部署后 | 变化 |
+|---|---|---|---|
+| main.py | 202 MB + 23 MB swap | **144.6 MB + 0 swap** | **-29%** |
+| QA 进程 | 137 MB + 37 MB swap（python） | **19.9 MB + 0 swap（Go）** | **-85%** |
+| 两进程合计 | 339 MB + 60 MB swap | **164.5 MB + 0 swap** | **-51%，swap 清零** |
+| 容器（docker stats） | 323.7 MiB | **149.3 MiB（14.6%限额）** | **-54%** |
+
+部署时序记录：停机窗口迁移向量 290（summaries）+3378（messages）条全量校验通过
+（行数一致 + 逐行维度 + 抽样余弦），原子换名 + 幂等标记 `data/.vector_migration_done`；
+`VECTOR_BACKEND=lite` 先行验证（QA 读者只读模式、realtime 批写生产路径正常、
+主进程 202→143MB），再切 `QA_BOT_RUNTIME=go`（Go 版启动序列、16 条命令菜单、
+长轮询、7 天清理 job 首跑清 215 条积压通知——全部与 Python 版日志逐字一致）。
+
+**回滚通道（分钟级）**：`data/.env` 改 `QA_BOT_RUNTIME=python` 和/或
+`VECTOR_BACKEND=chroma` → `docker compose restart`；向量方向的反向回填脚本
+`scripts/backfill_sqlite_to_chroma.py` 保障任意时点回滚数据完整。
+chroma 原目录 `data/vectors/chroma.sqlite3` 保留为迁移快照。
+
+**待日常观察项**：Go 版问答的实际对话路径（agentic 检索/流式编辑/配额）与
+申诉/投稿功能由真实用户流量验证——日志格式与 Python 版逐字一致，可直接 grep；
+主进程 SIGTERM 关停时偶发一条 "Event loop stopped before Future completed"
+CRITICAL 为**既有**竞态（迁移前行为，非本次引入）。
 
 ## 6. 后续路线图（若要继续压）
 
