@@ -344,7 +344,8 @@ def _verify_db(db_path: str, chroma_client, expected_dim: int) -> bool:
             for doc_id, blob in sample_rows:
                 local = np.frombuffer(blob, dtype="<f4")
                 remote = collection.get(ids=[doc_id], include=["embeddings"]).get("embeddings")
-                if not remote:
+                # ndarray 求真值非法，显式判 None/空（embeddings 是 numpy ndarray）
+                if remote is None or len(remote) == 0:
                     print(f"[校验失败] {label}/{doc_id}: chroma 中缺失源向量")
                     ok = False
                     continue
