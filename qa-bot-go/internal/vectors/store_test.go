@@ -16,8 +16,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
-	"os"
+
 	"path/filepath"
 	"testing"
 )
@@ -60,7 +61,7 @@ func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
 }
 
 // openWriter 打开读写连接（测试种子数据用），启用 WAL 对齐生产契约
-//（只读侧的 -shm 可访问性依赖写侧伴生文件存在）。
+// （只读侧的 -shm 可访问性依赖写侧伴生文件存在）。
 func openWriter(t *testing.T, file string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.ToSlash(file))
@@ -96,6 +97,9 @@ func insertDoc(t *testing.T, db *sql.DB, table, id string, vec []float32, docume
 		id, embedBlob(vec), document, string(metaJSON), len(vec), "2026-01-01T00:00:00+00:00")
 }
 
+// itoa 避免引入 strconv 全名的轻量封装（测试内多处使用）。
+func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
 // idsOf 提取结果 DocID 集合。
 func idsOf(hits []Hit) map[string]bool {
 	m := make(map[string]bool, len(hits))
@@ -120,6 +124,7 @@ func TestSearchOrthogonalTopK(t *testing.T) {
 		map[string]any{"channel_id": "-100200", "created_at": "2026-03-01T00:00:00+00:00", "message_id": 42})
 
 	store := New(dir)
+	t.Cleanup(func() { _ = store.Close() }) // Windows 下未关连接会锁住 TempDir 清理
 	ctx := context.Background()
 
 	t.Run("精确命中且相似度为1", func(t *testing.T) {
@@ -175,3 +180,145 @@ func TestSearchOrthogonalTopK(t *testing.T) {
 		}
 	})
 
+	t.Run("all 合并列并列时按 summaries 优先", func(t *testing.T) {
+		// summaries 的 "42" 与 messages 的 "100200:42" 对查询向量同为相似度 1，
+		// 合并后 top1 必须是其中之一且两条都进 top2（并列稳定排序）。
+		hits, err := store.Search(ctx, basisVec(42), Options{Collection: "all", TopK: 2})
+		if err != nil {
+			t.Fatalf("Search 失败: %v", err)
+		}
+		if len(hits) != 2 {
+			t.Fatalf("结果数 = %d, 期望 2", len(hits))
+		}
+		got := idsOf(hits)
+		if !got["42"] || !got["100200:42"] {
+			t.Fatalf("并列 top2 应含两侧正命中: %v", got)
+		}
+		for _, h := range hits {
+			if math.IsNaN(h.Similarity) || math.IsInf(h.Similarity, 0) {
+				t.Fatalf("相似度出现 NaN/Inf: %v (%s)", h.Similarity, h.DocID)
+			}
+		}
+	})
+
+	t.Run("零向量查询不产生 NaN", func(t *testing.T) {
+		zero := make([]float32, testDim)
+		hits, err := store.Search(ctx, zero, Options{Collection: "summaries", TopK: 5})
+		if err != nil {
+			t.Fatalf("Search 失败: %v", err)
+		}
+		for _, h := range hits {
+			if math.IsNaN(h.Similarity) {
+				t.Fatalf("零向量查询产生 NaN: %s", h.DocID)
+			}
+		}
+	})
+}
+
+// TestSearchFilters 日期过滤与频道过滤语义（naive 视为 UTC、坏边界忽略、
+// 缺 created_at 丢弃、channel_id 精确匹配）。
+func TestSearchFilters(t *testing.T) {
+	dir := t.TempDir()
+	db := openWriter(t, filepath.Join(dir, dbFileName))
+	seedMeta(t, db, 1, 1)
+	insertDoc(t, db, "summaries_vectors", "1", basisVec(1), "d1",
+		map[string]any{"channel_id": "-100100", "created_at": "2026-03-01T12:00:00+00:00"})
+	insertDoc(t, db, "summaries_vectors", "2", basisVec(2), "d2",
+		map[string]any{"channel_id": "-100200", "created_at": "2026-01-01T00:00:00+00:00"})
+	insertDoc(t, db, "summaries_vectors", "3", basisVec(3), "d3",
+		map[string]any{"channel_id": "-100100"}) // 缺 created_at：有边界时应被丢弃
+	insertDoc(t, db, "summaries_vectors", "4", basisVec(4), "d4",
+		map[string]any{"channel_id": "-100100", "created_at": "2026-05-01T00:00:00Z"})
+
+	store := New(dir)
+	t.Cleanup(func() { _ = store.Close() }) // Windows 下未关连接会锁住 TempDir 清理
+	ctx := context.Background()
+
+	t.Run("DateAfter 过滤且 naive 按 UTC 命中", func(t *testing.T) {
+		// naive 边界 "2026-02-01T00:00:00" 应视为 UTC，等价 2026-02-01T00:00:00+00:00
+		hits, err := store.Search(ctx, basisVec(1), Options{Collection: "summaries", TopK: 10, DateAfter: "2026-02-01T00:00:00"})
+		if err != nil {
+			t.Fatalf("Search 失败: %v", err)
+		}
+		got := idsOf(hits)
+		if !got["1"] || !got["4"] || len(hits) != 2 {
+			t.Fatalf("DateAfter 后应只剩 1/4（缺 created_at 的 3 被丢弃）: %v", got)
+		}
+	})
+
+	t.Run("坏边界忽略等于不过滤", func(t *testing.T) {
+		hits, err := store.Search(ctx, basisVec(1), Options{Collection: "summaries", TopK: 10, DateAfter: "not-a-date"})
+		if err != nil {
+			t.Fatalf("Search 失败: %v", err)
+		}
+		if len(hits) != 4 {
+			t.Fatalf("坏边界应被忽略，返回全部 4 条，得到 %d", len(hits))
+		}
+	})
+
+	t.Run("ChannelID 精确匹配", func(t *testing.T) {
+		hits, err := store.Search(ctx, basisVec(1), Options{Collection: "summaries", TopK: 10, ChannelID: "-100200"})
+		if err != nil {
+			t.Fatalf("Search 失败: %v", err)
+		}
+		if len(hits) != 1 || hits[0].DocID != "2" {
+			t.Fatalf("ChannelID=-100200 应只命中 2: %v", idsOf(hits))
+		}
+	})
+}
+
+// TestVersionInvalidation 版本失效：他进程 bump store_meta 后，本进程下一次
+// Search 前检测到并整表重载（README 硬规则 2：禁用文件 stat 方案）。
+func TestVersionInvalidation(t *testing.T) {
+	dir := t.TempDir()
+	db := openWriter(t, filepath.Join(dir, dbFileName))
+	seedMeta(t, db, 7, 7)
+	insertDoc(t, db, "summaries_vectors", "1", basisVec(1), "d1",
+		map[string]any{"channel_id": "-100100", "created_at": "2026-03-01T00:00:00+00:00"})
+
+	store := New(dir)
+	t.Cleanup(func() { _ = store.Close() }) // Windows 下未关连接会锁住 TempDir 清理
+	ctx := context.Background()
+	hits, err := store.Search(ctx, basisVec(1), Options{Collection: "summaries", TopK: 10})
+	if err != nil {
+		t.Fatalf("首次 Search 失败: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("首次应只有 1 条，得到 %d", len(hits))
+	}
+
+	// 模拟主进程写入：插入新行并 bump 版本号（同事务语义）。
+	insertDoc(t, db, "summaries_vectors", "2", basisVec(2), "d2",
+		map[string]any{"channel_id": "-100100", "created_at": "2026-03-02T00:00:00+00:00"})
+	mustExec(t, db, "UPDATE store_meta SET value = value + 1 WHERE key = 'summaries_version'")
+
+	hits, err = store.Search(ctx, basisVec(2), Options{Collection: "summaries", TopK: 10})
+	if err != nil {
+		t.Fatalf("失效重载后的 Search 失败: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("版本 bump 后下一次 Search 应看到 2 条，得到 %d", len(hits))
+	}
+}
+
+// TestNotReady 文件/表缺失返回 ErrNotReady 且不锁存（下一次就绪后可恢复）。
+func TestNotReady(t *testing.T) {
+	store := New(t.TempDir()) // 空：lite_index.sqlite3 不存在
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.Search(ctx, basisVec(0), Options{Collection: "summaries"}); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("空目录应返回 ErrNotReady，得到 %v", err)
+	}
+
+	// 库就绪后同一实例应能自愈（不锁存错误）。
+	dir := t.TempDir()
+	db := openWriter(t, filepath.Join(dir, dbFileName))
+	seedMeta(t, db, 1, 1)
+	insertDoc(t, db, "summaries_vectors", "9", basisVec(9), "d9",
+		map[string]any{"channel_id": "-100100", "created_at": "2026-03-01T00:00:00+00:00"})
+	s2 := New(dir)
+	t.Cleanup(func() { _ = s2.Close() })
+	if _, err := s2.Search(ctx, basisVec(9), Options{Collection: "summaries"}); err != nil {
+		t.Fatalf("就绪后 Search 应成功: %v", err)
+	}
+}
