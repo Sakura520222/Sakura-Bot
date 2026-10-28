@@ -284,10 +284,17 @@ class TestQARuntimeResolution:
         process_manager._qa_bot_runtime = "python"
 
     @patch.dict(os.environ, {"QA_BOT_RUNTIME": ""}, clear=False)
-    def test_effective_runtime_default_python(self):
+    def test_effective_runtime_default_go(self):
         with patch("core.config.runtime.runtime_config") as rc:
             rc.read.return_value = {}
-            assert process_manager.effective_qa_runtime() == "python"
+            assert process_manager.effective_qa_runtime() == "go"
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_effective_runtime_invalid_env_falls_back_to_go(self):
+        os.environ.pop("QA_BOT_RUNTIME", None)
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            assert process_manager.effective_qa_runtime() == "go"
 
     @patch.dict(os.environ, {"QA_BOT_RUNTIME": "go"})
     def test_effective_runtime_from_env(self):

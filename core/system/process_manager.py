@@ -33,10 +33,11 @@ _QA_RUNTIMES = ("python", "go")
 
 
 def effective_qa_runtime() -> str:
-    """解析当前生效的问答Bot运行时：config.json 优先，env 次之，缺省 python
+    """解析当前生效的问答Bot运行时：config.json 优先，env 次之，缺省 go
 
     优先级设计让运行时切换可以走 config.json（WebUI / 管理命令写入，
-    热更新生效），同时保留 QA_BOT_RUNTIME 环境变量作为部署期默认值。
+    热更新生效），同时保留 QA_BOT_RUNTIME 环境变量作为部署期覆盖。
+    缺省 go；Go 二进制缺失时 start_qa_bot 会自动回退 python 并告警。
     """
     try:
         from core.config.runtime import runtime_config
@@ -50,12 +51,12 @@ def effective_qa_runtime() -> str:
             )
     except Exception as e:
         logger.debug(f"读取 config.json 的 qa_bot_runtime 失败，回退环境变量: {e}")
-    value = os.getenv("QA_BOT_RUNTIME", "python").strip().lower()
+    value = os.getenv("QA_BOT_RUNTIME", "go").strip().lower()
     if value in _QA_RUNTIMES:
         return value
     if value:
-        logger.warning(f"QA_BOT_RUNTIME={value!r} 无效（可选 {list(_QA_RUNTIMES)}），回退 python")
-    return "python"
+        logger.warning(f"QA_BOT_RUNTIME={value!r} 无效（可选 {list(_QA_RUNTIMES)}），回退 go")
+    return "go"
 
 
 def set_qa_bot_runtime(runtime: str) -> dict:

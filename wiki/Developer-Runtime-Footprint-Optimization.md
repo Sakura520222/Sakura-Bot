@@ -99,7 +99,7 @@ golang 构建层，产物装 `/usr/local/bin/sakura-qa`（避开 `/app` 挂载�
 运行时切换控制面（`339cc8f`）：主 Bot 管理命令 `/qa_runtime`（别名 `/qa_运行时`，不带
 参数查看）与 WebUI「系统」页一键切换（`POST /api/system/qa-bot/runtime`）。切换写入
 `config.json` 持久化并立即重启 QA 子进程（进行中会话中断），热生效、无需重启容器；
-优先级 `config.json` > env `QA_BOT_RUNTIME` > `python`。`data/.env` 仅作部署级默认值，
+优先级 `config.json` > env `QA_BOT_RUNTIME` > `go`（Go 为缺省，二进制缺失自动回退 python）。`data/.env` 仅作部署级覆盖，
 改动后需 `docker compose restart`。回退无需数据回迁。
 
 ## 4. 已知行为差异（有意为之）
@@ -129,7 +129,7 @@ golang 构建层，产物装 `/usr/local/bin/sakura-qa`（避开 `/app` 挂载�
 
 **回滚通道（分钟级）**：QA 运行时回滚首选主 Bot 管理命令 `/qa_runtime python` 或
 WebUI「系统」页一键切换（写入 `config.json` 持久化并立即重启 QA 子进程，热生效、
-无需重启容器）；`data/.env` 改 `QA_BOT_RUNTIME=python` 保留为部署级默认值的兜底方式
+无需重启容器）；`data/.env` 改 `QA_BOT_RUNTIME=python` 保留为部署级覆盖的兜底方式
 （需 `docker compose restart`）。向量方向仍为 `VECTOR_BACKEND=chroma` +
 `docker compose restart`，反向回填脚本 `scripts/backfill_sqlite_to_chroma.py`
 保障任意时点回滚数据完整。chroma 原目录 `data/vectors/chroma.sqlite3` 保留为迁移快照。

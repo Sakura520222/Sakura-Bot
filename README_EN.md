@@ -36,14 +36,16 @@ Requires **Python 3.13+** or **Docker 20.10+**, plus:
 - An OpenAI-compatible API key (e.g., [DeepSeek](https://platform.deepseek.com/), [OpenAI](https://platform.openai.com/))
 - A MySQL database (MySQL is the only application database; provision it yourself — Compose does not include one)
 
-Docker:
+Docker (recommended, one-command updates):
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
 cp data/.env.example data/.env   # edit .env with your credentials
-docker compose up -d
+bash scripts/deploy.sh           # pull the GHCR image and start
 ```
+
+Images are built and pushed to GHCR by [GitHub Actions](.github/workflows/docker-build.yml), so servers no longer build locally; future updates are the same `bash scripts/deploy.sh`. If pulling the image is denied (401/403), make the `sakura-bot` package public in the repository's Packages settings, or run `docker login ghcr.io` once on the server. Forks and source deployments can still `docker compose build && docker compose up -d`.
 
 Local:
 
@@ -59,11 +61,11 @@ python main.py
 
 The first run requires phone-number authentication for Telegram; session files are reused afterwards. For the full configuration reference, enabling the assistant bot / UserBot / WebUI / Sakura Guard, and FAQs, see [Getting Started](wiki/User-Getting-Started.md).
 
-In Docker deployments, sending `/update` to the bot updates the host repository, reinstalls dependencies, rebuilds the WebUI, and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Changes involving system dependencies or the Dockerfile require a host-side `docker compose up -d --build`.
+In image-based Docker deployments the host repository is no longer mounted into the container (code ships with the image); the `/update` flow is replaced by `bash scripts/deploy.sh`: pull the latest image and restart, while local `data/` settings and data are preserved. Changes that support hot reload still apply instantly without deploying.
 
 ### Assistant Bot Runtime
 
-The assistant bot runs a Python implementation by default, with a lighter Go implementation (`qa-bot-go/`) available. Priority: `config.json` > the `QA_BOT_RUNTIME` environment variable (deployment-level default, see `data/.env.example`) > `python`. Admins can view or switch the runtime with the main-bot `/qa_runtime` command (alias `/qa_运行时`) or with one click on the WebUI "System" page; switching is persisted in `config.json` and restarts the assistant bot immediately (in-progress sessions are interrupted), falling back to Python automatically when the Go binary is missing. See [runtime footprint optimization](wiki/Developer-Runtime-Footprint-Optimization.md).
+The assistant bot runs the Go implementation by default (`qa-bot-go/`, roughly 1/7 the memory of the Python one); the Python implementation is kept as a fallback. Priority: `config.json` > the `QA_BOT_RUNTIME` environment variable (deployment-level override, see `data/.env.example`) > `go`. Admins can view or switch the runtime with the main-bot `/qa_runtime` command (alias `/qa_运行时`) or with one click on the WebUI "System" page; switching is persisted in `config.json` and restarts the assistant bot immediately (in-progress sessions are interrupted), falling back to Python automatically when the Go binary is missing. See [runtime footprint optimization](wiki/Developer-Runtime-Footprint-Optimization.md).
 
 ## Project Structure
 
