@@ -336,6 +336,33 @@ async def restart_qa_bot_endpoint(request: Request):
     }
 
 
+@router.post("/qa-bot/runtime")
+async def set_qa_bot_runtime_endpoint(request: Request):
+    """切换 QA Bot 运行时（go|python），写入配置并立即重启子进程。"""
+    started_at = time.perf_counter()
+    from core.system.process_manager import set_qa_bot_runtime
+
+    payload = await request.json()
+    runtime = str(payload.get("runtime", "")).strip()
+    result = set_qa_bot_runtime(runtime)
+    success = bool(result.get("success"))
+    await record_system_audit(
+        action="qa_bot.runtime",
+        actor=_actor_from_request(request),
+        success=success,
+        message=result.get("message", ""),
+        duration_ms=_audit_duration(started_at),
+    )
+    return {
+        "success": success,
+        "message": result.get("message", ""),
+        "data": {
+            "runtime": result.get("runtime"),
+            "restart": result.get("restart"),
+        },
+    }
+
+
 @router.post("/qa-bot/health")
 async def check_qa_bot_health_endpoint(request: Request):
     """检查 QA Bot 健康状态。"""

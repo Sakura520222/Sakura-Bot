@@ -19,9 +19,11 @@ from core.i18n.i18n import get_text
 from core.infrastructure.database import get_db_manager
 from core.infrastructure.utils.auth import is_admin
 from core.system.process_manager import (
+    effective_qa_runtime,
     format_uptime,
     get_qa_bot_status,
     restart_qa_bot,
+    set_qa_bot_runtime,
     start_qa_bot,
     stop_qa_bot,
 )
@@ -54,11 +56,23 @@ async def handle_qa_status(event):
             lines.append(f"**状态**: {status_emoji}")
             lines.append(f"**进程ID**: `{status['pid']}`")
             lines.append(f"**{get_text('qabot.status_uptime')}**: {uptime_str}")
+            lines.append(
+                get_text(
+                    "qabot.runtime_now",
+                    runtime=status.get("configured_runtime", "-"),
+                    actual=status.get("runtime", "-"),
+                )
+            )
         else:
             status_emoji = get_text("qabot.status_stopped")
             lines.append(f"**状态**: {status_emoji}")
             lines.append(f"**进程ID**: {get_text('qabot.status_not_running')}")
             lines.append(f"**{get_text('qabot.status_uptime')}**: -")
+            lines.append(
+                get_text(
+                    "qabot.runtime_now", runtime=status.get("configured_runtime", "-"), actual="-"
+                )
+            )
 
         lines.append("")
 
@@ -109,6 +123,7 @@ async def handle_qa_status(event):
         lines.append("`/qa_stop` - " + get_text("qabot.cmd.qa_stop"))
         lines.append("`/qa_restart` - " + get_text("qabot.cmd.qa_restart"))
         lines.append("`/qa_stats` - " + get_text("qabot.cmd.qa_stats"))
+        lines.append("`/qa_runtime` - " + get_text("qabot.cmd.qa_runtime"))
 
         message = "\n".join(lines)
         await event.reply(message, parse_mode="Markdown")
@@ -343,6 +358,54 @@ async def handle_qa_stats(event):
 
         message = "\n".join(lines)
         await event.reply(message, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"处理命令失败: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"❌ {get_text('error.unknown')}: {e}")
+
+
+async def handle_qa_runtime(event):
+    """处理/qa_runtime命令，查看或切换问答Bot运行时（go|python）"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+
+    if not is_admin(sender_id):
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply(get_text("error.admin_only"))
+        return
+
+    try:
+        # 解析参数：/qa_runtime [go|python]
+        parts = (event.text or "").split()
+        status = get_qa_bot_status()
+
+        if len(parts) < 2:
+            lines = [
+                get_text(
+                    "qabot.runtime_now",
+                    runtime=status.get("configured_runtime", effective_qa_runtime()),
+                    actual=status.get("runtime", "-"),
+                ),
+                "",
+                get_text("qabot.runtime_usage"),
+                get_text("qabot.runtime_note"),
+            ]
+            await event.reply("\n".join(lines), parse_mode="Markdown")
+            return
+
+        target = parts[1].strip().lower()
+        result = set_qa_bot_runtime(target)
+        lines = [result["message"]]
+
+        restart_result = result.get("restart")
+        if restart_result is not None:
+            if restart_result.get("success"):
+                lines.append(get_text("qabot.restarted", pid=restart_result.get("pid")))
+            else:
+                lines.append(f"⚠️ 重启未成功: {restart_result.get('message', '')}")
+
+        await event.reply("\n".join(lines), parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"处理命令失败: {type(e).__name__}: {e}", exc_info=True)

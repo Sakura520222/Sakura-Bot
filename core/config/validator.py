@@ -106,6 +106,13 @@ class ConfigValidator:
                     error="助手 Bot 配额必须为整数，每人每日不少于 1 次、全站每日不少于 10 次",
                     config_path=str(file_path),
                 )
+        if "qa_bot_runtime" in config:
+            value = str(config["qa_bot_runtime"] or "").strip().lower()
+            if value not in ("python", "go"):
+                return ConfigValidationErrorEvent(
+                    error="qa_bot_runtime 只能是 python 或 go",
+                    config_path=str(file_path),
+                )
         return ConfigValidator._validate_business_logic(config, file_path)
 
     @staticmethod

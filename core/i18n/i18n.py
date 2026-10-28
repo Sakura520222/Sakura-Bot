@@ -660,6 +660,13 @@ MESSAGE_ZH_CN = {
     "qabot.cmd.qa_stop": "停止问答Bot",
     "qabot.cmd.qa_restart": "重启问答Bot",
     "qabot.cmd.qa_stats": "查看详细统计",
+    "qabot.cmd.qa_runtime": "查看/切换问答Bot运行时（Go|Python）",
+    # ========== QA Bot 运行时切换 ==========
+    "qabot.runtime_usage": "用法：`/qa_runtime go` 或 `/qa_runtime python`（不带参数查看当前运行时）",
+    "qabot.runtime_now": "**运行时**: `{runtime}`（当前实际运行: `{actual}`）",
+    "qabot.runtime_switched": "✅ 问答Bot运行时已切换: {previous} → {runtime}（已写入配置，重启后生效情况见下）",
+    "qabot.runtime_invalid": "❌ 无效的运行时: {runtime}（只能选 go 或 python）",
+    "qabot.runtime_note": "💡 切换会重启问答Bot，进行中的问答会话将被中断",
     # ========== QA Bot 进程消息 ==========
     "qabot.started": "问答Bot启动成功 (PID: {pid})",
     "qabot.stopped": "问答Bot已成功停止 (PID: {pid})",
@@ -1601,6 +1608,13 @@ MESSAGE_EN_US = {
     "qabot.cmd.qa_stop": "Stop Q&A Bot",
     "qabot.cmd.qa_restart": "Restart Q&A Bot",
     "qabot.cmd.qa_stats": "View detailed statistics",
+    "qabot.cmd.qa_runtime": "View/switch Q&A Bot runtime (Go|Python)",
+    # ========== QA Bot Runtime Switch ==========
+    "qabot.runtime_usage": "Usage: `/qa_runtime go` or `/qa_runtime python` (no argument shows current runtime)",
+    "qabot.runtime_now": "**Runtime**: `{runtime}` (currently running: `{actual}`)",
+    "qabot.runtime_switched": "✅ Q&A Bot runtime switched: {previous} → {runtime} (persisted; see restart result below)",
+    "qabot.runtime_invalid": "❌ Invalid runtime: {runtime} (must be go or python)",
+    "qabot.runtime_note": "💡 Switching restarts the Q&A Bot; in-progress sessions will be interrupted",
     # ========== QA Bot Process Messages ==========
     "qabot.started": "Q&A Bot started successfully (PID: {pid})",
     "qabot.stopped": "Q&A Bot stopped successfully (PID: {pid})",

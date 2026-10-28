@@ -28,6 +28,81 @@ _qa_bot_start_time = None
 # 本次启动实际使用的运行时（python|go），供状态接口与日志核对
 _qa_bot_runtime = "python"
 
+# 合法的问答Bot运行时取值
+_QA_RUNTIMES = ("python", "go")
+
+
+def effective_qa_runtime() -> str:
+    """解析当前生效的问答Bot运行时：config.json 优先，env 次之，缺省 python
+
+    优先级设计让运行时切换可以走 config.json（WebUI / 管理命令写入，
+    热更新生效），同时保留 QA_BOT_RUNTIME 环境变量作为部署期默认值。
+    """
+    try:
+        from core.config.runtime import runtime_config
+
+        value = str((runtime_config.read() or {}).get("qa_bot_runtime", "") or "").strip().lower()
+        if value in _QA_RUNTIMES:
+            return value
+        if value:
+            logger.warning(
+                f"config.json qa_bot_runtime={value!r} 无效（可选 {list(_QA_RUNTIMES)}），忽略"
+            )
+    except Exception as e:
+        logger.debug(f"读取 config.json 的 qa_bot_runtime 失败，回退环境变量: {e}")
+    value = os.getenv("QA_BOT_RUNTIME", "python").strip().lower()
+    if value in _QA_RUNTIMES:
+        return value
+    if value:
+        logger.warning(f"QA_BOT_RUNTIME={value!r} 无效（可选 {list(_QA_RUNTIMES)}），回退 python")
+    return "python"
+
+
+def set_qa_bot_runtime(runtime: str) -> dict:
+    """切换问答Bot运行时并立即生效
+
+    写入 config.json 持久化（容器重启后仍生效），然后按新运行时重启子进程。
+    运行中切换会中断进行中的问答会话（与 /qa_restart 等价）。
+
+    Returns:
+        dict: {'success': bool, 'message': str, 'runtime': str, 'restart': dict|None}
+    """
+    runtime = str(runtime or "").strip().lower()
+    if runtime not in _QA_RUNTIMES:
+        return {
+            "success": False,
+            "message": get_text("qabot.runtime_invalid", runtime=runtime),
+            "runtime": effective_qa_runtime(),
+            "restart": None,
+        }
+
+    previous = effective_qa_runtime()
+    try:
+        from core.config import update_config_fields
+
+        update_config_fields({"qa_bot_runtime": runtime})
+        logger.info(f"问答Bot运行时已切换: {previous} -> {runtime}（config.json 已持久化）")
+    except Exception as e:
+        logger.error(f"写入 qa_bot_runtime 配置失败: {type(e).__name__}: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"写入配置失败: {type(e).__name__}: {e}",
+            "runtime": previous,
+            "restart": None,
+        }
+
+    # 已在运行则按新运行时重启；未运行则下次启动自然生效
+    restart_result = None
+    if _qa_bot_process is not None:
+        restart_result = restart_qa_bot()
+
+    return {
+        "success": True,
+        "message": get_text("qabot.runtime_switched", previous=previous, runtime=runtime),
+        "runtime": runtime,
+        "restart": restart_result,
+    }
+
 
 def _resolve_qa_binary() -> str | None:
     """解析 Go 版问答Bot二进制路径
@@ -90,7 +165,7 @@ def start_qa_bot():
         env.setdefault("SAKURA_LOG_COMPONENT", "qa")
         env.setdefault("SAKURA_COMPONENT_LOG_FILE", "qa-bot.log")
 
-        runtime = os.getenv("QA_BOT_RUNTIME", "python").strip().lower()
+        runtime = effective_qa_runtime()
         cwd = os.path.dirname(os.path.abspath(sys.argv[0]))
 
         if runtime == "go":
@@ -216,7 +291,8 @@ def get_qa_bot_status():
             'uptime_seconds': float or None,
             'enabled': bool,
             'token_configured': bool,
-            'runtime': str  # 本次启动实际使用的实现：python|go
+            'runtime': str,            # 本次启动实际使用的实现：python|go
+            'configured_runtime': str  # 当前配置的运行时（config.json > env）
         }
     """
     global _qa_bot_process, _qa_bot_start_time
@@ -252,6 +328,7 @@ def get_qa_bot_status():
         "enabled": qa_bot_enabled,
         "token_configured": bool(qa_bot_token),
         "runtime": _qa_bot_runtime,
+        "configured_runtime": effective_qa_runtime(),
     }
 
 
