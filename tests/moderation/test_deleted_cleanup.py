@@ -148,9 +148,9 @@ async def test_restart_after_removal_with_lost_response_reconciles_without_secon
 async def test_deleted_removal_immediately_cleans_all_messages_and_retries_after_network_failure(
     deleted,
 ):
-    from telegram.error import NetworkError
+    from core.infrastructure.telegram_bot_api import NetworkAPIError
 
-    deleted.guard.ban_history.revoke.side_effect = [NetworkError("temporary"), True]
+    deleted.guard.ban_history.revoke.side_effect = [NetworkAPIError("temporary"), True]
     await deleted.start(ADMIN, uuid.uuid4().hex, [CHAT])
     await deleted.step()
     await deleted.step()

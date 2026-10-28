@@ -24,7 +24,6 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-import aiohttp
 from packaging import version
 
 from core.docker_runtime import record_runtime_state
@@ -64,6 +63,9 @@ def get_local_version():
 
 async def get_remote_version():
     """从 GitHub Release API 获取最新版本"""
+    # 惰性导入：版本检查很少运行，避免主进程常驻 aiohttp（约 3-5MB）
+    import aiohttp
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -262,6 +264,32 @@ async def git_pull_latest():
     except Exception as e:
         logger.error(f"Git 更新失败: {e}")
         return False, str(e)
+
+
+async def pull_with_changed_paths() -> tuple[bool, str, list[str]]:
+    """快进更新并返回本次变更的文件相对路径列表（供镜像层变更检测）。
+
+    Returns:
+        (success, message, changed)：changed 为空表示无可检测变更
+        （更新失败、仓库异常或本就是最新）。
+    """
+    try:
+        before = await asyncio.to_thread(lambda: _run_git("rev-parse", "HEAD").stdout.strip())
+    except Exception:
+        before = ""
+
+    success, message = await git_pull_latest()
+    if not success or not before:
+        return success, message, []
+
+    def _changed() -> list[str]:
+        result = _run_git("diff", "--name-only", before, "HEAD", check=False)
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    try:
+        return success, message, await asyncio.to_thread(_changed)
+    except Exception:
+        return success, message, []
 
 
 async def install_dependencies():

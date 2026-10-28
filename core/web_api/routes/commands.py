@@ -125,6 +125,18 @@ COMMAND_METADATA: dict[str, dict[str, Any]] = {
     "qa_stop": {"risk": "danger", "covered_by_page": "/system"},
     "qa_restart": {"risk": "danger", "covered_by_page": "/system"},
     "qa_stats": {"risk": "safe", "covered_by_page": "/system"},
+    "qa_runtime": {
+        "risk": "danger",
+        "covered_by_page": "/system",
+        "parameters": [
+            _param(
+                "runtime",
+                "目标运行时",
+                required=False,
+                placeholder="go 或 python，留空仅查看当前运行时",
+            )
+        ],
+    },
     "forwarding": {"risk": "safe", "covered_by_page": "/forwarding"},
     "forwarding_enable": {"risk": "normal", "covered_by_page": "/forwarding"},
     "forwarding_disable": {"risk": "danger", "covered_by_page": "/forwarding"},
@@ -491,6 +503,34 @@ async def _op_qa_restart(_params: dict[str, Any], _request: Request) -> dict[str
     }
 
 
+async def _op_qa_runtime(params: dict[str, Any], _request: Request) -> dict[str, Any]:
+    from core.system.process_manager import (
+        effective_qa_runtime,
+        get_qa_bot_status,
+        set_qa_bot_runtime,
+    )
+
+    target = str(params.get("runtime") or "").strip()
+    if not target:
+        status = get_qa_bot_status()
+        current = status.get("configured_runtime", effective_qa_runtime())
+        return {
+            "success": True,
+            "message": f"当前运行时: {current}（实际运行: {status.get('runtime', '-')}）",
+            "data": {"runtime": current, "actual": status.get("runtime")},
+        }
+
+    result = set_qa_bot_runtime(target)
+    return {
+        "success": bool(result.get("success")),
+        "message": result.get("message", ""),
+        "data": {
+            "runtime": result.get("runtime"),
+            "restart": result.get("restart"),
+        },
+    }
+
+
 async def _op_forwarding_status(_params: dict[str, Any], _request: Request) -> dict[str, Any]:
     config = get_config()
     forwarding = config.get("forwarding", {})
@@ -684,6 +724,7 @@ OPERATION_HANDLERS: dict[str, OperationHandler] = {
     "qa_stop": _op_qa_stop,
     "qa_restart": _op_qa_restart,
     "qa_stats": _op_qa_status,
+    "qa_runtime": _op_qa_runtime,
     "forwarding": _op_forwarding_status,
     "forwarding_enable": _op_forwarding_toggle(True),
     "forwarding_disable": _op_forwarding_toggle(False),

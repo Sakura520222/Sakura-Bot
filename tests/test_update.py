@@ -25,7 +25,7 @@ def update_event(monkeypatch):
 async def test_legacy_image_without_git_shows_rebuild_instructions(update_event, monkeypatch):
     monkeypatch.setattr(subprocess, "run", Mock(side_effect=FileNotFoundError("git")))
     pull = AsyncMock()
-    monkeypatch.setattr(commands, "git_pull_latest", pull)
+    monkeypatch.setattr(commands, "pull_with_changed_paths", pull)
 
     await commands.handle_update(update_event)
 
@@ -59,20 +59,61 @@ async def test_telegram_update_installs_builds_then_restarts(update_event, monke
     monkeypatch.setattr(subprocess, "run", Mock(return_value=SimpleNamespace(returncode=0)))
     steps = []
 
-    def step(name):
+    def step(name, returns=None):
         async def run(*_args):
             steps.append(name)
-            return True, "ok"
+            return returns if returns is not None else (True, "ok")
 
         return run
 
-    for name in ("git_pull_latest", "install_dependencies", "build_frontend", "handle_restart"):
+    for name in ("install_dependencies", "build_frontend", "handle_restart"):
         monkeypatch.setattr(commands, name, step(name))
+    # 纯 Python 变更：不触及镜像层 → 走容器内安装/构建/重启路径
+    monkeypatch.setattr(
+        commands, "pull_with_changed_paths", step("pull", returns=(True, "ok", ["core/x.py"]))
+    )
     monkeypatch.setattr(commands.asyncio, "sleep", AsyncMock())
 
     await commands.handle_update(update_event)
 
-    assert steps == ["git_pull_latest", "install_dependencies", "build_frontend", "handle_restart"]
+    assert steps == ["pull", "install_dependencies", "build_frontend", "handle_restart"]
+
+
+async def test_telegram_update_with_image_layer_requests_deployer(
+    update_event, monkeypatch, tmp_path
+):
+    """镜像层变更 + 已装 deployer：跳过容器内安装/构建，交由宿主机重建容器"""
+    from core.system import image_update as image_update_module
+
+    monkeypatch.setattr(subprocess, "run", Mock(return_value=SimpleNamespace(returncode=0)))
+    monkeypatch.chdir(tmp_path)
+
+    async def pull(*_args):
+        return True, "ok", ["qa-bot-go/internal/tg/api.go", "core/x.py"]
+
+    install = AsyncMock(return_value=(True, "ok"))
+    build = AsyncMock(return_value=(True, "ok"))
+    monkeypatch.setattr(commands, "pull_with_changed_paths", pull)
+    monkeypatch.setattr(commands, "install_dependencies", install)
+    monkeypatch.setattr(commands, "build_frontend", build)
+    monkeypatch.setattr(
+        image_update_module, "DEPLOYER_MARKER", tmp_path / "data" / ".image_deployer_installed"
+    )
+    monkeypatch.setattr(
+        image_update_module, "REQUEST_FLAG", tmp_path / "data" / ".image_update_request"
+    )
+    image_update_module.DEPLOYER_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    image_update_module.DEPLOYER_MARKER.touch()
+
+    await commands.handle_update(update_event)
+
+    assert install.await_count == 0
+    assert build.await_count == 0
+    assert (tmp_path / "data" / ".image_update_request").read_text(encoding="utf-8") == (
+        "requested\n"
+    )
+    replied = "\n".join(str(call.args[0]) for call in update_event.reply.await_args_list)
+    assert "宿主机部署器已接管" in replied
 
 
 async def test_web_update_build_failure_does_not_restart(monkeypatch):

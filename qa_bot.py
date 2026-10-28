@@ -58,6 +58,11 @@ from core.telegram.keyboards import (
     build_qa_main_menu_keyboard,
 )
 
+# QA 进程是向量库的纯读者（VECTOR_BACKEND=lite 时以 mode=ro 只读连接打开，
+# 绝不执行 DDL/写事务，迁移未完成时降级为不可用）。必须在 core.ai.vector_store
+# 单例首次构造（QABot.__init__ → get_qa_engine_v3）之前生效，故置于模块顶部。
+os.environ.setdefault("VECTOR_BACKEND_READER", "1")
+
 
 def _setup_qa_logging() -> None:
     """初始化 QA Bot 日志系统"""
@@ -1051,8 +1056,8 @@ class QABot:
 
                 push_handler = get_mainbot_push_handler()
 
-                # 检查推送处理器是否初始化
-                if push_handler.qa_bot is None:
+                # 检查推送处理器是否初始化（token 存在即可发送）
+                if not push_handler.qa_bot_token:
                     logger.warning("⚠️ 问答Bot推送处理器未初始化，跳过通知检查")
                     return 0
 

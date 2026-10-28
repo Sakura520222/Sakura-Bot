@@ -93,6 +93,7 @@ from core.commands.prompt_commands import (
 )
 from core.commands.qa_control_commands import (
     handle_qa_restart,
+    handle_qa_runtime,
     handle_qa_start,
     handle_qa_stats,
     handle_qa_status,
@@ -358,6 +359,7 @@ class CommandRegistrar:
         client.add_event_handler(handle_qa_start, NewMessage(pattern="/qa_start|/qa_启动"))
         client.add_event_handler(handle_qa_stop, NewMessage(pattern="/qa_stop|/qa_停止"))
         client.add_event_handler(handle_qa_restart, NewMessage(pattern="/qa_restart|/qa_重启"))
+        client.add_event_handler(handle_qa_runtime, NewMessage(pattern="/qa_runtime|/qa_运行时"))
         client.add_event_handler(handle_qa_stats, NewMessage(pattern="/qa_stats|/qa_统计"))
 
     async def _register_forwarding_commands(self, client: "TelegramClient") -> None:

@@ -17,10 +17,9 @@ import logging
 import os
 from typing import Any
 
-from telegram import Bot
-from telegram.error import TelegramError
-
 from core.infrastructure.database.manager import get_db_manager
+from core.infrastructure.telegram_bot_api import BotAPIError
+from core.infrastructure.telegram_bot_api import send_message as bot_send_message
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +36,8 @@ class MainBotPushHandler:
         """
         self.db = get_db_manager()
         self.qa_bot_token = qa_bot_token or os.getenv("QA_BOT_TOKEN")
-        self.qa_bot = None
 
         if self.qa_bot_token:
-            self.qa_bot = Bot(token=self.qa_bot_token)
             logger.info("主Bot推送处理器初始化完成")
         else:
             logger.warning("未配置QA_BOT_TOKEN，无法发送通知")
@@ -62,7 +59,7 @@ class MainBotPushHandler:
         try:
             logger.info(f"开始处理频道 {channel_name} ({channel_id}) 的订阅推送")
 
-            if not self.qa_bot:
+            if not self.qa_bot_token:
                 logger.warning("问答Bot未初始化，无法发送通知")
                 return 0
 
@@ -100,12 +97,17 @@ class MainBotPushHandler:
 💡 使用 <code>/mysubscriptions</code> 查看您的订阅
 💡 使用 <code>/unsubscribe <频道链接></code> 取消订阅"""
 
-                    await self.qa_bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
+                    await bot_send_message(
+                        token=self.qa_bot_token,
+                        chat_id=user_id,
+                        text=message,
+                        parse_mode="HTML",
+                    )
 
                     success_count += 1
                     logger.info(f"成功通知用户 {user_id}")
 
-                except TelegramError as e:
+                except BotAPIError as e:
                     if "bot was blocked by the user" in str(e):
                         logger.warning(f"用户 {user_id} 已阻止Bot，取消订阅")
                         # 自动取消该用户的订阅
@@ -133,7 +135,7 @@ class MainBotPushHandler:
             成功处理的通知数
         """
         try:
-            if not self.qa_bot:
+            if not self.qa_bot_token:
                 logger.warning("❌ 问答Bot未初始化，无法处理通知")
                 return 0
 
@@ -179,8 +181,11 @@ class MainBotPushHandler:
                     # 新增纯文本类型时在此集合中添加即可；其他类型默认 Markdown。
                     _PLAIN_TEXT_TYPES = frozenset({"submission_approved", "submission_rejected"})
                     parse_mode = None if notification_type in _PLAIN_TEXT_TYPES else "Markdown"
-                    await self.qa_bot.send_message(
-                        chat_id=user_id, text=message, parse_mode=parse_mode
+                    await bot_send_message(
+                        token=self.qa_bot_token,
+                        chat_id=user_id,
+                        text=message,
+                        parse_mode=parse_mode,
                     )
 
                     # 更新状态
@@ -188,7 +193,7 @@ class MainBotPushHandler:
                     success_count += 1
                     logger.info(f"✅ 成功发送通知给用户 {user_id}, 通知ID: {notification_id}")
 
-                except TelegramError as e:
+                except BotAPIError as e:
                     failed_count += 1
                     error_msg = str(e)
                     if "bot was blocked by the user" in error_msg:

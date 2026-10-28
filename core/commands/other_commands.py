@@ -54,8 +54,13 @@ from core.infrastructure.utils.version_utils import (
     compare_versions,
     get_local_version,
     get_remote_version,
-    git_pull_latest,
     install_dependencies,
+    pull_with_changed_paths,
+)
+from core.system.image_update import (
+    deployer_installed,
+    needs_image_update,
+    request_image_update,
 )
 from core.telegram.mainbot_keyboards import build_mainbot_menu_keyboard
 
@@ -1134,13 +1139,28 @@ async def handle_update(event):
 
         # 更新代码
         await event.reply(get_text("update.updating"))
-        success, message = await git_pull_latest()
+        success, message, changed_paths = await pull_with_changed_paths()
 
         if not success:
             await event.reply(get_text("update.git_error", error=message))
             return
 
         logger.info(f"代码更新: {message}")
+
+        # 镜像层变更（Go 源码/Dockerfile/依赖/前端）→ 请求宿主机自动拉新镜像重建容器
+        image_update_requested = False
+        if changed_paths and needs_image_update(changed_paths):
+            image_update_requested = request_image_update()
+            if image_update_requested:
+                await event.reply(
+                    get_text("update.image_update_requested", count=len(changed_paths))
+                )
+
+        if image_update_requested and deployer_installed():
+            # deployer 在宿主机执行 deploy.sh（git pull 已完成、镜像自带依赖与
+            # 前端产物），容器将被重建，跳过容器内的依赖安装与前端构建
+            await event.reply(get_text("update.image_deploy_will_restart"))
+            return
 
         # 安装依赖
         await event.reply(get_text("update.installing_deps"))

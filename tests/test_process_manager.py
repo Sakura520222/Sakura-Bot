@@ -273,3 +273,86 @@ class TestFormatUptime:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.unit
+class TestQARuntimeResolution:
+    """问答Bot运行时解析与切换测试"""
+
+    def setup_method(self):
+        process_manager._qa_bot_process = None
+        process_manager._qa_bot_runtime = "python"
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": ""}, clear=False)
+    def test_effective_runtime_default_go(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            assert process_manager.effective_qa_runtime() == "go"
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_effective_runtime_invalid_env_falls_back_to_go(self):
+        os.environ.pop("QA_BOT_RUNTIME", None)
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            assert process_manager.effective_qa_runtime() == "go"
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": "go"})
+    def test_effective_runtime_from_env(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            assert process_manager.effective_qa_runtime() == "go"
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": "python"})
+    def test_effective_runtime_config_overrides_env(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {"qa_bot_runtime": "go"}
+            assert process_manager.effective_qa_runtime() == "go"
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": "python"})
+    def test_effective_runtime_invalid_values_fall_back(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {"qa_bot_runtime": "rust"}
+            assert process_manager.effective_qa_runtime() == "python"
+
+    @patch.dict(os.environ, {"QA_BOT_TOKEN": "t", "QA_BOT_ENABLED": "True", "QA_BOT_RUNTIME": "go"})
+    @patch("core.system.process_manager.subprocess.Popen")
+    def test_start_qa_bot_go_uses_binary(self, mock_popen):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            mock_process = MagicMock()
+            mock_process.pid = 777
+            mock_popen.return_value = mock_process
+            with patch.object(process_manager, "_resolve_qa_binary", return_value="/bin/sakura-qa"):
+                result = process_manager.start_qa_bot()
+            assert result["success"] is True
+            args, kwargs = mock_popen.call_args
+            assert args[0] == ["/bin/sakura-qa"]
+            assert kwargs["env"].get("GOMEMLIMIT") == "96MiB"
+            assert process_manager._qa_bot_runtime == "go"
+
+    def test_status_includes_runtime_fields(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {"qa_bot_runtime": "go"}
+            status = process_manager.get_qa_bot_status()
+            assert status["configured_runtime"] == "go"
+            assert "runtime" in status
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": "python"})
+    def test_set_runtime_invalid_rejected(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            result = process_manager.set_qa_bot_runtime("rust")
+            assert result["success"] is False
+            assert result["runtime"] == "python"
+
+    @patch.dict(os.environ, {"QA_BOT_RUNTIME": "python"})
+    def test_set_runtime_writes_config_and_skips_restart_when_stopped(self):
+        with patch("core.config.runtime.runtime_config") as rc:
+            rc.read.return_value = {}
+            with patch("core.config.update_config_fields") as mock_write:
+                with patch.object(process_manager, "restart_qa_bot") as mock_restart:
+                    result = process_manager.set_qa_bot_runtime("go")
+            assert result["success"] is True
+            mock_write.assert_called_once_with({"qa_bot_runtime": "go"})
+            # 未运行时不触发重启，下次启动自然生效
+            mock_restart.assert_not_called()

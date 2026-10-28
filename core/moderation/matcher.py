@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 _converter = OpenCC("t2s")
 
 
-@lru_cache(maxsize=2048)
+# 上限收紧：key/value 各持有完整原文与归一化串，长文高流量下 2048 项可达数十 MB
+@lru_cache(maxsize=256)
 def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text).casefold()
     return _converter.convert(

@@ -23,7 +23,7 @@ Sakura-Bot is a Telegram channel management tool: AI summaries and polls, messag
 - **Polls**: AI-generated interactive polls with per-channel public/anonymous mode and destination, one-click regeneration
 - **WebUI**: manage channels, schedules, forwarding rules, AI settings, MySQL data, vector stores, and system status from the browser; JWT authentication and instant hot reload on save
 - **Sakura Guard**: opt-in per-group nickname and message rules, contact-card filtering, join verification, `@admin report`, admin review, blacklists/whitelists, and self-service ban appeals
-- **Infrastructure**: multi-channel and multi-admin, Chinese/English interface, hot configuration reload with atomic rollback, graceful shutdown
+- **Infrastructure**: multi-channel and multi-admin, Chinese/English interface, hot configuration reload with atomic rollback, hot switching between assistant bot runtimes, graceful shutdown
 
 See the [command reference](wiki/User-Commands.md) for the full command list and the [user guide](wiki/User-Guide.md) for details on each feature.
 
@@ -36,14 +36,16 @@ Requires **Python 3.13+** or **Docker 20.10+**, plus:
 - An OpenAI-compatible API key (e.g., [DeepSeek](https://platform.deepseek.com/), [OpenAI](https://platform.openai.com/))
 - A MySQL database (MySQL is the only application database; provision it yourself — Compose does not include one)
 
-Docker:
+Docker (recommended, one-command updates):
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
 cp data/.env.example data/.env   # edit .env with your credentials
-docker compose up -d
+bash scripts/deploy.sh           # update source, pull the GHCR image, restart
 ```
+
+The dependency image (Python packages, the Go binary, frontend assets) is built and pushed to GHCR by [GitHub Actions](.github/workflows/docker-build.yml), so servers no longer build locally; application code still loads from the mounted source checkout — future updates are the same `bash scripts/deploy.sh` (Python-only changes just need `git pull` plus a restart). If pulling the image is denied (401/403), make the `sakura-bot` package public in the repository's Packages settings, or run `docker login ghcr.io` once on the server. Forks and source deployments can still `docker compose build && docker compose up -d`.
 
 Local:
 
@@ -59,7 +61,11 @@ python main.py
 
 The first run requires phone-number authentication for Telegram; session files are reused afterwards. For the full configuration reference, enabling the assistant bot / UserBot / WebUI / Sakura Guard, and FAQs, see [Getting Started](wiki/User-Getting-Started.md).
 
-In Docker deployments, sending `/update` to the bot updates the host repository, reinstalls dependencies, rebuilds the WebUI, and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Changes involving system dependencies or the Dockerfile require a host-side `docker compose up -d --build`.
+In Docker deployments, sending `/update` to the bot updates the host repository and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Python-only changes apply immediately; changes involving dependencies, the frontend, or the Go binary make `/update` automatically ask the host deployer (install once with `bash deploy/install-deployer.sh` on the server) to pull the updated dependency image and recreate the container — **no server login needed from then on**. Without the deployer it falls back to in-container self-healing (reinstalling dependencies and rebuilding the WebUI).
+
+### Assistant Bot Runtime
+
+The assistant bot runs the Go implementation by default (`qa-bot-go/`, roughly 1/7 the memory of the Python one); the Python implementation is kept as a fallback. Priority: `config.json` > the `QA_BOT_RUNTIME` environment variable (deployment-level override, see `data/.env.example`) > `go`. Admins can view or switch the runtime with the main-bot `/qa_runtime` command (alias `/qa_运行时`) or with one click on the WebUI "System" page; switching is persisted in `config.json` and restarts the assistant bot immediately (in-progress sessions are interrupted), falling back to Python automatically when the Go binary is missing. See [runtime footprint optimization](wiki/Developer-Runtime-Footprint-Optimization.md).
 
 ## Project Structure
 

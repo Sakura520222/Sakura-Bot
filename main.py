@@ -205,6 +205,37 @@ if __name__ == "__main__":
                     )
                     logger.info("✅ 配置变更事件订阅已配置")
 
+                    # 手工编辑 config.json 切换问答Bot运行时 → 自动按新运行时重启子进程
+                    async def on_qa_runtime_changed(event: ConfigChangedEvent):
+                        """qa_bot_runtime 字段热更新回调
+
+                        幂等：仅当"当前实际运行时 ≠ 配置值"时才重启——
+                        /qa_runtime 与 WebUI 切换路径已完成确定性重启，此处通常无事可做。
+                        """
+                        changed = getattr(event, "changed_fields", None) or set()
+                        if "qa_bot_runtime" not in changed:
+                            return
+                        from core.system.process_manager import (
+                            effective_qa_runtime,
+                            get_qa_bot_status,
+                            restart_qa_bot,
+                        )
+
+                        status = get_qa_bot_status()
+                        if (
+                            status.get("running")
+                            and status.get("runtime") != effective_qa_runtime()
+                        ):
+                            logger.info("检测到 qa_bot_runtime 配置变更，按新运行时重启问答Bot")
+                            restart_qa_bot()
+
+                    await event_bus.subscribe(
+                        ConfigChangedEvent,
+                        on_qa_runtime_changed,
+                        priority=event_bus.PRIORITY_NORMAL,
+                    )
+                    logger.info("✅ 问答Bot运行时热切换订阅已配置")
+
                     # 设置全局配置变量热重载
                     from core.config import setup_config_reload
 

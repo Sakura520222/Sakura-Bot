@@ -8,7 +8,6 @@ import time
 import uuid
 from datetime import timedelta
 
-from telegram.error import BadRequest, NetworkError, RetryAfter
 from telethon import utils
 from telethon.errors import FloodWaitError, UserNotParticipantError
 from telethon.tl.functions.channels import EditBannedRequest, GetParticipantsRequest
@@ -26,6 +25,11 @@ from telethon.tl.types import (
 )
 
 from core.infrastructure.database.mysql import utc_now_naive
+from core.infrastructure.telegram_bot_api import (
+    BadRequestError,
+    NetworkAPIError,
+    RetryAfterError,
+)
 
 from .chat_cleanup import ChatCleanupError
 from .deleted_cleanup_repository import DeletedCleanupRepository
@@ -270,7 +274,7 @@ class DeletedUserCleanup:
                             group["status"] = "partial" if group["error"] else "completed"
                             job["payload"]["group_index"] += 1
                 group.pop("failures", None)
-            except (FloodWaitError, RetryAfter) as error:
+            except (FloodWaitError, RetryAfterError) as error:
                 wait = error.seconds if isinstance(error, FloodWaitError) else error.retry_after
                 seconds = wait.total_seconds() if isinstance(wait, timedelta) else wait
                 job.update(
@@ -464,10 +468,10 @@ class DeletedUserCleanup:
                 if not isinstance(chat, Chat):
                     await self._delete_history(job, item, chat)
                 await store.item(item, "removed", "已移除并清理全部消息")
-        except (FloodWaitError, RetryAfter):
+        except (FloodWaitError, RetryAfterError):
             await store.attempt(item, -1)
             raise
-        except BadRequest as error:
+        except BadRequestError as error:
             reason = str(error).lower().replace(" ", "_")
             if reason in {
                 "participant_id_invalid",
@@ -487,7 +491,7 @@ class DeletedUserCleanup:
                 job["payload"]["groups"][job["payload"]["group_index"]]["error"] = (
                     "部分账号消息清理失败"
                 )
-        except NetworkError as error:
+        except NetworkAPIError as error:
             raise ConnectionError("DeletedHistoryRetry") from error
         except (TimeoutError, ConnectionError, OSError):
             raise

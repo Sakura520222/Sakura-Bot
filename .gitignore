@@ -292,3 +292,8 @@ data/.config.json.last_valid.*.tmp
 data/.config-write-*/
 .codex/
 .codegraph/
+
+# Go 版 QA bot 交叉编译产物（镜像内构建，不入库）
+bin/
+data/.image_update_request
+data/.image_deployer_installed

@@ -5,14 +5,17 @@
 import logging
 from datetime import datetime, timedelta
 
-from telegram import Bot
-from telegram.error import RetryAfter
 from telethon import utils
 from telethon.errors import UserNotParticipantError
 from telethon.tl.types import PeerChat
 
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
+from core.infrastructure.telegram_bot_api import (
+    RetryAfterError,
+    ban_chat_member,
+    bot_id_from_token,
+)
 
 from .telegram import call
 
@@ -105,20 +108,12 @@ class BanHistoryCleanup:
         # MTProto 的 deleteParticipantHistory 仅限用户帐号；复用主 Bot Token 调用 Bot API。
         from core.config import BOT_TOKEN
 
-        async with Bot(BOT_TOKEN) as bot:
-            if bot.id != bot_id:
-                raise BotIdentityMismatch("Main bot identity changed")
-            result = await bot.ban_chat_member(
-                chat_id,
-                user_id,
-                revoke_messages=True,
-                read_timeout=15,
-                write_timeout=10,
-                connect_timeout=10,
-                pool_timeout=5,
-            )
-            if result is not True:
-                raise ValueError("HistoryDeletionUnconfirmed")
+        # bot_id 从 token 前缀解析（与 PTB Bot.id 同源，无网络请求）
+        if bot_id_from_token(BOT_TOKEN) != bot_id:
+            raise BotIdentityMismatch("Main bot identity changed")
+        result = await call(ban_chat_member(BOT_TOKEN, chat_id, user_id, revoke_messages=True))
+        if result is not True:
+            raise ValueError("HistoryDeletionUnconfirmed")
 
     async def resume(self, store, case, *, force=False):
         cleanup = case["payload"].get("ban_message_cleanup")
@@ -195,9 +190,8 @@ class BanHistoryCleanup:
         except Exception as error:
             attempts = cleanup.get("attempts", 0) + 1
             delay = min(900, 30 * 2 ** min(attempts - 1, 5))
-            if isinstance(error, RetryAfter):
-                wait = error.retry_after
-                delay = max(1, wait.total_seconds() if isinstance(wait, timedelta) else wait)
+            if isinstance(error, RetryAfterError):
+                delay = max(1, error.retry_after)
             # 不保存异常原文，防止 HTTP 错误携带包含主 Bot Token 的 URL。
             await self.save(
                 store,

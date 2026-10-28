@@ -1,0 +1,10 @@
+[Unit]
+Description=Sakura-Bot one-command image deploy (pull GHCR image and recreate container)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/Sakura-Bot
+ExecStart=/bin/bash -c 'rm -f data/.image_update_request && bash scripts/deploy.sh >> logs/image-deploy.log 2>&1'
+TimeoutStartSec=900

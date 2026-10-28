@@ -137,6 +137,7 @@ BOT_COMMANDS = [
             ("qa_stop", "停止问答Bot"),
             ("qa_restart", "重启问答Bot"),
             ("qa_stats", "查看问答Bot详细统计"),
+            ("qa_runtime", "查看/切换问答Bot运行时（Go|Python）"),
         ],
     },
     # ========== 9. 偏好设置 ==========

@@ -36,6 +36,9 @@ pydantic-settings>=2.0.0
 # 向量数据库 (v3.0.0)
 chromadb>=0.4.0
 
+# 向量存储内存矩阵运算（lite 后端：SQLite WAL + numpy 暴力余弦）
+numpy>=1.26
+
 # Telegram Bot API (用于QA Bot)
 python-telegram-bot>=20.0
 

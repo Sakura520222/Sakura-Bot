@@ -1,0 +1,9 @@
+[Unit]
+Description=Sakura-Bot image deploy on request (watches the flag written by /update)
+
+[Path]
+PathExists=/root/Sakura-Bot/data/.image_update_request
+Unit=sakura-image-deploy.service
+
+[Install]
+WantedBy=multi-user.target
