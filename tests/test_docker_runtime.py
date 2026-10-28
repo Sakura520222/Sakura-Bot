@@ -29,7 +29,7 @@ def test_fingerprint_tracks_source_but_ignores_generated_files(project):
     before = runtime.dependency_fingerprint("frontend", project)
     for directory in ("node_modules", "dist", ".vite"):
         path = project / "web" / directory
-        path.mkdir()
+        path.mkdir(exist_ok=True)  # dist 可能已由 record_runtime_state 附带创建
         (path / "generated.js").write_text("generated")
     (project / "web/tsconfig.tsbuildinfo").write_text("generated")
     assert runtime.dependency_fingerprint("frontend", project) == before
@@ -54,11 +54,36 @@ def test_mounted_source_restores_matching_image_frontend(project, monkeypatch):
 
 
 def test_restart_reuses_synced_dependencies_and_frontend(project, monkeypatch):
-    (project / "web/dist").mkdir()
+    (project / "web/dist").mkdir(exist_ok=True)
     (project / "web/dist/index.html").write_text("current frontend")
+    # dist 自带指纹且与当前源码一致 → 视为新鲜，直接复用
+    runtime._write_dist_marker(project, runtime.dependency_fingerprint("frontend", project))
     run = Mock()
     monkeypatch.setattr(runtime.subprocess, "run", run)
     runtime.prepare_runtime(project)
+    run.assert_not_called()
+
+
+def test_stale_dist_without_marker_is_replaced_by_image_frontend(project, monkeypatch):
+    """挂载卷里的 dist 是旧源码残留（无指纹/指纹不符）时，不得复用，
+    必须恢复镜像产物——否则 WebUI 永远停在旧前端。"""
+    cache = runtime.RUNTIME_DIR / "web-dist"
+    cache.mkdir()
+    (cache / "index.html").write_text("image frontend")
+    (runtime.RUNTIME_DIR / "image-frontend.sha256").write_text(
+        runtime.dependency_fingerprint("frontend", project)
+    )
+    (project / "web/dist").mkdir(parents=True, exist_ok=True)
+    (project / "web/dist/index.html").write_text("stale frontend")
+    run = Mock()
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+
+    runtime.prepare_runtime(project)
+
+    assert (project / "web/dist/index.html").read_text() == "image frontend"
+    assert runtime._read_dist_marker(project) == runtime.dependency_fingerprint(
+        "frontend", project
+    )
     run.assert_not_called()
 
 
