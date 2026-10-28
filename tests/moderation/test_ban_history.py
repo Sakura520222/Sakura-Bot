@@ -212,9 +212,7 @@ async def test_bot_api_adapter_revokes_all_messages_and_checks_bot_identity(
 
     calls = []
 
-    async def fake_ban_chat_member(
-        token, chat_id, user_id, *, revoke_messages=False, timeout=None
-    ):
+    async def fake_ban_chat_member(token, chat_id, user_id, *, revoke_messages=False, timeout=None):
         calls.append((token, chat_id, user_id, revoke_messages))
         return answer
 
