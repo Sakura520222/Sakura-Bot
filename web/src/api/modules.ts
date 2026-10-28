@@ -212,6 +212,23 @@ export async function deleteForwardingRule(index: number) {
 
 // ==================== 系统运维 ====================
 
+export type QaBotRuntime = "go" | "python";
+
+export interface QaBotStatus {
+  running: boolean;
+  pid: number | null;
+  uptime_seconds?: number | null;
+  enabled: boolean;
+  token_configured: boolean;
+  runtime: string;
+  configured_runtime: string;
+}
+
+export interface QaBotRuntimeChangeResult {
+  runtime: string;
+  restart: boolean;
+}
+
 export interface BotStatus {
   status: string;
   version: string;
@@ -221,7 +238,7 @@ export interface BotStatus {
   qa_bot_running: boolean;
   userbot_connected: boolean;
   uptime_seconds?: number;
-  qa_bot?: Record<string, unknown>;
+  qa_bot?: QaBotStatus;
   database?: Record<string, unknown>;
   cache?: Record<string, unknown>;
   logs?: Record<string, unknown>;
@@ -297,6 +314,11 @@ export async function restartQABot() {
 
 export async function checkQABotHealth() {
   const res = await apiClient.post("/system/qa-bot/health");
+  return res.data;
+}
+
+export async function setQaBotRuntime(runtime: QaBotRuntime) {
+  const res = await apiClient.post<ApiResponse<QaBotRuntimeChangeResult>>("/system/qa-bot/runtime", { runtime });
   return res.data;
 }
 

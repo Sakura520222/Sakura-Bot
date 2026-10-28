@@ -23,7 +23,7 @@ Sakura-Bot 是一个 Telegram 频道管理工具：用 AI 总结频道内容、�
 - **投票**：AI 根据频道内容生成互动投票，按频道配置公开/匿名模式和发送位置，支持一键重新生成
 - **WebUI**：浏览器中管理频道、调度、转发规则、AI 配置、MySQL 数据、向量库和系统状态，JWT 认证，保存配置即时热重载
 - **Sakura Guard**：按群启用昵称与消息规则、联系人卡片过滤、入群验证、`@admin 举报`、管理员审核、黑白名单和自助封禁申诉
-- **基础设施**：多频道多管理员、中英双语界面、配置热重载与原子回滚、优雅关闭
+- **基础设施**：多频道多管理员、中英双语界面、配置热重载与原子回滚、问答 Bot 双运行时热切换、优雅关闭
 
 完整命令列表见[命令参考](wiki/User-Commands.md)，各功能的使用细节见[用户文档](wiki/User-Guide.md)。
 
@@ -60,6 +60,10 @@ python main.py
 首次运行需要输入手机号和验证码完成 Telegram 登录，之后会话文件会自动复用。各配置项说明、问答 Bot / UserBot / WebUI / Sakura Guard 的启用方式和常见问题，见[快速开始](wiki/User-Getting-Started.md)。
 
 Docker 部署中，向 Bot 发送 `/update` 会更新宿主机仓库、重装依赖、重建 WebUI 并重启；更新使用快进合并、保留本地配置，遇到冲突会停止并提示。涉及系统依赖或 Dockerfile 的变更需在宿主机执行 `docker compose up -d --build`。
+
+### 问答 Bot 运行时
+
+问答 Bot 默认使用 Python 实现，可选资源占用更低的 Go 实现（`qa-bot-go/`）。生效优先级为 `config.json` > 环境变量 `QA_BOT_RUNTIME`（部署级默认值，见 `data/.env.example`）> `python`。管理员可用主 Bot 命令 `/qa_runtime`（别名 `/qa_运行时`）查看或切换运行时，也可在 WebUI「系统」页一键切换；切换会写入 `config.json` 持久化并立即重启问答 Bot（进行中的问答会话会中断），Go 二进制缺失时自动回退 Python。详见[运行时占用优化](wiki/Developer-Runtime-Footprint-Optimization.md)。
 
 ## 目录结构
 

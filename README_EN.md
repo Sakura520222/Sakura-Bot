@@ -23,7 +23,7 @@ Sakura-Bot is a Telegram channel management tool: AI summaries and polls, messag
 - **Polls**: AI-generated interactive polls with per-channel public/anonymous mode and destination, one-click regeneration
 - **WebUI**: manage channels, schedules, forwarding rules, AI settings, MySQL data, vector stores, and system status from the browser; JWT authentication and instant hot reload on save
 - **Sakura Guard**: opt-in per-group nickname and message rules, contact-card filtering, join verification, `@admin report`, admin review, blacklists/whitelists, and self-service ban appeals
-- **Infrastructure**: multi-channel and multi-admin, Chinese/English interface, hot configuration reload with atomic rollback, graceful shutdown
+- **Infrastructure**: multi-channel and multi-admin, Chinese/English interface, hot configuration reload with atomic rollback, hot switching between assistant bot runtimes, graceful shutdown
 
 See the [command reference](wiki/User-Commands.md) for the full command list and the [user guide](wiki/User-Guide.md) for details on each feature.
 
@@ -60,6 +60,10 @@ python main.py
 The first run requires phone-number authentication for Telegram; session files are reused afterwards. For the full configuration reference, enabling the assistant bot / UserBot / WebUI / Sakura Guard, and FAQs, see [Getting Started](wiki/User-Getting-Started.md).
 
 In Docker deployments, sending `/update` to the bot updates the host repository, reinstalls dependencies, rebuilds the WebUI, and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Changes involving system dependencies or the Dockerfile require a host-side `docker compose up -d --build`.
+
+### Assistant Bot Runtime
+
+The assistant bot runs a Python implementation by default, with a lighter Go implementation (`qa-bot-go/`) available. Priority: `config.json` > the `QA_BOT_RUNTIME` environment variable (deployment-level default, see `data/.env.example`) > `python`. Admins can view or switch the runtime with the main-bot `/qa_runtime` command (alias `/qa_运行时`) or with one click on the WebUI "System" page; switching is persisted in `config.json` and restarts the assistant bot immediately (in-progress sessions are interrupted), falling back to Python automatically when the Go binary is missing. See [runtime footprint optimization](wiki/Developer-Runtime-Footprint-Optimization.md).
 
 ## Project Structure
 

@@ -18,6 +18,12 @@
           <n-card>
             <n-statistic label="QA Bot" :value="qaBotRunning ? '运行中' : '未运行'" />
             <n-text depth="3">PID {{ qaBotPid || "-" }}</n-text>
+            <div v-if="botStatus.qa_bot" class="qa-runtime-line">
+              <n-text :type="runtimeMismatch ? 'warning' : 'default'" :depth="runtimeMismatch ? undefined : 3">
+                运行时: {{ runtimeLabels[qaConfiguredRuntime] }}（实际运行 {{ runtimeLabels[qaActualRuntime] }}）
+              </n-text>
+              <n-text v-if="runtimeMismatch" type="warning">配置已切换，重启后生效</n-text>
+            </div>
           </n-card>
         </n-gi>
         <n-gi span="0:2 760:1">
@@ -93,6 +99,38 @@
                 >
                   重启 QA Bot
                 </n-button>
+              </n-space>
+
+              <n-divider />
+
+              <n-space align="center">
+                <n-text depth="2">问答 Bot 运行时</n-text>
+                <n-popconfirm @positive-click="switchQaRuntime('go')">
+                  <template #trigger>
+                    <n-button
+                      secondary
+                      :type="qaConfiguredRuntime === 'go' ? 'primary' : 'default'"
+                      :disabled="qaConfiguredRuntime === 'go' || runtimeSwitching !== null"
+                      :loading="runtimeSwitching === 'go'"
+                    >
+                      Go
+                    </n-button>
+                  </template>
+                  确认切换到 Go？切换会重启问答Bot，进行中的问答会话将被中断。
+                </n-popconfirm>
+                <n-popconfirm @positive-click="switchQaRuntime('python')">
+                  <template #trigger>
+                    <n-button
+                      secondary
+                      :type="qaConfiguredRuntime === 'python' ? 'primary' : 'default'"
+                      :disabled="qaConfiguredRuntime === 'python' || runtimeSwitching !== null"
+                      :loading="runtimeSwitching === 'python'"
+                    >
+                      Python
+                    </n-button>
+                  </template>
+                  确认切换到 Python？切换会重启问答Bot，进行中的问答会话将被中断。
+                </n-popconfirm>
               </n-space>
             </n-space>
           </n-card>
@@ -281,6 +319,7 @@ import { useDialog, useMessage } from "naive-ui";
 import {
   type AuditLogItem,
   type BotStatus,
+  type QaBotRuntime,
   checkQABotHealth,
   clearDatabaseAndRestart,
   cleanupAuditLogs,
@@ -297,6 +336,7 @@ import {
   restartBot,
   restartQABot,
   resumeBot,
+  setQaBotRuntime,
   startQABot,
   stopQABot,
 } from "@/api/modules";
@@ -391,7 +431,17 @@ const statusMap: Record<string, "success" | "warning" | "error" | "default"> = {
 const statusLabel = computed(() => statusLabels[botStatus.status] || botStatus.status);
 const statusTagType = computed(() => statusMap[botStatus.status] || "default");
 const qaBotRunning = computed(() => Boolean(botStatus.qa_bot_running || botStatus.qa_bot?.running));
-const qaBotPid = computed(() => (botStatus.qa_bot?.pid as number | undefined) || null);
+const qaBotPid = computed(() => botStatus.qa_bot?.pid ?? null);
+
+const runtimeLabels: Record<string, string> = { go: "Go", python: "Python" };
+const runtimeSwitching = ref<QaBotRuntime | null>(null);
+const qaConfiguredRuntime = computed<QaBotRuntime>(() =>
+  botStatus.qa_bot?.configured_runtime === "go" ? "go" : "python"
+);
+const qaActualRuntime = computed<QaBotRuntime>(() =>
+  botStatus.qa_bot?.runtime === "go" ? "go" : "python"
+);
+const runtimeMismatch = computed(() => qaConfiguredRuntime.value !== qaActualRuntime.value);
 const cacheSize = computed(() => Number(cacheInfo.value.size ?? botStatus.cache?.size ?? 0));
 const databaseAvailable = computed(() =>
   Boolean(databaseInfo.value.available ?? botStatus.database?.available)
@@ -516,6 +566,23 @@ async function runAction(
   }
 }
 
+async function switchQaRuntime(runtime: QaBotRuntime) {
+  runtimeSwitching.value = runtime;
+  try {
+    const res = await setQaBotRuntime(runtime);
+    if (res.success) {
+      message.success(res.message || `已切换问答 Bot 运行时到 ${runtimeLabels[runtime]}`);
+      await refreshAll();
+    } else {
+      message.error(res.message || "切换失败");
+    }
+  } catch {
+    message.error("切换请求失败");
+  } finally {
+    runtimeSwitching.value = null;
+  }
+}
+
 function showResult(res: { success: boolean; message?: string }) {
   const text = res.message || (res.success ? "操作成功" : "操作失败");
   if (res.success) {
@@ -537,6 +604,14 @@ onMounted(refreshAll);
 
 .section-grid {
   margin-top: 16px;
+}
+
+.qa-runtime-line {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .compact-control {

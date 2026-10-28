@@ -64,6 +64,27 @@
 
 ---
 
+## 🔀 双运行时（Go / Python）
+
+自 2026-10 起，问答 Bot 支持 Python 与 Go 两种运行时实现：
+
+- **Python 版**（`qa_bot.py`）：本文档描述的原始实现，保留作为回退；
+- **Go 版**（`qa-bot-go/`）：行为逐条对齐 Python 版的 Go 实现，进程内存占用从约 137MB 降至约 20MB。
+
+查看与切换（管理员专用）：
+
+| 方式 | 入口 |
+|------|------|
+| 主 Bot 命令 | `/qa_runtime`（别名 `/qa_运行时`）查看当前运行时；`/qa_runtime go\|python` 切换 |
+| WebUI | 「系统」页一键切换（`POST /api/system/qa-bot/runtime`） |
+| 部署级默认值 | 环境变量 `QA_BOT_RUNTIME=go\|python`（`data/.env`） |
+
+优先级：`config.json` > `QA_BOT_RUNTIME` 环境变量 > `python`。切换会写入 `config.json` 持久化并立即重启问答 Bot（进行中的问答会话将被中断）；Go 二进制缺失时自动回退 Python 并告警。
+
+Go 版与 Python 版的行为对齐方式及已知的有意差异（如配额非原子语义、float32 舍入等），见 [运行时占用优化](Developer-Runtime-Footprint-Optimization.md)。
+
+---
+
 ## 📦 新增文件
 
 ### 核心模块
