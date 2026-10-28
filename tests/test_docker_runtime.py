@@ -75,15 +75,16 @@ def test_stale_dist_without_marker_is_replaced_by_image_frontend(project, monkey
     )
     (project / "web/dist").mkdir(parents=True, exist_ok=True)
     (project / "web/dist/index.html").write_text("stale frontend")
+    # 旧代码构建的 dist 没有指纹文件；fixture 写入的那份模拟"新世界"产物，
+    # 这里删掉以还原生产现场（无指纹 → 不可信）。
+    runtime._dist_marker_path(project).unlink()
     run = Mock()
     monkeypatch.setattr(runtime.subprocess, "run", run)
 
     runtime.prepare_runtime(project)
 
     assert (project / "web/dist/index.html").read_text() == "image frontend"
-    assert runtime._read_dist_marker(project) == runtime.dependency_fingerprint(
-        "frontend", project
-    )
+    assert runtime._read_dist_marker(project) == runtime.dependency_fingerprint("frontend", project)
     run.assert_not_called()
 
 
