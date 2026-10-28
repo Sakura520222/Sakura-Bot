@@ -35,9 +35,15 @@ echo "环境变量检查完成"
 
 # /app 可由宿主机源码覆盖；重建容器后同步新增依赖并恢复前端产物。
 # 自定义诊断命令（例如 python --version）无需安装依赖或构建前端。
+# prepare 脚本优先用挂载的 /app 副本：镜像内置副本不会随源码更新，
+# 否则 prepare 的行为（如前端产物指纹核对）会永远停留在构建镜像时的版本。
 if [[ "${1:-}" == "python" || "${1:-}" == "python3" ]] && \
    [[ "${2:-}" == "main.py" || "${2:-}" == "qa_bot.py" ]]; then
-    python /usr/local/bin/sakura-docker-runtime.py prepare
+    RUNTIME_SCRIPT=/usr/local/bin/sakura-docker-runtime.py
+    if [ -f /app/core/docker_runtime.py ]; then
+        RUNTIME_SCRIPT=/app/core/docker_runtime.py
+    fi
+    python "$RUNTIME_SCRIPT" prepare
 fi
 
 # 检查并创建必要的文件
