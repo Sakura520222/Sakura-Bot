@@ -266,6 +266,32 @@ async def git_pull_latest():
         return False, str(e)
 
 
+async def pull_with_changed_paths() -> tuple[bool, str, list[str]]:
+    """快进更新并返回本次变更的文件相对路径列表（供镜像层变更检测）。
+
+    Returns:
+        (success, message, changed)：changed 为空表示无可检测变更
+        （更新失败、仓库异常或本就是最新）。
+    """
+    try:
+        before = await asyncio.to_thread(lambda: _run_git("rev-parse", "HEAD").stdout.strip())
+    except Exception:
+        before = ""
+
+    success, message = await git_pull_latest()
+    if not success or not before:
+        return success, message, []
+
+    def _changed() -> list[str]:
+        result = _run_git("diff", "--name-only", before, "HEAD", check=False)
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    try:
+        return success, message, await asyncio.to_thread(_changed)
+    except Exception:
+        return success, message, []
+
+
 async def install_dependencies():
     """在当前虚拟环境中安装依赖"""
 

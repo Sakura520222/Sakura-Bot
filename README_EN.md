@@ -61,7 +61,7 @@ python main.py
 
 The first run requires phone-number authentication for Telegram; session files are reused afterwards. For the full configuration reference, enabling the assistant bot / UserBot / WebUI / Sakura Guard, and FAQs, see [Getting Started](wiki/User-Getting-Started.md).
 
-In Docker deployments, sending `/update` to the bot updates the host repository, reinstalls dependencies, rebuilds the WebUI, and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Python-only changes apply immediately; changes involving dependencies, the frontend, or the Go binary require a host-side `bash scripts/deploy.sh` to pull the updated dependency image.
+In Docker deployments, sending `/update` to the bot updates the host repository and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Python-only changes apply immediately; changes involving dependencies, the frontend, or the Go binary make `/update` automatically ask the host deployer (install once with `bash deploy/install-deployer.sh` on the server) to pull the updated dependency image and recreate the container — **no server login needed from then on**. Without the deployer it falls back to in-container self-healing (reinstalling dependencies and rebuilding the WebUI).
 
 ### Assistant Bot Runtime
 

@@ -61,7 +61,7 @@ python main.py
 
 首次运行需要输入手机号和验证码完成 Telegram 登录，之后会话文件会自动复用。各配置项说明、问答 Bot / UserBot / WebUI / Sakura Guard 的启用方式和常见问题，见[快速开始](wiki/User-Getting-Started.md)。
 
-Docker 部署中，向 Bot 发送 `/update` 会更新宿主机仓库、重装依赖、重建 WebUI 并重启；更新使用快进合并、保留本地配置，遇到冲突会停止并提示。纯 Python 源码改动即时生效；涉及依赖、前端或 Go 二进制的变更，在宿主机执行 `bash scripts/deploy.sh` 拉取新依赖镜像即可。
+Docker 部署中，向 Bot 发送 `/update` 会更新宿主机仓库并重启；更新使用快进合并、保留本地配置，遇到冲突会停止并提示。纯 Python 源码改动即时生效；涉及依赖、前端或 Go 二进制的变更，`/update` 会自动请求宿主机部署器（在服务器上执行一次 `bash deploy/install-deployer.sh` 安装）拉取新依赖镜像并重建容器——**全程无需登录服务器**。未安装部署器时退回容器内自愈路径（重装依赖、重建 WebUI）。
 
 ### 问答 Bot 运行时
 

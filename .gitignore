@@ -295,3 +295,5 @@ data/.config-write-*/
 
 # Go 版 QA bot 交叉编译产物（镜像内构建，不入库）
 bin/
+data/.image_update_request
+data/.image_deployer_installed
