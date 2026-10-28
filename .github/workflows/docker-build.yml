@@ -7,7 +7,10 @@ name: docker-build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # 审阅期临时触发：为 PR 分支产出可拉取的测试镜像（合并后可移除）
+      - feature/resource-optimization
     tags: ["v*"]
   workflow_dispatch:
 
