@@ -13,6 +13,25 @@
 
 ---
 
+## [2.2.0] - 2026-10-28
+
+### 新增
+
+- **问答 Bot Go 实现（`qa-bot-go/`）**：QA 子进程整体移植为 Go 静态二进制（依赖白名单 `go-telegram/bot` + `go-sql-driver/mysql` + `modernc.org/sqlite`，其余全标准库），行为与 Python 版逐条对齐（串行分发、流式编辑节流 80 字符/1.5 秒、配额与申诉状态机 SQL 逐字移植、GET_LOCK 同连接语义、双语文案与日志格式逐字一致），实测稳态约 17-20MB（Python 版约 137MB+37MB swap）；`QA_BOT_RUNTIME` 缺省为 `go`，二进制缺失自动回退 Python。
+- **运行时热切换**：管理员命令 `/qa_runtime go|python`（别名 `/qa_运行时`，不带参数查看）与 WebUI「系统」页一键切换，写入 `config.json` 持久化并立即重启问答 Bot；手工编辑 `config.json` 亦自动生效（幂等）。`/qa_status` 增列当前与实际运行时。
+- **GitHub Actions 镜像构建**：`.github/workflows/docker-build.yml` 构建依赖镜像（Python 依赖 + Go 二进制 + 前端产物）推送 GHCR，服务器免本地构建；源码仍整体挂载、更新走 git。
+- **一键部署与全自动更新**：`scripts/deploy.sh`（git 快进 + 拉镜像 + 重建）；`/update` 检测到镜像层变更（Go 源码/Dockerfile/依赖/前端/构建工作流）时自动请求宿主机部署器（`deploy/install-deployer.sh` 一次性安装的 systemd 单元）拉取新镜像并重建容器，全程无需登录服务器；未装部署器时优雅退回容器内自愈路径。
+
+### 改进
+
+- **运行时占用**：生产实测容器总占用 339MB+60MB swap → 约 162MB+0 swap（-52%）。主进程去掉 python-telegram-bot 依赖（httpx 直调 Bot API 客户端替代，约 -10MB）；向量库由进程内 ChromaDB 替换为 SQLite(WAL)+numpy 暴力余弦轻量后端（`VECTOR_BACKEND=chroma|lite`，接口逐字段兼容，WebUI 零改动，两进程合计 -24~32MB）。
+- 向量库替换顺带修复既有缺陷：日期过滤遇 naive 时区字符串由「整体返回空」改为按 UTC 归一化命中；过滤由「超采 top_k×3」改为全量精确过滤。
+- 停机窗口迁移脚本（`scripts/migrate_vectors_to_sqlite.py`，行数/维度/抽样余弦三重校验、WAL 伴生文件防护、幂等标记）与反向回填脚本（`scripts/backfill_sqlite_to_chroma.py`）保障任意时点回滚。
+- 修复 LLM SSE 客户端空闲超时在取消未挂载请求上下文时永不生效的问题（Go 版）；matcher 规则缓存上限 2048→256 收紧长文内存上界；`MALLOC_ARENA_MAX=2` 抑制 glibc 碎片。
+- 测试基线 1625 → 1656 通过（向量契约 33 例、运行时解析与切换 29 例、镜像更新请求 8 例等新增）。
+
+---
+
 ## [2.1.1] - 2026-10-20
 
 ### 新增
