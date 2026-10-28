@@ -1,7 +1,9 @@
 services:
   sakura-summary-bot:
-    # 官方镜像由 GitHub Actions 构建推送（.github/workflows/docker-build.yml）；
-    # 保留 build 以便 fork / 本地源码部署：docker compose build && docker compose up -d
+    # 依赖镜像（Python 依赖 + Go 二进制 + 前端产物）由 GitHub Actions 构建推送
+    # （.github/workflows/docker-build.yml），服务器免本地构建；
+    # 源码仍整体挂载，代码更新走 git pull / /update 命令。
+    # fork / 本地源码部署：docker compose build && docker compose up -d
     image: ghcr.io/sakura520222/sakura-bot:main
     build: .
     container_name: sakura-bot
@@ -14,9 +16,10 @@ services:
     env_file:
       - data/.env
     volumes:
-      # 镜像内已含全部代码与依赖；宿主机只持久化数据与日志
+      # 挂载源码及 .git，支持 /update；依赖与前端产物由镜像提供
+      - .:/app
+      # 持久化整个 data 目录 - 避免单文件挂载错误
       - ./data:/app/data
-      - ./logs:/app/logs
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

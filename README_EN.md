@@ -42,10 +42,10 @@ Docker (recommended, one-command updates):
 git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
 cp data/.env.example data/.env   # edit .env with your credentials
-bash scripts/deploy.sh           # pull the GHCR image and start
+bash scripts/deploy.sh           # update source, pull the GHCR image, restart
 ```
 
-Images are built and pushed to GHCR by [GitHub Actions](.github/workflows/docker-build.yml), so servers no longer build locally; future updates are the same `bash scripts/deploy.sh`. If pulling the image is denied (401/403), make the `sakura-bot` package public in the repository's Packages settings, or run `docker login ghcr.io` once on the server. Forks and source deployments can still `docker compose build && docker compose up -d`.
+The dependency image (Python packages, the Go binary, frontend assets) is built and pushed to GHCR by [GitHub Actions](.github/workflows/docker-build.yml), so servers no longer build locally; application code still loads from the mounted source checkout — future updates are the same `bash scripts/deploy.sh` (Python-only changes just need `git pull` plus a restart). If pulling the image is denied (401/403), make the `sakura-bot` package public in the repository's Packages settings, or run `docker login ghcr.io` once on the server. Forks and source deployments can still `docker compose build && docker compose up -d`.
 
 Local:
 
@@ -61,7 +61,7 @@ python main.py
 
 The first run requires phone-number authentication for Telegram; session files are reused afterwards. For the full configuration reference, enabling the assistant bot / UserBot / WebUI / Sakura Guard, and FAQs, see [Getting Started](wiki/User-Getting-Started.md).
 
-In image-based Docker deployments the host repository is no longer mounted into the container (code ships with the image); the `/update` flow is replaced by `bash scripts/deploy.sh`: pull the latest image and restart, while local `data/` settings and data are preserved. Changes that support hot reload still apply instantly without deploying.
+In Docker deployments, sending `/update` to the bot updates the host repository, reinstalls dependencies, rebuilds the WebUI, and restarts. Updates use fast-forward merges and preserve local settings; they stop and ask for input on conflicts. Python-only changes apply immediately; changes involving dependencies, the frontend, or the Go binary require a host-side `bash scripts/deploy.sh` to pull the updated dependency image.
 
 ### Assistant Bot Runtime
 

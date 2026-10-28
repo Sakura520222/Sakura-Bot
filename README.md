@@ -42,10 +42,10 @@ Docker 部署（推荐，一条命令更新）：
 git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
 cp data/.env.example data/.env   # 编辑 .env，填入上述配置
-bash scripts/deploy.sh           # 拉取 GHCR 镜像并启动
+bash scripts/deploy.sh           # 更新源码 + 拉取 GHCR 依赖镜像并启动
 ```
 
-镜像由 [GitHub Actions](.github/workflows/docker-build.yml) 构建并推送到 GHCR，服务器不再本地构建；后续更新同样只需 `bash scripts/deploy.sh`。若镜像拉取被拒（401/403），到 GitHub 仓库 Packages 设置将 `sakura-bot` 包改为 public，或在服务器执行一次 `docker login ghcr.io`。fork 或源码部署仍可 `docker compose build && docker compose up -d`。
+依赖镜像（Python 依赖、Go 二进制、前端产物）由 [GitHub Actions](.github/workflows/docker-build.yml) 构建并推送到 GHCR，服务器不再本地构建；业务代码仍从挂载的源码加载，日常更新同样只需 `bash scripts/deploy.sh`（纯 Python 改动甚至只需 `git pull` 后重启）。若镜像拉取被拒（401/403），到 GitHub 仓库 Packages 设置将 `sakura-bot` 包改为 public，或在服务器执行一次 `docker login ghcr.io`。fork 或源码部署仍可 `docker compose build && docker compose up -d`。
 
 本地运行：
 
@@ -61,7 +61,7 @@ python main.py
 
 首次运行需要输入手机号和验证码完成 Telegram 登录，之后会话文件会自动复用。各配置项说明、问答 Bot / UserBot / WebUI / Sakura Guard 的启用方式和常见问题，见[快速开始](wiki/User-Getting-Started.md)。
 
-Docker 镜像部署下，宿主机仓库不再挂载进容器（代码随镜像分发），`/update` 更新流程由 `bash scripts/deploy.sh` 取代：拉取最新镜像并重启，本地 `data/` 配置与数据不受影响。涉及配置热重载的改动仍即时生效，无需部署。
+Docker 部署中，向 Bot 发送 `/update` 会更新宿主机仓库、重装依赖、重建 WebUI 并重启；更新使用快进合并、保留本地配置，遇到冲突会停止并提示。纯 Python 源码改动即时生效；涉及依赖、前端或 Go 二进制的变更，在宿主机执行 `bash scripts/deploy.sh` 拉取新依赖镜像即可。
 
 ### 问答 Bot 运行时
 
