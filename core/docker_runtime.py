@@ -59,6 +59,25 @@ def record_runtime_state(kind: str, root: Path = Path(".")) -> None:
         (RUNTIME_DIR / f"{kind}.sha256").write_text(
             dependency_fingerprint(kind, root), encoding="ascii"
         )
+        if kind == "frontend":
+            # 指纹随 dist 一起落盘：挂载卷里的 dist 可能来自任意历史构建，
+            # 只有 dist 自带的指纹才能证明"这份产物对应当前源码"。
+            _write_dist_marker(root, dependency_fingerprint("frontend", root))
+
+
+def _dist_marker_path(root: Path) -> Path:
+    return root / "web" / "dist" / ".build-fingerprint"
+
+
+def _read_dist_marker(root: Path) -> str:
+    path = _dist_marker_path(root)
+    return path.read_text(encoding="ascii").strip() if path.is_file() else ""
+
+
+def _write_dist_marker(root: Path, fingerprint: str) -> None:
+    path = _dist_marker_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(fingerprint, encoding="ascii")
 
 
 def _read_marker(name: str) -> str:
@@ -81,13 +100,17 @@ def prepare_runtime(root: Path = Path(".")) -> None:
         return
 
     fingerprint = dependency_fingerprint("frontend", root)
-    if (root / "web/dist/index.html").is_file() and fingerprint == _read_marker("frontend"):
+    # 早退必须核对 dist 自带指纹：dist 存在 + 源码指纹匹配不足以证明产物
+    # 新鲜——挂载卷里的 dist 可能是旧源码的构建残留（这正是它遮蔽镜像
+    # 新产物导致 WebUI 停在旧版的原因）。
+    if (root / "web/dist/index.html").is_file() and _read_dist_marker(root) == fingerprint:
         return
 
     cache = RUNTIME_DIR / "web-dist"
     if fingerprint == _read_marker("image-frontend") and (cache / "index.html").is_file():
         print("恢复镜像中的 WebUI 构建产物...", flush=True)
         shutil.copytree(cache, root / "web/dist", dirs_exist_ok=True)
+        _write_dist_marker(root, fingerprint)
     else:
         print("构建挂载源码的 WebUI...", flush=True)
         npm = shutil.which("npm") or "npm"
@@ -97,6 +120,7 @@ def prepare_runtime(root: Path = Path(".")) -> None:
             install_args.append("--package-lock=false")
         subprocess.run(install_args, cwd=root / "web", check=True)
         subprocess.run([npm, "run", "build"], cwd=root / "web", check=True)
+        _write_dist_marker(root, fingerprint)
     record_runtime_state("frontend", root)
 
 
