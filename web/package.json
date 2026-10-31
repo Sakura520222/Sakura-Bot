@@ -1,6 +1,6 @@
 {
   "name": "sakura-bot-webui",
-  "version": "2.1.1",
+  "version": "2.2.1",
   "private": true,
   "type": "module",
   "scripts": {
