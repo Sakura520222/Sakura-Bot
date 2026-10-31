@@ -95,6 +95,11 @@ The image builds the frontend and bundles it with the Python backend. Compose lo
 - Realtime RAG listeners enqueue whitelisted new/edited Telegram messages for batched embedding and ChromaDB writes via `core/handlers/realtime_rag_handler.py`; deletion events remove message vectors. This is distinct from summary-vector persistence.
 - The frontend calls typed API wrappers in `web/src/api/modules.ts` through the Axios client in `web/src/api/client.ts` (`/api` base URL and Bearer-token handling). Backend routes/schemas are in `core/web_api/`. `create_app()` serves `web/dist/` with SPA fallback when the build exists. Frontend route guards are in `web/src/router/index.ts`; backend authentication is enforced separately by middleware.
 
+### Versioning and releases
+
+- **The authoritative version number is `__version__` in `core/__init__.py`.** `.github/workflows/release-on-pr-merge.yml` reads it on every PR merge to `main`, then creates/updates the Release and tag `v<version>` from that value. Bumping only `web/package.json` will NOT produce a new release — the workflow keeps appending to the existing `v<version>` Release.
+- When changing the version, update all of: `core/__init__.py` (authoritative, drives releases), `web/package.json` + `web/package-lock.json` (both `version` fields; WebUI footer displays it), and add a `CHANGELOG.md` entry under `## [<version>] - <date>`.
+
 ### Configuration and persistence
 
 There are two configuration layers, not one interchangeable settings object:
