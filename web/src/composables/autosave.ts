@@ -14,7 +14,11 @@ const copy = <V>(value: V): V => JSON.parse(JSON.stringify(value));
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
 export function saveError(error: unknown): string {
-  const value = error as { response?: { data?: { detail?: unknown } }; message?: string };
+  const value = error as {
+    response?: { data?: { detail?: unknown }; status?: number };
+    code?: string;
+    message?: string;
+  };
   const detail = value.response?.data?.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -22,7 +26,25 @@ export function saveError(error: unknown): string {
     return reason.includes("regex") ? "正则表达式无效，请修正后自动保存" : reason;
   }
   if (detail && typeof detail === "object" && "message" in detail) return String(detail.message);
-  return value.message || "保存失败，请检查网络后重试";
+  // Axios 的 message 是英文框架文案（如 "Request failed with status code 500"），
+  // 直接透传会破坏全中文界面。这里改为按 HTTP 状态码映射中文短句；
+  // 后端 detail 缺失时不再透出 value.message，一律走中文兜底。
+  const status = value.response?.status;
+  if (status === 400) return "请求无效，请检查输入后重试";
+  if (status === 401) return "登录已过期，请重新登录";
+  if (status === 403) return "没有权限执行此操作";
+  if (status === 404) return "服务接口不存在，请刷新页面重试";
+  if (status === 413) return "数据超出大小限制，请精简后重试";
+  if (status === 422) return "设置值无效，请检查输入";
+  if (status === 429) return "操作过于频繁，请稍后重试";
+  if (status !== undefined) {
+    if (status >= 500) return "服务器暂时不可用，请稍后重试";
+    return `保存失败（HTTP ${status}），请稍后重试`;
+  }
+  // 没有 response 说明请求未到达服务端：断网、超时或请求被取消。
+  if (value.code === "ECONNABORTED") return "请求超时，请检查网络后重试";
+  if (value.code === "ERR_CANCELED") return "请求已取消";
+  return "网络连接失败，请检查网络后重试";
 }
 
 /** One request at a time; acknowledgements never replace a newer local edit. */
