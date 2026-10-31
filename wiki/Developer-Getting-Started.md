@@ -5,7 +5,7 @@
 > **分类**: 开发者文档  
 > **类型**: 教程  
 > **难度**: ⭐  
-> **更新时间**: 2026-05-02
+> **更新时间**: 2026-10-31
 
 [← 返回开发者文档](Developer-Guide.md) | [Wiki 首页](Home.md)
 
@@ -13,10 +13,11 @@
 
 ## 📋 环境要求
 
-- **Python 3.11+**（推荐 3.13）
+- **Python 3.13+**（Docker 与 CI 均使用 3.13）
 - **Git**
 - **MySQL**（必需，项目当前仅支持 MySQL）
 - **Node.js 20+ / npm**（可选，用于 WebUI 前端开发与构建）
+- **Go 1.27+**（可选，仅修改问答 Bot Go 版 `qa-bot-go/` 时需要）
 - **Docker**（可选，用于容器化测试）
 
 ---
@@ -52,11 +53,8 @@ source venv/bin/activate
 ### 步骤 2：安装依赖
 
 ```bash
-# 安装项目依赖
+# 安装项目依赖（含 pytest/ruff 等开发工具，无单独的开发依赖文件）
 pip install -r requirements.txt
-
-# 安装开发依赖
-pip install -r requirements-dev.txt  # 如果存在
 ```
 
 ### 步骤 2.1：安装 WebUI 前端依赖（可选）
@@ -123,11 +121,13 @@ pytest tests/test_ai_client.py
 
 ### 查看覆盖率
 
+`pytest.ini` 已默认启用覆盖率收集，直接运行 `pytest` 即可生成报告：
+
 ```bash
 pytest --cov=core --cov-report=html
 ```
 
-覆盖率目标：**≥ 90%**
+报告输出到 `htmlcov/` 与 `coverage.xml`。覆盖率目标与当前进展见[技术债务追踪](Developer-Technical-Debt.md)。
 
 ---
 
@@ -136,18 +136,17 @@ pytest --cov=core --cov-report=html
 ### 使用 Ruff 脚本
 
 ```bash
-# 检查代码
+# 完整模式：检查 → 自动修复 → 格式化
 python run_ruff.py
 
-# 自动修复
-python run_ruff.py --fix
+# 只检查，不修改文件
+python run_ruff.py --check
 
-# 格式化代码
-python run_ruff.py --format
-
-# 一键完成
-python run_ruff.py --all
+# 检查指定目录
+python run_ruff.py --check core/
 ```
+
+脚本会将日志写入 `logs/`；需要以退出码判断结果时（如 CI），请直接使用下方 Ruff 命令。
 
 ### 直接使用 Ruff
 
@@ -174,24 +173,35 @@ ruff format .
 python main.py
 ```
 
+主 Bot 会按配置自动管理问答 Bot 子进程。
+
 ### 运行问答 Bot
 
+v2.2.0 起问答 Bot 缺省运行 **Go 版静态二进制**（`qa-bot-go/`，内存占用远低于 Python 版）。运行时解析优先级为 `config.json` 的 `qa_bot_runtime` > `QA_BOT_RUNTIME` 环境变量 > 缺省 `go`；Go 二进制缺失时自动回退 Python。管理员可通过 `/qa_runtime` 命令或 WebUI「系统」页热切换。
+
 ```bash
+# Python 回退/调试入口（通常无需手动运行；运行时为 go 时由 main.py 管理 Go 子进程）
 python qa_bot.py
 ```
+
+> 注意：单独调试 `python qa_bot.py` 时，不要同时运行由 `main.py` 管理的问答 Bot 副本（同一 Token 会互相冲突）。
+
+如需开发 `qa-bot-go/`，请安装 Go 1.27+ 工具链，构建与运行说明见 `qa-bot-go/README.md`。
 
 ### 使用 Docker 运行
 
 ```bash
-# 构建镜像
-docker-compose build
+# 构建镜像（fork / 本地源码部署；缺省 compose 配置直接拉取 GHCR 依赖镜像，可跳过构建）
+docker compose build
 
 # 启动服务
-docker-compose up
+docker compose up
 
 # 后台运行
-docker-compose up -d
+docker compose up -d
 ```
+
+缺省 `docker-compose.yml` 拉取 GHCR 依赖镜像（`ghcr.io/sakura520222/sakura-bot:main`，内含 Python 依赖、Go 二进制与前端产物），源码仍整体挂载，代码更新走 `git pull` 或 `/update` 命令。
 
 ---
 
@@ -200,30 +210,37 @@ docker-compose up -d
 ```
 Sakura-Bot/
 ├── core/                      # 核心模块
-│   ├── __init__.py
-│   ├── ai/                   # AI、RAG、向量存储和工具调用
+│   ├── __init__.py           # 版本号等包级定义
+│   ├── ai/                   # AI、RAG、双后端向量存储和工具调用
 │   ├── bootstrap/            # 应用启动编排
 │   ├── commands/             # 命令处理
 │   ├── config/               # 配置管理、事件总线、热重载
 │   ├── forwarding/           # 频道转发功能
 │   ├── handlers/             # 事件处理器
+│   ├── i18n/                 # 国际化文案
 │   ├── infrastructure/       # 数据库、日志、异常和工具
-│   ├── initializers/         # 初始化步骤
-│   ├── system/               # 调度、进程和关闭管理
+│   ├── initializers/         # 初始化步骤（含命令集中注册）
+│   ├── migrations/           # 数据库迁移脚本
+│   ├── moderation/           # Sakura Guard 群管与封禁申诉
+│   ├── services/             # 缓存、投票、投稿等领域服务
+│   ├── system/               # 调度、进程、镜像更新和关闭管理
 │   ├── telegram/             # Telegram 相关
+│   ├── utils/                # 通用工具
 │   └── web_api/              # FastAPI WebUI API
+├── qa-bot-go/                 # 问答 Bot Go 版实现（缺省运行时）
 ├── web/                       # Vue 3 + Vite WebUI 前端
 ├── tests/                     # 测试代码
-│   ├── __init__.py
-│   ├── conftest.py           # pytest 配置
+│   ├── conftest.py           # pytest 共享 fixtures
 │   └── test_*.py             # 测试文件
+├── scripts/                   # 部署脚本与向量迁移/回填工具
+├── deploy/                    # 宿主机镜像部署器（systemd 单元）
 ├── data/                      # 数据文件
 │   ├── .env                  # 环境变量
 │   ├── config.json           # 配置文件
 │   └── sessions/             # Telegram 会话
-├── wiki/                      # 项目文档
+├── wiki/                      # 项目文档（VitePress 站点）
 ├── main.py                    # 主程序入口
-├── qa_bot.py                 # 问答 Bot 入口
+├── qa_bot.py                  # 问答 Bot Python 回退入口
 ├── requirements.txt          # 依赖列表
 ├── pytest.ini                # pytest 配置
 ├── pyproject.toml            # 项目配置
@@ -258,8 +275,8 @@ git checkout -b feature/your-feature-name
 # 运行测试
 pytest
 
-# 代码检查
-python run_ruff.py --all
+# 代码检查（不修改文件）
+python run_ruff.py --check
 ```
 
 ### 4. 提交代码
@@ -396,10 +413,10 @@ logger.error("错误信息")
 
 ```bash
 # 实时查看日志
-tail -f logs/sakura_bot.log
+tail -f logs/sakura-bot.log
 
 # 查看特定级别日志
-tail -f logs/sakura_bot.log | grep ERROR
+tail -f logs/sakura-bot.log | grep ERROR
 ```
 
 ---

@@ -2,15 +2,16 @@
 
 ## 📖 简介
 
-Sakura 智能问答Bot 是一个独立的Telegram Bot，专门用于查询频道历史总结。它支持自然语言交互，让你像对话一样轻松获取频道信息。
+Sakura 智能问答Bot 是一个独立的 Telegram Bot（与主 Bot 使用不同的 Token），由主 Bot 进程作为子进程托管运行，专门用于查询频道历史总结与已入库的频道消息。它支持自然语言交互，让你像对话一样轻松获取频道信息。
 
 ### ✨ 核心特点
 
 - 🎯 **自然语言查询** - 无需命令前缀，直接提问
 - 🧠 **智能意图识别** - 自动理解你的查询意图
 - 📊 **上下文感知** - 基于频道画像生成更精准的回答
-- 🔍 **多维度检索** - 支持时间、关键词、主题等多条件过滤
+- 🔍 **多维度检索** - 支持语义向量、时间、关键词、主题等多条件检索
 - 🎫 **使用配额管理** - 防止滥用，保障服务稳定性
+- 🧩 **双运行时** - v2.2.0 起缺省运行轻量 Go 二进制，可在线切换回 Python
 - 🛡️ **封禁申诉入口** - 兼作助手 Bot，受理 Sakura Guard 封禁申诉
 
 ---
@@ -46,13 +47,19 @@ QA_BOT_DAILY_LIMIT=200
 
 ### 3. 启动问答Bot
 
-```bash
-# 独立运行问答Bot
-python qa_bot.py
+问答 Bot 由主 Bot 进程自动托管启动，无需单独部署。配置好 `QA_BOT_ENABLED=True` 与 `QA_BOT_TOKEN` 后，正常启动主 Bot 即可：
 
-# 或使用Docker Compose（需要修改docker-compose.yml）
-docker-compose up qa_bot
+```bash
+# 本地源码运行
+python main.py
+
+# Docker Compose（问答 Bot 随主容器自动启动）
+docker compose up -d
 ```
+
+> 问答 Bot 作为主容器内的子进程运行（缺省使用轻量 Go 二进制 `sakura-qa`）。`docker-compose.yml` 只有 `sakura-summary-bot` 一个服务，不要在其中另建独立的 `qa_bot` 服务。
+
+如需临时单独运行 Python 版问答 Bot（如本地调试），可执行 `python qa_bot.py`；注意不要与主 Bot 托管的问答 Bot 同时使用同一个 Token。
 
 ### 4. 开始使用
 
@@ -209,6 +216,14 @@ docker-compose up qa_bot
 /status - 查看你的配额使用状态
 ```
 
+### 调整配额
+
+配额限额支持运行时调整（热生效，无需重启）：
+
+- `config.json` 的 `qa_bot_quota`（`user_daily_limit` / `total_daily_limit`）优先生效；
+- 环境变量 `QA_BOT_USER_LIMIT` / `QA_BOT_DAILY_LIMIT` 作为部署级兜底；
+- 也可在 WebUI「AI 配置」页的问答配额面板在线调整。
+
 ---
 
 ## 🛡️ 封禁申诉
@@ -231,12 +246,15 @@ docker-compose up qa_bot
 
 ### 系统架构
 
+问答 Bot 与主 Bot 共享 MySQL 数据库，由主 Bot 进程作为子进程托管（缺省 Go 运行时）：
+
 ```
 ┌─────────────────────────────────────────────────────┐
-│  主Bot（总结Bot）                                      │
+│  主Bot（总结Bot，main.py）                            │
 │  - 频道监控和总结                                      │
 │  - 投票功能                                          │
 │  - 管理员命令                                         │
+│  - 子进程托管问答 Bot                                 │
 └──────────┬──────────────────────────────────────────┘
            │
            │ 共享数据库（MySQL）
@@ -244,23 +262,31 @@ docker-compose up qa_bot
            ↓
 ┌─────────────────────────────────────────────────────┐
 │  问答Bot（智能助手）                                  │
-│  - 自然语言对话接口                                    │
-│  - 意图解析器                                         │
-│  - 记忆管理器                                         │
-│  - 问答引擎                                           │
+│  - 自然语言对话接口（串行分发、流式回复）              │
+│  - 问答引擎 QAEngineV3（agentic 工具调用）             │
+│  - 会话管理器（多轮上下文）                            │
 │  - 配额管理器                                         │
 └─────────────────────────────────────────────────────┘
 ```
 
+### 问答引擎（QAEngineV3）
+
+回答生成采用「agentic 工具调用 + 降级」的两段式流程：
+
+1. **Agentic 阶段**：LLM 自主决定是否检索以及调用哪些工具，包括：
+   - `semantic_search`：向量语义检索（总结与原始消息两个集合，可选重排序）
+   - 关键词检索：按关键词、主题、频道、时间范围查询历史总结
+   - 频道上下文与统计查询等辅助工具
+2. **无工具降级**：模型不支持工具调用或工具链路异常时，回退为结合多轮会话上下文的直连对话，保证仍能正常回答。
+
 ### 核心模块
 
-#### 1. 意图解析器（IntentParser）
+#### 1. 问答引擎（QAEngineV3）
 
-识别用户查询意图：
-- 时间范围提取（今天、上周、最近7天等）
-- 关键词提取（AI、GPT、Python等）
-- 主题识别（技术、新闻、讨论等）
-- 查询类型判断（总结、统计、状态等）
+编排检索与生成：
+- agentic 工具调用与流式输出
+- 检索结果与多轮上下文组装
+- 降级方案（无工具直连对话）
 
 #### 2. 记忆管理器（MemoryManager）
 
@@ -270,13 +296,12 @@ docker-compose up qa_bot
 - 时间范围过滤
 - 智能搜索
 
-#### 3. 问答引擎（QAEngine）
+#### 3. 会话管理器（ConversationManager）
 
-生成回答的核心引擎：
-- 检索相关总结
-- AI理解上下文
-- 生成连贯回答
-- 降级方案（直接返回摘要）
+管理多轮对话：
+- 会话创建与超时管理（30 分钟无交互开启新会话）
+- 对话历史持久化（MySQL）
+- 历史上下文注入与清理
 
 #### 4. 配额管理器（QuotaManager）
 
@@ -286,10 +311,14 @@ docker-compose up qa_bot
 - 自动重置机制
 - 管理员豁免
 
+### 双运行时（Go / Python）
+
+v2.2.0 起问答子进程缺省运行 Go 静态二进制（`qa-bot-go/`，稳态内存约 17-20MB，Python 版约 137MB，均为 v2.2.0 生产实测），行为与 Python 版逐条对齐；Go 二进制缺失时自动回退 Python。管理员可通过 `/qa_runtime` 命令或 WebUI「系统」页在线切换，详见 [运行时占用优化](Developer-Runtime-Footprint-Optimization.md) 与 [问答 Bot 实施](Developer-QA-Bot-Implementation.md)。
+
 ### 数据流
 
 ```
-用户查询 → 意图解析 → 配额检查 → 记忆检索 → AI生成 → 返回回答
+用户查询 → 配额检查 → 会话上下文加载 → agentic 检索（语义 + 关键词）→ AI 流式生成 → 返回回答
 ```
 
 ---
@@ -307,15 +336,20 @@ docker-compose up qa_bot
 
 **解决方法**：
 ```bash
-# 检查Bot是否运行
-docker-compose ps qa_bot
+# 查看主容器状态（问答 Bot 在其中作为子进程运行）
+docker compose ps
 
-# 查看日志
-docker-compose logs qa_bot
+# 查看主容器日志（含问答子进程输出）
+docker compose logs -f sakura-summary-bot
 
-# 重启Bot
-docker-compose restart qa_bot
+# 查看问答 Bot 组件日志
+docker compose exec sakura-summary-bot tail -n 100 logs/qa-bot.log
+
+# 重启主容器（问答 Bot 随之重启）
+docker compose restart
 ```
+
+管理员也可在 Telegram 中发送 `/qa_status` 查看问答 Bot 运行状态，或 `/qa_restart` 重启问答 Bot。
 
 #### 2. 配额不足
 
@@ -352,7 +386,7 @@ docker-compose restart qa_bot
 ```
 
 **解决方法**：
-- 稍后重试（降级方案会直接返回摘要）
+- 稍后重试（工具链路异常时会自动降级为无工具直连对话）
 - 检查AI API配置
 - 查看日志排查问题
 
@@ -362,21 +396,21 @@ docker-compose restart qa_bot
 
 ### 数据库优化
 
-- **WAL模式**：支持多进程并发读写
+- **MySQL 连接池**：复用数据库连接（`MYSQL_POOL_SIZE` 可调，缺省 5）
+- **跨进程协作**：问答 Bot 与主 Bot 通过 MySQL 表交换请求与通知，各自轮询处理
 - **索引优化**：关键字段建立索引
-- **查询缓存**：热点数据缓存
 
 ### AI优化
 
 - **提示词优化**：精简高效的提示词
 - **温度控制**：平衡创造性和准确性
-- **降级方案**：AI失败时直接返回摘要
+- **降级方案**：工具链路异常时自动降级为无工具直连对话
 
 ### 配额管理
 
 - **自动重置**：每日00:00自动重置
-- **并发控制**：MySQL 连接池和跨进程队列支持
-- **灵活配置**：支持调整限额
+- **并发控制**：问答消息串行分发处理，避免并发扣减竞态
+- **灵活配置**：支持运行时调整限额（见上文「调整配额」）
 
 ---
 
@@ -384,21 +418,18 @@ docker-compose restart qa_bot
 
 ### 数据安全
 
-- **数据库加密**：支持数据库文件加密
-- **访问控制**：用户仅能访问总结数据
+- **访问控制**：用户仅能查询频道总结与已入库的频道消息内容
 - **敏感信息**：不存储用户敏感信息
 
 ### 配额保护
 
 - **防滥用**：配额限制防止恶意使用
-- **监控告警**：异常使用自动告警
 - **管理员特权**：管理员无配额限制
 
 ### 隐私保护
 
-- **数据最小化**：仅收集必要数据
-- **匿名化处理**：用户ID匿名存储
-- **数据保留**：可配置数据保留策略
+- **数据最小化**：仅收集必要数据（Telegram 用户 ID、昵称与对话内容）
+- **数据保留**：对话历史存于 MySQL，用户可随时通过 `/clear` 命令清除本人的对话记忆
 
 ---
 
@@ -410,46 +441,39 @@ docker-compose restart qa_bot
 |------|------|--------|------|
 | QA_BOT_TOKEN | 问答Bot的Token | - | 是 |
 | QA_BOT_ENABLED | 是否启用问答Bot | True | 否 |
-| QA_BOT_USER_LIMIT | 每用户每日限额 | 3 | 否 |
-| QA_BOT_DAILY_LIMIT | 每日总限额 | 200 | 否 |
+| QA_BOT_USER_LIMIT | 每用户每日限额（config.json `qa_bot_quota` 优先） | 3 | 否 |
+| QA_BOT_DAILY_LIMIT | 每日总限额（config.json `qa_bot_quota` 优先） | 200 | 否 |
+| QA_BOT_RUNTIME | 问答 Bot 运行时（go/python），config.json 可在线切换覆盖 | go | 否 |
 
 ### Docker部署
 
-修改 `docker-compose.yml`：
+问答 Bot 无需单独的 compose 服务：`docker-compose.yml` 只有 `sakura-summary-bot` 一个服务，问答 Bot 由主容器内的主进程自动托管（`QA_BOT_ENABLED` + `QA_BOT_TOKEN` 即可，缺省运行 Go 二进制 `sakura-qa`）：
 
-```yaml
-services:
-  qa_bot:
-    build: .
-    command: python qa_bot.py
-    environment:
-      - QA_BOT_TOKEN=${QA_BOT_TOKEN}
-      - QA_BOT_ENABLED=${QA_BOT_ENABLED:-True}
-      - QA_BOT_USER_LIMIT=${QA_BOT_USER_LIMIT:-3}
-      - QA_BOT_DAILY_LIMIT=${QA_BOT_DAILY_LIMIT:-200}
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
+```bash
+docker compose up -d
 ```
 
-启动服务：
+查看问答 Bot 日志：
+
 ```bash
-docker-compose up -d qa_bot
+# 主容器日志（含问答子进程输出）
+docker compose logs -f sakura-summary-bot
+
+# 问答 Bot 组件日志
+docker compose exec sakura-summary-bot tail -n 100 logs/qa-bot.log
 ```
 
 ---
 
-## 🚀 未来规划
+## 🚀 已实现的高级特性
 
-### Phase 5: 高级特性（待实施）
+早期规划中的高级特性现已全部上线：
 
-- [ ] 向量数据库集成（ChromaDB/FAISS）
-- [ ] 语义搜索能力
-- [ ] 多轮对话支持
-- [ ] 上下文记忆
-- [ ] 个性化推荐
-- [ ] Web Dashboard
-- [ ] API接口
+- ✅ **向量语义搜索**：总结与原始消息双集合向量检索；向量库支持 `VECTOR_BACKEND=chroma|lite` 双后端（缺省 chroma），见 [运行时占用优化](Developer-Runtime-Footprint-Optimization.md)
+- ✅ **多轮对话与上下文记忆**：详见 [多轮对话功能](User-Multi-Turn-Conversation.md)
+- ✅ **Web Dashboard**：WebUI 统计与系统运维页面，详见 [WebUI 管理面板](User-WebUI-Guide.md)
+- ✅ **配额管理界面**：WebUI「AI 配置」页在线调整问答配额（热生效）
+- ✅ **REST API**：WebUI 后端提供 REST API（`core/web_api/`）
 
 ### 社区贡献
 

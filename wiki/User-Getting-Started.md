@@ -5,7 +5,7 @@
 > **分类**: 用户文档  
 > **类型**: 教程  
 > **难度**: ⭐  
-> **更新时间**: 2026-10-26
+> **更新时间**: 2026-10-31
 
 [← 返回用户文档](User-Guide.md) | [Wiki 首页](Home.md)
 
@@ -91,11 +91,25 @@ MYSQL_DATABASE=sakura_bot_db
 ### 步骤 4：启动服务
 
 ```bash
-# 启动容器
-docker-compose up -d
+# 一键部署：更新源码 + 拉取依赖镜像并启动
+bash scripts/deploy.sh
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
+```
+
+`docker-compose.yml` 默认使用由 GitHub Actions 构建并推送到 GHCR 的依赖镜像 `ghcr.io/sakura520222/sakura-bot:main`（内含 Python 依赖、Go 二进制与前端产物），服务器无需本地构建；源码仍整体挂载到容器（`.:/app`），业务代码始终从宿主机加载。
+
+**镜像拉取被拒（401/403）时**，任选其一处理：
+
+- 到 GitHub 仓库的 **Packages** 设置，将 `sakura-bot` 包改为 public；
+- 或在服务器上执行一次 `docker login ghcr.io`。
+
+**Fork 或本地源码部署**需要自行构建镜像：
+
+```bash
+docker compose build
+docker compose up -d
 ```
 
 ### 步骤 5：首次登录
@@ -121,13 +135,19 @@ docker-compose logs -f
 
 ### 更新与重建
 
-容器内向 Bot 发送 `/update` 会直接更新宿主机仓库，然后安装 Python 依赖、构建 WebUI 并重启。更新使用快进合并，保留本地配置；遇到冲突或分支分叉时会停止并提示处理。项目目录通过 `.:/app` 挂载，源码、前端构建产物和 `data/` 都保存在宿主机。
+日常更新只需向 Bot 发送 `/update`：它会将宿主机仓库快进合并到最新版本（保留本地配置，遇到冲突或分支分叉时停止并提示）。若变更涉及镜像层文件（`qa-bot-go/`、`web/`、`Dockerfile`、`docker-compose.yml`、`requirements.txt` 或镜像构建工作流），Bot 会写入更新请求标记，之后：
 
-涉及系统依赖或 Dockerfile 的更新，需要在宿主机执行一次重建：
+- **已安装自动部署器**（推荐）：部署器监听到标记后自动拉取新依赖镜像并重建容器，全程无需登录服务器，也不再执行容器内的依赖安装与前端构建。部署器在宿主机一次性安装（需要 systemd）：
 
-```bash
-docker compose up -d --build
-```
+  ```bash
+  bash deploy/install-deployer.sh   # 仓库不在 /root/Sakura-Bot 时传入实际路径
+  ```
+
+- **未安装自动部署器**：`/update` 退回容器内自愈路径——安装 Python 依赖、构建 WebUI 并重启。更新请求标记会保留（`deploy.sh` 本身不消费它）；之后可在宿主机手动执行 `bash scripts/deploy.sh` 完成相同的镜像更新，若日后安装了自动部署器，systemd 单元检测到残留标记会自动触发一次部署。
+
+变更不涉及镜像层时，`/update` 会在容器内安装依赖、构建 WebUI 并重启。也可以随时在宿主机手动执行 `bash scripts/deploy.sh` 一键更新（快进源码 + 拉取最新镜像）；`docker compose up -d --build` 仅用于 fork 或本地源码构建场景。
+
+项目目录通过 `.:/app` 挂载，源码与 `data/` 都保存在宿主机，容器重建不会丢失数据。
 
 ---
 
@@ -224,6 +244,8 @@ RERANKER_API_BASE=https://api.siliconflow.cn/v1/rerank
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
+> 进阶：向量存储后端由 `VECTOR_BACKEND` 控制，缺省 `chroma`（ChromaDB）。资源受限环境可切换 `lite`（SQLite WAL + numpy），但切换前必须先在全停机窗口运行 `scripts/migrate_vectors_to_sqlite.py` 完成向量迁移。
+
 详细说明请参考 [RAG 快速启动](User-RAG-Quickstart.md)。
 
 ### 启用问答 Bot（可选）
@@ -241,6 +263,8 @@ QA_BOT_TOKEN=your_qa_bot_token_here
 QA_BOT_USER_LIMIT=3
 QA_BOT_DAILY_LIMIT=200
 ```
+
+> 问答 Bot 默认以 Go 运行时启动（`QA_BOT_RUNTIME` 缺省 `go`，静态二进制由依赖镜像提供），资源占用远低于 Python 版；二进制缺失时自动回退 Python。管理员可通过 `/qa_runtime` 命令或 WebUI「系统」页在线切换。
 
 详细说明请参考 [问答 Bot 指南](User-QA-Bot-Guide.md)。
 
@@ -283,7 +307,7 @@ USERBOT_SESSION_PATH=data/sessions/user_session
 ### 查看 Docker 日志
 
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ---
@@ -314,13 +338,10 @@ docker-compose logs -f
 
 ### Q5: Docker 部署如何备份数据？
 
-**A:**
-```bash
-# 备份 data 目录
-tar -czf backup-$(date +%Y%m%d).tar.gz data/
+**A:** 数据都保存在宿主机的 `data/` 目录（Compose 使用绑定挂载，不涉及命名卷），直接打包即可：
 
-# 或使用 Docker 卷备份
-docker run --rm -v sakura_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/backup.tar.gz /data
+```bash
+tar -czf backup-$(date +%Y%m%d).tar.gz data/
 ```
 
 ---
