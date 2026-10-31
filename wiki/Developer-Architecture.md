@@ -5,7 +5,7 @@
 > **分类**: 开发者文档  
 > **类型**: 参考资料  
 > **难度**: ⭐⭐  
-> **更新时间**: 2026-05-01
+> **更新时间**: 2026-10-31
 
 [← 返回开发者文档](Developer-Guide.md) | [Wiki 首页](Home.md)
 
@@ -27,7 +27,7 @@ Sakura-Bot 采用**模块化微服务架构**，将功能拆分为多个独立�
 │                      Bot 层                                  │
 │  ┌──────────────┐              ┌──────────────┐            │
 │  │  主Bot       │              │  问答Bot     │            │
-│  │ (main.py)   │              │ (qa_bot.py) │            │
+│  │ (main.py)   │              │ (Go/Python) │            │
 │  │             │              │              │            │
 │  │ - 频道监控   │              │ - 自然对话   │            │
 │  │ - 消息总结   │              │ - 语义检索   │            │
@@ -55,9 +55,11 @@ Sakura-Bot 采用**模块化微服务架构**，将功能拆分为多个独立�
                      │
 ┌────────────────────┴────────────────────────────────────────┐
 │                     数据层                                   │
-│  MySQL · ChromaDB · 配置文件 · 会话文件                     │
+│  MySQL · 向量库（SQLite/ChromaDB）· 配置文件 · 会话文件     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**问答 Bot 双运行时**：问答 Bot 缺省运行 Go 编译的静态二进制（`qa-bot-go/`，稳态内存约 17-20MB，Python 版约 137MB，均为 v2.2.0 生产实测），由主进程 `core/system/process_manager.py` 作为子进程管理；Go 二进制缺失时自动回退 Python 版 `qa_bot.py`。运行时解析优先级为 `config.json` 的 `qa_bot_runtime` > `QA_BOT_RUNTIME` 环境变量 > 缺省 `go`，管理员可通过 `/qa_runtime` 命令或 WebUI「系统」页热切换并持久化。
 
 ---
 
@@ -101,14 +103,23 @@ Sakura-Bot 采用**模块化微服务架构**，将功能拆分为多个独立�
 - Reranker 调用（结果重排）
 - 错误处理和重试
 
-**关键类**:
+**关键 API**:
 ```python
-class AIClient:
-    async def generate_summary(messages: list[Message]) -> str
-    async def analyze_with_ai(text: str) -> str
-    async def generate_embedding(text: str) -> list[float]
-    async def rerank(query: str, documents: list[str]) -> list[int]
+# core/ai/ai_client.py —— 模块级异步函数
+async def analyze_with_ai(messages, current_prompt) -> str
+async def generate_poll_from_summary(summary_text) -> str
+
+# core/ai/embedding_generator.py
+class EmbeddingGenerator:
+    def generate(self, text: str) -> list[float] | None
+    def batch_generate(self, texts: list[str]) -> list[list[float] | None]
+
+# core/ai/reranker.py
+class Reranker:
+    def rerank(self, query: str, candidates: list[dict], top_k: int | None = None) -> list[dict]
 ```
+
+AI 客户端支持热重载：`get_ai_runtime()` / `get_async_ai_runtime()` 在每次请求时按 `effective_ai_config()` 校验连接信息，配置变更后自动重新初始化客户端。
 
 **支持的 AI 提供商**:
 - OpenAI (GPT-4, GPT-3.5)
@@ -120,19 +131,24 @@ class AIClient:
 
 **职责**: 管理所有数据持久化操作。
 
-**数据表**:
+**数据表**（仅列主要表）:
 
 | 表名 | 用途 |
 |------|------|
 | `summaries` | 存储频道总结记录 |
+| `users` / `subscriptions` | 用户与订阅 |
 | `usage_quota` | 问答Bot配额管理 |
 | `channel_profiles` | 频道画像数据 |
 | `conversation_history` | 多轮对话历史 |
 | `poll_regenerations` | 投票重新生成记录 |
 | `poll_voters` | 投票者记录 |
-| `forwarding_stats` | 转发统计信息 |
-| `cross_bot_*` | 主 Bot 与 QA Bot 跨进程通信队列 |
+| `forwarded_messages` / `forwarding_stats` | 转发记录与统计信息 |
+| `request_queue` / `notification_queue` | 主 Bot 与 QA Bot 跨进程通信队列 |
 | `submissions` | 投稿审核记录 |
+| `system_audit_logs` | 系统操作审计日志 |
+| `db_version` | 数据库迁移版本 |
+
+此外，Sakura Guard 群管与封禁申诉使用独立的 `moderation_*` 系列表（案件、黑白名单、验证会话、通知及五张申诉表等，定义见 `core/moderation/schema.sql`）。
 
 **支持的数据库**:
 - MySQL（当前唯一支持的关系数据库）
@@ -146,26 +162,31 @@ class AIClient:
 
 ### 3. 向量存储模块 (`core/ai/vector_store.py`)
 
-**职责**: 管理 ChromaDB 向量数据库，实现语义检索。
+**职责**: 双后端向量存储门面，实现语义检索。通过环境变量 `VECTOR_BACKEND` 选择后端：
+
+- **`chroma`**（代码缺省）: ChromaDB 持久化向量库，`chromadb` 延迟到后端初始化时才导入
+- **`lite`**: SQLite(WAL) 单文件 + numpy 内存矩阵暴力余弦（实现见 `core/ai/vector_lite.py`），数据存于 `store_meta` / `summaries_vectors` / `messages_vectors` 表；lite 模式绝不加载 chromadb
+
+两个后端接口逐字段兼容（`VectorStore` 类、搜索结果形状、`collection`/`messages_collection` 属性等），WebUI 与调用方零改动。v2.2.0 引入 lite 后端用于替换进程内 ChromaDB 以降低内存占用（生产环境已启用，回滚可切回 chroma）。
 
 **核心功能**:
-- 添加总结向量
-- 语义搜索
+- 添加总结/消息向量
+- 语义搜索（精确元数据过滤，日期按 UTC 归一化）
 - 向量更新和删除
-- 元数据过滤
+- 纯读者模式：QA 进程设置 `VECTOR_BACKEND_READER=1`，lite 后端以只读连接打开、绝不执行 DDL/写事务，库缺失时降级为不可用
 
 **使用的技术**:
-- **ChromaDB**: 向量数据库
+- **向量库**: ChromaDB 或 SQLite+numpy（按 `VECTOR_BACKEND` 选择）
 - **BGE 模型**: 中文 Embedding (bge-m3, bge-large-zh-v1.5)
 - **余弦相似度**: 相似度计算
 
 **工作流程**:
 ```
-总结生成 → 生成 Embedding → 存储到 ChromaDB
+总结生成 → 生成 Embedding → 存储到向量库（按 VECTOR_BACKEND 选择后端）
 用户查询 → 生成查询向量 → 语义检索 → 返回 Top-K 结果
 ```
 
-### 4. 会话管理模块 (`conversation_manager.py`)
+### 4. 会话管理模块 (`core/ai/conversation_manager.py`)
 
 **职责**: 管理问答Bot的多轮对话上下文。
 
@@ -183,27 +204,32 @@ class AIClient:
 用户发送 /clear → 手动清除会话
 ```
 
-### 5. 意图解析模块 (`intent_parser.py`)
+### 5. 意图解析模块 (`core/ai/intent_parser.py`)
 
-**职责**: 解析用户自然语言查询，识别意图和参数。
+**职责**: 从用户自然语言查询中提取检索辅助信息（频道提示、时间范围、关键词），不做硬编码意图拦截。
 
 **识别能力**:
 - **时间范围**: 今天、昨天、本周、上周、最近N天
-- **关键词**: AI、GPT、Python 等
-- **主题**: 技术、新闻、讨论
-- **查询类型**: 总结查询、统计查询、状态查询
+- **关键词**: 智能提取，不依赖硬编码词典
+- **主题**: 主题词会追加到关键词中
+- **频道提示**: @用户名、t.me 链接或「在 xxx 频道」等自然语言片段
 
 **返回结果**:
 ```python
 {
-    "intent": "summary_query",  # 意图类型
-    "time_range": 7,  # 时间范围（天）
+    "intent": "summary",  # 意图类型: summary / topic / keyword
+    "time_range": 7,  # 时间范围（天），None 表示不限制
     "keywords": ["AI", "GPT"],  # 关键词
-    "topics": ["技术"],  # 主题
+    "channel_id": None,  # 频道ID
+    "channel_hint": "@mychannel",  # 用户提到的频道提示
+    "original_query": "最近7天 AI 相关的总结",  # 原始查询
+    "confidence": 0.8,  # 置信度
 }
 ```
 
-### 6. 记忆管理模块 (`memory_manager.py`)
+> 注：问答 v3 引擎的流式路径已改为 agentic 工具调用，本模块作为检索辅助信息提取实现保留；系统状态类查询请使用显式命令（如 `/status`）。
+
+### 6. 记忆管理模块 (`core/ai/memory_manager.py`)
 
 **职责**: 管理频道画像和记忆数据。
 
@@ -222,31 +248,28 @@ class AIClient:
 
 ### 7. 问答引擎模块 (`core/ai/qa_engine_v3.py`)
 
-**职责**: 实现 RAG（检索增强生成）问答流程。
+**职责**: 实现 RAG（检索增强生成）问答流程，流式输出。
 
 **工作流程**:
 ```
 用户查询
   ↓
-意图解析
+获取/创建会话，加载对话历史
   ↓
-语义检索 (Top-20)
+Agentic 工具调用循环（优先路径）
+  │  模型自主决定是否检索及调用哪些工具：
+  │  semantic_search / keyword_search / rerank_results /
+  │  resolve_channel / get_recent_summaries 等多轮迭代
+  ↓ 失败时降级
+无工具直连对话（保留普通闲聊能力，不强制进入检索流水线）
   ↓
-关键词检索 (备选)
-  ↓
-RRF 融合
-  ↓
-Reranker 重排序 (Top-20 → Top-5)
-  ↓
-RAG 生成回答
-  ↓
-返回结果
+流式返回回答
 ```
 
-**核心算法**:
-- **RRF (Reciprocal Rank Fusion)**: 融合多路检索结果
-- **Reranker**: BGE-reranker-v2-m3 精排
-- **RAG 生成**: 基于精选上下文生成回答
+**核心机制**:
+- **Agentic 工具调用**: 每轮流式请求同时接收文本增量与 tool_call 增量，模型按需检索；工具内部使用向量语义检索、关键词检索与可选的 Reranker 精排
+- **Reranker**: BGE-reranker-v2-m3 精排（以 `rerank_results` 工具形式提供，未配置 API Key 时自动不可用）
+- **降级直连**: agentic 路径异常时回退为无工具的普通对话，避免把日常闲聊误导向频道检索
 
 ### 8. 重排序模块 (`core/ai/reranker.py`)
 
@@ -292,7 +315,8 @@ Reranker 模型计算相关性得分
 - **UserBot 管理**: 状态、加入、离开和频道列表
 
 **实现方式**:
-- 使用装饰器注册命令
+- 命令在 `core/initializers/command_registrar.py` 中通过 `client.add_event_handler(...)` 集中注册（命令模块本身不使用注册装饰器）
+- 新增命令通常需同时更新注册器与 `core/bot_commands.py` 菜单元数据
 - 支持中英文别名
 - 状态管理（多步骤交互）
 - Main Bot 欢迎和帮助消息提供内联键盘入口，复用既有命令处理器
@@ -302,20 +326,23 @@ Reranker 模型计算相关性得分
 **职责**: 提供浏览器端管理面板和 REST API。
 
 **后端能力**:
-- FastAPI 路由与中间件
+- FastAPI 路由与中间件，按功能域拆分路由：认证、仪表盘、频道、调度、转发、互动、群管（guard）、AI 配置、命令中心、总结、UserBot、系统、统计、向量存储和数据库管理
 - JWT 认证与管理员权限校验
-- 仪表盘、频道、调度、转发、系统、统计、向量存储和数据库管理 API
 - 配置保存后显式触发热重载
 
 **前端能力**:
 - Vue 3 + Vite + TypeScript + Naive UI
+- v2.2.1 起全页面（14 个路由页 + 登录页 + 布局）按平面设计系统重建（`--sb-*` 令牌：浅色对齐 Google 控制台、深色对齐 X），侧栏菜单按信息架构分组，统一「页头 + 工具栏 + 数据区」骨架
+- 异步三态（骨架屏 / 空态引导 / 错误重试）与危险操作三层确认
 - 深色/浅色主题持久化
 - 转发规则可视化编辑和底栏占位符插入
 - 数据库表分页浏览和受控维护操作
+- 「系统」页支持问答 Bot 运行时（Go/Python）热切换
 
 **部署方式**:
-- Docker 多阶段构建会先构建 `web/` 前端，再由 FastAPI 挂载静态资源
-- 本地开发可在 `web/` 中运行 Vite 开发服务，并代理到后端 API
+- Docker 多阶段构建（Node 构建 `web/` 前端、Go 构建 `qa-bot-go/` 二进制、Python 运行镜像）；GitHub Actions 将「依赖镜像」（Python 依赖 + Go 二进制 + 前端产物）推送 GHCR，`docker-compose.yml` 缺省拉取 `ghcr.io/sakura520222/sakura-bot:main`，源码仍整体挂载
+- `/update` 命令更新代码时若检测到镜像层变更（`qa-bot-go/`、`web/`、`Dockerfile`、`docker-compose.yml`、`requirements.txt`、构建工作流），会写入更新请求标记，由宿主机 deployer（`deploy/install-deployer.sh` 一次性安装的 systemd 单元）自动拉取新镜像并重建容器；未安装 deployer 时优雅退回容器内自愈路径（pip/npm 重建）
+- 本地开发可在 `web/` 中运行 Vite 开发服务，并代理到后端 API；fork/本地源码部署使用 `docker compose build` 构建
 
 ---
 
@@ -334,7 +361,7 @@ AI 生成总结
   ↓
 存储到数据库
   ↓
-存储向量到 ChromaDB
+存储向量到向量库（按 VECTOR_BACKEND 选择后端）
   ↓
 发送到管理员/频道
   ↓
@@ -348,15 +375,11 @@ AI 生成总结
 ```
 用户发送问题
   ↓
-意图解析
-  ↓
 配额检查
   ↓
-语义检索
+Agentic 工具调用循环（模型自主决定检索与重排；失败时降级为无工具直连对话）
   ↓
-重排序
-  ↓
-AI 生成回答
+AI 流式生成回答
   ↓
 更新配额
   ↓
@@ -410,7 +433,7 @@ AI 生成回答
 
 - **异步 I/O**: 所有 I/O 操作异步化
 - **任务队列**: 后台任务处理
-- **进程隔离**: 问答Bot独立进程
+- **进程隔离**: 问答Bot为独立子进程，缺省运行 Go 版静态二进制（`qa-bot-go/`），可热切换为 Python 版 `qa_bot.py`
 
 ---
 
@@ -426,9 +449,10 @@ AI 生成回答
 
 ### 日志位置
 
-- **应用日志**: `logs/sakura_bot.log`
-- **错误日志**: `logs/error.log`
-- **QA Bot 日志**: `logs/qa_bot.log`
+- **应用日志**: `logs/sakura-bot.log`
+- **QA Bot 日志**: `logs/qa-bot.log`
+
+错误信息按级别写入上述应用日志，没有独立的错误日志文件。
 
 ### 监控指标
 
@@ -448,6 +472,8 @@ AI 生成回答
 - AI API 配置
 - 数据库配置
 - 日志级别
+- 向量后端（`VECTOR_BACKEND`，缺省 `chroma`）
+- 问答 Bot 运行时（`QA_BOT_RUNTIME`，缺省 `go`，`config.json` 优先）
 - 功能开关
 
 ### 配置文件 (`data/config.json`)
@@ -467,7 +493,7 @@ AI 生成回答
 - 每个模块独立测试
 - 使用 pytest fixtures
 - Mock 外部依赖
-- 覆盖率目标 ≥ 90%
+- 覆盖率目标与当前进展见[技术债务追踪](Developer-Technical-Debt.md)
 
 ### 集成测试
 

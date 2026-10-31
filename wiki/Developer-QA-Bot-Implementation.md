@@ -57,8 +57,8 @@
 | 组件 | 技术方案 | 说明 |
 |------|---------|------|
 | 数据存储 | MySQL + aiomysql | 支持跨进程队列、连接池和并发读写 |
-| 检索方式 | SQL + 关键词检索 | 简单高效，易于维护 |
-| 意图识别 | 规则引擎 | 基于关键词和时间模式 |
+| 检索方式 | agentic 工具调用：语义向量检索 + 关键词检索 | QAEngineV3，可选重排序，支持无工具降级 |
+| 意图识别 | LLM 工具调用 | 模型自主决定检索策略（v2.0 规则引擎已由 V3 取代） |
 | 元数据提取 | AI (LLM) | 自动提取关键词、主题、情感 |
 | 配额管理 | 数据库计数 | 每日自动重置 |
 
@@ -69,7 +69,7 @@
 自 2026-10 起，问答 Bot 支持 Python 与 Go 两种运行时实现：
 
 - **Python 版**（`qa_bot.py`）：本文档描述的原始实现，保留作为回退；
-- **Go 版**（`qa-bot-go/`）：行为逐条对齐 Python 版的 Go 实现，进程内存占用从约 137MB 降至约 20MB。
+- **Go 版**（`qa-bot-go/`）：行为逐条对齐 Python 版的 Go 实现，进程内存占用从约 137MB 降至约 20MB（v2.2.0 生产实测）。
 
 查看与切换（管理员专用）：
 
@@ -79,7 +79,7 @@
 | WebUI | 「系统」页一键切换（`POST /api/system/qa-bot/runtime`） |
 | 部署级覆盖 | 环境变量 `QA_BOT_RUNTIME=go\|python`（`data/.env`；缺省 go） |
 
-优先级：`config.json` > `QA_BOT_RUNTIME` 环境变量 > `python`。切换会写入 `config.json` 持久化并立即重启问答 Bot（进行中的问答会话将被中断）；Go 二进制缺失时自动回退 Python 并告警。
+优先级：`config.json` > `QA_BOT_RUNTIME` 环境变量 > `go`（缺省 go）。切换会写入 `config.json` 持久化并立即重启问答 Bot（进行中的问答会话将被中断）；Go 二进制缺失时自动回退 Python 并告警。
 
 Go 版与 Python 版的行为对齐方式及已知的有意差异（如配额非原子语义、float32 舍入等），见 [运行时占用优化](Developer-Runtime-Footprint-Optimization.md)。
 
@@ -89,25 +89,28 @@ Go 版与 Python 版的行为对齐方式及已知的有意差异（如配额非
 
 ### 核心模块
 
-1. **core/quota_manager.py** - 配额管理器
+> 以下模块 v2.0 时位于 `core/` 下，后随模块拆分迁至 `core/ai/`，此处为当前路径。
+
+1. **core/ai/quota_manager.py** - 配额管理器
    - 用户配额检查和管理
    - 每日总限额控制
    - 管理员豁免机制
 
-2. **core/intent_parser.py** - 意图解析器
+2. **core/ai/intent_parser.py** - 意图解析器
    - 自然语言意图识别
    - 时间范围提取
    - 关键词和主题提取
+   - 注：v2.0 实现；V3 引擎改为由 LLM 通过工具调用自行决定检索策略
 
-3. **core/memory_manager.py** - 记忆管理器
+3. **core/ai/memory_manager.py** - 记忆管理器
    - 频道画像管理
    - 元数据提取（关键词、主题、情感）
    - 智能搜索功能
 
-4. **core/qa_engine.py** - 问答引擎
-   - 查询处理主流程
-   - AI生成回答
-   - 降级方案
+4. **core/ai/qa_engine_v3.py** - 问答引擎（已迭代至 V3）
+   - agentic 工具调用（LLM 自主决定检索策略）
+   - AI生成回答（流式输出）
+   - 降级方案（无工具直连对话）
 
 5. **qa_bot.py** - 问答Bot入口
    - Telegram Bot接口
@@ -116,12 +119,14 @@ Go 版与 Python 版的行为对齐方式及已知的有意差异（如配额非
 
 ### 文档
 
-- **wiki/QA_BOT_GUIDE.md** - 问答Bot使用指南
-- **wiki/QA_BOT_IMPLEMENTATION.md** - 本文档
+- **wiki/User-QA-Bot-Guide.md** - 问答Bot使用指南
+- **wiki/Developer-QA-Bot-Implementation.md** - 本文档
 
 ---
 
 ## 🔄 修改文件
+
+> 以下为 v2.0 当时的变更记录；`core/database.py` 已随模块拆分迁移，应用数据库也已由 SQLite 改为 MySQL（SQLite(WAL) 现仅用于 lite 向量索引文件）。
 
 ### 1. core/database.py
 
@@ -255,7 +260,7 @@ QA_BOT_TOKEN=your_qa_bot_token_here
 python main.py
 
 # 或使用Docker
-docker-compose up main_bot
+docker compose up -d sakura-summary-bot
 ```
 
 ### 1. 创建问答Bot
@@ -279,31 +284,24 @@ QA_BOT_DAILY_LIMIT=200
 
 ### 3. 启动服务
 
-**方式1：独立运行**
+**方式1：随主 Bot 自动启动（推荐）**
+
+问答 Bot 由主 Bot 进程作为子进程托管（缺省 Go 运行时，Go 二进制缺失时自动回退 Python）：
+
+```bash
+# 本地源码
+python main.py
+
+# Docker Compose（问答 Bot 随主容器自动启动）
+docker compose up -d sakura-summary-bot
+```
+
+**方式2：独立运行（调试用）**
 ```bash
 python qa_bot.py
 ```
 
-**方式2：Docker部署**
-```yaml
-# 添加到docker-compose.yml
-services:
-  qa_bot:
-    build: .
-    command: python qa_bot.py
-    environment:
-      - QA_BOT_TOKEN=${QA_BOT_TOKEN}
-      - QA_BOT_ENABLED=${QA_BOT_ENABLED:-True}
-      - QA_BOT_USER_LIMIT=${QA_BOT_USER_LIMIT:-3}
-      - QA_BOT_DAILY_LIMIT=${QA_BOT_DAILY_LIMIT:-200}
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
-```
-
-```bash
-docker-compose up -d qa_bot
-```
+> 注意不要与主 Bot 托管的问答 Bot 同时使用同一个 Token。`docker-compose.yml` 只有 `sakura-summary-bot` 一个服务，无需也不应另建独立的 `qa_bot` 服务。
 
 ### 4. 验证部署
 
@@ -316,14 +314,14 @@ docker-compose up -d qa_bot
 ### 预期性能
 
 - **查询响应时间**: 2-5秒（包含AI生成）
-- **并发支持**: 10+ 并发查询（WAL模式）
+- **并发模型**: 问答消息串行分发（对齐 PTB 默认行为），数据库访问经 MySQL 连接池（`MYSQL_POOL_SIZE` 缺省 5）
 - **数据库大小**: 预计每月增长10-50MB
 - **AI成本**: 每次查询约100-500 tokens
 
 ### 优化措施
 
 1. **数据库优化**
-   - WAL模式支持并发
+   - MySQL 连接池复用连接
    - 关键字段索引
    - 查询结果缓存
 
@@ -400,12 +398,16 @@ docker-compose up -d qa_bot
    ```
 
 2. **调整配额**
-   - 修改 `data/.env` 中的配置
-   - 重启Bot生效
+   - 在 WebUI「AI 配置」页的问答配额面板在线调整（热生效）
+   - 或修改 `config.json` 的 `qa_bot_quota`；环境变量 `QA_BOT_USER_LIMIT` / `QA_BOT_DAILY_LIMIT` 仅作部署级兜底
 
 3. **监控日志**
    ```bash
-   docker-compose logs -f qa_bot
+   # 主容器日志（含问答子进程输出）
+   docker compose logs -f sakura-summary-bot
+
+   # 问答 Bot 组件日志
+   docker compose exec sakura-summary-bot tail -n 100 logs/qa-bot.log
    ```
 
 ---
@@ -414,57 +416,37 @@ docker-compose up -d qa_bot
 
 ### 当前限制
 
-1. **语义搜索**
-   - 当前使用关键词匹配
-   - 不支持语义相似度搜索
-   - 计划Phase 5引入向量数据库
-
-2. **多轮对话**
-   - 当前无上下文记忆
-   - 每次查询独立处理
-   - 计划Phase 5实现会话管理
-
-3. **数据迁移**
+1. **数据迁移**
    - 旧总结无元数据
    - 需要手动或自动提取
    - 新总结自动提取元数据
 
-### 解决方案
-
-- **短期**: 使用关键词检索 + 降级方案
-- **中期**: 优化提示词提高准确性
-- **长期**: 引入向量数据库实现语义搜索
+> 早期的「无语义搜索」「无多轮对话」两项限制已分别由 QAEngineV3 语义向量检索（`VECTOR_BACKEND=chroma|lite` 双后端）与 ConversationManager 多轮会话解决，不再列为已知问题。
 
 ---
 
 ## 🚧 未来规划
 
-### Phase 5: 高级特性
+### Phase 5: 高级特性落地情况
 
-- [ ] **向量数据库集成**
-  - ChromaDB / FAISS
-  - 语义搜索
-  - 相似度排序
+- [x] **向量数据库集成**（已完成）
+  - ChromaDB 集成已上线多个版本；v2.2.0 起新增 SQLite(WAL)+numpy 轻量后端，`VECTOR_BACKEND=chroma|lite` 切换，见 [运行时占用优化](Developer-Runtime-Footprint-Optimization.md)
+  - 语义搜索与相似度排序（QAEngineV3 `semantic_search` 工具，可选重排序）
 
-- [ ] **多轮对话支持**
-  - 会话上下文记忆
-  - 跟进问题
-  - 上下文引用
+- [x] **多轮对话支持**（已完成）
+  - 会话上下文记忆（ConversationManager，Python 与 Go 版均已实现）
+  - 跟进问题与上下文引用，见 [多轮对话功能](User-Multi-Turn-Conversation.md)
 
 - [ ] **个性化推荐**
   - 用户偏好学习
   - 智能推荐总结
   - 自定义查询模板
 
-- [ ] **Web Dashboard**
-  - 可视化统计
-  - 配额管理界面
-  - 查询历史
+- [x] **Web Dashboard**（已完成）
+  - 可视化统计与配额管理界面（WebUI 统计页与「AI 配置」页问答配额面板）
 
-- [ ] **API接口**
-  - RESTful API
-  - Webhook支持
-  - 第三方集成
+- [x] **API接口**（已完成）
+  - WebUI 后端 RESTful API（`core/web_api/`）
 
 ---
 
@@ -490,11 +472,11 @@ docker-compose up -d qa_bot
 
 ### 优势
 
-✅ **独立架构** - 不影响主Bot运行
-✅ **简单高效** - SQL + 关键词检索
+✅ **独立架构** - 子进程托管，不影响主Bot运行
+✅ **简单高效** - agentic 工具调用：语义向量检索 + 关键词检索
 ✅ **易于维护** - 代码结构清晰
 ✅ **成本可控** - 配额管理防止滥用
-✅ **扩展性强** - 为Phase 5预留接口
+✅ **扩展性强** - 工具调用架构易于扩展新的检索能力
 
 ### 建议
 

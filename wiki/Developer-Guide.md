@@ -158,7 +158,7 @@ pytest tests/test_ai_client.py
 pytest --cov=core --cov-report=html
 ```
 
-测试覆盖率目标：**≥ 90%**
+测试覆盖率的现状与目标见[技术债务追踪](Developer-Technical-Debt.md)。
 
 ---
 
@@ -226,7 +226,7 @@ pre-commit run --all-files
 ### 3. 测试
 
 - 为新功能编写单元测试
-- 测试覆盖率 ≥ 90%
+- 覆盖率现状与目标见[技术债务追踪](Developer-Technical-Debt.md)
 - 使用 pytest fixtures
 - 模拟外部依赖
 

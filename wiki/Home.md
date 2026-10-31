@@ -28,13 +28,19 @@
 - **[开发者文档首页](Developer-Guide.md)** - 查看所有开发者文档
 - **[开发快速开始](Developer-Getting-Started.md)** - 开发环境配置
 - **[架构设计](Developer-Architecture.md)** - 系统架构和模块设计
+- **[配置持久化与恢复](Developer-Configuration-Persistence.md)** - 配置加载与热重载机制
 - **[代码重构总结](Developer-Refactoring-Summary.md)** - 重构改进说明
+- **[模块拆分总结](Developer-Module-Split-Summary.md)** - 模块拆分记录
 - **[错误处理增强](Developer-Error-Handling-Improvements.md)** - 错误处理机制
 - **[问答 Bot 实施](Developer-QA-Bot-Implementation.md)** - AI 功能实施文档
+- **[运行时占用优化](Developer-Runtime-Footprint-Optimization.md)** - QA Bot Go 运行时与向量库轻量化
 - **[RAG 技术文档](Developer-RAG-Feature-V3.md)** - RAG 技术实现
 - **[查询改写增强](Developer-Query-Rewrite-Enhancement.md)** - QA 引擎查询改写功能说明
 - **[Ruff 脚本指南](Developer-Ruff-Script-Guide.md)** - 代码质量工具
 - **[CI/CD 工作流](Developer-Workflow-Improvements.md)** - 持续集成配置
+- **[CI 测试修复](Developer-CI-Test-Fix.md)** - CI 测试修复记录
+- **[工作流合并修复](Developer-Workflow-Merge-Fix.md)** - 工作流合并修复记录
+- **[技术债务追踪](Developer-Technical-Debt.md)** - 技术债务清单
 - **[文档站维护与部署](Developer-Documentation-Site.md)** - 本地预览与推送自动发布
 
 ---
@@ -46,7 +52,8 @@
 | 主题 | 用户文档 | 开发者文档 |
 |------|---------|-----------|
 | **安装配置** | [快速开始](User-Getting-Started.md) | [开发环境](Developer-Getting-Started.md) |
-| **AI 功能** | [问答 Bot](User-QA-Bot-Guide.md) | [实施文档](Developer-QA-Bot-Implementation.md) |
+| **AI 功能** | [问答 Bot](User-QA-Bot-Guide.md) | [实施文档](Developer-QA-Bot-Implementation.md) · [运行时占用优化](Developer-Runtime-Footprint-Optimization.md) |
+| **部署与更新** | [一键更新 /update](User-Commands.md#一键更新-update) | [运行时占用优化](Developer-Runtime-Footprint-Optimization.md) |
 | **RAG 功能** | [快速启动](User-RAG-Quickstart.md) | [技术文档](Developer-RAG-Feature-V3.md) |
 | **投票功能** | [配置指南](User-Poll-Feature.md) | - |
 | **群管与申诉** | [Sakura Guard](User-Sakura-Guard.md) | - |
@@ -62,7 +69,7 @@
 |------|------|
 | ⭐ **入门** | [快速开始](User-Getting-Started.md) · [RAG 快速启动](User-RAG-Quickstart.md) |
 | ⭐⭐ **进阶** | [问答 Bot 指南](User-QA-Bot-Guide.md) · [投票功能](User-Poll-Feature.md) · [WebUI 面板](User-WebUI-Guide.md) |
-| ⭐⭐⭐ **高级** | [RAG 技术文档](Developer-RAG-Feature-V3.md) · [架构设计](Developer-Architecture.md) |
+| ⭐⭐⭐ **高级** | [RAG 技术文档](Developer-RAG-Feature-V3.md) · [架构设计](Developer-Architecture.md) · [运行时占用优化](Developer-Runtime-Footprint-Optimization.md) |
 
 ---
 
