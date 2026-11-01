@@ -135,7 +135,7 @@ async def fetch_last_week_messages(
                         # 动态获取频道名用于生成链接
                         channel_part = channel.split("/")[-1]
                         msg_link = f"https://t.me/{channel_part}/{message.id}"
-                        channel_messages.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
+                        channel_messages.append(f"内容: {message.text}\n链接: {msg_link}")
 
                         # 每抓取10条消息记录一次日志
                         if len(channel_messages) % 10 == 0:
