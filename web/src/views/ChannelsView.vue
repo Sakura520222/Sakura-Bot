@@ -105,7 +105,7 @@
         @keyup.enter="handleAdd"
       >
         <n-form-item label="频道 URL" path="url">
-          <n-input v-model:value="addForm.url" placeholder="https://t.me/channel_name" :disabled="saving" />
+          <n-input v-model:value="addForm.url" :placeholder="channelUrlPlaceholder" :disabled="saving" />
           <template #feedback>支持 https://t.me/ 链接、@用户名或频道 ID，添加后立即纳入监控。</template>
         </n-form-item>
       </n-form>
@@ -127,6 +127,9 @@ import { addChannel, deleteChannel, generateSummary, getChannels, type ChannelIn
 import { getChannelName } from "@/utils/formatters";
 
 const message = useMessage();
+
+// URL 不直接写在模板静态属性里：属性值中的 "//" 会截断 vue-tsc 3 虚拟代码的作用域，导致后续类型检查失效
+const channelUrlPlaceholder = "https://t.me/channel_name";
 
 // ── 列表数据与三态 ─────────────────────────────────────
 const loading = ref(false);

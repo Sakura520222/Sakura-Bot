@@ -35,7 +35,7 @@
               <n-select v-model:value="selectedProfile.provider" :options="providerOptions" />
             </n-form-item-gi>
             <n-form-item-gi span="0:2" label="API 地址">
-              <n-input v-model:value="selectedProfile.base_url" placeholder="https://api.openai.com/v1" />
+              <n-input v-model:value="selectedProfile.base_url" :placeholder="baseUrlPlaceholder" />
             </n-form-item-gi>
             <n-form-item-gi span="0:2" label="API 密钥">
               <n-space vertical style="width: 100%">
@@ -190,6 +190,8 @@ const routingOptions = computed(() => [{ label: "默认配置（兼容旧配置�
 const selectedProfile = computed(() => draft.value?.profiles[selectedId.value]);
 const selectedSaved = computed(() => !!selectedProfile.value && profileIsSaved(selectedProfile.value, saved.value?.profiles[selectedId.value]));
 const providerOptions = [{ label: "OpenAI / OpenAI 兼容接口", value: "openai" }];
+// URL 不直接写在模板静态属性里：属性值中的 "//" 会截断 vue-tsc 3 虚拟代码的作用域，导致后续类型检查失效
+const baseUrlPlaceholder = "https://api.openai.com/v1";
 const capabilityOptions = [{ label: "继承配置", value: "inherit" }, { label: "支持图片输入", value: "enabled" }, { label: "仅文本", value: "disabled" }];
 
 function formatError(problem: unknown): string {
