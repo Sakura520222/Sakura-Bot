@@ -50,7 +50,7 @@
               :show-require-mark="false"
             >
               <n-form-item label="API 地址" path="base_url">
-                <n-input v-model:value="aiConfig.base_url" placeholder="https://api.deepseek.com" />
+                <n-input v-model:value="aiConfig.base_url" :placeholder="baseUrlPlaceholder" />
               </n-form-item>
               <n-form-item label="模型名称" path="model">
                 <n-input v-model:value="aiConfig.model" placeholder="deepseek-chat" />
@@ -145,6 +145,9 @@ import AIProfilesPanel from "@/components/AIProfilesPanel.vue";
 import { saveError } from "@/composables/autosave";
 
 const message = useMessage();
+
+// URL 不直接写在模板静态属性里：属性值中的 "//" 会截断 vue-tsc 3 虚拟代码的作用域，导致后续类型检查失效
+const baseUrlPlaceholder = "https://api.deepseek.com";
 
 // ── 首屏三态与保存状态 ─────────────────────────────────
 const firstLoading = ref(true);
