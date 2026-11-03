@@ -20,6 +20,7 @@ from core.config import (
 )
 from core.handlers.userbot_client import get_userbot_client
 from core.i18n.i18n import get_text
+from core.media.image_pipeline import enrich_message
 from core.system.error_handler import record_error, retry_with_backoff
 
 from .client_management import extract_date_range_from_summary, get_active_client
@@ -131,11 +132,25 @@ async def fetch_last_week_messages(
                         logger.debug(f"跳过报告消息，ID: {message.id}")
                         continue
 
-                    if message.text:
+                    text = await enrich_message(client, message, channel)
+                    if text:
                         # 动态获取频道名用于生成链接
                         channel_part = channel.split("/")[-1]
                         msg_link = f"https://t.me/{channel_part}/{message.id}"
-                        channel_messages.append(f"内容: {message.text[:500]}\n链接: {msg_link}")
+                        from core.ai.source_archive import archive_source
+
+                        archive_source(
+                            channel,
+                            message.id,
+                            text,
+                            message.date.isoformat(),
+                            post_url=msg_link,
+                        )
+                        channel_messages.append(
+                            f"频道: {channel}\n消息ID: {message.id}\n"
+                            f"发布时间: {message.date.isoformat()}\n"
+                            f"内容: {text}\n链接: {msg_link}"
+                        )
 
                         # 每抓取10条消息记录一次日志
                         if len(channel_messages) % 10 == 0:
@@ -145,8 +160,8 @@ async def fetch_last_week_messages(
             except Exception as e:
                 record_error(e, f"fetch_messages_channel_{channel}")
                 logger.error(f"抓取频道 {channel} 消息时出错: {e}")
-                # 继续处理其他频道
-                continue
+                # 拒绝将未完整抓取的范围当作成功。
+                raise
 
             # 将当前频道的消息添加到字典中
             messages_by_channel[channel] = channel_messages

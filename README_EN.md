@@ -22,6 +22,7 @@ Sakura-Bot is a Telegram channel management tool: AI summaries and polls, messag
 - **Submissions and subscriptions**: users subscribe to summary push notifications, request summaries, or submit posts (anonymously if enabled) through the assistant bot for admin review
 - **Polls**: AI-generated interactive polls with per-channel public/anonymous mode and destination, one-click regeneration
 - **WebUI**: manage channels, schedules, forwarding rules, AI settings, MySQL data, vector stores, and system status from the browser; JWT authentication and instant hot reload on save
+- **AI purpose routing**: Independent OpenAI-compatible profiles for summaries, assistant answers, vision and polls, with masked keys, model discovery/manual IDs and connection/call tests. [Configuration guide](wiki/AI_PROFILES.md).
 - **Sakura Guard**: opt-in per-group nickname and message rules, contact-card filtering, join verification, `@admin report`, admin review, blacklists/whitelists, and self-service ban appeals
 - **Infrastructure**: multi-channel and multi-admin, Chinese/English interface, hot configuration reload with atomic rollback, hot switching between assistant bot runtimes, graceful shutdown
 

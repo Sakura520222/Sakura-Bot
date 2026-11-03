@@ -464,6 +464,33 @@ class VectorStore:
         all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
         return all_results[:top_k]
 
+    def _message_document_ids(self, parent_id: str) -> list[str]:
+        """同时兼容历史单条 ID 与新的分块 ID。"""
+        legacy = self.messages_collection.get(ids=[parent_id], include=[])["ids"]
+        if self.backend == "lite":
+            chunks = self.messages_collection.get(id_prefix=parent_id + "#chunk=", include=[])[
+                "ids"
+            ]
+        else:
+            chunks = self.messages_collection.get(where={"parent_id": parent_id}, include=[])["ids"]
+        return list(dict.fromkeys([*legacy, *chunks]))
+
+    def replace_message_chunks(self, parent_id, ids, texts, metadatas, embeddings) -> bool:
+        """完整写入后移除旧版本多余片段（短文/长文相互编辑也不会残留）。"""
+        if not self.messages_collection:
+            return False
+        try:
+            previous = self._message_document_ids(parent_id)
+            if self.add_messages_batch(ids, texts, metadatas, embeddings) != len(ids):
+                return False
+            obsolete = [doc_id for doc_id in previous if doc_id not in ids]
+            if obsolete:
+                self.messages_collection.delete(ids=obsolete)
+            return True
+        except Exception as exc:
+            logger.error("替换消息分块失败 %s: %s", parent_id, exc)
+            return False
+
     def delete_message(self, message_id: int | str) -> bool:
         """
         删除消息向量
@@ -478,10 +505,8 @@ class VectorStore:
             return False
 
         try:
-            if self.backend == "lite":
-                self._engine.delete(TABLE_MESSAGES, [str(message_id)])
-            else:
-                self.messages_collection.delete(ids=[str(message_id)])
+            ids = self._message_document_ids(str(message_id))
+            self.messages_collection.delete(ids=ids or [str(message_id)])
             logger.info(f"成功删除消息向量: message_id={message_id}")
             return True
 

@@ -240,17 +240,16 @@ class TestFormatConversationContext:
         assert "Hello" in result
         assert "Hi there" in result
 
-    def test_format_truncates_long_messages(self):
-        """测试截断过长消息"""
+    def test_format_preserves_long_messages(self):
+        """长消息正文与尾部必须原样保留。"""
         manager = ConversationManager()
 
-        long_content = "A" * 600
+        long_content = "  " + "中文 English 🐱\nreturn True\n" * 100 + "TAIL_MARKER  "
         history = [{"role": "user", "content": long_content}]
 
         result = manager.format_conversation_context(history)
 
-        assert "..." in result
-        assert len(result) < 650
+        assert result == "用户：" + long_content
 
 
 @pytest.mark.unit

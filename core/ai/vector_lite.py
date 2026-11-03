@@ -405,6 +405,7 @@ class LiteEngine:
         ids: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        id_prefix: str | None = None,
     ) -> list[tuple]:
         """按 id 升序取原始行 (id, embedding BLOB, document, metadata_json)
 
@@ -428,6 +429,9 @@ class LiteEngine:
                     placeholders = ", ".join("?" for _ in ids)
                     sql += f" WHERE id IN ({placeholders})"
                     params.extend(str(doc_id) for doc_id in ids)
+                if id_prefix is not None:
+                    sql += (" AND" if ids else " WHERE") + " id >= ? AND id < ?"
+                    params.extend([id_prefix, id_prefix + "\uffff"])
                 sql += " ORDER BY id"
                 if limit is not None:
                     sql += " LIMIT ?"
@@ -695,9 +699,11 @@ class CollectionAdapter:
         """等价 chroma collection.count()"""
         return self.engine.count(self.table)
 
-    def get(self, ids=None, include=None, limit=None, offset=None) -> dict:
+    def get(self, ids=None, include=None, limit=None, offset=None, id_prefix=None) -> dict:
         """等价 chroma collection.get(...) 的扁平返回形状（未请求键为 None）"""
-        rows = self.engine.get_rows(self.table, ids=ids, limit=limit, offset=offset)
+        rows = self.engine.get_rows(
+            self.table, ids=ids, limit=limit, offset=offset, id_prefix=id_prefix
+        )
         wanted = set(include or [])
         result: dict = {
             "ids": [row[0] for row in rows],

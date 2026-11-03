@@ -21,7 +21,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/db"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/llm"
@@ -199,7 +198,7 @@ func consumeAgentStream(
 // （qa_engine_v3.py:262-280）：
 //
 //   - 只保留 user/assistant 角色，跳过异常数据与空白内容；
-//   - 单条内容超长时按 rune 截断（Python len 语义，硬规则 3）并追加省略号；
+//   - 保留每条消息全文，不静默丢弃长消息尾部；
 //   - 只保留最近 MaxHistoryMessages 条。
 func historyToMessages(history []db.HistoryItem) []llm.Message {
 	messages := make([]llm.Message, 0, len(history))
@@ -208,9 +207,6 @@ func historyToMessages(history []db.HistoryItem) []llm.Message {
 		content := item.Content
 		if (role != "user" && role != "assistant") || strings.TrimSpace(content) == "" {
 			continue
-		}
-		if utf8.RuneCountInString(content) > HistoryMessageMaxChars {
-			content = string([]rune(content)[:HistoryMessageMaxChars]) + "…"
 		}
 		messages = append(messages, llm.Message{Role: role, Content: llm.Str(content)})
 	}

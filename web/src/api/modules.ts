@@ -73,6 +73,67 @@ export async function updateAIConfig(data: Partial<AIConfig & { api_key?: string
   return res.data;
 }
 
+export type AIPurpose = "summary" | "assistant" | "vision" | "poll";
+
+export interface AIProfile {
+  name: string;
+  provider: "openai";
+  base_url: string;
+  model: string;
+  supports_vision: boolean;
+  api_key_set: boolean;
+  api_key_preview: string;
+}
+
+export type AIProfileInput = Omit<AIProfile, "api_key_set" | "api_key_preview"> & { api_key?: string };
+
+export interface AIPurposeRoute {
+  profile_id: string;
+  model?: string;
+  supports_vision?: boolean | null;
+}
+
+export interface AIVisionSettings {
+  enabled: boolean;
+  ocr: boolean;
+  description: boolean;
+}
+
+export interface AIProfilesConfig {
+  profiles: Record<string, AIProfile>;
+  routing: Partial<Record<AIPurpose, AIPurposeRoute>>;
+  vision: AIVisionSettings;
+  revision: string;
+  effective: Record<AIPurpose, { profile_id: string; model: string; supports_vision: boolean }>;
+}
+
+export interface AIProfilesInput {
+  profiles: Record<string, AIProfileInput>;
+  routing: Partial<Record<AIPurpose, AIPurposeRoute>>;
+  vision: AIVisionSettings;
+  revision: string;
+}
+
+export async function getAIProfiles() {
+  const res = await apiClient.get<ApiResponse<AIProfilesConfig>>("/ai/profiles");
+  return res.data;
+}
+
+export async function updateAIProfiles(data: AIProfilesInput) {
+  const res = await apiClient.put<ApiResponse<AIProfilesConfig>>("/ai/profiles", data);
+  return res.data;
+}
+
+export async function getAIProfileModels(profileId: string) {
+  const res = await apiClient.post<ApiResponse<string[]>>(`/ai/profiles/${encodeURIComponent(profileId)}/models`, {}, { timeout: 60000 });
+  return res.data;
+}
+
+export async function testAIProfile(profileId: string, kind: "connection" | "call", model?: string) {
+  const res = await apiClient.post<ApiResponse>(`/ai/profiles/${encodeURIComponent(profileId)}/test`, { kind, model }, { timeout: 60000 });
+  return res.data;
+}
+
 export interface QAQuotaSettings {
   user_daily_limit: number;
   total_daily_limit: number;

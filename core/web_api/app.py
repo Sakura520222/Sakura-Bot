@@ -34,6 +34,7 @@ from .routes import (
     database,
     forwarding,
     guard,
+    images,
     interaction,
     schedules,
     stats,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(vector_store.router, prefix="/api/vector-store", tags=["向量存储"])
     app.include_router(database.router, prefix="/api/tables", tags=["数据库管理"])
     app.include_router(guard.router, prefix="/api/guard", tags=["Sakura Guard"])
+    app.include_router(images.router, prefix="/api/images", tags=["图片任务"])
 
     # 注册健康检查端点
     @app.get("/api/health", tags=["健康检查"])

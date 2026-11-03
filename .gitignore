@@ -297,3 +297,10 @@ data/.config-write-*/
 bin/
 data/.image_update_request
 data/.image_deployer_installed
+
+# 完整消息归档及总结运行记录（包含频道原文）
+data/message_sources/
+data/summary_runs/
+
+# Persisted image binaries (metadata stays in MySQL)
+data/images/

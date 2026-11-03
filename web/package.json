@@ -1,9 +1,10 @@
 {
   "name": "sakura-bot-webui",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test tests/guard-autosave.test.ts tests/ai-profiles-form.test.ts",
     "test:guard": "node --experimental-strip-types --test tests/guard-autosave.test.ts",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",

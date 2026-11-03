@@ -31,12 +31,13 @@ import (
 //   - Windows 无 Ino：platformIno 返回 (0,false)，三元组退化为 (mtime_ns, size)
 //     （评审 #6/设计 §17-6；生产为 Linux，不受影响）。
 type RuntimeJSON struct {
-	mu    sync.Mutex
-	path  string
-	ver   fileVersion
-	have  bool
-	data  map[string]any
-	ready bool
+	mu      sync.Mutex
+	path    string
+	ver     fileVersion
+	have    bool
+	data    map[string]any
+	ready   bool
+	loadErr error
 }
 
 // NewRuntimeJSON 以显式路径构建热读器（不立即读盘，读盘由 Init/Read 触发）。
@@ -63,8 +64,10 @@ func (r *RuntimeJSON) Init() error {
 	}
 	data, err := readJSONObject(r.path)
 	if err != nil {
-		return fmt.Errorf("config.json 解析失败: %w", err)
+		r.loadErr = err
+		return fmt.Errorf("config.json 解析或校验失败: %w", err)
 	}
+	r.loadErr = nil
 	r.data = data
 	r.ready = true
 	r.ver = versionOf(fi)
@@ -75,26 +78,34 @@ func (r *RuntimeJSON) Init() error {
 // Read 返回最新配置（顶层 map 拷贝）。永不失败：
 // 首次失败返回空 dict（启动失败由 Init 报告），后续失败保留旧值。
 func (r *RuntimeJSON) Read() map[string]any {
+	data, _ := r.read()
+	return data
+}
+
+// read 同时提供首次加载的校验错误，防止 AI 调用回退到错误的凭据。
+// 已加载配置的暂时错误仍使用最近一次有效快照。
+func (r *RuntimeJSON) read() (map[string]any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	fi, err := os.Stat(r.path)
 	if err != nil {
 		if !r.ready {
-			return map[string]any{}
+			return map[string]any{}, r.loadErr
 		}
 		// 文件临时缺失：保留旧值（runtime.py:35-39）。
-		return snapshotLocked(r.data)
+		return snapshotLocked(r.data), nil
 	}
 
 	ver := versionOf(fi)
 	if !r.have || ver != r.ver {
 		data, err := readJSONObject(r.path)
+		r.loadErr = err
 		if err != nil {
 			if !r.ready {
 				// Python 侧未加载时 raise；此处返回空 dict，Init 负责启动失败。
 				r.ver, r.have = ver, true
-				return map[string]any{}
+				return map[string]any{}, r.loadErr
 			}
 			slog.Warn("运行时配置暂时无效，继续使用最近一次有效配置", "error", err)
 		} else {
@@ -104,7 +115,10 @@ func (r *RuntimeJSON) Read() map[string]any {
 		// 版本号照常更新（对齐 runtime.py:49 在 except 分支后仍执行）。
 		r.ver, r.have = ver, true
 	}
-	return snapshotLocked(r.data)
+	if !r.ready {
+		return map[string]any{}, r.loadErr
+	}
+	return snapshotLocked(r.data), nil
 }
 
 // snapshotLocked 返回顶层 map 浅拷贝，避免调用方改动缓存。
@@ -144,6 +158,9 @@ func readJSONObject(path string) (map[string]any, error) {
 	}
 	if out == nil {
 		out = map[string]any{}
+	}
+	if _, err := parseAIProfiles(out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

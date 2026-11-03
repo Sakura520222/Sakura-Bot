@@ -6,7 +6,7 @@
         <h2 class="page-title">AI 配置</h2>
         <p class="page-subtitle">配置模型提供商、API 密钥与提示词，保存后立即生效。</p>
       </div>
-      <n-button type="primary" :loading="saving" :disabled="!aiLoaded" @click="saveAIConfig">保存配置</n-button>
+      <n-button type="primary" :loading="saving" :disabled="!aiLoaded" @click="saveAIConfig">保存默认配置</n-button>
     </header>
 
     <!-- 首屏三态之 loading：骨架占位 -->
@@ -32,10 +32,12 @@
     </n-card>
 
     <template v-else>
+      <AIProfilesPanel class="mt-md" :legacy-revision="legacyRevision" />
+
       <!-- 分区一：模型与提供商 / 分区二：密钥 -->
       <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" item-responsive class="mt-md">
         <n-gi span="0:2 1024:1">
-          <n-card title="模型与提供商">
+          <n-card title="旧版默认模型（未绑定用途时回退）">
             <template #header-extra>
               <n-text depth="3" class="font-xs">OpenAI 兼容接口</n-text>
             </template>
@@ -53,7 +55,7 @@
               <n-form-item label="模型名称" path="model">
                 <n-input v-model:value="aiConfig.model" placeholder="deepseek-chat" />
               </n-form-item>
-              <n-text depth="3">保存后立即生效，主机器人和助手 Bot 的后续请求使用新配置。</n-text>
+              <n-text depth="3">保存后立即生效，未在上方绑定独立配置的用途使用此默认模型。</n-text>
             </n-form>
           </n-card>
         </n-gi>
@@ -76,7 +78,7 @@
               <n-text v-if="aiConfig.api_key_set && aiConfig.api_key_preview" depth="3">
                 当前密钥：{{ aiConfig.api_key_preview }}
               </n-text>
-              <n-text depth="3">留空表示保持现有密钥；修改后点击右上角「保存配置」统一提交。</n-text>
+              <n-text depth="3">留空表示保持现有密钥；修改后点击右上角「保存默认配置」提交默认模型与密钥。</n-text>
             </n-space>
           </n-card>
         </n-gi>
@@ -139,6 +141,7 @@ import type { FormInst, FormItemRule, FormRules } from "naive-ui";
 import { getAIConfig, getPrompts, resetPrompt, updateAIConfig, updatePrompt } from "@/api/modules";
 import type { PromptInfo } from "@/api/modules";
 import QAQuotaPanel from "@/components/QAQuotaPanel.vue";
+import AIProfilesPanel from "@/components/AIProfilesPanel.vue";
 import { saveError } from "@/composables/autosave";
 
 const message = useMessage();
@@ -148,6 +151,7 @@ const firstLoading = ref(true);
 const loadError = ref("");
 const saving = ref(false);
 const aiLoaded = ref(false);
+const legacyRevision = ref(0);
 
 const aiConfig = reactive({
   base_url: "",
@@ -223,6 +227,7 @@ async function saveAIConfig() {
     if (res.success) {
       if (aiConfig.api_key) aiConfig.api_key_set = true;
       aiConfig.api_key = "";
+      legacyRevision.value++;
     }
   } catch (problem) {
     message.error(saveError(problem));

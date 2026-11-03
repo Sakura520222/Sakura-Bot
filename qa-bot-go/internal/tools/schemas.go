@@ -16,8 +16,7 @@
 //     （agent_tools.py:305-335）；
 //   - 结果存储按请求内自增 result_id 索引（agent_tools.py:680-692），
 //     每请求独立 ToolExecutor，多用户互不污染（qa_engine_v3.py:300）；
-//   - 序列化时 summary_text 截断至 500 字符（Python 码点语义 = Go rune，
-//     硬规则 3）；
+//   - 序列化时 summary_text 保留完整检索片段，不裁剪来源正文（与 Python 同步）；
 //   - post_url 只对 source_type=message 且解析出真实 Telegram 消息 ID 的
 //     结果构造；总结类结果一律 post_url=null、post_links=[]（R9 历史修复
 //     红线）；keyword_search 的 summary_message_ids 是机器人发布的总结

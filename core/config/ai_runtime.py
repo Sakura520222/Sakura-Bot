@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass, field
 
+from .ai_profiles import PURPOSES, parse_ai_profiles
 from .runtime import runtime_config
 
 
@@ -14,16 +15,45 @@ class AIConnectionSettings:
     api_key: str | None = field(repr=False)
     base_url: str
     model: str
+    profile_id: str = ""
+    supports_vision: bool = False
+    vision_enabled: bool = False
+    vision_ocr: bool = True
+    vision_description: bool = True
 
 
-def effective_ai_config(config: dict | None = None) -> AIConnectionSettings:
+def effective_ai_config(
+    config: dict | None = None, purpose: str = "summary"
+) -> AIConnectionSettings:
     from core.settings import get_settings
 
     if config is None:
         config = runtime_config.read()
+    if purpose not in PURPOSES:
+        raise ValueError("Unknown AI purpose")
+    profiles = parse_ai_profiles(config)
+    route = profiles.routing.get(purpose)
+    vision = dict(
+        vision_enabled=profiles.vision.enabled,
+        vision_ocr=profiles.vision.ocr,
+        vision_description=profiles.vision.description,
+    )
+    if route and route.profile_id:
+        profile = profiles.profiles[route.profile_id]
+        return AIConnectionSettings(
+            api_key=profile.api_key,
+            base_url=profile.base_url,
+            model=route.model or profile.model,
+            profile_id=route.profile_id,
+            supports_vision=(
+                profile.supports_vision if route.supports_vision is None else route.supports_vision
+            ),
+            **vision,
+        )
     defaults = get_settings().ai
     return AIConnectionSettings(
         api_key=config.get("api_key") or defaults.effective_api_key,
         base_url=config.get("base_url") or defaults.base_url,
         model=config.get("model") or defaults.model,
+        **vision,
     )

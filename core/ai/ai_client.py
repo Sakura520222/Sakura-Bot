@@ -30,18 +30,19 @@ base_url = _initial_config.base_url
 model = _initial_config.model
 _client_connection = (api_key, base_url)
 _client_lock = threading.RLock()
+_purpose_clients = {}
 
 logger.debug(
     f"AI客户端配置: Base URL={base_url}, Model={model}, API Key={'***' if api_key else '未设置'}"
 )
 
-client_llm = OpenAI(api_key=api_key, base_url=base_url)
+client_llm = OpenAI(api_key=api_key or "", base_url=base_url)
 
 logger.info("AI客户端初始化完成")
 
 # 初始化异步 AI 客户端
 logger.info("开始初始化异步AI客户端...")
-async_client_llm = AsyncOpenAI(api_key=api_key, base_url=base_url)
+async_client_llm = AsyncOpenAI(api_key=api_key or "", base_url=base_url)
 logger.info("异步AI客户端初始化完成")
 
 
@@ -66,17 +67,35 @@ def reinitialize_ai_clients(new_api_key: str, new_base_url: str) -> None:
         logger.info("AI 客户端已热重载")
 
 
-def get_ai_runtime():
+def _get_purpose_clients(purpose, config):
+    connection = (config.api_key, config.base_url)
+    cached = _purpose_clients.get(purpose)
+    if cached is None or cached[0] != connection:
+        # 请求持有旧客户端直至结束；不同用途不交换全局凭据。
+        cached = (
+            connection,
+            OpenAI(api_key=config.api_key, base_url=config.base_url),
+            AsyncOpenAI(api_key=config.api_key, base_url=config.base_url),
+        )
+        _purpose_clients[purpose] = cached
+    return cached[1:]
+
+
+def get_ai_runtime(purpose: str = "summary"):
     """为一次请求固定客户端与模型，兼容助手独立进程。"""
-    config = effective_ai_config()
+    config = effective_ai_config(purpose=purpose)
     with _client_lock:
+        if purpose != "summary":
+            return _get_purpose_clients(purpose, config)[0], config.model
         reinitialize_ai_clients(config.api_key, config.base_url)
         return client_llm, config.model
 
 
-def get_async_ai_runtime():
-    config = effective_ai_config()
+def get_async_ai_runtime(purpose: str = "summary"):
+    config = effective_ai_config(purpose=purpose)
     with _client_lock:
+        if purpose != "summary":
+            return _get_purpose_clients(purpose, config)[1], config.model
         reinitialize_ai_clients(config.api_key, config.base_url)
         return async_client_llm, config.model
 
@@ -85,66 +104,14 @@ def get_llm_model() -> str:
     return effective_ai_config().model
 
 
-@retry_with_backoff(
-    max_retries=3,
-    base_delay=1.0,
-    max_delay=30.0,
-    exponential_backoff=True,
-    retry_on_exceptions=(ConnectionError, TimeoutError, Exception),
-)
 async def analyze_with_ai(messages, current_prompt):
-    """调用 AI 进行汇总（异步版本）
-
-    Args:
-        messages: 要分析的消息列表
-        current_prompt: 当前使用的提示词
-
-    Returns:
-        str: AI 生成的摘要文本
-
-    Raises:
-        ConnectionError: 连接失败
-        TimeoutError: 请求超时
-        Exception: 其他错误
-    """
-    logger.info("开始调用AI进行消息汇总（异步）")
-
+    """所有总结入口共用同一套分块逻辑，失败时不发布不完整的结果。"""
     if not messages:
-        logger.info("没有需要分析的消息，返回空结果")
         return "本周无新动态。"
-
-    context_text = "\n\n---\n\n".join(messages)
-    prompt = f"{current_prompt}{context_text}"
+    from core.ai.summary_pipeline import summarize_complete
 
     client, model = get_async_ai_runtime()
-    logger.debug(
-        f"AI请求配置: 模型={model}, 提示词长度={len(current_prompt)}字符, 上下文长度={len(context_text)}字符"
-    )
-    logger.debug(f"AI请求总长度: {len(prompt)}字符")
-
-    from datetime import datetime
-
-    start_time = datetime.now()
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": "你是一个专业的资讯摘要助手，擅长提取重点并保持客观。",
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
-    end_time = datetime.now()
-
-    processing_time = (end_time - start_time).total_seconds()
-    logger.info(f"AI分析完成，处理时间: {processing_time:.2f}秒")
-    logger.debug(
-        f"AI响应状态: 成功，选择索引={response.choices[0].index}, 完成原因={response.choices[0].finish_reason}"
-    )
-    logger.debug(f"AI响应长度: {len(response.choices[0].message.content)}字符")
-
-    return response.choices[0].message.content
+    return await summarize_complete(messages, current_prompt, client, model)
 
 
 @retry_with_backoff(
@@ -182,7 +149,7 @@ async def generate_poll_from_summary(summary_text):
     poll_prompt_template = load_poll_prompt()
     prompt = poll_prompt_template.format(summary_text=summary_text)
 
-    client, model = get_async_ai_runtime()
+    client, model = get_async_ai_runtime("poll")
     logger.debug(f"投票生成请求配置: 模型={model}, 提示词长度={len(prompt)}字符")
 
     try:

@@ -69,3 +69,6 @@ pip-audit>=2.6.0
 
 # Pre-commit 钩子管理
 pre-commit>=3.0.0
+
+# Validate downloaded PNG/JPEG payloads before vision processing
+Pillow>=11.3.0

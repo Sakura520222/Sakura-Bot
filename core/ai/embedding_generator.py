@@ -88,7 +88,19 @@ class EmbeddingGenerator:
         try:
             response = self.client.embeddings.create(model=self.model, input=texts)
 
-            embeddings = [item.embedding for item in response.data]
+            # API 可乱序返回，必须按 index 对齐原始片段，缺失/重复均视为失败。
+            if len(response.data) != len(texts):
+                raise ValueError("Incomplete embedding response")
+            embeddings = [None] * len(texts)
+            for item in response.data:
+                if (
+                    not isinstance(item.index, int)
+                    or item.index < 0
+                    or item.index >= len(texts)
+                    or embeddings[item.index] is not None
+                ):
+                    raise ValueError("Invalid embedding response index")
+                embeddings[item.index] = item.embedding
             logger.info(f"成功批量生成{len(embeddings)}个embedding")
             return embeddings
 

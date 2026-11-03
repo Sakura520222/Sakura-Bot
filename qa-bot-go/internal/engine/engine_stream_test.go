@@ -128,10 +128,10 @@ func TestProcessQueryStreamConsumerCancel(t *testing.T) {
 	}
 }
 
-// TestHistoryToMessages 历史转换：角色过滤、空白跳过、1500 rune 截断加省略号、
+// TestHistoryToMessages 历史转换：角色过滤、空白跳过、完整保留长消息、
 // 只保留最近 20 条。
 func TestHistoryToMessages(t *testing.T) {
-	long := strings.Repeat("汉", 1501)
+	long := "  " + strings.Repeat("汉 English 🐱\n", 1501) + "TAIL_MARKER  "
 	items := []db.HistoryItem{
 		{Role: "system", Content: "应被跳过"},
 		{Role: "user", Content: "   "},
@@ -145,9 +145,8 @@ func TestHistoryToMessages(t *testing.T) {
 	if msgs[0].Role != "user" || *msgs[0].Content != "问题一" {
 		t.Fatalf("msgs[0] = %+v", msgs[0])
 	}
-	wantTruncated := strings.Repeat("汉", 1500) + "…"
-	if msgs[1].Role != "assistant" || *msgs[1].Content != wantTruncated {
-		t.Fatalf("超长历史应截断为 1500 rune + …, 实际长度 %d", len([]rune(*msgs[1].Content)))
+	if msgs[1].Role != "assistant" || *msgs[1].Content != long {
+		t.Fatal("long history must preserve all text and whitespace")
 	}
 
 	var many []db.HistoryItem

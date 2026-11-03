@@ -13,7 +13,7 @@
    每次 handleUpdate 顶层 `defer recover()`，panic 记日志不杀进程。两个 ticker job 独立 goroutine。
 2. **向量新鲜度**：每次 search 前 `SELECT value FROM store_meta WHERE key IN ('summaries_version','messages_version')`
    判断重载（WAL 下主文件 mtime 不可靠，禁用 stat 方案）。
-3. **rune 计数**：一切长度判定用 `utf8.RuneCountInString`（80 字符阈值 / 4096 限长 / 2000/1000/500 字限）。
+3. **rune 计数**：一切长度判定用 `utf8.RuneCountInString`（80 字符阈值 / 4096 限长 / 界面显示限长；检索正文不按固定长度裁剪）。
 4. **TG API 调用统一 5s 超时**（申诉卡片 25s 例外）；429 仅当 `RetryAfter <= 60s` 才睡眠重试一次，否则按错误返回；
    `message is not modified` 静默。
 5. **GOMEMLIMIT** 默认 96MiB（env 可调），在 main.go 里 `debug.SetMemoryLimit`。

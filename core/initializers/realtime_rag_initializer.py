@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 import core.config as config_module
 from core.handlers.realtime_rag_handler import get_realtime_rag_handler
+from core.media.image_pipeline import channel_key, combined_text, get_image_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,11 @@ class RealtimeRAGInitializer:
             # 启动处理器
             await rag_handler.start()
 
+            try:
+                await get_image_pipeline().start(monitoring_client)
+            except Exception:
+                self.logger.exception("图片处理任务启动失败，文本采集继续运行")
+
             # 注册事件监听器
             self._register_listeners(monitoring_client, rag_handler)
 
@@ -93,8 +99,17 @@ class RealtimeRAGInitializer:
                 if not self._is_whitelisted_channel(chat):
                     return
 
-                # 提取文本（富媒体消息只取文本部分，无文本则跳过）
-                text = event.message.message
+                # 持久化图片任务并复用已完成识别，图片识别不阻塞事件处理
+                text = event.message.message or ""
+                try:
+                    pipeline = get_image_pipeline()
+                    if pipeline.tasks:
+                        await pipeline.capture(event.message, chat)
+                        text = combined_text(
+                            text, await pipeline.store.text(channel_key(chat.id), event.message.id)
+                        )
+                except Exception:
+                    logger.exception("图片元数据采集失败，保留原始文本")
                 if not text or not text.strip():
                     return
 
@@ -114,6 +129,7 @@ class RealtimeRAGInitializer:
                     text=text,
                     sender_id=sender_id,
                     channel_username=channel_username,
+                    created_at=event.message.date.isoformat(),
                 )
 
             except Exception as e:
@@ -130,8 +146,18 @@ class RealtimeRAGInitializer:
                 if not self._is_whitelisted_channel(chat):
                     return
 
-                text = event.message.message
+                text = event.message.message or ""
+                try:
+                    pipeline = get_image_pipeline()
+                    if pipeline.tasks:
+                        await pipeline.capture(event.message, chat)
+                        text = combined_text(
+                            text, await pipeline.store.text(channel_key(chat.id), event.message.id)
+                        )
+                except Exception:
+                    logger.exception("图片元数据采集失败，保留原始文本")
                 if not text or not text.strip():
+                    await rag_handler.handle_message_delete(channel_key(chat.id), event.message.id)
                     return
 
                 channel_id = str(chat.id)
@@ -147,6 +173,7 @@ class RealtimeRAGInitializer:
                     text=text,
                     sender_id=sender_id,
                     channel_username=channel_username,
+                    created_at=event.message.date.isoformat(),
                 )
 
             except Exception as e:
@@ -161,12 +188,23 @@ class RealtimeRAGInitializer:
                 if not event.chat_id:
                     return
 
-                chat_id = str(event.chat_id)
+                chat_id = channel_key(event.chat_id)
+                # 删除事件通常使用 -100 ID，而新增事件使用 bare ID。
+                # 优先查询实体，以支持白名单使用公开 username 的频道。
                 if not self._is_whitelisted_chat_id(chat_id):
-                    return
+                    try:
+                        chat = await client.get_entity(event.chat_id)
+                    except Exception:
+                        return
+                    if not self._is_whitelisted_channel(chat):
+                        return
 
                 # 批量删除
                 for msg_id in event.deleted_ids:
+                    try:
+                        await get_image_pipeline().store.delete(chat_id, msg_id)
+                    except Exception:
+                        logger.exception("图片删除状态写入失败")
                     await rag_handler.handle_message_delete(
                         channel_id=chat_id,
                         message_id=msg_id,
@@ -213,7 +251,7 @@ class RealtimeRAGInitializer:
 
         for ch in config_module.CHANNELS:
             normalized = self._extract_channel_identifier(ch)
-            if normalized == username or normalized == chat_id:
+            if normalized == username or channel_key(normalized) == chat_id:
                 return True
 
         return False
@@ -230,7 +268,7 @@ class RealtimeRAGInitializer:
         """
         for ch in config_module.CHANNELS:
             normalized = self._extract_channel_identifier(ch)
-            if normalized == chat_id:
+            if channel_key(normalized) == chat_id:
                 return True
 
         return False

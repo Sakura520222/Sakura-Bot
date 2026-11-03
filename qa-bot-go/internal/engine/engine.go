@@ -45,9 +45,6 @@ const (
 	AgentMaxIterations = 10
 	// MaxHistoryMessages 提供给模型的历史消息条数上限（MAX_HISTORY_MESSAGES）。
 	MaxHistoryMessages = 20
-	// HistoryMessageMaxChars 单条历史消息内容截断长度（HISTORY_MESSAGE_MAX_CHARS，
-	// Python len 语义 = Unicode 码点，Go 侧按 rune 计，README 硬规则 3）。
-	HistoryMessageMaxChars = 1500
 )
 
 // 用户可见文案与提示词片段（与 qa_engine_v3.py 逐字一致，禁止改动措辞）。
