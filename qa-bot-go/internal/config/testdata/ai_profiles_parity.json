@@ -452,7 +452,7 @@
     }
   },
   {
-    "name": "unassigned route ignores overrides",
+    "name": "unassigned route applies route overrides",
     "config": {
       "api_key": "legacy-key",
       "base_url": "https://legacy.example/v1",
@@ -486,7 +486,7 @@
         },
         "assistant": {
           "profile_id": "",
-          "model": "ignored",
+          "model": "route-model",
           "supports_vision": true
         },
         "vision": {
@@ -509,9 +509,9 @@
     "expected": {
       "api_key": "legacy-key",
       "base_url": "https://legacy.example/v1",
-      "model": "legacy-model",
+      "model": "route-model",
       "profile_id": "",
-      "supports_vision": false,
+      "supports_vision": true,
       "vision_enabled": false,
       "vision_ocr": true,
       "vision_description": true

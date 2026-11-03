@@ -51,9 +51,16 @@ def effective_ai_config(
             **vision,
         )
     defaults = get_settings().ai
+    # 未绑定档案的路由同样按用途生效：路由覆盖只改变模型与图片能力，
+    # 凭据与地址仍来自旧配置/env，绝不与其他档案混用。
     return AIConnectionSettings(
         api_key=config.get("api_key") or defaults.effective_api_key,
         base_url=config.get("base_url") or defaults.base_url,
-        model=config.get("model") or defaults.model,
+        model=(route.model if route and route.model else None)
+        or config.get("model")
+        or defaults.model,
+        supports_vision=(
+            route.supports_vision if route and route.supports_vision is not None else False
+        ),
         **vision,
     )

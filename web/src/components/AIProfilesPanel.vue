@@ -56,10 +56,10 @@
             <n-form-item-gi span="0:2" label="默认模型">
               <div class="model-picker">
                 <n-select
-                  v-model:value="selectedProfile.model" :options="modelOptions(selectedId)" filterable tag
+                  v-model:value="selectedProfile.model" :options="profileModelOptions(selectedId)" filterable tag
                   placeholder="搜索模型，或输入模型 ID 后按回车" :disabled="busy"
                 />
-                <n-button :loading="modelLoading === selectedId" :disabled="!selectedSaved || busy || !!modelLoading" @click="refreshModels(selectedId)">刷新列表</n-button>
+                <n-button :loading="modelLoading === selectedId" :disabled="busy || !!modelLoading || !selectedProfile.base_url.trim()" @click="refreshModels(selectedId)">刷新列表</n-button>
               </div>
             </n-form-item-gi>
             <n-form-item-gi span="0:2" label="默认图片能力">
@@ -73,12 +73,12 @@
 
         <div v-if="selectedProfile" class="profile-actions">
           <n-space align="center" :size="8">
-            <n-button size="small" :loading="testLoading === `${selectedId}:connection`" :disabled="!selectedSaved || busy || !!testLoading" @click="runTest(selectedId, 'connection')">测试连接</n-button>
+            <n-button size="small" :loading="testLoading === `${selectedId}:connection`" :disabled="busy || !!testLoading || !selectedProfile.base_url.trim()" @click="runTest(selectedId, 'connection')">测试连接</n-button>
             <n-popconfirm @positive-click="runTest(selectedId, 'call')">
               <template #trigger>
-                <n-button size="small" :loading="testLoading === `${selectedId}:call`" :disabled="!selectedSaved || busy || !!testLoading">测试调用</n-button>
+                <n-button size="small" :loading="testLoading === `${selectedId}:call`" :disabled="busy || !!testLoading || !selectedProfile.base_url.trim()">测试调用</n-button>
               </template>
-              向已保存的模型发送一条简短测试消息，可能产生少量 API 费用，继续？
+              将用当前填写的地址与密钥发送一条简短测试消息，可能产生少量 API 费用，继续？
             </n-popconfirm>
           </n-space>
           <n-popconfirm :disabled="isAssigned(selectedId) || busy" @positive-click="removeProfile(selectedId)">
@@ -89,7 +89,7 @@
           </n-popconfirm>
         </div>
         <n-text v-if="selectedProfile" depth="3" class="helper-text">
-          {{ selectedSaved ? "刷新列表与测试使用已保存的地址、密钥和模型。" : "请先保存此配置，再刷新模型列表或测试。模型 ID 也可手动输入。" }}
+          刷新列表与测试直接使用当前填写的地址与密钥，密钥留空时沿用已保存的密钥；保存后才会用于实际任务。模型 ID 也可手动输入。
           {{ isAssigned(selectedId) ? "移除前请先在下方解除该配置的用途绑定。" : "" }}
         </n-text>
         <n-alert v-if="selectedId && testResults[selectedId]" :type="testResults[selectedId].success ? 'success' : 'error'" class="profile-result">
@@ -110,25 +110,26 @@
                 <div class="model-picker">
                   <n-select
                     :value="draft.routing[purpose.key].model || null"
-                    :options="modelOptions(draft.routing[purpose.key].profile_id)"
-                    filterable tag clearable placeholder="继承配置，或手动输入模型 ID" :disabled="busy || !draft.routing[purpose.key].profile_id"
+                    :options="routeModelOptions(purpose.key)"
+                    filterable tag clearable placeholder="继承配置，或手动输入模型 ID" :disabled="busy"
                     @update:value="setRouteModel(purpose.key, $event)"
                   />
                   <n-button
+                    v-if="draft.routing[purpose.key].profile_id"
                     :loading="modelLoading === draft.routing[purpose.key].profile_id"
-                    :disabled="busy || !canUseProfile(draft.routing[purpose.key].profile_id)"
+                    :disabled="busy || !draft.profiles[draft.routing[purpose.key].profile_id]?.base_url.trim()"
                     @click="refreshModels(draft.routing[purpose.key].profile_id)"
                   >刷新</n-button>
                 </div>
               </n-form-item>
               <n-form-item label="图片能力覆盖">
                 <n-select
-                  :value="visionOverride(purpose.key)" :options="capabilityOptions" :disabled="busy || !draft.routing[purpose.key].profile_id"
+                  :value="visionOverride(purpose.key)" :options="capabilityOptions" :disabled="busy"
                   @update:value="setVisionOverride(purpose.key, $event)"
                 />
               </n-form-item>
             </n-form>
-            <n-text v-if="!draft.routing[purpose.key].profile_id" depth="3" class="helper-text">默认配置直接使用旧版模型与能力；选择独立配置后可设置覆盖。</n-text>
+            <n-text v-if="!draft.routing[purpose.key].profile_id" depth="3" class="helper-text">未选择独立配置时使用下方旧版默认模型与密钥；此处的模型与图片能力覆盖仍按用途生效。</n-text>
             <div class="effective-route">当前生效：{{ effectiveLabel(purpose.key) }}</div>
           </n-card>
         </n-gi>
@@ -166,8 +167,9 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useMessage } from "naive-ui";
 import { getAIProfiles, getAIProfileModels, testAIProfile, updateAIProfiles } from "@/api/modules";
+import type { AIProfileCredentials } from "@/api/modules";
 import type { AIProfilesConfig, AIPurpose } from "@/api/modules";
-import { aiPurposes, createProfilesDraft, profileIsSaved, profilesPayload, validateProfiles } from "@/composables/ai-profiles-form";
+import { aiPurposes, createProfilesDraft, profilesPayload, validateProfiles } from "@/composables/ai-profiles-form";
 import type { AIProfilesDraft } from "@/composables/ai-profiles-form";
 import { saveError } from "@/composables/autosave";
 
@@ -183,12 +185,12 @@ const modelLists = ref<Record<string, string[]>>({});
 const modelLoading = ref<string | null>(null);
 const testLoading = ref<string | null>(null);
 const testResults = ref<Record<string, { success: boolean; message: string }>>({});
+let lastWarning = { text: "", at: 0 };
 const busy = computed(() => loading.value || saving.value || !!modelLoading.value || !!testLoading.value);
 const dirty = computed(() => !!draft.value && JSON.stringify(profilesPayload(draft.value)) !== baseline.value);
 const profileOptions = computed(() => Object.entries(draft.value?.profiles || {}).map(([id, profile]) => ({ label: profile.name || "未命名配置", value: id })));
 const routingOptions = computed(() => [{ label: "默认配置（兼容旧配置）", value: "" }, ...profileOptions.value]);
 const selectedProfile = computed(() => draft.value?.profiles[selectedId.value]);
-const selectedSaved = computed(() => !!selectedProfile.value && profileIsSaved(selectedProfile.value, saved.value?.profiles[selectedId.value]));
 const providerOptions = [{ label: "OpenAI / OpenAI 兼容接口", value: "openai" }];
 // URL 不直接写在模板静态属性里：属性值中的 "//" 会截断 vue-tsc 3 虚拟代码的作用域，导致后续类型检查失效
 const baseUrlPlaceholder = "https://api.openai.com/v1";
@@ -226,13 +228,23 @@ async function load() {
 async function save() {
   if (!draft.value || busy.value) return;
   const validation = validateProfiles(draft.value);
-  if (validation) { error.value = validation; message.warning(validation); return; }
+  if (validation) {
+    error.value = validation;
+    // 相同校验提示 4 秒内只弹一次，避免反复点击时刷屏
+    const now = Date.now();
+    if (lastWarning.text !== validation || now - lastWarning.at > 4000) {
+      lastWarning = { text: validation, at: now };
+      message.warning(validation);
+    }
+    return;
+  }
   saving.value = true;
   error.value = "";
   try {
     const result = await updateAIProfiles(profilesPayload(draft.value));
     if (!result.success || !result.data) throw new Error(result.message || "保存结果不完整，请重新加载确认配置状态");
     applySnapshot(result.data);
+    lastWarning = { text: "", at: 0 };
     message.success(result.message || "用途配置已保存");
   } catch (problem) { error.value = formatError(problem); }
   finally { saving.value = false; }
@@ -251,29 +263,51 @@ function isAssigned(id: string): boolean {
 
 function removeProfile(id: string) {
   if (!draft.value || busy.value || isAssigned(id)) return;
+  const removed = draft.value.profiles[id];
   delete draft.value.profiles[id];
-  delete modelLists.value[id];
+  // 模型列表按地址缓存，同地址的其他配置仍可复用
+  const key = removed?.base_url.trim();
+  if (key && !Object.values(draft.value.profiles).some(profile => profile.base_url.trim() === key)) {
+    delete modelLists.value[key];
+  }
   delete testResults.value[id];
   selectedId.value = Object.keys(draft.value.profiles)[0] || "";
 }
 
-function modelOptions(id: string) {
-  const current = draft.value?.profiles[id]?.model;
-  return [...new Set([...(modelLists.value[id] || []), ...(current ? [current] : [])])].map(model => ({ label: model, value: model }));
+function modelOptionsFor(baseUrl: string | undefined, current: string | undefined) {
+  const key = (baseUrl || "").trim();
+  const list = key ? modelLists.value[key] || [] : [...new Set(Object.values(modelLists.value).flat())];
+  return [...new Set([...list, ...(current ? [current] : [])])].map(model => ({ label: model, value: model }));
 }
 
-function canUseProfile(id: string) {
+function profileModelOptions(id: string) {
   const profile = draft.value?.profiles[id];
-  return !!profile && profileIsSaved(profile, saved.value?.profiles[id]);
+  return modelOptionsFor(profile?.base_url, profile?.model);
+}
+
+function routeModelOptions(purpose: AIPurpose) {
+  const route = draft.value?.routing[purpose];
+  const profile = route?.profile_id ? draft.value?.profiles[route.profile_id] : undefined;
+  return modelOptionsFor(profile?.base_url, route?.model);
+}
+
+/** 草稿连接参数：密钥留空时由后端沿用已保存的密钥。 */
+function draftCredentials(id: string): AIProfileCredentials | undefined {
+  const profile = draft.value?.profiles[id];
+  const base_url = profile?.base_url.trim();
+  if (!profile || !base_url) return undefined;
+  return { base_url, ...(profile.api_key.trim() ? { api_key: profile.api_key.trim() } : {}) };
 }
 
 async function refreshModels(id: string) {
-  if (!draft.value?.profiles[id] || !profileIsSaved(draft.value.profiles[id], saved.value?.profiles[id]) || modelLoading.value || busy.value) return;
+  const creds = draftCredentials(id);
+  const base_url = creds?.base_url;
+  if (!creds || !base_url || modelLoading.value || busy.value) return;
   modelLoading.value = id;
   try {
-    const result = await getAIProfileModels(id);
+    const result = await getAIProfileModels(id, creds);
     if (!result.success || !result.data) throw new Error(result.message || "获取模型列表失败，可手动填写模型 ID");
-    modelLists.value[id] = result.data;
+    modelLists.value[base_url] = result.data;
     message[result.data.length ? "success" : "warning"](result.data.length ? `已获取 ${result.data.length} 个模型` : "提供商未返回模型，可手动填写模型 ID");
   } catch (problem) { message.error(formatError(problem)); }
   finally { modelLoading.value = null; }
@@ -281,10 +315,15 @@ async function refreshModels(id: string) {
 
 async function runTest(id: string, kind: "connection" | "call") {
   const profile = draft.value?.profiles[id];
-  if (!profile || !profileIsSaved(profile, saved.value?.profiles[id]) || testLoading.value || busy.value) return;
+  const creds = draftCredentials(id);
+  if (!profile || !creds || testLoading.value || busy.value) return;
+  if (kind === "call" && !profile.model.trim()) {
+    message.warning("请先选择或手动填写默认模型，再进行调用测试");
+    return;
+  }
   testLoading.value = `${id}:${kind}`;
   try {
-    const result = await testAIProfile(id, kind, profile.model);
+    const result = await testAIProfile(id, kind, profile.model.trim(), creds);
     testResults.value[id] = { success: result.success, message: result.message || (result.success ? "测试成功" : "测试失败，请检查地址、密钥和模型") };
   } catch (problem) { testResults.value[id] = { success: false, message: formatError(problem) }; }
   finally { testLoading.value = null; }
@@ -319,6 +358,9 @@ watch(() => props.legacyRevision, () => {
   else void load();
 });
 onMounted(load);
+
+// 供页面级「保存默认配置」读取：面板有未保存修改时给出提醒
+defineExpose({ dirty });
 </script>
 
 <style scoped>

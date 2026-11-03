@@ -52,6 +52,18 @@ def test_routes_are_isolated_and_legacy_fallback():
     assert effective_ai_config(config).model == "override"
     assert effective_ai_config(config).supports_vision
     assert effective_ai_config(config, "assistant").model == "assistant-model"
+    # 未绑定档案的路由同样按用途覆盖模型与图片能力，凭据仍来自旧配置。
+    config["ai_routing"]["poll"] = {
+        "profile_id": "",
+        "model": "poll-override",
+        "supports_vision": True,
+    }
+    poll = effective_ai_config(config, "poll")
+    assert poll.model == "poll-override"
+    assert poll.supports_vision
+    assert poll.profile_id == ""
+    assert poll.api_key == "legacy-secret"
+    assert poll.base_url == "https://legacy.example/v1"
     config["ai_profiles"]["summary"]["api_key"] = ""
     assert effective_ai_config(config).api_key == ""  # never inherit another provider's key
 
@@ -311,6 +323,68 @@ def test_models_and_connection_test_use_saved_profile(api, monkeypatch):
     assert all(
         c["api_key"] == "summary-secret" and c["base_url"] == "https://summary.example/v1"
         for c in connections
+    )
+    assert store.path.read_bytes() == before
+
+
+def test_draft_connection_uses_request_credentials(api, monkeypatch):
+    """未保存的草稿也能直接拉模型列表与测试；缺密钥沿用同 ID 已保存档案。"""
+    from types import SimpleNamespace
+
+    client, store = api
+    sdk = AsyncMock()
+    sdk.__aenter__.return_value = sdk
+    sdk.models.list.return_value = SimpleNamespace(data=[SimpleNamespace(id="m1")])
+    connections = []
+
+    def factory(**kwargs):
+        connections.append(kwargs)
+        return sdk
+
+    monkeypatch.setattr(routes, "AsyncOpenAI", factory)
+    before = store.path.read_bytes()
+    response = client.post(
+        "/api/ai/profiles/unsaved/models",
+        json={"base_url": "https://draft.example/v1", "api_key": "draft-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] == ["m1"]
+    assert connections[-1]["api_key"] == "draft-key"
+    assert connections[-1]["base_url"] == "https://draft.example/v1"
+    # 草稿只填地址时，沿用同 ID 已保存档案的密钥
+    assert (
+        client.post(
+            "/api/ai/profiles/summary/models", json={"base_url": "https://draft.example/v1"}
+        ).status_code
+        == 200
+    )
+    assert connections[-1]["api_key"] == "summary-secret"
+    # 非法草稿地址 400，且错误信息不回显内容；配置不落盘
+    bad = client.post(
+        "/api/ai/profiles/summary/models",
+        json={"base_url": "https://user:pass@bad.example/v1", "api_key": "k"},
+    )
+    assert bad.status_code == 400
+    assert "user:pass" not in bad.text
+    assert (
+        client.post(
+            "/api/ai/profiles/unsaved/test",
+            json={
+                "kind": "call",
+                "model": "draft-model",
+                "base_url": "https://draft.example/v1",
+                "api_key": "draft-key",
+            },
+        ).status_code
+        == 200
+    )
+    # 草稿调用测试缺模型时无法执行
+    assert (
+        client.post(
+            "/api/ai/profiles/unsaved/test",
+            json={"kind": "call", "base_url": "https://draft.example/v1"},
+        ).status_code
+        == 400
     )
     assert store.path.read_bytes() == before
 

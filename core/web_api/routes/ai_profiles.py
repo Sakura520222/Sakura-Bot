@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 
 from core.config.ai_profiles import (
     PURPOSES,
+    AIProfile,
     AIProfilesConfig,
     parse_ai_profiles,
     profiles_revision,
@@ -99,15 +100,56 @@ def saved_profile(profile_id):
     return profiles[profile_id]
 
 
+async def _json_body(request: Request) -> dict:
+    """读取 JSON 请求体；空请求体或非对象一律按空字典处理。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _draft_connection(body: dict) -> tuple[str, str] | None:
+    """提取请求体中的草稿连接参数；未提供 base_url 时返回 None 走已保存档案。
+
+    值直接来自请求，校验失败以 400 结束且错误信息不回显任何内容。
+    """
+    if not body.get("base_url"):
+        return None
+    try:
+        base_url = AIProfile.valid_url(AIProfile.safe_string(body["base_url"]))
+        api_key = AIProfile.safe_string(body.get("api_key") or "")
+        if not base_url or len(base_url) > 2048 or len(api_key) > 8192:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(400, get_text("ai_profiles.validation")) from None
+    return base_url, api_key
+
+
+def _connection_for(profile_id: str, body: dict) -> tuple[str, str]:
+    """解析列模型/测试所用的连接参数：草稿优先，缺密钥时沿用已保存档案。"""
+    draft = _draft_connection(body)
+    if not draft:
+        profile = saved_profile(profile_id)
+        return profile.base_url, profile.api_key
+    base_url, api_key = draft
+    if not api_key:
+        try:
+            api_key = saved_profile(profile_id).api_key
+        except HTTPException:
+            api_key = ""
+    return base_url, api_key
+
+
 @router.post("/profiles/{profile_id}/models")
-async def list_profile_models(profile_id: str):
-    profile = saved_profile(profile_id)
+async def list_profile_models(profile_id: str, request: Request):
+    base_url, api_key = _connection_for(profile_id, await _json_body(request))
     try:
         async with AsyncOpenAI(
-            api_key=profile.api_key, base_url=profile.base_url, timeout=15, max_retries=0
+            api_key=api_key, base_url=base_url, timeout=15, max_retries=0
         ) as client:
             result = await client.models.list()
-            models = sorted({item.id for item in result.data if isinstance(item.id, str)})
+        models = sorted({item.id for item in result.data if isinstance(item.id, str)})
         return {"success": True, "data": models}
     except Exception:
         # SDK 异常可能包含请求参数、密钥或上游响应正文，不得回传。
@@ -116,19 +158,25 @@ async def list_profile_models(profile_id: str):
 
 @router.post("/profiles/{profile_id}/test")
 async def test_profile(profile_id: str, request: Request):
-    profile = saved_profile(profile_id)
-    try:
-        body = await request.json()
-        if not isinstance(body, dict) or body.get("kind") not in {"connection", "call"}:
-            raise ValueError()
-        model = body.get("model") or profile.model
-        if not isinstance(model, str) or len(model) > 256 or any(ord(c) < 32 for c in model):
-            raise ValueError()
-    except (ValueError, TypeError):
-        raise HTTPException(400, get_text("ai_profiles.test_kind")) from None
+    body = await _json_body(request)
+    if body.get("kind") not in {"connection", "call"}:
+        raise HTTPException(400, get_text("ai_profiles.test_kind"))
+    model = body.get("model")
+    if model is not None and (
+        not isinstance(model, str) or len(model) > 256 or any(ord(c) < 32 for c in model)
+    ):
+        raise HTTPException(400, get_text("ai_profiles.test_kind"))
+    if not model:
+        try:
+            model = saved_profile(profile_id).model
+        except HTTPException:
+            model = ""
+    if body["kind"] == "call" and not model:
+        raise HTTPException(400, get_text("ai_profiles.test_kind"))
+    base_url, api_key = _connection_for(profile_id, body)
     try:
         async with AsyncOpenAI(
-            api_key=profile.api_key, base_url=profile.base_url, timeout=20, max_retries=0
+            api_key=api_key, base_url=base_url, timeout=20, max_retries=0
         ) as client:
             if body["kind"] == "connection":
                 await client.models.list()

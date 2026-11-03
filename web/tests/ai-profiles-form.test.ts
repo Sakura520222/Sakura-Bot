@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createProfilesDraft, profilesPayload, profileIsSaved, validateProfiles } from "../src/composables/ai-profiles-form.ts";
+import { createProfilesDraft, profilesPayload, validateProfiles } from "../src/composables/ai-profiles-form.ts";
 import type { AIProfilesConfig } from "../src/api/modules.ts";
 
 function snapshot(): AIProfilesConfig {
@@ -61,6 +61,13 @@ test("routing preserves explicit false capabilities and trims manual model names
   assert.equal("supports_vision" in payload.routing.summary!, false);
 });
 
+test("unassigned routes still carry model overrides for the legacy default", () => {
+  const draft = createProfilesDraft(snapshot());
+  draft.routing.poll = { profile_id: "", model: "route-model", supports_vision: true };
+  assert.deepEqual(profilesPayload(draft).routing.poll, { profile_id: "", model: "route-model", supports_vision: true });
+  assert.equal(validateProfiles(draft), undefined);
+});
+
 test("nullable inherited capabilities from the API remain inherited", () => {
   const config = snapshot();
   config.routing.summary = { profile_id: "primary", model: "", supports_vision: null };
@@ -90,22 +97,6 @@ test("invalid endpoints, blank models and dangling routes are rejected", () => {
   draft.profiles.primary.model = "text-model";
   delete draft.profiles.vision;
   assert.match(validateProfiles(draft)!, /图片识别引用/);
-});
-
-test("model listing and tests require the profile to match saved settings", () => {
-  const config = snapshot();
-  const draft = createProfilesDraft(config);
-  const profile = draft.profiles.primary;
-  assert.equal(profileIsSaved(profile, config.profiles.primary), true);
-  profile.api_key = "new-key";
-  assert.equal(profileIsSaved(profile, config.profiles.primary), false);
-  profile.api_key = "";
-  profile.clear_api_key = true;
-  assert.equal(profileIsSaved(profile, config.profiles.primary), false);
-  profile.clear_api_key = false;
-  profile.base_url = "https://other.example.com";
-  assert.equal(profileIsSaved(profile, config.profiles.primary), false);
-  assert.equal(profileIsSaved(draft.profiles.vision, undefined), false);
 });
 
 test("a legacy-only config remains usable without adding profiles", () => {

@@ -124,13 +124,27 @@ export async function updateAIProfiles(data: AIProfilesInput) {
   return res.data;
 }
 
-export async function getAIProfileModels(profileId: string) {
-  const res = await apiClient.post<ApiResponse<string[]>>(`/ai/profiles/${encodeURIComponent(profileId)}/models`, {}, { timeout: 60000 });
+/** 直接使用草稿中填写的连接参数；api_key 省略时后端沿用已保存的密钥。 */
+export interface AIProfileCredentials {
+  base_url?: string;
+  api_key?: string;
+}
+
+export async function getAIProfileModels(profileId: string, creds?: AIProfileCredentials) {
+  const res = await apiClient.post<ApiResponse<string[]>>(
+    `/ai/profiles/${encodeURIComponent(profileId)}/models`,
+    creds ?? {},
+    { timeout: 60000 }
+  );
   return res.data;
 }
 
-export async function testAIProfile(profileId: string, kind: "connection" | "call", model?: string) {
-  const res = await apiClient.post<ApiResponse>(`/ai/profiles/${encodeURIComponent(profileId)}/test`, { kind, model }, { timeout: 60000 });
+export async function testAIProfile(profileId: string, kind: "connection" | "call", model?: string, creds?: AIProfileCredentials) {
+  const res = await apiClient.post<ApiResponse>(
+    `/ai/profiles/${encodeURIComponent(profileId)}/test`,
+    { kind, model, ...creds },
+    { timeout: 60000 }
+  );
   return res.data;
 }
 
