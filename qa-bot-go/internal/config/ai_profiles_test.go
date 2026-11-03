@@ -60,7 +60,7 @@ func TestEffectiveAIConfigPurposeRouting(t *testing.T) {
 	routes := data["ai_routing"].(map[string]any)
 	routes["summary"] = map[string]any{"profile_id": "primary", "model": " summary-model ", "supports_vision": false}
 	routes["vision"] = map[string]any{"profile_id": "local", "model": "image-model", "supports_vision": true}
-	routes["poll"] = map[string]any{"profile_id": "", "model": "ignored", "supports_vision": true}
+	routes["poll"] = map[string]any{"profile_id": "", "model": "poll-override", "supports_vision": true}
 	cfg := newTestConfig(t, map[string]string{"LLM_API_KEY": "env-key"}, profileJSON(t, data), t.TempDir())
 	if err := cfg.Init(); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestEffectiveAIConfigPurposeRouting(t *testing.T) {
 		{"assistant", contracts.AIConf{APIKey: "primary-key", BaseURL: "https://primary.example/v1", Model: "primary-model", ProfileID: "primary", SupportsVision: true, VisionOCR: true, VisionDescription: true}},
 		{"summary", contracts.AIConf{APIKey: "primary-key", BaseURL: "https://primary.example/v1", Model: "summary-model", ProfileID: "primary", SupportsVision: false, VisionOCR: true, VisionDescription: true}},
 		{"vision", contracts.AIConf{APIKey: "", BaseURL: "http://localhost:8000/v1", Model: "image-model", ProfileID: "local", SupportsVision: true, VisionOCR: true, VisionDescription: true}},
-		{"poll", contracts.AIConf{APIKey: "legacy-key", BaseURL: "https://legacy.example/v1", Model: "legacy-model", VisionOCR: true, VisionDescription: true}},
+		{"poll", contracts.AIConf{APIKey: "legacy-key", BaseURL: "https://legacy.example/v1", Model: "poll-override", SupportsVision: true, VisionOCR: true, VisionDescription: true}},
 	} {
 		t.Run(tc.purpose, func(t *testing.T) {
 			if got := cfg.EffectiveAIConfig(tc.purpose); got != tc.want {

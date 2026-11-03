@@ -72,10 +72,3 @@ export function validateProfiles(draft: AIProfilesDraft): string | undefined {
   }
   return undefined;
 }
-
-export function profileIsSaved(draft: AIProfileDraft, saved?: AIProfile): boolean {
-  return !!saved && !draft.api_key.trim() && !draft.clear_api_key &&
-    draft.name.trim() === saved.name && draft.provider === saved.provider &&
-    draft.base_url.trim() === saved.base_url && draft.model.trim() === saved.model &&
-    draft.supports_vision === saved.supports_vision;
-}

@@ -21,8 +21,9 @@ const (
 )
 
 // EffectiveAIConfig 按用途解析 AI 连接，Go QA 进程默认使用 assistant。
-// 未分配服务档案时保留旧 config.json → env 链；分配后凭据、地址、
-// 模型只从该档案读取，不能与其他档案或旧配置混用。
+// 已分配服务档案时凭据、地址、模型只从该档案读取，不能与其他档案或
+// 旧配置混用；未分配档案时使用旧 config.json → env 链，且该用途路由
+// 中的模型与图片能力覆盖同样生效（与 Python ai_runtime 一致）。
 func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 	purpose := "assistant"
 	if len(purposes) > 0 {
@@ -75,6 +76,14 @@ func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 	result.Model = stringField(cfg, "model")
 	if result.Model == "" {
 		result.Model = c.Env.GetDefault(KeyLLMModel, defaultLLMModel)
+	}
+	if route, ok := profiles.routing[purpose]; ok {
+		if route.model != "" {
+			result.Model = route.model
+		}
+		if route.supportsVision != nil {
+			result.SupportsVision = *route.supportsVision
+		}
 	}
 	return result
 }

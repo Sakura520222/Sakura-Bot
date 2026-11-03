@@ -32,7 +32,7 @@
     </n-card>
 
     <template v-else>
-      <AIProfilesPanel class="mt-md" :legacy-revision="legacyRevision" />
+      <AIProfilesPanel ref="profilesPanel" class="mt-md" :legacy-revision="legacyRevision" />
 
       <!-- 分区一：模型与提供商 / 分区二：密钥 -->
       <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" item-responsive class="mt-md">
@@ -176,6 +176,7 @@ const promptLabels: Record<string, string> = {
 };
 
 const formRef = ref<FormInst | null>(null);
+const profilesPanel = ref<InstanceType<typeof AIProfilesPanel> | null>(null);
 
 // 轻量校验：允许留空（= 不修改该项），但填写 API 地址时必须是可访问的绝对地址
 const rules: FormRules = {
@@ -231,6 +232,10 @@ async function saveAIConfig() {
       if (aiConfig.api_key) aiConfig.api_key_set = true;
       aiConfig.api_key = "";
       legacyRevision.value++;
+      // 默认配置只覆盖页头这份旧版配置；面板区域是独立保存的，提醒避免误以为全部已保存
+      if (profilesPanel.value?.dirty) {
+        message.warning("顶部「按用途选择 AI 模型」区还有未保存的修改，请在该区底部点击「保存用途配置」保存");
+      }
     }
   } catch (problem) {
     message.error(saveError(problem));
