@@ -40,30 +40,22 @@ func TestRound3(t *testing.T) {
 	}
 }
 
-// TestTruncateSummary 校验 500 码点截断（Python len/切片语义 = rune，硬规则 3）。
-func TestTruncateSummary(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"恰500", strings.Repeat("字", 500), strings.Repeat("字", 500)},
-		{"501截断", strings.Repeat("字", 501), strings.Repeat("字", 500) + "..."},
-		{"多字节中英文混合", strings.Repeat("a你", 300), strings.Repeat("a你", 250) + "..."},
-		{"空串", "", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := truncateSummary(c.in); got != c.want {
-				t.Errorf("长度 %d rune, got 长度 %d", len([]rune(c.in)), len([]rune(got)))
-			}
+// TestSerializeResultPreservesFullText 防止检索消息尾部在序列化时丢失。
+func TestSerializeResultPreservesFullText(t *testing.T) {
+	for _, text := range []string{
+		"", strings.Repeat("字", 501), strings.Repeat("a你", 300),
+		"  " + strings.Repeat("公告 English 🐱\n```go\nreturn true\n```\n", 100) + "TAIL_MARKER  ",
+	} {
+		result := serializeResult(map[string]any{
+			"summary_text": text, "source": "message", "doc_id": "123:42#chunk=3",
+			"metadata": map[string]any{"message_id": "42", "channel_id": "123"},
 		})
-	}
-	// emoji 代理对按 rune（码点）计数，对齐 Python len
-	emoji := strings.Repeat("\U0001F600", 600) // 600 个四字节 emoji
-	got := truncateSummary(emoji)
-	if n := len([]rune(got)); n != 503 {
-		t.Errorf("emoji 截断后 rune 数 = %d, 期望 503", n)
+		if result.SummaryText != text {
+			t.Fatal("retrieved source text changed during serialization")
+		}
+		if result.MessageID != int64(42) || result.PostURL != "https://t.me/c/123/42" {
+			t.Fatalf("chunk source reference lost: %+v", result)
+		}
 	}
 }
 
@@ -197,7 +189,7 @@ func TestPostURLInvariants(t *testing.T) {
 	}
 }
 
-// TestSerializeResult 键序、截断与条件字段。
+// TestSerializeResult 键序、完整正文与条件字段。
 func TestSerializeResult(t *testing.T) {
 	result := map[string]any{
 		"result_id":    1,
@@ -211,8 +203,8 @@ func TestSerializeResult(t *testing.T) {
 		"similarity": 0.123456,
 	}
 	s := serializeResult(result)
-	if len([]rune(s.SummaryText)) != 503 {
-		t.Errorf("summary_text 应截到 500+3, got %d rune", len([]rune(s.SummaryText)))
+	if s.SummaryText != result["summary_text"] {
+		t.Fatal("summary_text must remain unchanged")
 	}
 	if s.SummaryID != int64(9) || s.MessageID != nil || s.PostURL != nil {
 		t.Errorf("总结类 ID 字段漂移: %+v", s)

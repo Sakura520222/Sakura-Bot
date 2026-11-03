@@ -276,9 +276,6 @@ TOOL_SCHEMAS = [
     },
 ]
 
-# 在 tool message 中截断 summary_text 的最大字符数
-_SUMMARY_TRUNCATE_LEN = 500
-
 
 class ToolExecutor:
     """工具执行器：将 LLM 的 tool_call 请求路由到实际的检索组件。"""
@@ -384,7 +381,7 @@ class ToolExecutor:
                     date_before=args.get("date_before"),
                 )
 
-        # 累积到 result_store 并序列化（截断长文本）
+        # 累积到 result_store 并序列化（保留完整文本）
         serialized = []
         for r in results:
             self._store_result(r)
@@ -634,7 +631,7 @@ class ToolExecutor:
 
     @staticmethod
     def _serialize_result(result: dict) -> dict:
-        """序列化单条结果用于 tool message（截断长文本）。
+        """序列化单条结果用于 tool message（保留完整文本）。
 
         字段语义（重要，勿混淆三种 ID）：
         - result_id: 请求内自增的内部引用 ID，供 rerank/get_source_detail 使用
@@ -643,9 +640,6 @@ class ToolExecutor:
         - post_url:   后端验证过的帖子链接；总结类结果为 None
         """
         text = result.get("summary_text", "")
-        truncated = (
-            text[:_SUMMARY_TRUNCATE_LEN] + "..." if len(text) > _SUMMARY_TRUNCATE_LEN else text
-        )
 
         metadata = result.get("metadata", {})
         created_at = metadata.get("created_at")
@@ -659,7 +653,7 @@ class ToolExecutor:
             "result_id": result.get("result_id"),
             "source_type": source_type,
             "summary_id": result.get("summary_id") if source_type == "summary" else None,
-            "summary_text": truncated,
+            "summary_text": text,
             "channel_id": metadata.get("channel_id") or result.get("channel_id"),
             "channel_name": metadata.get("channel_name") or result.get("channel_name"),
             "created_at": created_at,

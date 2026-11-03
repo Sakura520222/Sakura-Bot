@@ -25,6 +25,14 @@ type AIConf struct {
 	BaseURL string
 	// Model 例如 deepseek-chat
 	Model string
+	// ProfileID 为空表示兼容旧的 config.json / env 配置。
+	ProfileID string
+	// SupportsVision 是服务档案与用途覆盖合并后的能力声明。
+	SupportsVision bool
+	// VisionEnabled 为全局视觉开关；能力声明不会自动启用图像处理。
+	VisionEnabled     bool
+	VisionOCR         bool
+	VisionDescription bool
 }
 
 // QuotaLimits 是每日配额限额，对齐 core/config/qa_quota.py::QAQuotaSettings。

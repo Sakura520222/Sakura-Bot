@@ -70,6 +70,16 @@ class ConfigValidator:
             return ConfigValidationErrorEvent(
                 error="配置根节点必须是对象", config_path=str(file_path)
             )
+        if any(key in config for key in ("ai_profiles", "ai_routing", "ai_vision")):
+            from core.config.ai_profiles import parse_ai_profiles
+
+            try:
+                parse_ai_profiles(config)
+            except (ValueError, TypeError):
+                return ConfigValidationErrorEvent(
+                    error="AI 档案或用途配置无效，请检查地址、模型及档案引用",
+                    config_path=str(file_path),
+                )
         for field in ("api_key", "base_url", "model"):
             if field in config and config[field] is not None and not isinstance(config[field], str):
                 return ConfigValidationErrorEvent(

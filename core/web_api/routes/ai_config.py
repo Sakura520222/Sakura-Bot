@@ -24,7 +24,9 @@ from core.config import DEFAULT_POLL_PROMPT, DEFAULT_PROMPT, DEFAULT_QA_PERSONA
 from core.config.ai_runtime import effective_ai_config
 from core.config.persistence import ConfigConflictError, ConfigPersistenceError
 from core.config.qa_quota import effective_qa_quota
+from core.i18n.i18n import get_text
 from core.web_api.deps import get_config, write_config
+from core.web_api.routes.ai_profiles import router as profiles_router
 from core.web_api.schemas.config import (
     AIConfigResponse,
     AIConfigUpdateRequest,
@@ -35,7 +37,9 @@ from core.web_api.schemas.config import (
 
 logger = logging.getLogger(__name__)
 
+
 router = APIRouter()
+router.include_router(profiles_router)
 
 # 提示词文件路径映射
 PROMPT_FILES = {
@@ -56,7 +60,9 @@ DEFAULT_PROMPTS = {
 async def get_ai_config():
     """获取 AI 配置信息"""
     try:
-        settings = effective_ai_config(get_config())
+        legacy = dict(get_config())
+        legacy.pop("ai_routing", None)
+        settings = effective_ai_config(legacy)
         api_key = settings.api_key
         api_key_preview = ""
         if api_key:
@@ -71,9 +77,9 @@ async def get_ai_config():
                 api_key_preview=api_key_preview,
             ).model_dump(),
         }
-    except Exception as e:
-        logger.error(f"获取 AI 配置失败: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception:
+        logger.error("获取 AI 配置失败")
+        raise HTTPException(status_code=500, detail=get_text("ai_profiles.invalid")) from None
 
 
 @router.put("/config")

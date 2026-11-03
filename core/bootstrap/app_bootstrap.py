@@ -268,6 +268,14 @@ class AppBootstrap:
         except Exception as e:
             self.logger.error(f"关闭 WebUI API 服务器时出错: {type(e).__name__}: {e}")
 
+        # 图片 worker 必须先停止，避免向已关闭 RAG 队列投递。
+        try:
+            from core.media.image_pipeline import get_image_pipeline
+
+            await get_image_pipeline().stop()
+        except Exception:
+            self.logger.exception("停止图片流水线失败")
+
         # 1. 停止实时RAG处理器
         try:
             from core.handlers.realtime_rag_handler import get_realtime_rag_handler

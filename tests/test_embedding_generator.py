@@ -127,9 +127,9 @@ class TestBatchGenerate:
         """测试成功批量生成"""
         mock_response = MagicMock()
         mock_response.data = [
-            MagicMock(embedding=[0.1, 0.2]),
-            MagicMock(embedding=[0.3, 0.4]),
-            MagicMock(embedding=[0.5, 0.6]),
+            MagicMock(index=0, embedding=[0.1, 0.2]),
+            MagicMock(index=1, embedding=[0.3, 0.4]),
+            MagicMock(index=2, embedding=[0.5, 0.6]),
         ]
         mock_client = MagicMock()
         mock_client.embeddings.create.return_value = mock_response

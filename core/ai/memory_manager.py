@@ -54,7 +54,7 @@ class MemoryManager:
             prompt = f"""请分析以下总结文本，提取关键信息，以JSON格式返回：
 
 总结内容：
-{summary_text[:1000]}
+{summary_text}
 
 请提取：
 1. keywords: 3-5个关键词
@@ -72,7 +72,7 @@ class MemoryManager:
 
 只返回JSON，不要其他内容。"""
 
-            client, model = get_ai_runtime()
+            client, model = get_ai_runtime("assistant")
             response = client.chat.completions.create(
                 model=model,
                 messages=[

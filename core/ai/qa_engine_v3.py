@@ -104,9 +104,6 @@ AGENT_MAX_ITERATIONS = 10
 # 提供给模型的历史消息条数上限
 MAX_HISTORY_MESSAGES = 20
 
-# 单条历史消息内容截断长度（控制 token 消耗）
-HISTORY_MESSAGE_MAX_CHARS = 1500
-
 
 class QAEngineV3:
     """问答引擎 v4 - 通用 AI 助手 + Agentic RAG + 真实多轮对话"""
@@ -264,7 +261,7 @@ class QAEngineV3:
         """把数据库中的对话历史转换为真实的 user/assistant 消息序列。
 
         - 只保留 user/assistant 角色，跳过异常数据
-        - 单条内容超长时截断，控制 token 消耗
+        - 保留每条消息完整正文，不按固定字符数截断
         - 只保留最近 MAX_HISTORY_MESSAGES 条
         """
         messages: list[dict[str, str]] = []
@@ -273,8 +270,6 @@ class QAEngineV3:
             content = item.get("content") or ""
             if role not in ("user", "assistant") or not content.strip():
                 continue
-            if len(content) > HISTORY_MESSAGE_MAX_CHARS:
-                content = content[:HISTORY_MESSAGE_MAX_CHARS] + "…"
             messages.append({"role": role, "content": content})
 
         return messages[-MAX_HISTORY_MESSAGES:]
@@ -298,7 +293,7 @@ class QAEngineV3:
         """
         # 每请求隔离的工具执行上下文
         tool_executor = ToolExecutor(self.vector_store, self.memory_manager, self.reranker)
-        client, model = get_ai_runtime()
+        client, model = get_ai_runtime("assistant")
         loop = asyncio.get_running_loop()
 
         system_prompt = await self._build_system_prompt(channel_hint=channel_hint)
@@ -407,7 +402,7 @@ class QAEngineV3:
         模型 API 不支持工具调用或工具链路异常时使用；保证普通对话仍能
         正常回答，不会误导为"未找到频道总结"。
         """
-        client, model = get_ai_runtime()
+        client, model = get_ai_runtime("assistant")
         system_prompt = await self._build_system_prompt(include_tools=False)
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(self._history_to_messages(conversation_history))

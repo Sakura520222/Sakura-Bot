@@ -20,29 +20,73 @@ const (
 	defaultLLMModel   = "deepseek-chat"
 )
 
-// EffectiveAIConfig 返回 AI 连接的最终有效配置：
-// config.json 的 api_key/base_url/model 优先（仅接受非空字符串），
-// 否则回退 env（LLM_API_KEY 缺失/为空时回退 DEEPSEEK_API_KEY）。
-// 对齐 core/config/ai_runtime.py:19-29。
-func (c *Config) EffectiveAIConfig() contracts.AIConf {
-	cfg := c.readConfig()
+// EffectiveAIConfig 按用途解析 AI 连接，Go QA 进程默认使用 assistant。
+// 未分配服务档案时保留旧 config.json → env 链；分配后凭据、地址、
+// 模型只从该档案读取，不能与其他档案或旧配置混用。
+func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
+	purpose := "assistant"
+	if len(purposes) > 0 {
+		purpose = purposes[0]
+	}
+	if !validAIPurpose(purpose) {
+		return contracts.AIConf{}
+	}
+	cfg, err := c.runtime.read()
+	if err != nil {
+		// 未经 Init 的调用也必须拒绝无效配置，不能意外启用环境中的密钥。
+		return contracts.AIConf{}
+	}
+	profiles, err := parseAIProfiles(cfg)
+	if err != nil {
+		return contracts.AIConf{}
+	}
+	result := contracts.AIConf{
+		VisionEnabled:     profiles.vision.enabled,
+		VisionOCR:         profiles.vision.ocr,
+		VisionDescription: profiles.vision.description,
+	}
+	if route, ok := profiles.routing[purpose]; ok && route.profileID != "" {
+		profile := profiles.profiles[route.profileID]
+		result.APIKey = profile.apiKey
+		result.BaseURL = profile.baseURL
+		result.Model = profile.model
+		result.ProfileID = route.profileID
+		result.SupportsVision = profile.supportsVision
+		if route.model != "" {
+			result.Model = route.model
+		}
+		if route.supportsVision != nil {
+			result.SupportsVision = *route.supportsVision
+		}
+		return result
+	}
 
-	key := stringField(cfg, "api_key")
-	if key == "" {
-		key = c.Env.Get(KeyLLMAPIKey)
-		if key == "" {
-			key = c.Env.Get(KeyDeepseekAPIKey)
+	result.APIKey = stringField(cfg, "api_key")
+	if result.APIKey == "" {
+		result.APIKey = c.Env.Get(KeyLLMAPIKey)
+		if result.APIKey == "" {
+			result.APIKey = c.Env.Get(KeyDeepseekAPIKey)
 		}
 	}
-	baseURL := stringField(cfg, "base_url")
-	if baseURL == "" {
-		baseURL = c.Env.GetDefault(KeyLLMBaseURL, defaultLLMBaseURL)
+	result.BaseURL = stringField(cfg, "base_url")
+	if result.BaseURL == "" {
+		result.BaseURL = c.Env.GetDefault(KeyLLMBaseURL, defaultLLMBaseURL)
 	}
-	model := stringField(cfg, "model")
-	if model == "" {
-		model = c.Env.GetDefault(KeyLLMModel, defaultLLMModel)
+	result.Model = stringField(cfg, "model")
+	if result.Model == "" {
+		result.Model = c.Env.GetDefault(KeyLLMModel, defaultLLMModel)
 	}
-	return contracts.AIConf{APIKey: key, BaseURL: baseURL, Model: model}
+	return result
+}
+
+// validAIPurpose 与 Python PURPOSES 保持一致。
+func validAIPurpose(purpose string) bool {
+	switch purpose {
+	case "summary", "assistant", "vision", "poll":
+		return true
+	default:
+		return false
+	}
 }
 
 // stringField 取顶层字符串字段；非字符串或空串一律返回空

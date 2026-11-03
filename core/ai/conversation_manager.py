@@ -190,10 +190,6 @@ class ConversationManager:
             # 角色名称映射
             role_name = "用户" if role == "user" else "助手"
 
-            # 截断过长的消息（避免token浪费）
-            if len(content) > 500:
-                content = content[:500] + "..."
-
             context_parts.append(f"{role_name}：{content}")
 
         return "\n".join(context_parts)

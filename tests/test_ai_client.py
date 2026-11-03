@@ -25,7 +25,9 @@ def skip_retry_waits(monkeypatch):
     import core.ai.ai_client as ai_module
 
     monkeypatch.setattr(
-        ai_module, "get_async_ai_runtime", lambda: (async_client_llm, ai_module.get_llm_model())
+        ai_module,
+        "get_async_ai_runtime",
+        lambda purpose="summary": (async_client_llm, ai_module.get_llm_model()),
     )
 
 
@@ -175,6 +177,7 @@ class TestGeneratePollFromSummary:
         """Mock 投票生成响应"""
         response = MagicMock()
         response.choices = [MagicMock()]
+        response.choices[0].finish_reason = "stop"
         response.choices[0].message.content = """```json
 {
   "question": "测试投票问题 / Test Poll Question",
@@ -231,6 +234,7 @@ class TestGeneratePollFromSummary:
         """测试处理格式错误的 JSON 响应"""
         bad_response = MagicMock()
         bad_response.choices = [MagicMock()]
+        bad_response.choices[0].finish_reason = "stop"
         bad_response.choices[0].message.content = "这不是 JSON 格式的响应"
 
         with patch.object(
@@ -250,6 +254,7 @@ class TestGeneratePollFromSummary:
         """测试处理不完整的 JSON 响应"""
         incomplete_response = MagicMock()
         incomplete_response.choices = [MagicMock()]
+        incomplete_response.choices[0].finish_reason = "stop"
         incomplete_response.choices[0].message.content = '{"question": "问题"}'
 
         with patch.object(
@@ -384,6 +389,7 @@ class TestAIClientErrorHandling:
         # 前两次失败，第三次成功
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
+        mock_response.choices[0].finish_reason = "stop"
         mock_response.choices[0].message.content = "成功"
 
         with patch.object(
@@ -479,6 +485,7 @@ class TestAIClientIntegration:
         # 第二次调用成功
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
+        mock_response.choices[0].finish_reason = "stop"
         mock_response.choices[0].message.content = "成功"
 
         with patch.object(

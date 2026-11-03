@@ -27,6 +27,20 @@ logger = logging.getLogger(__name__)
 
 # 中文翻译（简体中文）
 MESSAGE_ZH_CN = {
+    "images.unavailable": "图片流水线尚未启动。",
+    "images.not_found": "未找到图片任务，或消息已删除。",
+    "images.channel_invalid": "请选择已配置的频道。",
+    "images.range_invalid": "请提供带时区的有效开始和结束时间。",
+    "images.pending": "[图片识别状态：{status}；内容尚不可用，请勿推断图片内容。]",
+    "ai_profiles.invalid": "AI 配置无效，请检查配置文件",
+    "ai_profiles.conflict": "AI 配置已被其他操作修改，请重新加载后重试",
+    "ai_profiles.saved": "AI 档案及用途已保存，后续请求立即生效",
+    "ai_profiles.validation": "AI 配置无效，请检查名称、地址、模型及用途引用；删除档案前请解除绑定",
+    "ai_profiles.not_found": "服务档案不存在，请先保存",
+    "ai_profiles.models_failed": "无法获取模型列表，请检查连接或权限；仍可手动输入模型 ID，已保存配置不受影响",
+    "ai_profiles.test_kind": "请选择连接测试或模型调用测试",
+    "ai_profiles.success": "测试成功",
+    "ai_profiles.failed": "测试失败，请检查服务地址、密钥及模型权限；不支持模型列表的服务可直接进行模型调用测试",
     "guard.guest_ban_reason": "通过访客机器人发送违规消息，联动封禁真实调用者",
     "guard.guest_ban_notice": "访客调用者：{user_id} · {state}",
     "guard.guest_ban_pending": "联动封禁待处理",
@@ -977,6 +991,20 @@ MESSAGE_ZH_CN = {
 
 # 英文翻译
 MESSAGE_EN_US = {
+    "images.unavailable": "Image pipeline is not running.",
+    "images.not_found": "Image task not found or message deleted.",
+    "images.channel_invalid": "Select a configured channel.",
+    "images.range_invalid": "Provide a valid start and end with time zones.",
+    "images.pending": "[Image recognition: {status}; content unavailable. Do not infer image contents.]",
+    "ai_profiles.invalid": "Invalid AI configuration. Check the configuration file.",
+    "ai_profiles.conflict": "AI configuration changed elsewhere. Reload before saving.",
+    "ai_profiles.saved": "AI profiles and routes saved. New requests use them immediately.",
+    "ai_profiles.validation": "Invalid AI configuration. Check names, URLs, models and profile references. Unbind a profile before deleting it.",
+    "ai_profiles.not_found": "Profile not found. Save it first.",
+    "ai_profiles.models_failed": "Could not list models. Check connectivity and permissions, or enter a model ID manually. Saved settings are unchanged.",
+    "ai_profiles.test_kind": "Select a connection test or a model call test.",
+    "ai_profiles.success": "Test succeeded.",
+    "ai_profiles.failed": "Test failed. Check the URL, key and model permissions. Services without model listing can still use the model call test.",
     "guard.guest_ban_reason": "Invoked a guest bot to post a violating message",
     "guard.guest_ban_notice": "Guest caller: {user_id} · {state}",
     "guard.guest_ban_pending": "Linked ban pending",

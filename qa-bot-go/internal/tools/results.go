@@ -23,10 +23,6 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/links"
 )
 
-// 在 tool message 中截断 summary_text 的最大字符数
-// （agent_tools.py:280；Python 码点计数 → Go rune，硬规则 3）。
-const summaryTruncateLen = 500
-
 // messageIDSuffix 等价 Python re.search(r":(\d+)$", doc_id)
 // （agent_tools.py:591）：从 doc_id 尾段解析真实 Telegram 消息 ID。
 var messageIDSuffix = regexp.MustCompile(`:(\d+)$`)
@@ -625,27 +621,10 @@ type serializedResult struct {
 	RerankScore *float64 `json:"rerank_score,omitempty"`
 }
 
-// truncateSummary 按 rune 截断正文：超过 summaryTruncateLen（500）个码点
-// 时截断并追加 "..."（对齐 agent_tools.py:646-648 的码点切片语义）。
-func truncateSummary(text string) string {
-	if utf8.RuneCountInString(text) <= summaryTruncateLen {
-		return text
-	}
-	n := 0
-	for i := range text {
-		if n == summaryTruncateLen {
-			return text[:i] + "..."
-		}
-		n++
-	}
-	return text // 不可达：长度已在上面保证
-}
-
-// serializeResult 序列化单条结果用于 tool message（截断长文本）。
+// serializeResult 序列化单条结果用于 tool message（保留完整检索片段）。
 // 调用前结果必须已经 resultStore.put（result_id 已分配）。
 func serializeResult(result map[string]any) serializedResult {
 	text, _ := result["summary_text"].(string)
-	truncated := truncateSummary(text)
 
 	var meta map[string]any
 	if m, ok := result["metadata"].(map[string]any); ok {
@@ -665,7 +644,7 @@ func serializeResult(result map[string]any) serializedResult {
 	out := serializedResult{
 		ResultID:    result["result_id"],
 		SourceType:  sourceType,
-		SummaryText: truncated,
+		SummaryText: text,
 		CreatedAt:   createdAt,
 		DocID:       result["doc_id"],
 		PostLinks:   []string{},

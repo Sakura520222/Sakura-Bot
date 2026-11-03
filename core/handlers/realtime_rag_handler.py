@@ -17,6 +17,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
+from itertools import count
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ class RealtimeRAGHandler:
         self._worker_task: asyncio.Task | None = None
         self._processed_count = 0
         self._failed_count = 0
+        self._generations: dict[str, int] = {}
+        self._generation_sequence = count(1)
         logger.info("实时RAG处理器已创建")
 
     async def start(self) -> None:
@@ -83,6 +86,7 @@ class RealtimeRAGHandler:
         text: str,
         sender_id: int | None = None,
         channel_username: str | None = None,
+        created_at: datetime | str | None = None,
     ) -> bool:
         """
         将频道消息加入处理队列
@@ -107,21 +111,44 @@ class RealtimeRAGHandler:
 
         # 使用 channel_id:message_id 作为向量库唯一标识
         vector_id = f"{channel_id}:{message_id}"
+        generation = next(self._generation_sequence)
 
+        from core.ai.source_archive import archive_source
+
+        created_at = (
+            created_at.isoformat()
+            if isinstance(created_at, datetime)
+            else created_at or datetime.now(UTC).isoformat()
+        )
+        archive_source(
+            channel_id,
+            message_id,
+            text,
+            created_at,
+            channel_name=channel_name,
+            channel_username=channel_username,
+        )
+        self._generations[vector_id] = generation
         try:
             self._queue.put_nowait(
                 {
                     "vector_id": vector_id,
+                    "generation": generation,
                     "message_id": message_id,
                     "channel_id": channel_id,
                     "channel_name": channel_name,
-                    "text": text.strip(),
+                    "text": text,
                     "sender_id": sender_id,
                     "channel_username": channel_username,
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": (
+                        created_at.isoformat()
+                        if isinstance(created_at, datetime)
+                        else created_at or datetime.now(UTC).isoformat()
+                    ),
                 }
             )
         except asyncio.QueueFull:
+            self._generations.pop(vector_id, None)
             logger.warning(
                 f"实时RAG队列已满({self._queue.maxsize})，丢弃消息: "
                 f"channel={channel_id}, msg_id={message_id}"
@@ -139,6 +166,7 @@ class RealtimeRAGHandler:
         text: str,
         sender_id: int | None = None,
         channel_username: str | None = None,
+        created_at: datetime | str | None = None,
     ) -> bool:
         """
         将消息更新加入处理队列（编辑消息时调用）
@@ -162,22 +190,45 @@ class RealtimeRAGHandler:
             return False
 
         vector_id = f"{channel_id}:{message_id}"
+        generation = next(self._generation_sequence)
 
+        from core.ai.source_archive import archive_source
+
+        created_at = (
+            created_at.isoformat()
+            if isinstance(created_at, datetime)
+            else created_at or datetime.now(UTC).isoformat()
+        )
+        archive_source(
+            channel_id,
+            message_id,
+            text,
+            created_at,
+            channel_name=channel_name,
+            channel_username=channel_username,
+        )
+        self._generations[vector_id] = generation
         try:
             self._queue.put_nowait(
                 {
                     "vector_id": vector_id,
+                    "generation": generation,
                     "message_id": message_id,
                     "channel_id": channel_id,
                     "channel_name": channel_name,
-                    "text": text.strip(),
+                    "text": text,
                     "sender_id": sender_id,
                     "channel_username": channel_username,
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": (
+                        created_at.isoformat()
+                        if isinstance(created_at, datetime)
+                        else created_at or datetime.now(UTC).isoformat()
+                    ),
                     "is_update": True,
                 }
             )
         except asyncio.QueueFull:
+            self._generations.pop(vector_id, None)
             logger.warning(
                 f"实时RAG队列已满({self._queue.maxsize})，丢弃更新: "
                 f"channel={channel_id}, msg_id={message_id}"
@@ -186,6 +237,51 @@ class RealtimeRAGHandler:
 
         logger.debug(f"消息更新已入队: channel={channel_id}, msg_id={message_id}")
         return True
+
+    async def index_message(
+        self,
+        channel_id: str,
+        channel_name: str,
+        message_id: int,
+        text: str,
+        channel_username: str | None = None,
+        created_at: datetime | str | None = None,
+    ) -> bool:
+        """等待完整分块写入确认，供有持久化重试队列的图片任务使用。"""
+        from core.ai.source_archive import archive_source
+
+        if not text or not text.strip():
+            return False
+        vector_id = f"{channel_id}:{message_id}"
+        generation = next(self._generation_sequence)
+        timestamp = (
+            created_at.isoformat()
+            if isinstance(created_at, datetime)
+            else created_at or datetime.now(UTC).isoformat()
+        )
+        archive_source(
+            channel_id,
+            message_id,
+            text,
+            timestamp,
+            channel_name=channel_name,
+            channel_username=channel_username,
+        )
+        self._generations[vector_id] = generation
+        return await self._process_batch(
+            [
+                {
+                    "vector_id": vector_id,
+                    "generation": generation,
+                    "message_id": message_id,
+                    "channel_id": channel_id,
+                    "channel_name": channel_name,
+                    "text": text,
+                    "channel_username": channel_username,
+                    "created_at": timestamp,
+                }
+            ]
+        )
 
     async def handle_message_delete(self, channel_id: str, message_id: int) -> bool:
         """
@@ -198,6 +294,11 @@ class RealtimeRAGHandler:
         Returns:
             是否成功删除
         """
+        vector_id = f"{channel_id}:{message_id}"
+        self._generations.pop(vector_id, None)
+        from core.ai.source_archive import delete_source
+
+        delete_source(channel_id, message_id)
         try:
             from core.ai.vector_store import get_vector_store
 
@@ -206,7 +307,12 @@ class RealtimeRAGHandler:
                 return False
 
             vector_id = f"{channel_id}:{message_id}"
-            return vector_store.delete_message(vector_id)
+            success = vector_store.delete_message(vector_id)
+            if success:
+                from core.ai.source_archive import delete_source
+
+                delete_source(channel_id, message_id)
+            return success
 
         except Exception as e:
             logger.error(f"删除消息向量失败: {type(e).__name__}: {e}")
@@ -268,7 +374,7 @@ class RealtimeRAGHandler:
 
         logger.info("实时RAG worker 已退出")
 
-    async def _process_batch(self, batch: list[dict]) -> None:
+    async def _process_batch(self, batch: list[dict]) -> bool:
         """
         批量处理消息：生成 embedding → 写入 ChromaDB
 
@@ -285,96 +391,83 @@ class RealtimeRAGHandler:
             if not vector_store.is_messages_available():
                 logger.warning("消息向量存储不可用，跳过批次处理")
                 self._failed_count += len(batch)
-                return
+                return False
 
             if not emb_gen.is_available():
                 logger.warning("Embedding服务不可用，跳过批次处理")
                 self._failed_count += len(batch)
-                return
+                return False
 
-            # 提取文本列表
-            texts = [item["text"] for item in batch]
+            import os
 
-            # 批量生成 embedding
+            from core.ai.text_budget import split_text
+
+            budget = int(os.getenv("EMBEDDING_INPUT_TOKENS", "4096"))
             loop = asyncio.get_running_loop()
-
-            def _batch_embed():
-                return emb_gen.batch_generate(texts)
-
-            embeddings = await loop.run_in_executor(None, _batch_embed)
-
-            if embeddings is None or len(embeddings) != len(batch):
-                logger.error(
-                    f"批量embedding生成失败: 期望 {len(batch)} 个，实际 {len(embeddings) if embeddings else 0} 个"
-                )
-                self._failed_count += len(batch)
-                return
-
-            # 分离新增和更新操作
-            add_items = []
-            update_items = []
-
-            for item, embedding in zip(batch, embeddings, strict=True):
-                if embedding is None:
-                    logger.warning(f"跳过embedding为空的消息: vector_id={item['vector_id']}")
-                    self._failed_count += 1
-                    continue
-
-                metadata = {
-                    "channel_id": item["channel_id"],
-                    "channel_name": item["channel_name"],
-                    "message_id": str(item["message_id"]),
-                    "created_at": item["created_at"],
-                    "sender_id": str(item["sender_id"]) if item.get("sender_id") else "",
-                }
-                # 公开频道 username：生成帖子链接时优先于数字 ID（更友好可读）
-                if item.get("channel_username"):
-                    metadata["channel_username"] = str(item["channel_username"])
-
-                entry = {
-                    "id": item["vector_id"],
-                    "text": item["text"],
-                    "metadata": metadata,
-                    "embedding": embedding,
-                }
-
-                if item.get("is_update"):
-                    update_items.append(entry)
-                else:
-                    add_items.append(entry)
-
-            # 批量新增
-            if add_items:
-                success_count = vector_store.add_messages_batch(
-                    ids=[it["id"] for it in add_items],
-                    texts=[it["text"] for it in add_items],
-                    metadatas=[it["metadata"] for it in add_items],
-                    embeddings=[it["embedding"] for it in add_items],
-                )
-                self._processed_count += success_count
-                self._failed_count += len(add_items) - success_count
-
-            # 逐条更新
-            for item in update_items:
-                success = vector_store.update_message(
-                    message_id=item["id"],
-                    text=item["text"],
-                    metadata=item["metadata"],
-                    embedding=item["embedding"],
-                )
-                if success:
+            # 同一消息的所有片段成功后才记为处理成功；短消息保持旧文档 ID。
+            all_success = True
+            for item in batch:
+                try:
+                    parts = split_text(item["text"], budget)
+                    embeddings = await loop.run_in_executor(None, emb_gen.batch_generate, parts)
+                    if (
+                        embeddings is None
+                        or len(embeddings) != len(parts)
+                        or any(embedding is None for embedding in embeddings)
+                    ):
+                        raise RuntimeError("Incomplete embeddings for message " + item["vector_id"])
+                    if item.get("generation") is not None and item[
+                        "generation"
+                    ] != self._generations.get(item["vector_id"]):
+                        raise RuntimeError("Message was changed or deleted while embedding")
+                    metadata = {
+                        "channel_id": item["channel_id"],
+                        "channel_name": item["channel_name"],
+                        "message_id": str(item["message_id"]),
+                        "created_at": item["created_at"],
+                        "sender_id": str(item.get("sender_id") or ""),
+                        "parent_id": item["vector_id"],
+                    }
+                    if item.get("channel_username"):
+                        metadata["channel_username"] = str(item["channel_username"])
+                    ids = (
+                        [item["vector_id"]]
+                        if len(parts) == 1
+                        else [f"{item['vector_id']}#chunk={n}" for n in range(len(parts))]
+                    )
+                    metadatas = [
+                        dict(metadata, chunk_index=n, chunk_count=len(parts))
+                        for n in range(len(parts))
+                    ]
+                    # 先完成 embedding，失败不会覆盖现有可用版本。
+                    success = vector_store.replace_message_chunks(
+                        item["vector_id"], ids, parts, metadatas, embeddings
+                    )
+                    if not success:
+                        raise RuntimeError(
+                            "Failed to persist complete message " + item["vector_id"]
+                        )
                     self._processed_count += 1
-                else:
+                except Exception as exc:
+                    all_success = False
                     self._failed_count += 1
+                    logger.error("RAG 消息处理失败 %s: %s", item["vector_id"], exc)
 
-            logger.info(
-                f"批次处理完成: 新增 {len(add_items)} 条, 更新 {len(update_items)} 条, "
-                f"队列剩余 {self._queue.qsize()} 条"
-            )
+            return all_success
 
         except Exception as e:
             logger.error(f"批次处理失败: {type(e).__name__}: {e}", exc_info=True)
             self._failed_count += len(batch)
+
+            return False
+        finally:
+            # 全局单调 token 防止复用；清理完成/失败项而不影响更晚的编辑。
+            for item in batch:
+                if (
+                    item.get("generation") is not None
+                    and self._generations.get(item["vector_id"]) == item["generation"]
+                ):
+                    self._generations.pop(item["vector_id"], None)
 
 
 # ── 模块级单例 ──────────────────────────────────────────────────────────

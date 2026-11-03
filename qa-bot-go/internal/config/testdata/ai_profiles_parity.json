@@ -1,0 +1,666 @@
+[
+  {
+    "name": "summary uses its own service",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "summary",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "summary-model",
+      "profile_id": "summarizer",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "assistant uses a different service",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "assistant-key",
+      "base_url": "https://assistant.example/v1",
+      "model": "assistant-model",
+      "profile_id": "assistant",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "vision model override with opt in",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      },
+      "ai_vision": {
+        "enabled": true,
+        "ocr": false,
+        "description": true
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "vision",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "vision-model",
+      "profile_id": "summarizer",
+      "supports_vision": true,
+      "vision_enabled": true,
+      "vision_ocr": false,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "poll model override",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "poll",
+    "expected": {
+      "api_key": "assistant-key",
+      "base_url": "https://assistant.example/v1",
+      "model": "poll-model",
+      "profile_id": "assistant",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "false capability override",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer",
+          "supports_vision": false
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "summary",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "summary-model",
+      "profile_id": "summarizer",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "empty profile key never borrows legacy credentials",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "local",
+          "supports_vision": true
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "",
+      "base_url": "http://localhost:8000/v1",
+      "model": "local-model",
+      "profile_id": "local",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "missing route uses legacy config",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "profile_id": "",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "unassigned route ignores overrides",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "",
+          "model": "ignored",
+          "supports_vision": true
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "profile_id": "",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "missing legacy values use environment",
+    "config": {
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "env-key",
+      "base_url": "https://env.example/v1",
+      "model": "env-model",
+      "profile_id": "",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "empty legacy values use environment",
+    "config": {
+      "api_key": "",
+      "base_url": "",
+      "model": ""
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "summary",
+    "expected": {
+      "api_key": "env-key",
+      "base_url": "https://env.example/v1",
+      "model": "env-model",
+      "profile_id": "",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "deprecated environment key fallback",
+    "config": {},
+    "env": {
+      "LLM_API_KEY": "",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "deprecated-key",
+      "base_url": "https://env.example/v1",
+      "model": "env-model",
+      "profile_id": "",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "null capability override inherits",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "assistant": {
+          "profile_id": "summarizer",
+          "model": "",
+          "supports_vision": null
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "summary-model",
+      "profile_id": "summarizer",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  }
+]

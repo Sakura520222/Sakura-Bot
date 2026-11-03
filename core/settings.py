@@ -414,7 +414,16 @@ def validate_required_settings() -> tuple[bool, list[str]]:
     if not settings.telegram.bot_token:
         missing.append("TELEGRAM_BOT_TOKEN")
     if not settings.ai.effective_api_key:
-        missing.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
+        # 已保存的运行时档案也是有效配置；不能要求迁移后重复填写旧环境密钥。
+        from core.config.ai_runtime import effective_ai_config
+
+        try:
+            ai = effective_ai_config()
+            configured = bool(ai.profile_id or ai.api_key)
+        except (ValueError, RuntimeError):
+            configured = False
+        if not configured:
+            missing.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
 
     # 如果启用了 UserBot，检查 UserBot 相关配置
     if settings.userbot.userbot_enabled and not settings.userbot.userbot_phone_number:

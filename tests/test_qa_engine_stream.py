@@ -63,7 +63,7 @@ def install_llm(monkeypatch, create):
     """替换引擎使用的 LLM 客户端"""
     llm = MagicMock()
     llm.chat.completions.create = create
-    monkeypatch.setattr(qae, "get_ai_runtime", lambda: (llm, "test-model"))
+    monkeypatch.setattr(qae, "get_ai_runtime", lambda purpose="assistant": (llm, "test-model"))
     return llm
 
 
@@ -249,7 +249,7 @@ class TestStreamHelpers:
     """流式工具函数测试"""
 
     @pytest.mark.asyncio
-    async def test_history_to_messages_truncates_and_filters(self):
+    async def test_history_to_messages_preserves_content_and_filters(self):
         long_content = "x" * 3000
         history = [
             {"role": "tool", "content": "应被过滤"},
@@ -261,8 +261,7 @@ class TestStreamHelpers:
 
         assert len(messages) == 2
         assert messages[0]["role"] == "assistant"
-        assert len(messages[0]["content"]) <= qae.HISTORY_MESSAGE_MAX_CHARS + 1
-        assert messages[0]["content"].endswith("…")
+        assert messages[0]["content"] == long_content
         assert messages[1] == {"role": "user", "content": "问题"}
 
     def test_accumulate_tool_call_delta_assembles_fragments(self):
