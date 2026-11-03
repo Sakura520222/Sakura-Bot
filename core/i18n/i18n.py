@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 中文翻译（简体中文）
 MESSAGE_ZH_CN = {
-    "images.unavailable": "图片流水线尚未启动。",
+    "images.unavailable": "图片处理尚未启动。",
     "images.not_found": "未找到图片任务，或消息已删除。",
     "images.channel_invalid": "请选择已配置的频道。",
     "images.range_invalid": "请提供带时区的有效开始和结束时间。",

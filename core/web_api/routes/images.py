@@ -2,7 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 
-"""通过现有 WebUI JWT 认证提供图片任务状态、重试和有界补录。"""
+"""通过现有 WebUI JWT 认证提供图片任务状态、重试和限量补录。"""
 
 from datetime import datetime
 

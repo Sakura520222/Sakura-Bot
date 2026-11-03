@@ -42,7 +42,7 @@ async def test_short_input_single_call_and_exact_audit(runtime):
     messages = ["  原文🥳\n", "end"]
     assert await summarize_complete(messages, "总结", client, "test") == "complete"
     client.chat.completions.create.assert_awaited_once()
-    audit = json.loads(next(path.glob("*.json")).read_text())
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
     assert audit["messages"] == messages
     assert audit["processed_count"] == 2
     assert audit["status"] == "completed"
@@ -59,7 +59,7 @@ async def test_all_chunks_including_tail_and_head_in_final(runtime):
     text = "FIRST" + "中文 English 🥳 code()\n" * 300 + "LAST"
     result = await summarize_complete([text], "summarize", client, "test")
     assert "FIRST" in result and "LAST" in result
-    audit = json.loads(next(path.glob("*.json")).read_text())
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
     assert audit["messages"] == [text]
     assert audit["processed_chunks"] == audit["chunk_count"] > 1
     assert audit["failed_count"] == 0
@@ -74,7 +74,7 @@ async def test_incomplete_output_fails_and_audits(runtime, reason):
     with pytest.raises(SummaryIntegrityError, match="Incomplete model output"):
         await summarize_complete(["data"], "prompt", client, "test")
     assert client.chat.completions.create.await_count == 3
-    audit = json.loads(next(path.glob("*.json")).read_text())
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
     assert audit["status"] == "failed"
     assert audit["failed_count"] == 1
     assert "summary" not in audit
@@ -90,7 +90,7 @@ async def test_chunk_failure_no_partial_success(runtime):
     ]
     with pytest.raises(SummaryIntegrityError):
         await summarize_complete(["x" * 8000], "prompt", client, "test")
-    audit = json.loads(next(path.glob("*.json")).read_text())
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
     assert audit["processed_chunks"] == 1
     assert audit["failed_count"] == 1
     assert audit["status"] == "failed"
@@ -171,7 +171,7 @@ async def test_fetch_complete_source_and_order(monkeypatch, tmp_path):
     fetched = await messaging.fetch_last_week_messages(["https://t.me/example"])
     assert text + "1" in fetched["https://t.me/example"][0]
     assert text + "2" in fetched["https://t.me/example"][1]
-    records = [json.loads(path.read_text()) for path in tmp_path.glob("*.json")]
+    records = [json.loads(path.read_text(encoding="utf-8")) for path in tmp_path.glob("*.json")]
     assert sorted(record["text"] for record in records) == [text + "1", text + "2"]
     assert all(record["post_url"].startswith("https://t.me/example/") for record in records)
 
@@ -191,7 +191,7 @@ async def test_rag_failure_does_not_claim_success_and_keeps_source(monkeypatch, 
     assert not await handler.index_message("chan", "name", 8, "  original  ")
     assert handler.get_stats()["failed_count"] == 1
     store.replace_message_chunks.assert_not_called()
-    assert json.loads(source_path("chan", 8).read_text())["text"] == "  original  "
+    assert json.loads(source_path("chan", 8).read_text(encoding="utf-8"))["text"] == "  original  "
 
 
 def test_retrieval_serialization_preserves_full_tail():
@@ -213,7 +213,7 @@ async def test_merge_failure_is_failed_even_after_all_inputs_processed(runtime):
     client.chat.completions.create.side_effect = complete
     with pytest.raises(SummaryIntegrityError):
         await summarize_complete(["x" * 8000], "prompt", client, "test")
-    audit = json.loads(next(path.glob("*.json")).read_text())
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
     assert audit["processed_count"] == 1
     assert audit["failed_count"] > 0
     assert audit["status"] == "failed"
@@ -312,7 +312,7 @@ async def test_summary_fetch_includes_image_only_ocr_at_source_time(monkeypatch,
     enrich.assert_awaited_once_with(client, image, "https://t.me/example")
     assert full_ocr in fetched["https://t.me/example"][0]
     assert published.isoformat() in fetched["https://t.me/example"][0]
-    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    record = json.loads(next(tmp_path.glob("*.json")).read_text(encoding="utf-8"))
     assert record["text"] == full_ocr
     assert record["created_at"] == published.isoformat()
     assert record["post_url"] == "https://t.me/example/42"

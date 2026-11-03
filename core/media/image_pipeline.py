@@ -2,7 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 
-"""图片采集、独立视觉 worker 和历史补录（单主进程服务）。"""
+"""图片采集、独立视觉 worker 与历史补录；仅支持单个主 Bot 进程。"""
 
 import asyncio
 import base64
@@ -47,7 +47,7 @@ def combined_text(caption, result):
 
 
 class BoundedWriter:
-    """在写入前限制下载体积，防止无大小或错误元数据占满磁盘。"""
+    """写入前限制下载体积，防止缺失或错误的 size 元数据把磁盘占满。"""
 
     def __init__(self, file, limit):
         self.file, self.limit, self.size = file, limit, 0
@@ -225,7 +225,7 @@ class ImagePipeline:
                     try:
                         await self.store.update_job(job, "pending", error=type(error).__name__)
                     except Exception:
-                        logger.exception("图片任务失败状态写入失败；等待租约恢复")
+                        logger.exception("图片任务失败状态写入失败，等待租约恢复")
                 await asyncio.sleep(2)
 
     async def _recognize(self, asset):
@@ -323,7 +323,7 @@ class ImagePipeline:
         return success and latest["revision"] == record["revision"]
 
     async def cleanup_orphans(self, before, dry_run=True):
-        """离线清理：主 Bot 停止后调用，默认仅预览；保留被任一活消息引用的图片。"""
+        """离线清理：主 Bot 停止后调用，默认只预览；仍被消息引用的图片不会删除。"""
         if self.tasks:
             raise RuntimeError("stop_pipeline_before_cleanup")
         rows = await self.store.query(
@@ -356,7 +356,7 @@ class ImagePipeline:
         return removed
 
     async def backfill(self, client, channel, start, end, limit=10000):
-        """有界历史补录，半开区间 [start,end)，不按识别时间归属周报。"""
+        """限制扫描条数的历史补录；区间为 [start,end) 不含 end，按原帖时间归档，不按识别时间计入周报。"""
         if start >= end or not 1 <= limit <= 100000:
             raise ValueError("invalid_backfill_range")
         chat = await client.get_entity(channel)
@@ -385,7 +385,7 @@ def get_image_pipeline():
 
 
 async def enrich_message(client, message, channel):
-    """周报收集不等待视觉 API；故障不影响原消息，已完成结果按原消息日期使用。"""
+    """周报收集不等待视觉 API；识别故障不影响原消息，已完成的结果按原消息日期使用。"""
     caption = getattr(message, "message", None) or getattr(message, "text", None) or ""
 
     def unavailable(status):

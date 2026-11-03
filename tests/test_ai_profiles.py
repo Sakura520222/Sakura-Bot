@@ -78,7 +78,7 @@ def test_schema_rejects_invalid_config(change):
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps(sample()))
+    path.write_text(json.dumps(sample()), encoding="utf-8")
     store = ConfigStore(path)
     monkeypatch.setattr(routes, "get_config", store.read)
     monkeypatch.setattr(routes, "write_config", store.save_changes)
@@ -148,7 +148,7 @@ def test_manual_model_call_does_not_require_model_listing(api, monkeypatch):
 
 def test_hot_reload_and_restart_use_same_routes(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps(sample()))
+    path.write_text(json.dumps(sample()), encoding="utf-8")
     store = ConfigStore(path)
     monkeypatch.setattr(config_module._old_config, "CONFIG_FILE", str(path))
     reader = RuntimeConfigReader()
@@ -254,7 +254,7 @@ def parity_cases():
     from pathlib import Path
 
     path = Path(__file__).parents[1] / "qa-bot-go/internal/config/testdata/ai_profiles_parity.json"
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("case", parity_cases(), ids=lambda case: case["name"])

@@ -24,7 +24,7 @@ async def test_malformed_isolated_and_exact_replay(tmp_path):
     path = tmp_path / "valid.json"
     original = json.dumps(record, ensure_ascii=False).encode()
     path.write_bytes(original)
-    (tmp_path / "broken.json").write_text("{broken")
+    (tmp_path / "broken.json").write_text("{broken", encoding="utf-8")
     indexer = AsyncMock(return_value=True)
     result = await replay_sources(tmp_path, apply=True, indexer=indexer)
     assert result["input_count"] == 2
@@ -45,7 +45,7 @@ async def test_malformed_isolated_and_exact_replay(tmp_path):
 
 
 async def test_false_ack_is_failure(tmp_path):
-    (tmp_path / "valid.json").write_text(json.dumps(source()))
+    (tmp_path / "valid.json").write_text(json.dumps(source()), encoding="utf-8")
     result = await replay_sources(tmp_path, apply=True, indexer=AsyncMock(return_value=False))
     assert result["processed_count"] == 0
     assert result["failed_count"] == 1
@@ -53,7 +53,7 @@ async def test_false_ack_is_failure(tmp_path):
 
 
 async def test_dry_run_does_not_index(tmp_path):
-    (tmp_path / "valid.json").write_text(json.dumps(source()))
+    (tmp_path / "valid.json").write_text(json.dumps(source()), encoding="utf-8")
     indexer = AsyncMock()
     result = await replay_sources(tmp_path, indexer=indexer)
     assert result["dry_run"]
@@ -64,7 +64,7 @@ async def test_dry_run_does_not_index(tmp_path):
 
 def test_cli_missing_or_malformed_returns_nonzero(tmp_path, capsys):
     assert main(["--source-dir", str(tmp_path / "missing")]) == 1
-    (tmp_path / "bad.json").write_text('{"channel_id": "123"}')
+    (tmp_path / "bad.json").write_text('{"channel_id": "123"}', encoding="utf-8")
     assert main(["--source-dir", str(tmp_path)]) == 1
     assert '"failed_count": 1' in capsys.readouterr().out
 
@@ -79,13 +79,13 @@ async def test_apply_uses_shadow_archive_and_restores_environment(tmp_path, monk
     record = source()
     path = tmp_path / "original.json"
     content = json.dumps(record, ensure_ascii=False)
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     monkeypatch.setenv("MESSAGE_SOURCE_DIR", str(tmp_path))
 
     async def index(self, **kwargs):
         shadow = Path(os.environ["MESSAGE_SOURCE_DIR"])
         assert shadow != tmp_path
-        (shadow / "rewritten.json").write_text("changed")
+        (shadow / "rewritten.json").write_text("changed", encoding="utf-8")
         assert kwargs["created_at"] == record["created_at"]
         return True
 
@@ -93,6 +93,6 @@ async def test_apply_uses_shadow_archive_and_restores_environment(tmp_path, monk
     result = await run(tmp_path, apply=True)
     assert result["processed_count"] == 1
     assert result["failed_count"] == 0
-    assert path.read_text() == content
+    assert path.read_text(encoding="utf-8") == content
     assert list(tmp_path.glob("*.json")) == [path]
     assert os.environ["MESSAGE_SOURCE_DIR"] == str(tmp_path)

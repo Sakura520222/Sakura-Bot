@@ -2,7 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 
-"""服务档案 API：脱敏读取、版本冲突检测与独立测试。"""
+"""服务档案 API：脱敏读取、版本冲突检测、连接与调用测试。"""
 
 from copy import deepcopy
 

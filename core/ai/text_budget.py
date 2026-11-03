@@ -13,7 +13,7 @@ def token_upper_bound(text: str) -> int:
 
 
 def split_text(text: str, budget: int) -> list[str]:
-    """按预算无损分块，保证 Unicode 字符和原文顺序完整。"""
+    """按预算切分文本，不拆坏字符，不打乱顺序。"""
     if budget < 4:
         raise ValueError("Token budget must be at least 4")
     chunks, start, size = [], 0, 0
@@ -29,7 +29,7 @@ def split_text(text: str, budget: int) -> list[str]:
 
 
 def pack_texts(texts: list[str], budget: int) -> list[str]:
-    """无损装箱，超长条目先拆分，所有片段均保留。"""
+    """把多条文本合并成不超过预算的分组；超长的先拆开，所有片段都保留。"""
     groups, current = [], ""
     for text in texts:
         for part in split_text(text, budget):

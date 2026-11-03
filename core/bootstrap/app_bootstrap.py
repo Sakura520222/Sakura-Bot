@@ -274,7 +274,7 @@ class AppBootstrap:
 
             await get_image_pipeline().stop()
         except Exception:
-            self.logger.exception("停止图片流水线失败")
+            self.logger.exception("停止图片处理任务失败")
 
         # 1. 停止实时RAG处理器
         try:

@@ -53,7 +53,7 @@ class ImageStore:
             await self.query(sql)
 
     async def capture(self, record):
-        """相同媒体重复投递不会重试终态失败；编辑说明会重新索引。"""
+        """同一媒体的重复事件不会重新排队已失败的任务；编辑说明文字会重新索引。"""
         current = await self.get(record["channel_id"], record["message_id"])
         if (
             current
@@ -148,7 +148,7 @@ class ImageStore:
         )
 
     async def recognize(self, digest, ocr, description, model, job):
-        """原子检查任务版本，防止强制重识别后旧请求重新写入缓存。"""
+        """版本检查和写入在同一条 UPDATE 中完成，防止强制重识别后旧请求又写入缓存。"""
         return bool(
             await self.query(
                 """UPDATE image_assets a JOIN message_images m ON m.sha256=a.sha256
@@ -190,7 +190,7 @@ class ImageStore:
         if not job or job["deleted"]:
             return False
         if force and job["sha256"]:
-            # 缓存失效和所有引用的版本变更必须在同一语句中原子提交。
+            # 缓存作废和所有引用的版本变更由同一条 UPDATE 完成。
             await self.query(
                 """UPDATE image_assets a JOIN message_images m ON m.sha256=a.sha256
                 SET a.recognized=FALSE,m.status='pending',m.attempts=0,

@@ -37,7 +37,7 @@ def validate_source(record):
 
 
 async def replay_sources(directory: Path, *, apply=False, indexer=None):
-    """单条损坏记录不影响其余记录；完整写入确认后才计成功。"""
+    """单条损坏记录不影响其余记录；确认完整写入后才算成功。"""
     report = {
         "dry_run": not apply,
         "input_count": 0,

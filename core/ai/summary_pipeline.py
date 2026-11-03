@@ -2,7 +2,7 @@
 # 本项目采用 GNU Affero General Public License Version 3.0 (AGPL-3.0) 许可
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 # 许可证全文：参见 LICENSE 文件
-"""完整输入、分层摘要和可审计的运行记录（兼容历史字符串 API）。"""
+"""输入不截断，超出预算时分层摘要，每次运行写入记录文件（兼容历史字符串 API）。"""
 
 import asyncio
 import json
@@ -23,7 +23,7 @@ MERGE = "合并以下分段摘要，覆盖每一段的重要信息，保留来�
 
 
 class SummaryIntegrityError(RetryExhaustedError):
-    """不能确认完整处理所有输入时拒绝返回成功。"""
+    """只要无法确认所有输入都完整处理，就不返回成功。"""
 
     def __init__(self, message, last_exception=None):
         super().__init__(message, last_exception)
@@ -146,7 +146,7 @@ async def summarize_complete(messages, prompt, client, model):
             completed += count
             record["processed_count"] = index + 1
             _save_run(path, record)
-        # 每层均消费全部中间结果；不收敛时显式失败，避免无限循环或裁剪。
+        # 每一轮都处理上一步的全部结果；不收敛就报错，避免无限循环或丢内容。
         for _ in range(16):
             if len(summaries) == 1:
                 break

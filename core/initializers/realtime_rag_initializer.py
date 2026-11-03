@@ -65,7 +65,7 @@ class RealtimeRAGInitializer:
             try:
                 await get_image_pipeline().start(monitoring_client)
             except Exception:
-                self.logger.exception("图片流水线启动失败，文本采集继续运行")
+                self.logger.exception("图片处理任务启动失败，文本采集继续运行")
 
             # 注册事件监听器
             self._register_listeners(monitoring_client, rag_handler)

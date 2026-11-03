@@ -65,7 +65,7 @@
             <n-form-item-gi span="0:2" label="默认图片能力">
               <n-space align="center">
                 <n-switch v-model:value="selectedProfile.supports_vision" />
-                <n-text depth="3">此模型支持图片输入。能力需按提供商说明设置，模型列表不会自动检测。</n-text>
+                <n-text depth="3">此模型支持图片输入。是否支持需按提供商说明设置，刷新模型列表不会自动检测。</n-text>
               </n-space>
             </n-form-item-gi>
           </n-grid>

@@ -247,7 +247,7 @@ class RealtimeRAGHandler:
         channel_username: str | None = None,
         created_at: datetime | str | None = None,
     ) -> bool:
-        """等待完整分块写入确认，供有持久化重试队列的图片任务使用。"""
+        """同步等待所有分块写入完成后再返回，供带持久化重试的图片任务调用。"""
         from core.ai.source_archive import archive_source
 
         if not text or not text.strip():
@@ -404,7 +404,7 @@ class RealtimeRAGHandler:
 
             budget = int(os.getenv("EMBEDDING_INPUT_TOKENS", "4096"))
             loop = asyncio.get_running_loop()
-            # 同一消息的所有片段成功后才记为处理成功；短消息保持旧文档 ID。
+            # 一条消息的所有分块都写入成功才算处理成功；不分块的消息沿用旧文档 ID。
             all_success = True
             for item in batch:
                 try:
@@ -461,7 +461,7 @@ class RealtimeRAGHandler:
 
             return False
         finally:
-            # 全局单调 token 防止复用；清理完成/失败项而不影响更晚的编辑。
+            # 序号只增不复用；清理时跳过已被更新编辑覆盖的条目，不影响后来的修改。
             for item in batch:
                 if (
                     item.get("generation") is not None

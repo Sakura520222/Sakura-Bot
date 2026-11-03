@@ -105,7 +105,7 @@ def get_llm_model() -> str:
 
 
 async def analyze_with_ai(messages, current_prompt):
-    """所有总结入口共用无损分块管道，失败时不发布部分结果。"""
+    """所有总结入口共用同一套分块逻辑，失败时不发布不完整的结果。"""
     if not messages:
         return "本周无新动态。"
     from core.ai.summary_pipeline import summarize_complete

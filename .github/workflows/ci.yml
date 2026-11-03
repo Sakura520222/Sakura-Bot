@@ -182,6 +182,16 @@ jobs:
             --tb=short \
             --strict-markers
           test -s test-results/integration.xml
+
+      - name: 设置 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 运行前端回归测试
+        run: |
+          npm --prefix web ci
+          npm --prefix web test
       
       - name: 验证 coverage 数据文件
         if: always()

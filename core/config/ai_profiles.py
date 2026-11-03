@@ -2,7 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 # 本项目源代码：https://github.com/Sakura520222/Sakura-Bot
 
-"""多服务档案的共享校验；不在异常或 repr 中暴露凭据。"""
+"""多服务档案校验，各处共用；异常和 repr 中不暴露凭据。"""
 
 import hashlib
 import json
