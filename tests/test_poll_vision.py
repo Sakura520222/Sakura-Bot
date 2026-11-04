@@ -7,6 +7,7 @@ import pytest
 
 from core.ai import ai_client, poll_vision
 from core.config.ai_runtime import AIConnectionSettings
+from core.media import image_descriptions
 
 IMAGE = "data:image/png;base64,PRIVATE_IMAGE_BODY"
 
@@ -58,11 +59,13 @@ def runtime(monkeypatch):
         ai_client, "load_poll_prompt", lambda: "根据以下素材生成双语投票：\n{summary_text}"
     )
     monkeypatch.setattr(poll_vision, "effective_ai_config", lambda purpose: configs[purpose])
-    return configs, clients, selected
+    saved = AsyncMock(return_value=["图1：一只戴着墨镜的橘猫。"])
+    monkeypatch.setattr(image_descriptions, "saved_poll_descriptions", saved)
+    return configs, clients, selected, saved
 
 
 async def test_visual_poll_model_receives_images_directly_without_external_call(runtime):
-    configs, clients, selected = runtime
+    configs, clients, selected, saved = runtime
     configs["poll"] = replace(configs["poll"], supports_vision=True)
     result = await ai_client.generate_poll_from_summary("", images=[IMAGE])
     assert result["question"].startswith("这只")
@@ -74,49 +77,50 @@ async def test_visual_poll_model_receives_images_directly_without_external_call(
     }
     clients["vision"].chat.completions.create.assert_not_awaited()
     assert selected == [("poll", configs["poll"])]
+    saved.assert_not_awaited()
+    clients["poll"].with_options.assert_not_called()
 
 
 async def test_text_poll_model_uses_external_description_with_channel_ocr_disabled(runtime):
-    configs, clients, selected = runtime
+    configs, clients, selected, saved = runtime
     result = await ai_client.generate_poll_from_summary("猫", images=[IMAGE])
     assert result["options"] == ["海边", "沙发"]
-    visual_request = clients["vision"].chat.completions.create.call_args.kwargs
     poll_request = clients["poll"].chat.completions.create.call_args.kwargs
-    assert visual_request["model"] == "vision-model"
-    assert visual_request["messages"][-1]["content"][1]["image_url"]["url"] == IMAGE
     text = poll_request["messages"][-1]["content"]
     assert isinstance(text, str) and "戴着墨镜的橘猫" in text and "猫" in text
     assert "PRIVATE_IMAGE_BODY" not in text and "base64" not in text
-    assert selected == [("poll", configs["poll"]), ("vision", configs["vision"])]
+    assert selected == [("poll", configs["poll"])]
+    saved.assert_awaited_once_with([IMAGE], configs["vision"])
+    clients["poll"].with_options.assert_not_called()
 
 
 async def test_both_purpose_parameters_are_pinned_before_vision_await(runtime):
-    configs, clients, selected = runtime
+    configs, clients, selected, saved = runtime
     original_poll, original_vision = configs["poll"], configs["vision"]
 
-    async def describe(**kwargs):
+    async def describe(images, config):
         configs["poll"] = replace(original_poll, model="new-poll", api_key="new-secret")
         configs["vision"] = replace(original_vision, model="new-vision")
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="戴墨镜的猫"))]
-        )
+        assert config is original_vision
+        return ["戴墨镜的猫"]
 
-    clients["vision"].chat.completions.create.side_effect = describe
+    saved.side_effect = describe
     await ai_client.generate_poll_from_summary("原帖图片", images=[IMAGE])
-    assert selected == [("poll", original_poll), ("vision", original_vision)]
+    assert selected == [("poll", original_poll)]
     assert clients["poll"].chat.completions.create.call_args.kwargs["model"] == "poll-model"
-    assert clients["vision"].chat.completions.create.call_args.kwargs["model"] == "vision-model"
+    saved.assert_awaited_once_with([IMAGE], original_vision)
 
 
 @pytest.mark.parametrize("failure", ["capability", "empty", "upstream", "invalid_poll"])
 async def test_image_failures_do_not_generate_a_fake_text_only_poll(runtime, caplog, failure):
-    configs, clients, _ = runtime
+    configs, clients, _, saved = runtime
     if failure == "capability":
         configs["vision"] = replace(configs["vision"], supports_vision=False)
+        saved.side_effect = ValueError("vision_disabled")
     elif failure == "empty":
-        clients["vision"].chat.completions.create.return_value.choices[0].message.content = ""
+        saved.side_effect = ValueError("empty_saved_image_description")
     elif failure == "upstream":
-        clients["vision"].chat.completions.create.side_effect = ValueError("vision-secret " + IMAGE)
+        saved.side_effect = ValueError("vision-secret " + IMAGE)
     else:
         clients["poll"].chat.completions.create.return_value.choices[0].message.content = "not JSON"
     assert await ai_client.generate_poll_from_summary("有图片的帖子", images=[IMAGE]) is None
@@ -126,10 +130,11 @@ async def test_image_failures_do_not_generate_a_fake_text_only_poll(runtime, cap
 
 
 async def test_plain_text_poll_keeps_its_existing_single_model_request(runtime):
-    _, clients, selected = runtime
+    _, clients, selected, saved = runtime
     assert await ai_client.generate_poll_from_summary("足够长的普通文本帖子，没有任何图片素材。")
     assert [purpose for purpose, _ in selected] == ["poll"]
     assert isinstance(
         clients["poll"].chat.completions.create.call_args.kwargs["messages"][-1]["content"], str
     )
     clients["vision"].chat.completions.create.assert_not_awaited()
+    saved.assert_not_awaited()

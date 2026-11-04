@@ -1,4 +1,4 @@
-"""Bounded, transient media collection for one channel fun poll."""
+"""Bounded media collection backed by the channel image store."""
 
 import asyncio
 import io
@@ -37,7 +37,7 @@ class ImageBuffer(io.BytesIO):
 
 
 async def collect_poll_images(client, message, discussion_id: int, caption: str):
-    """Queue references stay small; image bytes exist only while processing."""
+    """Queue references stay small; validated images enter shared durable storage."""
     if message is None or not has_poll_media(message):
         return caption, []
     if isinstance(getattr(message, "grouped_id", None), int):
@@ -98,6 +98,10 @@ async def collect_poll_images(client, message, discussion_id: int, caption: str)
             if total > MAX_TOTAL_BYTES:
                 raise PollImageError("趣味投票图片总量超过 20 MiB，已跳过")
             urls.append(await asyncio.to_thread(image_data_url, data))
+            from core.media.image_descriptions import register_poll_image
+
+            mime = urls[-1].split(";", 1)[0][5:]
+            await register_poll_image(data, mime, item, client)
         except PollImageError:
             raise
         except Exception:
