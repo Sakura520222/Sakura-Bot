@@ -71,6 +71,11 @@ func NewClient(b *bot.Bot, log Logger, timeout time.Duration) *Client {
 // Bot 返回底层 *bot.Bot（供 main 启动长轮询/注册 handler）。
 func (c *Client) Bot() *bot.Bot { return c.b }
 
+func (c *Client) GetFile(ctx context.Context, params *bot.GetFileParams) (*models.File, error) {
+	return call(ctx, 15*time.Second, func(ctx context.Context) (*models.File, error) { return c.b.GetFile(ctx, params) })
+}
+func (c *Client) FileDownloadLink(file *models.File) string { return c.b.FileDownloadLink(file) }
+
 // call 统一执行一次 TG API 调用：
 //   - 请求上下文截断到 timeout（外部 ctx 更早取消/超限时以外部为准）；
 //   - 429 且 0 <= RetryAfter <= 60s 时睡眠 RetryAfter+1s 后仅重试一次

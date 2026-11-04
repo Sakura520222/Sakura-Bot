@@ -70,7 +70,16 @@ class ConfigValidator:
             return ConfigValidationErrorEvent(
                 error="配置根节点必须是对象", config_path=str(file_path)
             )
-        if any(key in config for key in ("ai_profiles", "ai_routing", "ai_vision")):
+        if any(
+            key in config
+            for key in (
+                "ai_profiles",
+                "ai_providers",
+                "ai_config_version",
+                "ai_routing",
+                "ai_vision",
+            )
+        ):
             from core.config.ai_profiles import parse_ai_profiles
 
             try:

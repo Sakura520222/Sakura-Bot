@@ -272,7 +272,7 @@ func maxInt64(a, b int64) int64 {
 func assembleEngine(cfg *config.Config, mgr *db.Manager, conversations *engine.Conversations, vecStore *vectors.Store, logger *slog.Logger) *engine.Engine {
 	chat := llm.NewClient(llm.AIConfigFunc(func() llm.AIConfig {
 		c := cfg.EffectiveAIConfig()
-		return llm.AIConfig{APIKey: c.APIKey, BaseURL: c.BaseURL, Model: c.Model}
+		return llm.AIConfig{APIKey: c.APIKey, BaseURL: c.BaseURL, Model: c.Model, SupportsVision: c.SupportsVision}
 	}), llm.WithLogger(logger))
 
 	memMgr := memory.New(mgr, mgr.DB)
@@ -395,21 +395,19 @@ func (t *toolVectorStore) SearchMessages(ctx context.Context, query string, topK
 }
 
 // SearchAll 实现 VectorStore：两 collection 合并按相似度降序截 top_k
-// （:406-464）；单侧失败记日志继续（Python 每侧独立 try/except）。
+// （:406-464）；单侧失败返回工具错误，不能把未完成的检索当作未命中。
 func (t *toolVectorStore) SearchAll(ctx context.Context, query string, topK int, filterMetadata map[string]any, dateAfter, dateBefore string) ([]map[string]any, error) {
 	results := make([]map[string]any, 0, topK)
 
 	sumHits, err := t.searchOne(ctx, "summaries", query, topK, filterMetadata, dateAfter, dateBefore)
 	if err != nil {
-		t.log.Error(fmt.Sprintf("搜索summaries失败: %T: %v", err, err))
-		sumHits = nil
+		return nil, err
 	}
 	results = append(results, tools.HitsToResults(sumHits, "summary")...)
 
 	msgHits, err := t.searchOne(ctx, "messages", query, topK, filterMetadata, dateAfter, dateBefore)
 	if err != nil {
-		t.log.Error(fmt.Sprintf("搜索messages失败: %T: %v", err, err))
-		msgHits = nil
+		return nil, err
 	}
 	results = append(results, tools.HitsToResults(msgHits, "message")...)
 
@@ -421,16 +419,15 @@ func (t *toolVectorStore) SearchAll(ctx context.Context, query string, topK int,
 }
 
 // searchOne 生成查询向量并检索单个 collection。embedding 不可用/生成失败
-// 返回空切片（对齐 _search_collection 的 is_available/None → [] 分支，
-// vector_store.py:556-564）。
+// 返回可识别错误，调用方不能误报「没有历史消息」。
 func (t *toolVectorStore) searchOne(ctx context.Context, collection, query string, topK int, filterMetadata map[string]any, dateAfter, dateBefore string) ([]vectors.Hit, error) {
 	if !t.emb.IsAvailable() {
-		return nil, nil
+		return nil, fmt.Errorf("语义检索服务不可用，请检查 Embedding 配置")
 	}
 	queryVec, err := t.emb.Generate(ctx, query)
 	if err != nil || queryVec == nil {
-		t.log.Warn(fmt.Sprintf("生成查询向量失败: %v", err))
-		return nil, nil
+		t.log.Warn(fmt.Sprintf("生成查询向量失败: %T", err))
+		return nil, fmt.Errorf("语义检索失败：无法生成查询向量，请检查 Embedding 服务；这不代表没有历史记录")
 	}
 	return t.vec.Search(ctx, queryVec, vectors.Options{
 		Collection: collection,

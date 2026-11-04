@@ -6,7 +6,7 @@
         <h2 class="page-title">AI 配置</h2>
         <p class="page-subtitle">配置模型提供商、API 密钥与提示词，保存后立即生效。</p>
       </div>
-      <n-button type="primary" :loading="saving" :disabled="!aiLoaded" @click="saveAIConfig">保存默认配置</n-button>
+      <n-button type="primary" :loading="profilesPanel?.saving" :disabled="!profilesPanel || profilesPanel.busy || !profilesPanel.dirty" @click="profilesPanel?.save()">保存厂商、模型与用途</n-button>
     </header>
 
     <!-- 首屏三态之 loading：骨架占位 -->
@@ -39,7 +39,7 @@
         <n-gi span="0:2 1024:1">
           <n-card title="旧版默认模型（未绑定用途时回退）">
             <template #header-extra>
-              <n-text depth="3" class="font-xs">OpenAI 兼容接口</n-text>
+              <n-button size="small" :loading="saving" :disabled="!aiLoaded" @click="saveAIConfig">仅保存旧版默认配置</n-button>
             </template>
             <n-form
               ref="formRef"
@@ -234,7 +234,7 @@ async function saveAIConfig() {
       legacyRevision.value++;
       // 默认配置只覆盖页头这份旧版配置；面板区域是独立保存的，提醒避免误以为全部已保存
       if (profilesPanel.value?.dirty) {
-        message.warning("顶部「按用途选择 AI 模型」区还有未保存的修改，请在该区底部点击「保存用途配置」保存");
+        message.warning("厂商与模型区还有未保存的修改，请点击「保存厂商、模型与用途」保存");
       }
     }
   } catch (problem) {

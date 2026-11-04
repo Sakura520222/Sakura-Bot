@@ -353,6 +353,7 @@ class ToolExecutor:
                 filter_metadata=filter_metadata,
                 date_after=args.get("date_after"),
                 date_before=args.get("date_before"),
+                strict=True,
             )
         elif collection == "summaries":
             results = self.vector_store.search_similar(
@@ -361,6 +362,7 @@ class ToolExecutor:
                 filter_metadata=filter_metadata,
                 date_after=args.get("date_after"),
                 date_before=args.get("date_before"),
+                strict=True,
             )
         else:
             # 默认: 同时搜索 summaries + messages
@@ -371,6 +373,7 @@ class ToolExecutor:
                     filter_metadata=filter_metadata,
                     date_after=args.get("date_after"),
                     date_before=args.get("date_before"),
+                    strict=True,
                 )
             else:
                 results = self.vector_store.search_similar(
@@ -379,6 +382,7 @@ class ToolExecutor:
                     filter_metadata=filter_metadata,
                     date_after=args.get("date_after"),
                     date_before=args.get("date_before"),
+                    strict=True,
                 )
 
         # 累积到 result_store 并序列化（保留完整文本）

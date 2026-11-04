@@ -4,6 +4,7 @@
 
 """服务档案 API：脱敏读取、版本冲突检测、连接与调用测试。"""
 
+import logging
 from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,8 +14,10 @@ from core.config.ai_profiles import (
     PURPOSES,
     AIProfile,
     AIProfilesConfig,
+    migrate_providers,
     parse_ai_profiles,
     profiles_revision,
+    providers_revision,
 )
 from core.config.ai_runtime import effective_ai_config
 from core.config.persistence import ConfigConflictError, ConfigPersistenceError
@@ -22,6 +25,7 @@ from core.i18n.i18n import get_text
 from core.web_api.deps import get_config, write_config
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def public_profiles(config):
@@ -66,6 +70,8 @@ async def save_profiles(request: Request):
         if not isinstance(body, dict) or set(body) != {"profiles", "routing", "vision", "revision"}:
             raise ValueError()
         config = get_config()
+        if config.get("ai_config_version", 1) != 1:
+            raise ConfigConflictError("AI configuration upgraded; reload the page")
         if body["revision"] != profiles_revision(config):
             raise ConfigConflictError(get_text("ai_profiles.conflict"))
         candidate = deepcopy(body)
@@ -79,9 +85,12 @@ async def save_profiles(request: Request):
             ai_profiles=data["profiles"], ai_routing=data["routing"], ai_vision=data["vision"]
         )
         write_config(config)
+        persisted = get_config()
+        if profiles_revision(persisted) != profiles_revision(config):
+            raise ConfigConflictError("AI configuration readback mismatch")
         return {
             "success": True,
-            "data": public_profiles(config),
+            "data": public_profiles(persisted),
             "message": get_text("ai_profiles.saved"),
         }
     except ConfigConflictError:
@@ -183,6 +192,167 @@ async def test_profile(profile_id: str, request: Request):
             else:
                 await client.chat.completions.create(
                     model=model, messages=[{"role": "user", "content": "Reply with only OK."}]
+                )
+        return {"success": True, "message": get_text("ai_profiles.success")}
+    except Exception:
+        raise HTTPException(502, get_text("ai_profiles.failed")) from None
+
+
+def public_providers(config):
+    parsed = migrate_providers(config)
+    providers = {}
+    for key, provider in parsed.providers.items():
+        data = provider.model_dump(exclude={"api_key"})
+        data.update(
+            api_key_set=bool(provider.api_key),
+            api_key_preview="********" if provider.api_key else "",
+        )
+        providers[key] = data
+    resolved_config = dict(
+        config,
+        ai_providers=parsed.model_dump()["providers"],
+        ai_routing=parsed.model_dump()["routing"],
+        ai_config_version=2,
+    )
+    effective = {}
+    for purpose in PURPOSES:
+        resolved = effective_ai_config(resolved_config, purpose)
+        effective[purpose] = {
+            "provider_id": resolved.profile_id,
+            "model_id": resolved.model,
+            "supports_vision": resolved.supports_vision,
+        }
+    return {
+        "version": 2,
+        "providers": providers,
+        "routing": {
+            key: route.model_dump(include={"provider_id", "model_id", "supports_vision"})
+            for key, route in parsed.routing.items()
+        },
+        "vision": parsed.vision.model_dump(),
+        "effective": effective,
+        "revision": providers_revision(config),
+    }
+
+
+@router.get("/providers")
+async def get_providers():
+    try:
+        return {"success": True, "data": public_providers(get_config())}
+    except (ConfigPersistenceError, ValueError, TypeError):
+        raise HTTPException(400, get_text("ai_profiles.invalid")) from None
+
+
+@router.put("/providers")
+async def save_providers(request: Request):
+    try:
+        body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"version", "providers", "routing", "vision", "revision"}
+            or body["version"] != 2
+        ):
+            raise ValueError()
+        config = get_config()
+        if body["revision"] != providers_revision(config):
+            raise ConfigConflictError("AI configuration changed")
+        previous = migrate_providers(config)
+        candidate = deepcopy(body)
+        candidate.pop("revision")
+        for key, provider in candidate["providers"].items():
+            if "api_key" not in provider:
+                provider["api_key"] = (
+                    previous.providers[key].api_key if key in previous.providers else ""
+                )
+        parsed = AIProfilesConfig.model_validate(candidate)
+        data = parsed.model_dump()
+        config.update(
+            ai_config_version=2,
+            ai_providers=data["providers"],
+            ai_routing=data["routing"],
+            ai_vision=data["vision"],
+        )
+        write_config(config)
+        persisted = get_config()
+        if providers_revision(persisted) != providers_revision(config):
+            raise ConfigConflictError("AI configuration readback mismatch")
+        result = public_providers(persisted)
+        logger.info(
+            "AI configuration persisted and verified: revision=%s providers=%d models=%d",
+            result["revision"][:12],
+            len(parsed.providers),
+            sum(len(p.models) for p in parsed.providers.values()),
+        )
+        return {
+            "success": True,
+            "data": result,
+            "message": "厂商、已添加模型和用途配置已保存并校验",
+        }
+    except ConfigConflictError:
+        raise HTTPException(409, get_text("ai_profiles.conflict")) from None
+    except (ValueError, TypeError, KeyError, AttributeError, ConfigPersistenceError):
+        raise HTTPException(400, get_text("ai_profiles.validation")) from None
+
+
+def provider_connection(provider_id, body):
+    try:
+        saved = migrate_providers(get_config()).providers.get(provider_id)
+    except (ValueError, TypeError, ConfigPersistenceError):
+        raise HTTPException(400, get_text("ai_profiles.invalid")) from None
+    draft = _draft_connection(body)
+    if not draft and saved is None:
+        raise HTTPException(404, get_text("ai_profiles.not_found"))
+    base_url, key = draft if draft else (saved.base_url, saved.api_key)
+    # Omission/blank preserves the key; explicit clearing also applies to tests.
+    if body.get("clear_api_key") is True:
+        key = ""
+    elif not key and saved:
+        key = saved.api_key
+    return base_url, key
+
+
+@router.post("/providers/{provider_id}/models")
+async def list_provider_models(provider_id: str, request: Request):
+    base_url, key = provider_connection(provider_id, await _json_body(request))
+    try:
+        async with AsyncOpenAI(api_key=key, base_url=base_url, timeout=15, max_retries=0) as client:
+            result = await client.models.list()
+        models = sorted(
+            {
+                item.id
+                for item in result.data
+                if isinstance(item.id, str)
+                and 0 < len(item.id) <= 256
+                and AIProfile.safe_string(item.id) == item.id
+            }
+        )
+        return {"success": True, "data": models}
+    except Exception:
+        raise HTTPException(502, get_text("ai_profiles.models_failed")) from None
+
+
+@router.post("/providers/{provider_id}/test")
+async def test_provider(provider_id: str, request: Request):
+    body = await _json_body(request)
+    if body.get("kind") not in {"connection", "call"}:
+        raise HTTPException(400, get_text("ai_profiles.test_kind"))
+    model = body.get("model", "")
+    if (
+        not isinstance(model, str)
+        or len(model) > 256
+        or (body["kind"] == "call" and not model.strip())
+        or any(ord(c) < 32 or ord(c) == 127 for c in model)
+    ):
+        raise HTTPException(400, get_text("ai_profiles.test_kind"))
+    base_url, key = provider_connection(provider_id, body)
+    try:
+        async with AsyncOpenAI(api_key=key, base_url=base_url, timeout=20, max_retries=0) as client:
+            if body["kind"] == "connection":
+                await client.models.list()
+            else:
+                await client.chat.completions.create(
+                    model=model.strip(),
+                    messages=[{"role": "user", "content": "Reply with only OK."}],
                 )
         return {"success": True, "message": get_text("ai_profiles.success")}
     except Exception:

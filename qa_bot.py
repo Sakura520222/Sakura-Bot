@@ -14,6 +14,7 @@ Sakura 问答Bot - 独立的智能问答助手
 基于历史总结回答自然语言查询
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -118,6 +119,8 @@ class QABot:
         self.conversation_mgr = get_conversation_manager()
         self.user_system = get_qa_user_system()
         self.application = None
+        self._image_context = None
+        self._image_albums = {}
 
         logger.info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持 + 用户系统）")
 
@@ -288,6 +291,11 @@ class QABot:
     async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """处理/clear命令 - 清除对话历史"""
         user_id = update.effective_user.id
+        self._images().clear_user(user_id)
+        for key, album in list(getattr(self, "_image_albums", {}).items()):
+            if key[0] == user_id:
+                album["task"].cancel()
+                del self._image_albums[key]
 
         # 清除所有对话历史
         deleted_count = await self.conversation_mgr.clear_user_history(user_id)
@@ -602,6 +610,8 @@ class QABot:
             await update.message.reply_text("请提供要查询的问题。")
             return
 
+        image_options = self._image_options(update, context)
+
         try:
             quota_check = await self.quota_manager.check_quota(user_id)
             if not quota_check.get("allowed", False):
@@ -620,6 +630,7 @@ class QABot:
                 user_id=user_id,
                 quota_check=quota_check,
                 channel_hint=channel_hint,
+                **image_options,
             )
             if not success:
                 await self.quota_manager.refund_quota(user_id)
@@ -635,11 +646,110 @@ class QABot:
         if not update.effective_user or not update.message:
             return
 
+        from core.ai.qa_images import (
+            IMAGE_ACK,
+            VISION_DISABLED,
+            ImageInputError,
+            telegram_image_ref,
+        )
+        from core.config.ai_runtime import effective_ai_config
+
+        msg = update.message
+        query = msg.text or msg.caption or ""
+        scope = (update.effective_user.id, msg.chat_id)
+        try:
+            ref = telegram_image_ref(msg)
+            if ref is not None:
+                if not effective_ai_config(purpose="assistant").supports_vision:
+                    raise ImageInputError(VISION_DISABLED)
+                added, first = self._images().add(scope, ref)
+                if not added:
+                    return
+                if msg.media_group_id:
+                    self._schedule_image_album(update, context, query)
+                    if first and not query.strip():
+                        await msg.reply_text(IMAGE_ACK)
+                    return
+                if not query.strip():
+                    if first:
+                        await msg.reply_text(IMAGE_ACK)
+                    return
+        except ImageInputError as e:
+            logger.warning("QA image rejected: user_id=%s stage=receive", scope[0])
+            await msg.reply_text(str(e))
+            return
+        await self._answer_message(update, context, query, require_images=ref is not None)
+
+    def _images(self):
+        from core.ai.qa_images import ImageContext
+
+        if getattr(self, "_image_context", None) is None:
+            self._image_context = ImageContext()
+        return self._image_context
+
+    def _image_options(self, update, context, require_images=False):
+        from core.ai.qa_images import ImageRequest
+        from core.config.ai_runtime import effective_ai_config
+
+        scope = (update.effective_user.id, update.message.chat_id)
+        if not require_images and not self._images().has_context(scope):
+            return {}
+        return {
+            "image_request": ImageRequest(
+                self._images(),
+                scope,
+                context.bot,
+                bool(update.message.reply_to_message),
+                require_images,
+            ),
+            "ai_config": effective_ai_config(purpose="assistant"),
+        }
+
+    def _schedule_image_album(self, update, context, query):
+        if not hasattr(self, "_image_albums"):
+            self._image_albums = {}
+        key = (update.effective_user.id, update.message.chat_id, update.message.media_group_id)
+        previous = self._image_albums.get(key)
+        if previous:
+            previous["task"].cancel()
+        captions = dict(previous["captions"]) if previous else {}
+        if query.strip():
+            captions[update.message.message_id] = query.strip()
+        caption = "\n".join(captions[key] for key in sorted(captions))
+        album = {"query": caption, "captions": captions}
+
+        async def flush():
+            try:
+                await asyncio.sleep(0.9)
+                if self._image_albums.get(key) is not album:
+                    return
+                del self._image_albums[key]
+                if caption:
+                    await self._answer_message(update, context, caption, require_images=True)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(
+                    "QA album failed: user_id=%s error_type=%s", key[0], type(e).__name__
+                )
+
+        album["task"] = asyncio.create_task(flush())
+        self._image_albums[key] = album
+
+    async def _cleanup_images(self, context=None):
+        self._images().cleanup()
+
+    async def _answer_message(self, update, context, query, require_images=False):
         user_id = update.effective_user.id
-        query = update.message.text
 
         if not query or not query.strip():
             return
+        scope = (user_id, update.message.chat_id)
+        for key, album in list(getattr(self, "_image_albums", {}).items()):
+            if key[:2] == scope:
+                album["task"].cancel()
+                del self._image_albums[key]
+        image_options = self._image_options(update, context, require_images)
 
         # 自动注册用户（确保数据库中有用户信息）
         await self.user_system.register_user(
@@ -667,7 +777,11 @@ class QABot:
 
             # 3. 流式处理并实时编辑消息
             success = await self._stream_and_edit(
-                placeholder=placeholder, query=query, user_id=user_id, quota_check=quota_check
+                placeholder=placeholder,
+                query=query,
+                user_id=user_id,
+                quota_check=quota_check,
+                **image_options,
             )
 
             # 4. 内部失败时回退本次配额占用
@@ -690,6 +804,8 @@ class QABot:
         user_id: int,
         quota_check: dict,
         channel_hint: str | None = None,
+        image_request=None,
+        ai_config=None,
     ) -> bool:
         """
         流式接收 QA 引擎输出，并实时编辑 Telegram 消息。
@@ -789,7 +905,14 @@ class QABot:
             last_edit_time = time.monotonic()
 
         try:
-            async for chunk in self.qa_engine.process_query_stream(query, user_id, channel_hint):
+            image_options = (
+                {"image_request": image_request, "ai_config": ai_config}
+                if image_request is not None
+                else {}
+            )
+            async for chunk in self.qa_engine.process_query_stream(
+                query, user_id, channel_hint, **image_options
+            ):
                 # ── 处理特殊控制标记 ─────────────────────────────────────────
                 if chunk == "__DONE__":
                     break
@@ -1045,8 +1168,20 @@ class QABot:
 
         # 消息处理器
         self.application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
+            MessageHandler(
+                (
+                    filters.TEXT
+                    | filters.PHOTO
+                    | filters.Document.IMAGE
+                    | filters.Document.FileExtension("png")
+                    | filters.Document.FileExtension("jpg")
+                    | filters.Document.FileExtension("jpeg")
+                )
+                & ~filters.COMMAND,
+                self.handle_message,
+            )
         )
+        self.application.job_queue.run_repeating(self._cleanup_images, interval=30, first=30)
 
         # 添加定期检查通知任务（跨Bot通信）
         async def check_notifications_job(context=None):

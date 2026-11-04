@@ -12,6 +12,52 @@ import pytest
 from core.ai.embedding_generator import EmbeddingGenerator, get_embedding_generator
 
 
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("", "/embeddings"),
+        ("/", "/embeddings"),
+        ("/v1", "/v1/embeddings"),
+        ("/v1/", "/v1/embeddings"),
+        ("/v1/embeddings", "/v1/embeddings"),
+        ("/v1/embeddings/", "/v1/embeddings"),
+        ("/proxy/openai/v1", "/proxy/openai/v1/embeddings"),
+        ("/proxy/openai/v1/embeddings", "/proxy/openai/v1/embeddings"),
+    ],
+)
+def test_base_and_endpoint_configs_send_one_embeddings_suffix(path, expected, monkeypatch):
+    import httpx
+    from openai import OpenAI
+
+    from core.ai import embedding_generator as module
+
+    sent = []
+
+    def respond(request):
+        sent.append(request.url.path)
+        assert request.url.path == expected
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": "test",
+                "data": [{"index": 0, "object": "embedding", "embedding": [1.0, 0.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    monkeypatch.setenv("EMBEDDING_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_API_BASE", "https://embedding.example" + path)
+    monkeypatch.setattr(
+        module,
+        "OpenAI",
+        lambda **kw: OpenAI(**kw, http_client=httpx.Client(transport=httpx.MockTransport(respond))),
+    )
+    generator = EmbeddingGenerator()
+    assert generator.generate("history query") == [1.0, 0.0]
+    assert sent == [expected]
+
+
 @pytest.mark.unit
 class TestEmbeddingGeneratorInit:
     """初始化测试"""

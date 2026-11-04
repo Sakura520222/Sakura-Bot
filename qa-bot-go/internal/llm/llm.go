@@ -45,9 +45,10 @@ const (
 // AIConfig 每请求生效的 AI 运行时配置三元组。
 // 对齐 core/config/ai_runtime.py::AIConnectionSettings。
 type AIConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey         string
+	BaseURL        string
+	Model          string
+	SupportsVision bool
 }
 
 // AIConfigProvider 由消费方（main 装配）注入的窄接口：客户端在每次
@@ -135,7 +136,17 @@ func (e *APIError) Error() string {
 // 成功返回 *Stream；非 200 返回 *APIError；网络/协议错误返回包装后的 error。
 // 调用方须在消费完毕后 defer stream.Close()。
 func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*Stream, error) {
-	cfg := c.provider.EffectiveAIConfig()
+	cfg, pinned := PinnedConfig(ctx)
+	if !pinned {
+		cfg = c.provider.EffectiveAIConfig()
+	}
+	for _, message := range req.Messages {
+		for _, part := range message.Parts {
+			if part.Type == "image_url" && !cfg.SupportsVision {
+				return nil, fmt.Errorf("assistant model does not support images")
+			}
+		}
+	}
 	baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
 
 	body, err := json.Marshal(chatRequestWire{

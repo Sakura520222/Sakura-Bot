@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
@@ -206,11 +207,15 @@ func (g *Generator) BatchGenerate(ctx context.Context, texts []string) [][]float
 
 // callEmbeddings 发起一次 embeddings POST 并解析 data[].embedding。
 func (g *Generator) callEmbeddings(ctx context.Context, input []string) ([][]float32, error) {
+	endpoint, err := embeddingsEndpoint(g.apiBase)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(embeddingsRequest{Model: g.model, Input: input})
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, g.apiBase, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +245,23 @@ func (g *Generator) callEmbeddings(ctx context.Context, input []string) ([][]flo
 		out = append(out, toFloat32(item.Embedding))
 	}
 	return out, nil
+}
+
+// Accept either an OpenAI API base or the historical full embeddings endpoint.
+func embeddingsEndpoint(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("Embedding API 地址无效")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = strings.TrimRight(u.RawPath, "/")
+	if !strings.HasSuffix(u.Path, "/embeddings") {
+		u.Path += "/embeddings"
+		if u.RawPath != "" {
+			u.RawPath += "/embeddings"
+		}
+	}
+	return u.String(), nil
 }
 
 // toFloat32 把 JSON 数值向量收口为存储契约的 float32。

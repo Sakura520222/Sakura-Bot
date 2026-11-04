@@ -29,6 +29,7 @@ from core.config import (
     is_auto_poll_enabled_for_channel,
 )
 from core.i18n.i18n import get_text
+from core.media.poll_images import PollImageError, collect_poll_images, has_poll_media
 from core.system.error_handler import record_error
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,8 @@ class AutoPollHandler:
         discussion_id: int,
         forward_msg_id: int,
         message_text: str,
+        *,
+        media_message=None,
     ) -> bool:
         """将趣味投票任务加入处理队列
 
@@ -133,7 +136,7 @@ class AutoPollHandler:
         Returns:
             是否成功入队
         """
-        if not message_text or not message_text.strip():
+        if (not message_text or not message_text.strip()) and not has_poll_media(media_message):
             return False
 
         if not self._running:
@@ -161,7 +164,8 @@ class AutoPollHandler:
                     "channel_id": channel_id,
                     "discussion_id": discussion_id,
                     "forward_msg_id": forward_msg_id,
-                    "message_text": message_text.strip(),
+                    "message_text": (message_text or "").strip(),
+                    "media_message": media_message,
                     "created_at": datetime.now(UTC).isoformat(),
                 }
             )
@@ -234,14 +238,25 @@ class AutoPollHandler:
                 logger.info(f"频道 {channel_id} 的自动趣味投票已禁用，跳过")
                 return
 
+            message_text, images = await collect_poll_images(
+                self.client, task.get("media_message"), discussion_id, message_text
+            )
+
             # 消息文本太短，无法生成有意义的投票
-            if len(message_text.strip()) < 10:
+            if len(message_text.strip()) < 10 and not images:
                 logger.info(f"消息文本太短（{len(message_text)}字符），跳过投票生成")
                 return
 
             # 调用 AI 生成投票
             logger.info(f"开始为频道 {channel_id} 的消息生成趣味投票...")
-            poll_data = await generate_poll_from_summary(message_text)
+            poll_data = await generate_poll_from_summary(
+                message_text, **({"images": images} if images else {})
+            )
+
+            if images and (
+                not poll_data or "question" not in poll_data or "options" not in poll_data
+            ):
+                raise PollImageError("图片识别或趣味投票生成失败，已跳过本条投票")
 
             if not poll_data or "question" not in poll_data or "options" not in poll_data:
                 logger.error("AI 生成趣味投票内容失败，使用默认投票")

@@ -15,10 +15,29 @@ Embedding生成器 - 将文本转换为向量
 
 import logging
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+
+def embedding_api_base(value: str) -> str:
+    """The SDK appends /embeddings; accept legacy full endpoints without doubling it."""
+    url = urlsplit(value.strip())
+    if (
+        url.scheme not in {"http", "https"}
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+    ):
+        raise ValueError("Invalid Embedding API address")
+    path = url.path.rstrip("/")
+    if path.endswith("/embeddings"):
+        path = path[: -len("/embeddings")]
+    return urlunsplit((url.scheme, url.netloc, path, "", ""))
 
 
 class EmbeddingGenerator:
@@ -36,7 +55,9 @@ class EmbeddingGenerator:
             self.client = None
         else:
             try:
-                self.client = OpenAI(api_key=self.api_key, base_url=self.api_base)
+                self.client = OpenAI(
+                    api_key=self.api_key, base_url=embedding_api_base(self.api_base)
+                )
                 logger.info(f"Embedding生成器初始化成功: {self.model}")
             except Exception as e:
                 logger.error(f"Embedding生成器初始化失败: {type(e).__name__}: {e}")

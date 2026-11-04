@@ -14,14 +14,15 @@ import "encoding/json"
 
 // Message 对齐 OpenAI chat/completions 的消息结构（qa_engine_v3.py:307-309、352-380）。
 //
-// Content 使用指针以保留空串与 null 的区别：assistant 轮次显式发送 "content":""，
-// system/user/tool 恒为非空字符串（用 Str 构造）。ToolCalls 仅 assistant 角色、
+// Content 保留旧版字符串/null 形态；Parts 用类型化数组承载当前 user 的图文输入，
+// 由 MarshalJSON 写入同一个 content 字段。ToolCalls 仅 assistant 角色、
 // ToolCallID 仅 tool 角色使用，omitempty 保证其余角色的 wire 形态与 Python dict 一致。
 type Message struct {
-	Role       string     `json:"role"`
-	Content    *string    `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role       string        `json:"role"`
+	Content    *string       `json:"content"`
+	Parts      []ContentPart `json:"-"`
+	ToolCalls  []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 // Str 返回内容字符串的指针，用于构造 Message.Content。

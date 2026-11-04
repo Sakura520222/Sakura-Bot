@@ -148,6 +148,44 @@ export async function testAIProfile(profileId: string, kind: "connection" | "cal
   return res.data;
 }
 
+export interface AIModel { name: string; supports_vision: boolean }
+export interface AIProvider {
+  name: string;
+  provider: "openai";
+  base_url: string;
+  api_key_set: boolean;
+  api_key_preview: string;
+  models: Record<string, AIModel>;
+}
+export interface AIProviderRoute { provider_id: string; model_id: string; supports_vision?: boolean | null }
+export interface AIProvidersConfig {
+  version: 2;
+  providers: Record<string, AIProvider>;
+  routing: Partial<Record<AIPurpose, AIProviderRoute>>;
+  vision: AIVisionSettings;
+  effective: Record<AIPurpose, { provider_id: string; model_id: string; supports_vision: boolean }>;
+  revision: string;
+}
+export interface AIProvidersInput {
+  version: 2;
+  providers: Record<string, Omit<AIProvider, "api_key_set" | "api_key_preview"> & { api_key?: string }>;
+  routing: Record<AIPurpose, AIProviderRoute>;
+  vision: AIVisionSettings;
+  revision: string;
+}
+export async function getAIProviders() {
+  return (await apiClient.get<ApiResponse<AIProvidersConfig>>("/ai/providers")).data;
+}
+export async function updateAIProviders(data: AIProvidersInput) {
+  return (await apiClient.put<ApiResponse<AIProvidersConfig>>("/ai/providers", data)).data;
+}
+export async function getAIProviderModels(id: string, creds: AIProfileCredentials & { clear_api_key?: boolean }) {
+  return (await apiClient.post<ApiResponse<string[]>>(`/ai/providers/${encodeURIComponent(id)}/models`, creds, { timeout: 60000 })).data;
+}
+export async function testAIProvider(id: string, kind: "connection" | "call", model: string, creds: AIProfileCredentials & { clear_api_key?: boolean }) {
+  return (await apiClient.post<ApiResponse>(`/ai/providers/${encodeURIComponent(id)}/test`, { kind, model, ...creds }, { timeout: 60000 })).data;
+}
+
 export interface QAQuotaSettings {
   user_daily_limit: number;
   total_daily_limit: number;
