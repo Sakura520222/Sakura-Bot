@@ -47,6 +47,10 @@ _READER_ENV = "VECTOR_BACKEND_READER"
 _READER_TRUTHY = {"1", "true", "yes", "on"}
 
 
+class VectorSearchError(RuntimeError):
+    """A failed search is distinct from a successful search with no matches."""
+
+
 class VectorStore:
     """向量存储管理器"""
 
@@ -218,6 +222,8 @@ class VectorStore:
         filter_metadata: dict | None = None,
         date_after: str | None = None,
         date_before: str | None = None,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         语义搜索相似的总结
@@ -235,6 +241,8 @@ class VectorStore:
         """
         if not self.collection:
             logger.warning("向量存储不可用")
+            if strict:
+                raise VectorSearchError("向量索引不可用，检索未完成")
             return []
 
         try:
@@ -245,9 +253,14 @@ class VectorStore:
                 filter_metadata=filter_metadata,
                 date_after=date_after,
                 date_before=date_before,
+                strict=strict,
             )
         except Exception as e:
             logger.error(f"语义搜索失败: {type(e).__name__}: {e}")
+            if strict:
+                raise VectorSearchError(
+                    "语义检索失败，请检查向量索引及 Embedding 服务；这不代表没有历史记录"
+                ) from None
             return []
 
     def delete_summary(self, summary_id: int) -> bool:
@@ -373,6 +386,8 @@ class VectorStore:
         filter_metadata: dict | None = None,
         date_after: str | None = None,
         date_before: str | None = None,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         语义搜索频道消息
@@ -388,6 +403,8 @@ class VectorStore:
             匹配的消息列表
         """
         if not self.messages_collection:
+            if strict:
+                raise VectorSearchError("消息索引不可用，检索未完成")
             return []
 
         try:
@@ -398,9 +415,14 @@ class VectorStore:
                 filter_metadata=filter_metadata,
                 date_after=date_after,
                 date_before=date_before,
+                strict=strict,
             )
         except Exception as e:
             logger.error(f"搜索消息向量失败: {type(e).__name__}: {e}")
+            if strict:
+                raise VectorSearchError(
+                    "消息检索失败，请检查向量索引及 Embedding 服务；这不代表没有历史记录"
+                ) from None
             return []
 
     def search_all(
@@ -410,6 +432,8 @@ class VectorStore:
         filter_metadata: dict | None = None,
         date_after: str | None = None,
         date_before: str | None = None,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         同时搜索 summaries 和 messages 两个 collection，合并结果按相似度排序
@@ -425,6 +449,8 @@ class VectorStore:
             合并后的结果列表，按相似度降序排列，截取 top_k
         """
         all_results = []
+        if strict and (not self.collection or not self.messages_collection):
+            raise VectorSearchError("部分索引不可用，检索未完成")
 
         # 搜索 summaries
         if self.collection:
@@ -436,12 +462,17 @@ class VectorStore:
                     filter_metadata=filter_metadata,
                     date_after=date_after,
                     date_before=date_before,
+                    strict=strict,
                 )
                 for r in summary_results:
                     r["source"] = "summary"
                 all_results.extend(summary_results)
             except Exception as e:
                 logger.error(f"搜索summaries失败: {type(e).__name__}: {e}")
+                if strict:
+                    raise VectorSearchError(
+                        "总结检索失败，请检查向量索引及 Embedding 服务；这不代表没有历史记录"
+                    ) from None
 
         # 搜索 messages
         if self.messages_collection:
@@ -453,12 +484,17 @@ class VectorStore:
                     filter_metadata=filter_metadata,
                     date_after=date_after,
                     date_before=date_before,
+                    strict=strict,
                 )
                 for r in message_results:
                     r["source"] = "message"
                 all_results.extend(message_results)
             except Exception as e:
                 logger.error(f"搜索messages失败: {type(e).__name__}: {e}")
+                if strict:
+                    raise VectorSearchError(
+                        "消息检索失败，请检查向量索引及 Embedding 服务；这不代表没有历史记录"
+                    ) from None
 
         # 按相似度降序排序，截取 top_k
         all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
@@ -561,6 +597,7 @@ class VectorStore:
         filter_metadata: dict | None = None,
         date_after: str | None = None,
         date_before: str | None = None,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         通用 collection 搜索方法
@@ -581,11 +618,15 @@ class VectorStore:
         emb_gen = get_embedding_generator()
 
         if not emb_gen.is_available():
+            if strict:
+                raise VectorSearchError("Embedding 服务不可用")
             return []
 
         # embedding 生成是网络调用，必须发生在 lite 引擎锁之外（引擎仅在搜索段持锁）
         query_embedding = emb_gen.generate(query)
         if query_embedding is None:
+            if strict:
+                raise VectorSearchError("生成查询向量失败，检索未完成")
             return []
 
         need_date_filter = date_after or date_before

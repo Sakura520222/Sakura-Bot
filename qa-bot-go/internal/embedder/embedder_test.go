@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +119,36 @@ func TestGenerateSuccess(t *testing.T) {
 	}
 	if !contains(buf.String(), "成功生成embedding，维度: 3") {
 		t.Fatalf("缺少成功日志: %s", buf.String())
+	}
+}
+
+func TestAPIBaseAndFullEndpointUseTheSameEmbeddingsPath(t *testing.T) {
+	for _, path := range []string{"", "/", "/v1", "/v1/", "/v1/embeddings", "/v1/embeddings/", "/proxy/openai/v1", "/proxy/openai/v1/embeddings"} {
+		t.Run(path, func(t *testing.T) {
+			want := "/v1/embeddings"
+			if path == "" || path == "/" {
+				want = "/embeddings"
+			}
+			if strings.HasPrefix(path, "/proxy/") {
+				want = "/proxy/openai/v1/embeddings"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != want {
+					http.NotFound(w, r)
+					return
+				}
+				if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-key" {
+					t.Error("invalid embedding request")
+				}
+				_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[1,0]}]}`)
+			}))
+			defer server.Close()
+			g := NewGenerator(mapEnv{EnvAPIKey: "test-key", EnvAPIBase: server.URL + path})
+			vec, err := g.Generate(context.Background(), "history query")
+			if err != nil || len(vec) != 2 {
+				t.Fatalf("base %q did not reach embeddings endpoint: %v", path, err)
+			}
+		})
 	}
 }
 

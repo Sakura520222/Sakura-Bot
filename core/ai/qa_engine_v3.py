@@ -98,6 +98,7 @@ AGENT_TOOL_INSTRUCTIONS = """
    （source_type=summary）没有帖子链接。严禁根据 channel_id、message_id
    或其他 ID 自行拼接 t.me 链接
 6. 最多进行{max_iterations}轮工具调用，之后必须基于已收集的信息给出最终回答
+7. 工具返回 error 表示检索未完成，不代表没有数据。可尝试其他检索工具；仍失败时明确说明检索服务异常，不得声称已查无记录
 """
 
 # Agentic RAG 最大工具调用迭代次数

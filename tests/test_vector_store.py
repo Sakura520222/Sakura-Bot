@@ -496,6 +496,42 @@ def test_search_all_returns_partial_results_when_one_side_fails(lite_store, stub
     assert {row["source"] for row in results} == {"message"}
 
 
+@pytest.mark.parametrize("collection", ["summaries", "messages", "all"])
+@pytest.mark.parametrize("available", [False, True])
+def test_qa_strict_search_distinguishes_embedding_failure_from_no_matches(
+    lite_store, stub_embeddings, monkeypatch, collection, available
+):
+    from core.ai.vector_store import VectorSearchError
+
+    monkeypatch.setattr(stub_embeddings, "is_available", lambda: available)
+    monkeypatch.setattr(stub_embeddings, "generate", lambda text: None)
+    search = {
+        "summaries": lite_store.search_similar,
+        "messages": lite_store.search_messages,
+        "all": lite_store.search_all,
+    }[collection]
+    assert search("history query") == []
+    with pytest.raises(VectorSearchError, match="检索失败"):
+        search("history query", strict=True)
+
+
+async def test_failed_qa_search_returns_tool_error_instead_of_empty_results(
+    lite_store, stub_embeddings, monkeypatch
+):
+    import json
+    from unittest.mock import MagicMock
+
+    from core.ai.agent_tools import ToolExecutor
+
+    monkeypatch.setattr(stub_embeddings, "generate", lambda text: None)
+    executor = ToolExecutor(lite_store, MagicMock(), MagicMock())
+    result = json.loads(
+        await executor.execute("semantic_search", {"query": "流萤", "collection": "messages"})
+    )
+    assert result.get("error")
+    assert "没有历史记录" in result["error"]
+
+
 # ==================== get_stats 形状 ====================
 
 

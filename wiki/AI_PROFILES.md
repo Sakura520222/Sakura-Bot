@@ -54,6 +54,12 @@ Telegram 助手的 Python、Go 运行时均支持照片、PNG/JPEG 图片文档�
 - 每轮最多 4 张，单张最多 8 MiB、1200 万像素、单边 8192 像素。只从 Telegram Bot API 下载并验证实际文件类型，最多同时处理两轮图片请求。
 - 跨轮只保留短期 Telegram 文件引用。原始图片及 Data URL/Base64 仅在当前模型请求中存在，不存入 MySQL 历史或普通日志。
 
+## 历史消息检索的 Embedding 地址
+
+`EMBEDDING_API_BASE` 可填写 OpenAI 兼容的 API 基址（例如 `https://api.siliconflow.cn/v1`），也兼容旧版完整端点（末尾含 `/embeddings`）。Python 与 Go 都会确保实际请求只有一个 `/embeddings` 后缀。
+
+历史消息语义检索依赖 Embedding；最近总结查询则直接读取数据库。Embedding 请求失败时，助手会收到检索服务错误，不能把异常当作“没有历史记录”。清除对话记忆不会清空频道消息或总结索引。
+
 ## 旧版兼容格式（升级前）
 
 旧配置仍可直接读取，以下格式说明用于维护升级前的部署。
