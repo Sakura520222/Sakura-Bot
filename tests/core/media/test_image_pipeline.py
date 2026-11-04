@@ -41,6 +41,7 @@ def store_mock():
         "get",
         "query",
         "asset",
+        "claim_digest",
         "recognize",
         "save_asset",
         "update_job",
@@ -204,6 +205,7 @@ async def test_disabled_vision_stores_without_consuming_retries(tmp_path):
     store = store_mock()
     asset, job = asset_and_job()
     store.asset.return_value = asset
+    store.get.return_value = job
     pipeline = ImagePipeline(store, tmp_path)
     pipeline.vision_enabled = lambda: False
     await pipeline.process(job)
@@ -297,6 +299,158 @@ async def test_summary_never_silently_omits_unprocessed_image(monkeypatch, tmp_p
     result = await module.enrich_message(client, message(caption="original"), "channel")
     assert result.startswith("original")
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_summary_reads_saved_images_with_workers_stopped(monkeypatch, tmp_path):
+    import core.media.image_pipeline as module
+
+    store = store_mock()
+    store.text = AsyncMock(return_value={"ocr": "保存的文字", "description": "保存的画面"})
+    store.get.return_value = {"deleted": False, "media_id": "photo:10"}
+    pipeline = ImagePipeline(store, tmp_path)
+    pipeline.capture = AsyncMock()
+    monkeypatch.setattr(module, "get_image_pipeline", lambda: pipeline)
+    client = SimpleNamespace(get_entity=AsyncMock(return_value=SimpleNamespace(id=123)))
+    result = await module.enrich_message(client, message(), "channel")
+    assert "保存的文字" in result and "保存的画面" in result
+    pipeline.capture.assert_not_awaited()
+    store.get.return_value = {"deleted": False, "media_id": "photo:999"}
+    result = await module.enrich_message(client, message(), "channel")
+    assert "保存的文字" not in result and "unavailable" in result
+
+
+@pytest.mark.asyncio
+async def test_poll_image_bytes_are_durable_and_link_original_reference(tmp_path):
+    import hashlib
+
+    store = store_mock()
+    pipeline = ImagePipeline(store, tmp_path)
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(image, format="PNG")
+    data = image.getvalue()
+    digest = hashlib.sha256(data).hexdigest()
+    for _ in range(2):
+        assert await pipeline.store_poll_image(data, "image/png", "photo:10") == digest
+    path = tmp_path / digest[:2] / digest
+    assert path.read_bytes() == data
+    assert list(tmp_path.glob("*/*")) == [path]
+    store.save_asset.assert_awaited_with(digest, "image/png", len(data), str(path))
+    sql, args = store.query.await_args.args
+    assert "media_id=%s" in sql and "deleted=FALSE" in sql
+    assert args == (digest, "photo:10")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("poll_first", [False, True])
+async def test_poll_and_channel_share_recognition_and_original_index(tmp_path, poll_first):
+    store = store_mock()
+    asset, job = asset_and_job()
+    current = dict(job)
+    store.asset.side_effect = lambda digest: dict(asset)
+    store.get.side_effect = lambda *args: dict(current)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def claim(digest):
+        current["lease_token"] = "poll-lease"
+        return dict(current)
+
+    async def recognize(image):
+        entered.set()
+        await release.wait()
+        return {"ocr": "角色数值", "description": "角色图片", "model": "vision"}
+
+    async def save(digest, ocr, description, model, source):
+        assert source["revision"] == current["revision"]
+        assert source["lease_token"] == current["lease_token"]
+        asset.update(recognized=True, ocr=ocr, description=description, model=model)
+        return True
+
+    store.claim_digest.side_effect = claim
+    store.recognize.side_effect = save
+    recognizer = AsyncMock(side_effect=recognize)
+    publisher = AsyncMock(return_value=True)
+    pipeline = ImagePipeline(store, tmp_path, recognizer=recognizer, publisher=publisher)
+    first = asyncio.create_task(
+        pipeline.describe_for_poll(job["sha256"]) if poll_first else pipeline.process(job)
+    )
+    await entered.wait()
+    second = asyncio.create_task(
+        pipeline.process(job) if poll_first else pipeline.describe_for_poll(job["sha256"])
+    )
+    release.set()
+    await asyncio.gather(first, second)
+    recognizer.assert_awaited_once()
+    store.recognize.assert_awaited_once()
+    publisher.assert_awaited_once()
+    assert "角色数值" in publisher.await_args.args[1]
+    assert "角色图片" in publisher.await_args.args[1]
+    assert publisher.await_args.args[0]["message_id"] == job["message_id"]
+    # A later request (including after restart) uses the durable asset alone.
+    assert (await ImagePipeline(store, tmp_path).describe_for_poll(job["sha256"]))[
+        "ocr"
+    ] == "角色数值"
+    recognizer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_saved_poll_description_survives_index_outage(tmp_path):
+    store = store_mock()
+    asset, job = asset_and_job()
+    store.asset.side_effect = lambda digest: dict(asset)
+    store.get.return_value = job
+    store.claim_digest.return_value = job
+
+    async def save(digest, ocr, description, model, source):
+        asset.update(recognized=True, ocr=ocr, description=description)
+        return True
+
+    store.recognize.side_effect = save
+    pipeline = ImagePipeline(
+        store,
+        tmp_path,
+        recognizer=AsyncMock(return_value={"ocr": "OCR", "description": "visible", "model": "v"}),
+        publisher=AsyncMock(return_value=False),
+    )
+    result = await pipeline.describe_for_poll(job["sha256"])
+    assert result["recognized"] and result["description"] == "visible"
+    store.update_job.assert_awaited_once_with(job, "pending", error="RuntimeError")
+
+
+@pytest.mark.asyncio
+async def test_poll_recognition_uses_pinned_client_when_channel_ocr_disabled(monkeypatch, tmp_path):
+    import core.ai.ai_client as ai
+
+    config = SimpleNamespace(
+        vision_enabled=False,
+        supports_vision=True,
+        vision_ocr=False,
+        vision_description=False,
+        model="vision",
+    )
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content='{"ocr":"", "description":"角色"}'),
+            )
+        ]
+    )
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=response)
+    client.with_options.side_effect = AssertionError(
+        "must use configured client without a new timeout"
+    )
+    runtime = MagicMock(return_value=(client, "vision"))
+    monkeypatch.setattr(ai, "get_async_ai_runtime", runtime)
+    path = tmp_path / "image"
+    path.write_bytes(b"image")
+    result = await ImagePipeline(store_mock(), tmp_path)._recognize(
+        {"storage_path": str(path), "mime_type": "image/png"}, for_poll=True, config=config
+    )
+    assert result == {"ocr": "", "description": "角色", "model": "vision"}
+    runtime.assert_called_once_with(purpose="vision", config=config)
+    client.with_options.assert_not_called()
 
 
 @pytest.mark.asyncio

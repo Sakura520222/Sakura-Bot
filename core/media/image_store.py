@@ -113,6 +113,18 @@ class ImageStore:
         rows = await self.query("SELECT * FROM message_images WHERE lease_token=%s", (token,), True)
         return rows[0] if rows else None
 
+    async def claim_digest(self, digest):
+        """Called under the shared recognition lock; retain revision/lease fencing."""
+        token = uuid.uuid4().hex
+        await self.query(
+            """UPDATE message_images SET status='processing',lease_token=%s,
+            lease_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 10 MINUTE)
+            WHERE sha256=%s AND deleted=FALSE ORDER BY source_date LIMIT 1""",
+            (token, digest),
+        )
+        rows = await self.query("SELECT * FROM message_images WHERE lease_token=%s", (token,), True)
+        return rows[0] if rows else None
+
     async def update_job(self, job, status, sha256=None, error=None, max_attempts=3):
         attempts = job["attempts"] + (1 if error else 0)
         if error:

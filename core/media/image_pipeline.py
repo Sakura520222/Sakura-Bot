@@ -173,6 +173,14 @@ class ImagePipeline:
                 (digest, job["channel_id"], job["message_id"], job["revision"]),
             )
         async with self._locks[int(digest[:4], 16) % len(self._locks)]:
+            current = await self.store.get(job["channel_id"], job["message_id"])
+            if (
+                not current
+                or current["deleted"]
+                or current["revision"] != job["revision"]
+                or current.get("lease_token") != job.get("lease_token")
+            ):
+                return
             asset = await self.store.asset(digest)
             if not asset:
                 raise FileNotFoundError("image_metadata_missing")
@@ -195,6 +203,76 @@ class ImagePipeline:
             raise RuntimeError("image_index_unavailable")
         await self.store.update_job(job, "complete", sha256=digest)
 
+    async def store_poll_image(self, data, mime, media_id):
+        """Register the already-validated Telegram image in durable content storage."""
+        if not data or len(data) > MAX_BYTES or mime not in {"image/png", "image/jpeg"}:
+            raise ValueError("invalid_poll_image")
+        digest = hashlib.sha256(data).hexdigest()
+        destination = self.root / digest[:2] / digest
+
+        def persist():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.is_file():
+                return
+            fd, temporary = tempfile.mkstemp(prefix="poll-", dir=destination.parent)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, destination)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+
+        await asyncio.to_thread(persist)
+        await self.store.save_asset(digest, mime, len(data), str(destination))
+        await self.store.query(
+            """UPDATE message_images SET sha256=%s WHERE media_id=%s
+            AND deleted=FALSE AND sha256 IS NULL""",
+            (digest, media_id),
+        )
+        return digest
+
+    async def describe_for_poll(self, digest, *, config=None):
+        """Reuse or produce a saved result, sharing the channel worker's hash lock."""
+        async with self._locks[int(digest[:4], 16) % len(self._locks)]:
+            asset = await self.store.asset(digest)
+            if not asset:
+                raise ValueError("image_not_registered")
+            if asset["recognized"] and (asset.get("ocr") or asset.get("description")):
+                return asset
+            job = await self.store.claim_digest(digest)
+            if not job:
+                raise ValueError("image_source_not_registered")
+            try:
+                result = (
+                    await self.recognizer(asset)
+                    if self._custom_recognizer
+                    else await self._recognize(asset, for_poll=True, config=config)
+                )
+                accepted = await self.store.recognize(
+                    digest, result["ocr"], result["description"], result["model"], job
+                )
+                if not accepted:
+                    raise ValueError("image_recognition_superseded")
+            except Exception as error:
+                await self.store.update_job(job, "pending", error=type(error).__name__)
+                raise
+        # Publication uses the same source timestamp, link, and revision checks as
+        # channel recognition, so the assistant can retrieve the saved description.
+        try:
+            await self.process(job)
+            await self.store.query(
+                """UPDATE message_images SET status='pending',attempts=0,
+                next_attempt=UTC_TIMESTAMP(6) WHERE sha256=%s AND deleted=FALSE
+                AND status IN ('stored','failed')""",
+                (digest,),
+            )
+        except Exception as error:
+            await self.store.update_job(job, "pending", error=type(error).__name__)
+            logger.warning("图片描述已保存，检索索引将在后台重试: %s", type(error).__name__)
+        return await self.store.asset(digest)
+
     def vision_enabled(self):
         if self._custom_recognizer:
             return True
@@ -215,7 +293,7 @@ class ImagePipeline:
                 if not job:
                     await asyncio.sleep(2)
                     continue
-                await asyncio.wait_for(self.process(job), timeout=240)
+                await self.process(job)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -228,14 +306,14 @@ class ImagePipeline:
                         logger.exception("图片任务失败状态写入失败，等待租约恢复")
                 await asyncio.sleep(2)
 
-    async def _recognize(self, asset):
+    async def _recognize(self, asset, *, for_poll=False, config=None):
         from core.ai.ai_client import get_async_ai_runtime
         from core.config.ai_runtime import effective_ai_config
 
-        config = effective_ai_config(purpose="vision")
-        if not config.vision_enabled or not config.supports_vision:
+        config = config if config is not None else effective_ai_config(purpose="vision")
+        if (not config.vision_enabled and not for_poll) or not config.supports_vision:
             raise RuntimeError("vision_disabled_or_incompatible")
-        if not (config.vision_ocr or config.vision_description):
+        if not (config.vision_ocr or config.vision_description or for_poll):
             return {"ocr": "", "description": "", "model": config.model}
         path = Path(asset["storage_path"])
         # 数据库路径必须限制在配置的图片目录内。
@@ -247,7 +325,7 @@ class ImagePipeline:
         if len(data) > MAX_BYTES:
             raise ValueError("image_size_limit")
         encoded = base64.b64encode(data).decode("ascii")
-        client, model = get_async_ai_runtime(purpose="vision")
+        client, model = get_async_ai_runtime(purpose="vision", config=config)
         response = await client.chat.completions.create(
             model=model,
             temperature=0,
@@ -267,7 +345,7 @@ class ImagePipeline:
                                 )
                                 + (
                                     "Describe visible facts without inventing details."
-                                    if config.vision_description
+                                    if config.vision_description or for_poll
                                     else "Set description to an empty string."
                                 )
                             ),
@@ -292,9 +370,11 @@ class ImagePipeline:
             not isinstance(result.get(k), str) for k in ("ocr", "description")
         ):
             raise ValueError("invalid_vision_response")
+        if for_poll and not (result["ocr"].strip() or result["description"].strip()):
+            raise ValueError("empty_vision_description")
         return {
             "ocr": result["ocr"] if config.vision_ocr else "",
-            "description": result["description"] if config.vision_description else "",
+            "description": result["description"] if config.vision_description or for_poll else "",
             "model": model,
         }
 
@@ -398,6 +478,15 @@ async def enrich_message(client, message, channel):
     try:
         pipeline = get_image_pipeline()
         if not pipeline.tasks:
+            if image_media(message):
+                if not getattr(message, "chat", None) and client is None:
+                    return unavailable("unavailable")
+                chat = getattr(message, "chat", None) or await client.get_entity(channel)
+                record = await pipeline.store.get(channel_key(chat.id), message.id)
+                if record and not record["deleted"] and record["media_id"] == image_media(message):
+                    saved = await pipeline.store.text(channel_key(chat.id), message.id)
+                    if saved:
+                        return combined_text(caption, saved)
             return unavailable("unavailable")
         chat = getattr(message, "chat", None) or await client.get_entity(channel)
         await pipeline.capture(message, chat)
