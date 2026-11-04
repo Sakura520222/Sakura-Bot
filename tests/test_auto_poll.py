@@ -101,6 +101,14 @@ class TestEnqueuePollTask:
         assert result is False
         assert running_handler._queue.qsize() == 0
 
+    def test_enqueue_photo_without_caption(self, running_handler):
+        from types import SimpleNamespace
+
+        photo = SimpleNamespace(id=456, photo=SimpleNamespace(id=1), document=None, grouped_id=None)
+        assert running_handler.enqueue_poll_task("@ch", 123, 456, "", media_message=photo)
+        task = running_handler._queue.get_nowait()
+        assert task["media_message"] is photo and task["message_text"] == ""
+
     def test_enqueue_whitespace_only_skipped(self, running_handler):
         """测试仅空白字符的消息不入队"""
         result = running_handler.enqueue_poll_task(

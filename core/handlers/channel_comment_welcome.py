@@ -589,6 +589,7 @@ class CommentWelcomeHandler:
                         discussion_id=msg.chat_id,
                         forward_msg_id=msg.id,
                         message_text=message_text,
+                        media_message=msg,
                     )
                     logger.info(
                         f"📊 趣味投票入队结果: {enqueued}, "
