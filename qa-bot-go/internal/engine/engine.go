@@ -37,6 +37,7 @@ import (
 
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/llm"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/media"
 )
 
 // 引擎行为常量（qa_engine_v3.py:101-108 逐项对齐）。
@@ -286,8 +287,15 @@ func (e *Engine) ProcessQueryStream(ctx context.Context, query string, userID in
 				return // GeneratorExit 等价：静默终止
 			}
 			// 外层兜底（qa_engine_v3.py:219-221）
-			e.log.Error(fmt.Sprintf("[stream] 处理查询失败: %T: %s", err, err))
-			_ = send(ErrChunk(errQueryFailedText))
+			e.log.Error(fmt.Sprintf("[stream] 处理查询失败: %T", err))
+			text := errQueryFailedText
+			var imageErr media.InputError
+			if errors.As(err, &imageErr) {
+				text = imageErr.Error()
+			} else if req := media.RequestFrom(ctx); req != nil && req.UsedImages {
+				text = media.RequestFailed
+			}
+			_ = send(ErrChunk(text))
 		}
 	}()
 	return ch
@@ -297,9 +305,51 @@ func (e *Engine) ProcessQueryStream(ctx context.Context, query string, userID in
 // 返回 errConsumerGone 表示消费端已停止；其他非 nil 错误交由外层兜底。
 func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, userID int64, channelHint string) error {
 	e.log.Info(fmt.Sprintf("[stream] 处理查询: user_id=%d, query=%s", userID, query))
+	if pinner, ok := e.llm.(interface {
+		Pin(context.Context) context.Context
+	}); ok {
+		ctx = pinner.Pin(ctx)
+	}
 
 	// 1. 获取或创建会话（内部异常自降级）
 	sessionID, isNew := e.conversations.GetOrCreateSession(userID)
+	imageSuccess := false
+	if request := media.RequestFrom(ctx); request != nil {
+		lease, err := request.Store.Begin(request.Scope, sessionID, query, request.Reply)
+		if err != nil {
+			return err
+		}
+		defer func() { request.Store.Finish(lease, imageSuccess) }()
+		if lease == nil && request.RequireImages {
+			return media.InputError("图片上下文已清除或过期，请重新发送图片。")
+		}
+		if lease != nil {
+			request.UsedImages = true
+			select {
+			case media.ImageSlots <- struct{}{}:
+				defer func() { <-media.ImageSlots }()
+			default:
+				return media.InputError("图片处理繁忙，请稍后重试。")
+			}
+			cfg, ok := llm.PinnedConfig(ctx)
+			if !ok || !cfg.SupportsVision {
+				return media.InputError(media.VisionDisabled)
+			}
+			urls := make([]string, 0, len(lease.Refs))
+			if request.Download == nil {
+				return media.InputError("图片下载服务不可用，请稍后重试。")
+			}
+			for _, ref := range lease.Refs {
+				url, err := request.Download(ctx, ref)
+				if err != nil {
+					return err
+				}
+				urls = append(urls, url)
+			}
+			ctx = llm.WithImages(ctx, urls)
+			e.log.Info(fmt.Sprintf("QA image request: user_id=%d count=%d", userID, len(urls)))
+		}
+	}
 
 	// 2. 先取历史（此时还不含当前消息），再保存当前用户消息，
 	//    避免当前消息在历史中重复出现
@@ -320,7 +370,7 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 		}
 		// 降级策略（qa_engine_v3.py:185-203）：一次无工具的直连对话；
 		// 已有部分输出则保留内容并附加可观测提示。
-		e.log.Error(fmt.Sprintf("[stream] Agentic 处理异常，降级为无工具直连回答: %T: %s", err, err))
+		e.log.Error(fmt.Sprintf("[stream] Agentic 处理异常，降级为无工具直连回答: %T", err))
 		if fullAnswer == "" {
 			if err := e.plainChatStream(ctx, send, &fullAnswer, query, history); err != nil {
 				return err // 直连仍失败 → 外层 __ERROR__（Python except 内二次抛出）
@@ -351,6 +401,7 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 	if !send(CtrlChunk(contracts.CtrlDone)) {
 		return errConsumerGone
 	}
+	imageSuccess = true
 	return nil
 }
 

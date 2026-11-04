@@ -272,7 +272,7 @@ func maxInt64(a, b int64) int64 {
 func assembleEngine(cfg *config.Config, mgr *db.Manager, conversations *engine.Conversations, vecStore *vectors.Store, logger *slog.Logger) *engine.Engine {
 	chat := llm.NewClient(llm.AIConfigFunc(func() llm.AIConfig {
 		c := cfg.EffectiveAIConfig()
-		return llm.AIConfig{APIKey: c.APIKey, BaseURL: c.BaseURL, Model: c.Model}
+		return llm.AIConfig{APIKey: c.APIKey, BaseURL: c.BaseURL, Model: c.Model, SupportsVision: c.SupportsVision}
 	}), llm.WithLogger(logger))
 
 	memMgr := memory.New(mgr, mgr.DB)

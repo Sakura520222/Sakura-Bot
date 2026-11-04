@@ -81,9 +81,9 @@ def _get_purpose_clients(purpose, config):
     return cached[1:]
 
 
-def get_ai_runtime(purpose: str = "summary"):
+def get_ai_runtime(purpose: str = "summary", *, config=None):
     """为一次请求固定客户端与模型，兼容助手独立进程。"""
-    config = effective_ai_config(purpose=purpose)
+    config = config if config is not None else effective_ai_config(purpose=purpose)
     with _client_lock:
         if purpose != "summary":
             return _get_purpose_clients(purpose, config)[0], config.model

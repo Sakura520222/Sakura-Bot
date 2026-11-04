@@ -29,6 +29,8 @@ import (
 
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/engine"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/llm"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/media"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/qauser"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/tg"
 )
@@ -111,7 +113,10 @@ type CommandsDeps struct {
 	// Log 日志器；nil 时静默。
 	Log tg.Logger
 	// Now 单调时钟注入（测试用）；nil 时 time.Now。
-	Now func() time.Time
+	Now      func() time.Time
+	AIConfig func() llm.AIConfig
+	Files    media.FileClient
+	Images   *media.Store
 }
 
 // Commands 承载 QA Bot 命令层与 AI 问答主路径（qa_bot.py QABot 命令方法的移植）。
@@ -125,6 +130,10 @@ type Commands struct {
 	submissions SubmissionStates
 	log         tg.Logger
 	now         func() time.Time
+	aiConfig    func() llm.AIConfig
+	files       media.FileClient
+	images      *media.Store
+	albums      imageAlbums
 }
 
 // NewCommands 装配命令层。
@@ -137,6 +146,9 @@ func NewCommands(d CommandsDeps) *Commands {
 	if now == nil {
 		now = time.Now
 	}
+	if d.Images == nil {
+		d.Images = media.NewStore(5 * time.Minute)
+	}
 	return &Commands{
 		tg:          d.TG,
 		users:       d.Users,
@@ -147,6 +159,9 @@ func NewCommands(d CommandsDeps) *Commands {
 		submissions: d.Submissions,
 		log:         log,
 		now:         now,
+		aiConfig:    d.AIConfig,
+		files:       d.Files,
+		images:      d.Images,
 	}
 }
 
@@ -306,7 +321,14 @@ func (c *Commands) Route(ctx context.Context, upd *models.Update) {
 	}()
 
 	_, msg, ok := effectiveUserMessage(upd)
-	if !ok || msg.Text == "" {
+	if !ok {
+		return
+	}
+	if len(msg.Photo) > 0 || msg.Document != nil {
+		c.HandleMessage(ctx, upd)
+		return
+	}
+	if msg.Text == "" {
 		return
 	}
 
@@ -467,6 +489,8 @@ func (c *Commands) Clear(ctx context.Context, upd *models.Update) {
 		return
 	}
 	deletedCount := c.sessions.ClearUserHistory(ctx, user.ID, "")
+	c.images.ClearUser(user.ID)
+	c.albums.clearUser(user.ID)
 	message := fmt.Sprintf("🗑️ **对话记忆已清除**\n\n已清除 **%d** 条对话记录。\n\n现在，我们的对话是全新的开始。有什么可以帮你的吗？", deletedCount)
 	c.replyMarkdown(ctx, msg, message)
 }
@@ -668,8 +692,50 @@ func (c *Commands) HandleMessage(ctx context.Context, upd *models.Update) {
 	if !ok {
 		return
 	}
-	userID := user.ID
+	ref, err := media.TelegramRef(msg)
+	if err != nil {
+		c.replyPlain(ctx, msg, err.Error())
+		return
+	}
 	query := msg.Text
+	if ref != nil {
+		if c.aiConfig == nil || !c.aiConfig().SupportsVision {
+			c.replyPlain(ctx, msg, media.VisionDisabled)
+			return
+		}
+		added, first, err := c.images.Add(media.Scope{UserID: user.ID, ChatID: msg.Chat.ID}, *ref)
+		if err != nil {
+			c.replyPlain(ctx, msg, err.Error())
+			return
+		}
+		if !added {
+			return
+		}
+		query = msg.Caption
+		if msg.MediaGroupID != "" {
+			c.scheduleImageAlbum(ctx, upd, query)
+			if first && strings.TrimSpace(query) == "" {
+				c.replyPlain(ctx, msg, media.Ack)
+			}
+			return
+		}
+		if strings.TrimSpace(query) == "" {
+			if first {
+				c.replyPlain(ctx, msg, media.Ack)
+			}
+			return
+		}
+	}
+	c.answerMessage(ctx, upd, query)
+}
+
+func (c *Commands) answerMessage(ctx context.Context, upd *models.Update, query string) {
+	user, msg, ok := effectiveUserMessage(upd)
+	if !ok {
+		return
+	}
+	userID := user.ID
+	c.albums.clearScope(media.Scope{UserID: userID, ChatID: msg.Chat.ID})
 	if query == "" || strings.TrimSpace(query) == "" {
 		return
 	}
@@ -698,6 +764,7 @@ func (c *Commands) HandleMessage(ctx context.Context, upd *models.Update) {
 //     再包一层 try/except pass，失败静默）。
 func (c *Commands) runStream(ctx context.Context, msg *models.Message, userID int64,
 	query, channelHint, placeholderText string, quotaCheck contracts.QuotaCheckResult, errLogPrefix string) {
+	ctx = c.imageRequestContext(ctx, msg, userID)
 
 	var streamErr error
 	func() {

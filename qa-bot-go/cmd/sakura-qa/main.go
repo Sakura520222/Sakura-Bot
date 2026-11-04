@@ -48,7 +48,9 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/engine"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/handlers"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/i18n"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/llm"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/logging"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/media"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/qauser"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/tg"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/vectors"
@@ -191,6 +193,11 @@ func run() int {
 	appealHandler.SubmissionActive = submissionHandler.GetUserState
 
 	// 组 0：命令 / 菜单 / 游离按钮 / 普通文本 AI 问答。
+	imageTTL, err := time.ParseDuration(cfg.Env.GetDefault("QA_IMAGE_CONTEXT_TTL_SECONDS", "300") + "s")
+	if err != nil {
+		imageTTL = 5 * time.Minute
+	}
+	imageStore := media.NewStore(imageTTL)
 	commands := handlers.NewCommands(handlers.CommandsDeps{
 		TG:          tgClient,
 		Users:       users,
@@ -200,6 +207,12 @@ func run() int {
 		Persona:     cfg,
 		Submissions: submissionHandler,
 		Log:         slogBridge{logger},
+		Images:      imageStore,
+		Files:       tgClient,
+		AIConfig: func() llm.AIConfig {
+			conf := cfg.EffectiveAIConfig("assistant")
+			return llm.AIConfig{APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model, SupportsVision: conf.SupportsVision}
+		},
 	})
 
 	// 装配分发链（字段在 Start 前赋值；WithDefaultHandler 已引用 disp）。
@@ -213,6 +226,7 @@ func run() int {
 	// 两个周期 job（PTB job_queue 对齐：申诉 interval=5, first=5；通知
 	// interval=30, first=10）。独立 goroutine，ctx 取消即退出（README 硬规则 1）。
 	go appealHandler.RunAppealDeliver(ctx)
+	go imageStore.Run(ctx)
 	go handlers.NewPushJob(dbMgr, tgClient, token, slogBridge{logger}).Run(ctx)
 
 	// ── 10. 长轮询主循环（阻塞至 ctx 取消；workers=1 保证在途 handler

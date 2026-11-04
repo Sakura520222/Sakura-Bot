@@ -287,5 +287,90 @@ class TestStreamHelpers:
         assert QAEngineV3._get_stream_delta(SimpleNamespace(choices=None)) is None
 
 
+@pytest.mark.parametrize("mode", ["tools", "fallback", "forced"])
+async def test_multimodal_requests_preserve_images_runtime_and_text_only_history(
+    engine, monkeypatch, caplog, mode
+):
+    from copy import deepcopy
+
+    from core.ai.qa_images import ImageContext, ImageRef, ImageRequest
+    from core.config.ai_runtime import AIConnectionSettings
+
+    store = ImageContext()
+    store.add((1, 10), ImageRef("telegram-one", 1))
+    store.add((1, 10), ImageRef("telegram-two", 2))
+    images = ["data:image/png;base64,PRIVATE_ONE", "data:image/jpeg;base64,PRIVATE_TWO"]
+    downloader = AsyncMock(side_effect=images)
+    request = ImageRequest(store, (1, 10), object(), download=downloader)
+    connection = AIConnectionSettings(
+        "provider-secret", "https://assistant.example/v1", "assistant-image", supports_vision=True
+    )
+    sent = []
+
+    def create(**kwargs):
+        sent.append(deepcopy(kwargs))
+        if len(sent) == 1:
+            if mode == "fallback":
+                raise ValueError("PRIVATE_ONE provider-secret")
+            return iter([tool_call_chunk(0, "call", "list_channels", "{}")])
+        return iter([content_chunk("红色的物体")])
+
+    client = MagicMock()
+    client.chat.completions.create = create
+    runtime_calls = []
+
+    def runtime(purpose="assistant", *, config=None):
+        runtime_calls.append((purpose, config))
+        return client, config.model
+
+    monkeypatch.setattr(qae, "get_ai_runtime", runtime)
+    install_tool_executor(monkeypatch)
+    if mode == "forced":
+        monkeypatch.setattr(qae, "AGENT_MAX_ITERATIONS", 1)
+    chunks = await collect(
+        engine.process_query_stream("这是什么", 1, image_request=request, ai_config=connection)
+    )
+    assert "__DONE__" in chunks and "红色的物体" in chunks
+    assert len(sent) == 2 and runtime_calls == [("assistant", connection)]
+    for call in sent:
+        current = [m for m in call["messages"] if isinstance(m["content"], list)]
+        assert len(current) == 1 and current[0]["role"] == "user"
+        assert current[0]["content"][0] == {"type": "text", "text": "这是什么"}
+        assert [p["image_url"]["url"] for p in current[0]["content"][1:]] == images
+        assert call["model"] == "assistant-image"
+    for call in engine.conversation_mgr.save_message.await_args_list:
+        assert isinstance(call.kwargs["content"], str)
+        assert "PRIVATE" not in call.kwargs["content"]
+    assert "PRIVATE" not in caplog.text and "provider-secret" not in caplog.text
+    followup = store.begin((1, 10), "session-1", "它是什么颜色？")
+    assert len(followup.refs) == 2
+    store.finish(followup, True)
+
+
+async def test_images_disabled_or_download_failure_never_sends_text_only(engine, monkeypatch):
+    from core.ai.qa_images import ImageContext, ImageInputError, ImageRef, ImageRequest
+    from core.config.ai_runtime import AIConnectionSettings
+
+    store = ImageContext()
+    store.add((1, 1), ImageRef("file", 1))
+    download = AsyncMock(side_effect=ImageInputError("下载失败"))
+    req = ImageRequest(store, (1, 1), object(), download=download)
+    runtime = MagicMock(return_value=(MagicMock(), "image"))
+    monkeypatch.setattr(qae, "get_ai_runtime", runtime)
+    config = AIConnectionSettings("key", "https://a.example/v1", "image", supports_vision=False)
+    chunks = await collect(
+        engine.process_query_stream("这是什么", 1, image_request=req, ai_config=config)
+    )
+    assert any("未开启图片输入" in c for c in chunks)
+    runtime.assert_not_called()
+    download.assert_not_called()
+    config = AIConnectionSettings("key", "https://a.example/v1", "image", supports_vision=True)
+    chunks = await collect(
+        engine.process_query_stream("再试一次", 1, image_request=req, ai_config=config)
+    )
+    assert chunks == ["__ERROR__:下载失败"]
+    engine.conversation_mgr.save_message.assert_not_awaited()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
