@@ -1,379 +1,213 @@
 <template>
-  <n-card title="按用途选择 AI 模型">
-    <template #header-extra>
-      <n-tag size="small" :type="dirty ? 'warning' : 'default'">{{ dirty ? "有未保存的修改" : "独立保存" }}</n-tag>
-    </template>
-
+  <n-card title="AI 厂商、模型与用途">
+    <template #header-extra><n-tag size="small" :type="dirty ? 'warning' : 'success'">{{ dirty ? '有未保存的修改' : '已同步' }}</n-tag></template>
     <n-skeleton v-if="loading && !draft" text :repeat="5" />
-    <n-alert v-else-if="!draft" type="error" title="模型配置加载失败">
-      {{ error }}
-      <n-button text type="primary" :loading="loading" @click="load">重新加载</n-button>
-    </n-alert>
-
+    <n-alert v-else-if="!draft" type="error" title="读取失败">{{ error }} <n-button text @click="load">重试</n-button></n-alert>
     <template v-else>
-      <n-alert v-if="error" type="error" class="section-gap" title="操作未完成">
-        {{ error }} 本地修改已保留，请检查后重试。
-      </n-alert>
-      <n-alert v-if="legacyChanged" type="warning" class="section-gap">
-        默认配置已更新，本区未保存的修改已保留。保存或重新加载后，「当前生效」信息将同步更新。
-      </n-alert>
-      <n-text depth="3">为总结、助手、图片识别和投票分别选择模型。未指定配置的用途继续使用下方的默认模型；本区通过「保存用途配置」单独保存。</n-text>
-
-      <div class="section-heading">
-        <h3>模型配置</h3>
-        <n-button size="small" :disabled="busy" @click="addProfile">添加模型配置</n-button>
-      </div>
-      <n-empty v-if="!profileOptions.length" description="尚未添加独立配置，所有用途使用默认模型" />
+      <n-alert v-if="error" type="error" class="gap" title="操作未完成">{{ error }} 本地草稿已保留。</n-alert>
+      <n-alert v-if="legacyChanged" type="warning" class="gap">默认配置已变化。请重新加载后合并本地修改。</n-alert>
+      <n-text depth="3">先添加厂商，再添加该厂商的多个模型。候选列表仅用于发现；「已添加模型」随厂商、图片开关和用途绑定一起保存。</n-text>
+      <div class="heading"><h3>厂商</h3><n-button :disabled="busy" @click="addProvider">添加厂商</n-button></div>
+      <n-empty v-if="!providerOptions.length" description="请添加 AI 厂商" />
       <template v-else>
-        <n-select v-model:value="selectedId" :options="profileOptions" filterable :disabled="busy" placeholder="选择要编辑的模型配置" />
-        <n-form v-if="selectedProfile" class="profile-form" label-placement="top" :disabled="busy">
-          <n-grid :cols="2" :x-gap="20" responsive="screen" item-responsive>
-            <n-form-item-gi span="0:2 768:1" label="配置名称">
-              <n-input v-model:value="selectedProfile.name" placeholder="例如：通用问答、图片识别" :maxlength="100" />
-            </n-form-item-gi>
-            <n-form-item-gi span="0:2 768:1" label="提供商">
-              <n-select v-model:value="selectedProfile.provider" :options="providerOptions" />
-            </n-form-item-gi>
-            <n-form-item-gi span="0:2" label="API 地址">
-              <n-input v-model:value="selectedProfile.base_url" :placeholder="baseUrlPlaceholder" />
-            </n-form-item-gi>
-            <n-form-item-gi span="0:2" label="API 密钥">
-              <n-space vertical style="width: 100%">
-                <n-input
-                  v-model:value="selectedProfile.api_key" type="password" show-password-on="click" autocomplete="new-password"
-                  :disabled="busy || selectedProfile.clear_api_key"
-                  :placeholder="selectedProfile.api_key_set ? '留空保留已保存的密钥' : '请输入 API Key'"
-                />
-                <n-space align="center">
-                  <n-tag size="small" :type="selectedProfile.api_key_set ? 'success' : 'default'">
-                    {{ selectedProfile.api_key_set ? "已配置密钥" : "未配置密钥" }}
-                  </n-tag>
-                  <n-text v-if="selectedProfile.api_key_preview" depth="3">{{ selectedProfile.api_key_preview }}</n-text>
-                  <n-checkbox v-if="selectedProfile.api_key_set" v-model:checked="selectedProfile.clear_api_key">保存时清除密钥</n-checkbox>
-                </n-space>
-              </n-space>
-            </n-form-item-gi>
-            <n-form-item-gi span="0:2" label="默认模型">
-              <div class="model-picker">
-                <n-select
-                  v-model:value="selectedProfile.model" :options="profileModelOptions(selectedId)" filterable tag
-                  placeholder="搜索模型，或输入模型 ID 后按回车" :disabled="busy"
-                />
-                <n-button :loading="modelLoading === selectedId" :disabled="busy || !!modelLoading || !selectedProfile.base_url.trim()" @click="refreshModels(selectedId)">刷新列表</n-button>
-              </div>
-            </n-form-item-gi>
-            <n-form-item-gi span="0:2" label="默认图片能力">
-              <n-space align="center">
-                <n-switch v-model:value="selectedProfile.supports_vision" />
-                <n-text depth="3">此模型支持图片输入。是否支持需按提供商说明设置，刷新模型列表不会自动检测。</n-text>
+        <n-select v-model:value="selectedId" :options="providerOptions" :disabled="busy" filterable placeholder="选择厂商" />
+        <n-form v-if="selected" label-placement="top" :disabled="busy" class="gap">
+          <n-grid :cols="2" :x-gap="16" responsive="screen" item-responsive>
+            <n-form-item-gi span="0:2 768:1" label="厂商名称"><n-input v-model:value="selected.name" :maxlength="100" /></n-form-item-gi>
+            <n-form-item-gi span="0:2 768:1" label="协议"><n-select v-model:value="selected.provider" :options="protocolOptions" /></n-form-item-gi>
+            <n-form-item-gi span="0:2" label="API Base URL"><n-input v-model:value="selected.base_url" :placeholder="baseUrlPlaceholder" /></n-form-item-gi>
+            <n-form-item-gi span="0:2" label="API Key（此厂商下所有模型共用）">
+              <n-space vertical style="width:100%">
+                <n-input v-model:value="selected.api_key" type="password" show-password-on="click" autocomplete="new-password" :disabled="busy || selected.clear_api_key" :placeholder="selected.api_key_set ? '留空保留已保存的密钥' : '请输入 API Key'" />
+                <n-checkbox v-if="selected.api_key_set" v-model:checked="selected.clear_api_key">保存时清除密钥</n-checkbox>
               </n-space>
             </n-form-item-gi>
           </n-grid>
         </n-form>
-
-        <div v-if="selectedProfile" class="profile-actions">
-          <n-space align="center" :size="8">
-            <n-button size="small" :loading="testLoading === `${selectedId}:connection`" :disabled="busy || !!testLoading || !selectedProfile.base_url.trim()" @click="runTest(selectedId, 'connection')">测试连接</n-button>
-            <n-popconfirm @positive-click="runTest(selectedId, 'call')">
-              <template #trigger>
-                <n-button size="small" :loading="testLoading === `${selectedId}:call`" :disabled="busy || !!testLoading || !selectedProfile.base_url.trim()">测试调用</n-button>
-              </template>
-              将用当前填写的地址与密钥发送一条简短测试消息，可能产生少量 API 费用，继续？
-            </n-popconfirm>
-          </n-space>
-          <n-popconfirm :disabled="isAssigned(selectedId) || busy" @positive-click="removeProfile(selectedId)">
-            <template #trigger>
-              <n-button size="small" type="error" quaternary :disabled="isAssigned(selectedId) || busy">移除配置</n-button>
-            </template>
-            移除「{{ selectedProfile.name }}」？点击「保存用途配置」后才会生效。
+        <n-space v-if="selected">
+          <n-button :disabled="busy" :loading="testLoading === 'connection'" @click="runTest('connection')">测试厂商连接</n-button>
+          <n-popconfirm :disabled="busy || !!assignments().length" @positive-click="removeProvider">
+            <template #trigger><n-button type="error" quaternary :disabled="busy || !!assignments().length">删除厂商</n-button></template>
+            删除此厂商及其模型？保存后生效。
           </n-popconfirm>
-        </div>
-        <n-text v-if="selectedProfile" depth="3" class="helper-text">
-          刷新列表与测试直接使用当前填写的地址与密钥，密钥留空时沿用已保存的密钥；保存后才会用于实际任务。模型 ID 也可手动输入。
-          {{ isAssigned(selectedId) ? "移除前请先在下方解除该配置的用途绑定。" : "" }}
-        </n-text>
-        <n-alert v-if="selectedId && testResults[selectedId]" :type="testResults[selectedId].success ? 'success' : 'error'" class="profile-result">
-          {{ testResults[selectedId].message }}
-        </n-alert>
+        </n-space>
+        <n-text v-if="assignments().length" depth="3" class="helper">{{ assignments().join('、') }} 正在使用此厂商，删除前请在下方改绑。</n-text>
+        <template v-if="selected">
+          <div class="heading"><h3>发现模型</h3><n-button :loading="modelLoading" :disabled="busy" @click="refreshModels">拉取 / 刷新上游列表</n-button></div>
+          <n-text depth="3">刷新不会修改已添加模型。上游未提供列表时，可手动添加模型 ID。</n-text>
+          <n-text v-if="discovery" depth="3" class="helper">上次同步：{{ discovery.syncedAt }} · {{ discovery.models.length }} 个候选模型（候选列表不保存）</n-text>
+          <div class="picker gap">
+            <n-select v-model:value="candidateIds" :options="candidateOptions" multiple filterable :disabled="busy" placeholder="搜索并多选候选模型" />
+            <n-button :disabled="busy || !candidateIds.length" @click="addCandidates">添加所选模型</n-button>
+          </div>
+          <div class="picker gap">
+            <n-input v-model:value="manualId" placeholder="手动填写模型 ID" :maxlength="256" :disabled="busy" @keydown.enter.prevent="addManual" />
+            <n-button :disabled="busy || !manualId.trim()" @click="addManual">手动添加</n-button>
+          </div>
+          <div class="heading"><h3>已添加模型（{{ Object.keys(selected.models).length }}）</h3></div>
+          <n-empty v-if="!Object.keys(selected.models).length" description="从候选列表或手动添加模型，然后保存" />
+          <n-card v-for="(model, id) in selected.models" :key="id" size="small" :title="id" class="gap">
+            <n-input v-model:value="model.name" placeholder="显示名称（可选）" :maxlength="100" :disabled="busy" />
+            <n-space align="center" class="gap">
+              <n-switch v-model:value="model.supports_vision" :disabled="busy" />
+              <n-text>{{ model.supports_vision ? '支持图片输入' : '仅文本' }} · 仅对此模型生效</n-text>
+              <n-button size="small" :disabled="busy" :loading="testLoading === id" @click="runTest('call', id)">测试模型调用</n-button>
+              <n-popconfirm :disabled="busy || !!assignments(id).length" @positive-click="removeModel(id)">
+                <template #trigger><n-button size="small" type="error" quaternary :disabled="busy || !!assignments(id).length">移除模型</n-button></template>
+                移除此模型？保存后生效。
+              </n-popconfirm>
+            </n-space>
+            <n-text v-if="assignments(id).length" depth="3" class="helper">用于{{ assignments(id).join('、') }}，移除前请改绑。</n-text>
+          </n-card>
+          <n-text depth="3" class="helper">测试使用当前草稿连接，可能产生少量 API 费用。图片能力需按模型说明显式设置，拉取列表不会猜测。</n-text>
+          <n-alert v-if="testResult" :type="testResult.success ? 'success' : 'error'" class="gap">{{ testResult.message }}</n-alert>
+        </template>
       </template>
-
-      <div class="section-heading"><h3>用途路由</h3></div>
+      <div class="heading"><h3>用途绑定</h3></div>
       <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
         <n-gi v-for="purpose in aiPurposes" :key="purpose.key" span="0:2 1024:1">
           <n-card size="small" :title="purpose.label">
-            <n-text depth="3">{{ purpose.description }}</n-text>
-            <n-form label-placement="top" :disabled="busy" class="route-form">
-              <n-form-item label="使用的配置">
-                <n-select v-model:value="draft.routing[purpose.key].profile_id" :options="routingOptions" filterable />
-              </n-form-item>
-              <n-form-item label="模型覆盖（留空继承配置）">
-                <div class="model-picker">
-                  <n-select
-                    :value="draft.routing[purpose.key].model || null"
-                    :options="routeModelOptions(purpose.key)"
-                    filterable tag clearable placeholder="继承配置，或手动输入模型 ID" :disabled="busy"
-                    @update:value="setRouteModel(purpose.key, $event)"
-                  />
-                  <n-button
-                    v-if="draft.routing[purpose.key].profile_id"
-                    :loading="modelLoading === draft.routing[purpose.key].profile_id"
-                    :disabled="busy || !draft.profiles[draft.routing[purpose.key].profile_id]?.base_url.trim()"
-                    @click="refreshModels(draft.routing[purpose.key].profile_id)"
-                  >刷新</n-button>
-                </div>
-              </n-form-item>
-              <n-form-item label="图片能力覆盖">
-                <n-select
-                  :value="visionOverride(purpose.key)" :options="capabilityOptions" :disabled="busy"
-                  @update:value="setVisionOverride(purpose.key, $event)"
-                />
-              </n-form-item>
+            <n-form label-placement="top" :disabled="busy">
+              <n-form-item label="厂商"><n-select :value="draft.routing[purpose.key].provider_id" :options="routingOptions" @update:value="setRouteProvider(purpose.key, $event)" /></n-form-item>
+              <n-form-item label="已添加模型"><n-select :value="draft.routing[purpose.key].model_id || null" :options="routeModels(purpose.key)" :disabled="busy || !draft.routing[purpose.key].provider_id" filterable @update:value="setRouteModel(purpose.key, $event)" /></n-form-item>
+              <n-form-item label="图片能力（默认使用该模型的开关）"><n-select :value="visionOverride(purpose.key)" :options="capabilityOptions" @update:value="setVisionOverride(purpose.key, $event)" /></n-form-item>
             </n-form>
-            <n-text v-if="!draft.routing[purpose.key].profile_id" depth="3" class="helper-text">未选择独立配置时使用下方旧版默认模型与密钥；此处的模型与图片能力覆盖仍按用途生效。</n-text>
-            <div class="effective-route">当前生效：{{ effectiveLabel(purpose.key) }}</div>
+            <n-text depth="3">{{ routeCapability(purpose.key) }}</n-text>
+            <div class="effective">当前已保存：{{ effectiveLabel(purpose.key) }}</div>
           </n-card>
         </n-gi>
       </n-grid>
-
-      <div class="section-heading"><h3>图片识别功能</h3></div>
-      <n-space vertical :size="12">
-        <n-space align="center">
-          <n-switch v-model:value="draft.vision.enabled" :disabled="busy" />
-          <n-text>启用图片识别</n-text>
-        </n-space>
-        <n-space>
-          <n-checkbox v-model:checked="draft.vision.ocr" :disabled="busy || !draft.vision.enabled">识别图片文字（OCR）</n-checkbox>
-          <n-checkbox v-model:checked="draft.vision.description" :disabled="busy || !draft.vision.enabled">生成图片描述</n-checkbox>
-        </n-space>
-        <n-text depth="3">图片识别使用上方「图片识别」用途的模型。请确认所选模型支持图片输入，关闭后保留 OCR 和描述选项。</n-text>
+      <div class="heading"><h3>频道图片识别</h3></div>
+      <n-space vertical>
+        <n-space align="center"><n-switch v-model:value="draft.vision.enabled" :disabled="busy" /><n-text>启用频道图片 OCR / 描述</n-text></n-space>
+        <n-space><n-checkbox v-model:checked="draft.vision.ocr" :disabled="busy || !draft.vision.enabled">OCR</n-checkbox><n-checkbox v-model:checked="draft.vision.description" :disabled="busy || !draft.vision.enabled">图片描述</n-checkbox></n-space>
+        <n-text depth="3">此开关使用「图片识别」用途；助手私聊收图使用「助手问答」所选模型的图片能力。</n-text>
       </n-space>
-
-      <div class="save-actions">
-        <n-space>
-          <n-button type="primary" :loading="saving" :disabled="busy || !dirty" @click="save">保存用途配置</n-button>
-          <n-popconfirm v-if="dirty" @positive-click="load">
-            <template #trigger><n-button :disabled="busy" :loading="loading">重新加载</n-button></template>
-            放弃本区所有未保存修改并加载最新配置？
-          </n-popconfirm>
-          <n-button v-else :disabled="busy" :loading="loading" @click="load">重新加载</n-button>
-        </n-space>
-        <n-text depth="3">保存成功后生效。加载失败、测试失败或保存冲突不会清空当前编辑内容。</n-text>
-      </div>
+      <n-space class="actions">
+        <n-button type="primary" :loading="saving" :disabled="busy || !dirty" @click="save">保存厂商、模型与用途</n-button>
+        <n-popconfirm v-if="dirty" @positive-click="load"><template #trigger><n-button :disabled="busy">重新加载</n-button></template>放弃本区未保存修改并加载最新配置？</n-popconfirm>
+        <n-button v-else :disabled="busy" @click="load">重新加载</n-button>
+      </n-space>
+      <n-text depth="3" class="helper">只有保存并校验成功后才生效。读取、测试、刷新列表或保存失败均保留草稿。</n-text>
     </template>
   </n-card>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { useMessage } from "naive-ui";
-import { getAIProfiles, getAIProfileModels, testAIProfile, updateAIProfiles } from "@/api/modules";
-import type { AIProfileCredentials } from "@/api/modules";
-import type { AIProfilesConfig, AIPurpose } from "@/api/modules";
-import { aiPurposes, createProfilesDraft, profilesPayload, validateProfiles } from "@/composables/ai-profiles-form";
-import type { AIProfilesDraft } from "@/composables/ai-profiles-form";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
+import { useDialog, useMessage } from "naive-ui";
+import { getAIProviders, updateAIProviders, getAIProviderModels, testAIProvider } from "@/api/modules";
+import type { AIProvidersConfig, AIPurpose } from "@/api/modules";
+import { aiPurposes } from "@/composables/ai-profiles-form";
+import { addProviderModels, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "@/composables/ai-providers-form";
+import type { AIProvidersDraft } from "@/composables/ai-providers-form";
 import { saveError } from "@/composables/autosave";
 
 const props = defineProps<{ legacyRevision?: number }>();
-const message = useMessage();
-const loading = ref(false), saving = ref(false), error = ref("");
-const draft = ref<AIProfilesDraft | null>(null);
-const saved = ref<AIProfilesConfig | null>(null);
-const baseline = ref("");
-const selectedId = ref("");
-const legacyChanged = ref(false);
-const modelLists = ref<Record<string, string[]>>({});
-const modelLoading = ref<string | null>(null);
-const testLoading = ref<string | null>(null);
-const testResults = ref<Record<string, { success: boolean; message: string }>>({});
-let lastWarning = { text: "", at: 0 };
-const busy = computed(() => loading.value || saving.value || !!modelLoading.value || !!testLoading.value);
-const dirty = computed(() => !!draft.value && JSON.stringify(profilesPayload(draft.value)) !== baseline.value);
-const profileOptions = computed(() => Object.entries(draft.value?.profiles || {}).map(([id, profile]) => ({ label: profile.name || "未命名配置", value: id })));
-const routingOptions = computed(() => [{ label: "默认配置（兼容旧配置）", value: "" }, ...profileOptions.value]);
-const selectedProfile = computed(() => draft.value?.profiles[selectedId.value]);
-const providerOptions = [{ label: "OpenAI / OpenAI 兼容接口", value: "openai" }];
-// URL 不直接写在模板静态属性里：属性值中的 "//" 会截断 vue-tsc 3 虚拟代码的作用域，导致后续类型检查失效
+const message = useMessage(), dialog = useDialog();
+const loading = ref(false), saving = ref(false), modelLoading = ref(false), testLoading = ref("");
+const error = ref(""), baseline = ref(""), selectedId = ref(""), legacyChanged = ref(false);
+const draft = ref<AIProvidersDraft | null>(null), saved = ref<AIProvidersConfig | null>(null);
+const manualId = ref(""), candidateIds = ref<string[]>([]);
+const discoveries = ref<Record<string, { baseUrl: string; models: string[]; syncedAt: string }>>({});
+const testResult = ref<{ success: boolean; message: string } | null>(null);
+const busy = computed(() => loading.value || saving.value || modelLoading.value || !!testLoading.value);
+const dirty = computed(() => !!draft.value && JSON.stringify(providersPayload(draft.value)) !== baseline.value);
+const selected = computed(() => draft.value?.providers[selectedId.value]);
+const providerOptions = computed(() => Object.entries(draft.value?.providers || {}).map(([value, p]) => ({ value, label: p.name || "未命名厂商" })));
+const routingOptions = computed(() => [{ value: "", label: "旧版默认配置（回退）" }, ...providerOptions.value]);
+const discovery = computed(() => discoveries.value[selectedId.value]?.baseUrl === selected.value?.base_url.trim() ? discoveries.value[selectedId.value] : undefined);
+const candidateOptions = computed(() => (discovery.value?.models || []).map(value => ({ value, label: `${value}${Object.prototype.hasOwnProperty.call(selected.value?.models || {}, value) ? '（已添加）' : ''}`, disabled: Object.prototype.hasOwnProperty.call(selected.value?.models || {}, value) })));
 const baseUrlPlaceholder = "https://api.openai.com/v1";
-const capabilityOptions = [{ label: "继承配置", value: "inherit" }, { label: "支持图片输入", value: "enabled" }, { label: "仅文本", value: "disabled" }];
-
-function formatError(problem: unknown): string {
-  if ((problem as { response?: { status?: number } }).response?.status === 409) return "配置已被其他页面或进程修改。请先重新加载，再重新应用本地修改";
-  if (problem instanceof Error && !("isAxiosError" in problem)) return problem.message;
-  return saveError(problem);
+const protocolOptions = [{ value: "openai", label: "OpenAI / OpenAI 兼容" }];
+const capabilityOptions = [{ value: "inherit", label: "使用模型的图片能力" }, { value: "enabled", label: "用途覆盖：允许图片" }, { value: "disabled", label: "用途覆盖：仅文本" }];
+function formatError(problem: unknown) {
+  return (problem as { response?: { status?: number } }).response?.status === 409 ? "配置版本已变化，请重新加载后合并修改" : problem instanceof Error && !("isAxiosError" in problem) ? problem.message : saveError(problem);
 }
-
-function applySnapshot(config: AIProfilesConfig) {
-  saved.value = config;
-  draft.value = createProfilesDraft(config);
-  baseline.value = JSON.stringify(profilesPayload(draft.value));
-  if (!config.profiles[selectedId.value]) selectedId.value = Object.keys(config.profiles)[0] || "";
+function applySnapshot(config: AIProvidersConfig) {
+  saved.value = config; draft.value = createProvidersDraft(config);
+  baseline.value = JSON.stringify(providersPayload(draft.value));
+  if (!config.providers[selectedId.value]) selectedId.value = Object.keys(config.providers)[0] || "";
   legacyChanged.value = false;
-  // 刷新后丢弃旧地址返回的模型列表和旧测试结果。
-  modelLists.value = {};
-  testResults.value = {};
 }
-
 async function load() {
   if (busy.value) return;
-  loading.value = true;
-  error.value = "";
-  try {
-    const result = await getAIProfiles();
-    if (!result.success || !result.data) throw new Error(result.message || "读取模型配置失败，请稍后重试");
-    applySnapshot(result.data);
-  } catch (problem) { error.value = formatError(problem); }
-  finally { loading.value = false; }
+  loading.value = true; error.value = "";
+  try { const res = await getAIProviders(); if (!res.success || !res.data) throw new Error("读取厂商配置失败"); applySnapshot(res.data); }
+  catch (e) { error.value = formatError(e); } finally { loading.value = false; }
 }
-
 async function save() {
-  if (!draft.value || busy.value) return;
-  const validation = validateProfiles(draft.value);
-  if (validation) {
-    error.value = validation;
-    // 相同校验提示 4 秒内只弹一次，避免反复点击时刷屏
-    const now = Date.now();
-    if (lastWarning.text !== validation || now - lastWarning.at > 4000) {
-      lastWarning = { text: validation, at: now };
-      message.warning(validation);
-    }
-    return;
-  }
-  saving.value = true;
-  error.value = "";
+  if (!draft.value || busy.value) return false;
+  const validation = validateProviders(draft.value);
+  if (validation) { error.value = validation; return false; }
+  saving.value = true; error.value = "";
   try {
-    const result = await updateAIProfiles(profilesPayload(draft.value));
-    if (!result.success || !result.data) throw new Error(result.message || "保存结果不完整，请重新加载确认配置状态");
-    applySnapshot(result.data);
-    lastWarning = { text: "", at: 0 };
-    message.success(result.message || "用途配置已保存");
-  } catch (problem) { error.value = formatError(problem); }
-  finally { saving.value = false; }
+    const res = await updateAIProviders(providersPayload(draft.value));
+    if (!res.success || !res.data) throw new Error(res.message || "保存未完成，请重试");
+    applySnapshot(res.data); message.success(res.message || "厂商、模型与用途已保存"); return true;
+  } catch (e) { error.value = formatError(e); return false; } finally { saving.value = false; }
 }
-
-function addProfile() {
+function addProvider() {
   if (!draft.value || busy.value) return;
-  const id = `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  draft.value.profiles[id] = { name: "新模型配置", provider: "openai", base_url: "https://api.openai.com/v1", model: "", supports_vision: false, api_key_set: false, api_key_preview: "", api_key: "", clear_api_key: false };
+  const id = `provider_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  draft.value.providers[id] = { name: "新厂商", provider: "openai", base_url: baseUrlPlaceholder, api_key: "", clear_api_key: false, api_key_set: false, api_key_preview: "", models: {} };
   selectedId.value = id;
 }
-
-function isAssigned(id: string): boolean {
-  return !!id && aiPurposes.some(({ key }) => draft.value?.routing[key].profile_id === id);
+function assignments(model?: string) { return draft.value ? modelAssignments(draft.value, selectedId.value, model) : []; }
+function removeProvider() {
+  if (!draft.value || busy.value || assignments().length) return;
+  delete draft.value.providers[selectedId.value]; delete discoveries.value[selectedId.value]; selectedId.value = Object.keys(draft.value.providers)[0] || "";
 }
-
-function removeProfile(id: string) {
-  if (!draft.value || busy.value || isAssigned(id)) return;
-  const removed = draft.value.profiles[id];
-  delete draft.value.profiles[id];
-  // 模型列表按地址缓存，同地址的其他配置仍可复用
-  const key = removed?.base_url.trim();
-  if (key && !Object.values(draft.value.profiles).some(profile => profile.base_url.trim() === key)) {
-    delete modelLists.value[key];
-  }
-  delete testResults.value[id];
-  selectedId.value = Object.keys(draft.value.profiles)[0] || "";
-}
-
-function modelOptionsFor(baseUrl: string | undefined, current: string | undefined) {
-  const key = (baseUrl || "").trim();
-  const list = key ? modelLists.value[key] || [] : [...new Set(Object.values(modelLists.value).flat())];
-  return [...new Set([...list, ...(current ? [current] : [])])].map(model => ({ label: model, value: model }));
-}
-
-function profileModelOptions(id: string) {
-  const profile = draft.value?.profiles[id];
-  return modelOptionsFor(profile?.base_url, profile?.model);
-}
-
-function routeModelOptions(purpose: AIPurpose) {
-  const route = draft.value?.routing[purpose];
-  const profile = route?.profile_id ? draft.value?.profiles[route.profile_id] : undefined;
-  return modelOptionsFor(profile?.base_url, route?.model);
-}
-
-/** 草稿连接参数：密钥留空时由后端沿用已保存的密钥。 */
-function draftCredentials(id: string): AIProfileCredentials | undefined {
-  const profile = draft.value?.profiles[id];
-  const base_url = profile?.base_url.trim();
-  if (!profile || !base_url) return undefined;
-  return { base_url, ...(profile.api_key.trim() ? { api_key: profile.api_key.trim() } : {}) };
-}
-
-async function refreshModels(id: string) {
-  const creds = draftCredentials(id);
-  const base_url = creds?.base_url;
-  if (!creds || !base_url || modelLoading.value || busy.value) return;
-  modelLoading.value = id;
+function removeModel(id: string) { if (selected.value && !busy.value && !assignments(id).length) delete selected.value.models[id]; }
+function addCandidates() { if (draft.value && !busy.value) { addProviderModels(draft.value, selectedId.value, candidateIds.value); candidateIds.value = []; } }
+function addManual() { if (draft.value && !busy.value) { addProviderModels(draft.value, selectedId.value, [manualId.value]); manualId.value = ""; } }
+function credentials() { const p = selected.value!; return { base_url: p.base_url.trim(), ...(p.api_key.trim() ? { api_key: p.api_key.trim() } : {}), clear_api_key: p.clear_api_key }; }
+async function refreshModels() {
+  if (!selected.value || busy.value) return;
+  modelLoading.value = true;
   try {
-    const result = await getAIProfileModels(id, creds);
-    if (!result.success || !result.data) throw new Error(result.message || "获取模型列表失败，可手动填写模型 ID");
-    modelLists.value[base_url] = result.data;
-    message[result.data.length ? "success" : "warning"](result.data.length ? `已获取 ${result.data.length} 个模型` : "提供商未返回模型，可手动填写模型 ID");
-  } catch (problem) { message.error(formatError(problem)); }
-  finally { modelLoading.value = null; }
+    const res = await getAIProviderModels(selectedId.value, credentials());
+    if (!res.success || !res.data) throw new Error("拉取失败，可继续手动添加模型");
+    discoveries.value[selectedId.value] = { baseUrl: selected.value.base_url.trim(), models: res.data, syncedAt: new Date().toLocaleString() };
+    candidateIds.value = []; message[res.data.length ? "success" : "warning"](`已发现 ${res.data.length} 个候选模型，已添加模型保持不变`);
+  } catch (e) { message.error(formatError(e)); } finally { modelLoading.value = false; }
 }
-
-async function runTest(id: string, kind: "connection" | "call") {
-  const profile = draft.value?.profiles[id];
-  const creds = draftCredentials(id);
-  if (!profile || !creds || testLoading.value || busy.value) return;
-  if (kind === "call" && !profile.model.trim()) {
-    message.warning("请先选择或手动填写默认模型，再进行调用测试");
-    return;
-  }
-  testLoading.value = `${id}:${kind}`;
-  try {
-    const result = await testAIProfile(id, kind, profile.model.trim(), creds);
-    testResults.value[id] = { success: result.success, message: result.message || (result.success ? "测试成功" : "测试失败，请检查地址、密钥和模型") };
-  } catch (problem) { testResults.value[id] = { success: false, message: formatError(problem) }; }
-  finally { testLoading.value = null; }
+async function runTest(kind: "connection" | "call", model = "") {
+  if (!selected.value || busy.value) return;
+  testLoading.value = model || "connection";
+  try { const res = await testAIProvider(selectedId.value, kind, model, credentials()); testResult.value = { success: res.success, message: `${model || '厂商连接'}：${res.message || (res.success ? '测试成功' : '测试失败')}` }; }
+  catch (e) { testResult.value = { success: false, message: formatError(e) }; } finally { testLoading.value = ""; }
 }
-
-function setRouteModel(purpose: AIPurpose, model: string | null) {
-  if (!draft.value) return;
-  if (model) draft.value.routing[purpose].model = model;
-  else delete draft.value.routing[purpose].model;
+function routeModels(purpose: AIPurpose) { const p = draft.value?.providers[draft.value.routing[purpose].provider_id]; return Object.entries(p?.models || {}).map(([value, m]) => ({ value, label: m.name ? `${m.name} (${value})` : value })); }
+function setRouteProvider(purpose: AIPurpose, id: string) { if (draft.value) draft.value.routing[purpose] = { provider_id: id, model_id: "" }; }
+function setRouteModel(purpose: AIPurpose, id: string) { if (draft.value) { draft.value.routing[purpose].model_id = id; delete draft.value.routing[purpose].supports_vision; } }
+function visionOverride(purpose: AIPurpose) { const v = draft.value?.routing[purpose].supports_vision; return v == null ? "inherit" : v ? "enabled" : "disabled"; }
+function setVisionOverride(purpose: AIPurpose, value: string) { if (!draft.value) return; if (value === "inherit") delete draft.value.routing[purpose].supports_vision; else draft.value.routing[purpose].supports_vision = value === "enabled"; }
+function routeCapability(purpose: AIPurpose) {
+  if (!draft.value) return "";
+  const r = draft.value.routing[purpose], m = draft.value.providers[r.provider_id]?.models[r.model_id];
+  return `${r.supports_vision == null ? '来源：模型' : '来源：用途覆盖'} · ${(r.supports_vision ?? m?.supports_vision) ? '支持图片' : '仅文本'}`;
 }
-
-function visionOverride(purpose: AIPurpose) {
-  const value = draft.value?.routing[purpose].supports_vision;
-  return value == null ? "inherit" : value ? "enabled" : "disabled";
-}
-
-function setVisionOverride(purpose: AIPurpose, value: string) {
-  if (!draft.value) return;
-  if (value === "inherit") delete draft.value.routing[purpose].supports_vision;
-  else draft.value.routing[purpose].supports_vision = value === "enabled";
-}
-
-function effectiveLabel(purpose: AIPurpose) {
-  const route = saved.value?.effective[purpose];
-  if (!route) return "尚未配置";
-  const name = saved.value?.profiles[route.profile_id]?.name || "默认配置";
-  return `${name} / ${route.model || "未设置模型"} / ${route.supports_vision ? "支持图片" : "仅文本"}`;
-}
-
-watch(() => props.legacyRevision, () => {
-  if (dirty.value || busy.value) legacyChanged.value = true;
-  else void load();
-});
-onMounted(load);
-
-// 供页面级「保存默认配置」读取：面板有未保存修改时给出提醒
-defineExpose({ dirty });
+function effectiveLabel(purpose: AIPurpose) { const r = saved.value?.effective[purpose]; return r ? `${saved.value?.providers[r.provider_id]?.name || '默认配置'} / ${r.model_id} / ${r.supports_vision ? '支持图片' : '仅文本'}` : '尚未配置'; }
+watch(selectedId, () => { manualId.value = ""; candidateIds.value = []; testResult.value = null; });
+watch(() => [selected.value?.base_url, selected.value?.api_key, selected.value?.clear_api_key], () => { candidateIds.value = []; testResult.value = null; });
+watch(() => props.legacyRevision, () => { if (dirty.value || busy.value) legacyChanged.value = true; else void load(); });
+function beforeUnload(e: BeforeUnloadEvent) { if (dirty.value) { e.preventDefault(); e.returnValue = ""; } }
+onMounted(() => { void load(); window.addEventListener("beforeunload", beforeUnload); });
+onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
+onBeforeRouteLeave(() => !dirty.value || new Promise<boolean>(resolve => { dialog.warning({ title: "尚有未保存的厂商与模型", content: "离开将丢弃本地修改。", positiveText: "留在此页", negativeText: "放弃并离开", onPositiveClick: () => resolve(false), onNegativeClick: () => resolve(true), onClose: () => resolve(false), onMaskClick: () => resolve(false) }); }));
+defineExpose({ dirty, busy, saving, save });
 </script>
 
 <style scoped>
-.section-heading, .profile-actions, .save-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.section-heading { margin: 22px 0 12px; }
-.section-heading h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.profile-form, .route-form { margin-top: 16px; }
-.model-picker { display: flex; align-items: center; gap: 8px; width: 100%; }
-.model-picker > :first-child { flex: 1; min-width: 0; }
-.helper-text { display: block; margin-top: 10px; font-size: 12px; }
-.profile-result { margin-top: 12px; }
-.effective-route { color: var(--sb-text-2); background: var(--sb-surface-2); padding: 8px 10px; border-radius: var(--sb-radius-s); font-size: 12px; overflow-wrap: anywhere; }
-.save-actions { margin-top: 24px; }
-.section-gap { margin-bottom: 16px; }
-@media (max-width: 600px) { .model-picker { flex-wrap: wrap; } .model-picker > :first-child { flex-basis: 100%; } }
+.heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:22px 0 12px; flex-wrap:wrap; }
+.heading h3 { margin:0; font-size:15px; }
+.gap { margin-top:12px; }
+.picker { display:flex; gap:8px; align-items:center; }
+.picker > :first-child { flex:1; min-width:0; }
+.helper { display:block; margin-top:10px; font-size:12px; }
+.effective { margin-top:12px; padding:8px; border-radius:8px; background:var(--sb-surface-2); font-size:12px; overflow-wrap:anywhere; }
+.actions { margin-top:24px; }
+@media(max-width:600px) { .picker { flex-wrap:wrap; } .picker > :first-child { flex-basis:100%; } }
 </style>

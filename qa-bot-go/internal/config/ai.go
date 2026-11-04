@@ -46,6 +46,16 @@ func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 		VisionOCR:         profiles.vision.ocr,
 		VisionDescription: profiles.vision.description,
 	}
+	if route, ok := profiles.routing[purpose]; ok && route.providerID != "" {
+		provider := profiles.providers[route.providerID]
+		result.APIKey, result.BaseURL = provider.apiKey, provider.baseURL
+		result.Model, result.ProfileID = route.modelID, route.providerID
+		result.SupportsVision = provider.models[route.modelID].supportsVision
+		if route.supportsVision != nil {
+			result.SupportsVision = *route.supportsVision
+		}
+		return result
+	}
 	if route, ok := profiles.routing[purpose]; ok && route.profileID != "" {
 		profile := profiles.profiles[route.profileID]
 		result.APIKey = profile.apiKey

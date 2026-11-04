@@ -7,6 +7,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -27,6 +28,8 @@ type aiProfile struct {
 type aiRoute struct {
 	profileID      string
 	model          string
+	providerID     string
+	modelID        string
 	supportsVision *bool
 }
 
@@ -37,9 +40,10 @@ type aiVision struct {
 }
 
 type aiProfiles struct {
-	profiles map[string]aiProfile
-	routing  map[string]aiRoute
-	vision   aiVision
+	profiles  map[string]aiProfile
+	providers map[string]aiProvider
+	routing   map[string]aiRoute
+	vision    aiVision
 }
 
 var aiProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -49,6 +53,37 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 		profiles: make(map[string]aiProfile),
 		routing:  make(map[string]aiRoute),
 		vision:   aiVision{ocr: true, description: true},
+	}
+	version := 1
+	if raw, ok := cfg["ai_config_version"]; ok {
+		switch v := raw.(type) {
+		case json.Number:
+			n, err := v.Int64()
+			if err != nil || (n != 1 && n != 2) {
+				return result, fmt.Errorf("ai_config_version: 版本无效")
+			}
+			version = int(n)
+		case float64:
+			if v != 1 && v != 2 {
+				return result, fmt.Errorf("ai_config_version: 版本无效")
+			}
+			version = int(v)
+		case int:
+			version = v
+		default:
+			return result, fmt.Errorf("ai_config_version: 版本无效")
+		}
+		if version != 1 && version != 2 {
+			return result, fmt.Errorf("ai_config_version: 版本无效")
+		}
+	}
+	var providerErr error
+	result.providers, providerErr = parseAIProviders(cfg)
+	if providerErr != nil {
+		return result, providerErr
+	}
+	if version == 1 && len(result.providers) > 0 {
+		return result, fmt.Errorf("ai_providers: 需要配置版本 2")
 	}
 	profiles, err := aiObject(cfg, "ai_profiles")
 	if err != nil {
@@ -108,7 +143,7 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 		if !ok {
 			return result, fmt.Errorf("ai_routing: 路由必须为对象")
 		}
-		if err := aiKnownFields(route, "ai_routing", "profile_id", "model", "supports_vision"); err != nil {
+		if err := aiKnownFields(route, "ai_routing", "profile_id", "model", "provider_id", "model_id", "supports_vision"); err != nil {
 			return result, err
 		}
 		id := ""
@@ -136,7 +171,29 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 			}
 			vision = &value
 		}
-		result.routing[purpose] = aiRoute{profileID: id, model: model, supportsVision: vision}
+		providerID, err := aiString(route, "provider_id", "ai_routing", false, 64)
+		if err != nil {
+			return result, err
+		}
+		modelID, err := aiString(route, "model_id", "ai_routing", false, 256)
+		if err != nil {
+			return result, err
+		}
+		if providerID != "" {
+			provider, exists := result.providers[providerID]
+			if !exists || id != "" || model != "" || modelID == "" {
+				return result, fmt.Errorf("ai_routing: 厂商或模型引用无效")
+			}
+			if _, ok := provider.models[modelID]; !ok {
+				return result, fmt.Errorf("ai_routing: 模型不存在")
+			}
+		} else if modelID != "" {
+			return result, fmt.Errorf("ai_routing: 模型缺少厂商")
+		}
+		if version == 2 && (id != "" || model != "") {
+			return result, fmt.Errorf("ai_routing: 旧路由不能写入新版配置")
+		}
+		result.routing[purpose] = aiRoute{profileID: id, model: model, providerID: providerID, modelID: modelID, supportsVision: vision}
 	}
 
 	vision, err := aiObject(cfg, "ai_vision")

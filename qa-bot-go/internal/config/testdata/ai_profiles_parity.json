@@ -662,5 +662,218 @@
       "vision_ocr": true,
       "vision_description": true
     }
+  },
+  {
+    "name": "v2 same provider visual",
+    "config": {
+      "ai_config_version": 2,
+      "ai_providers": {
+        "one": {
+          "name": "One",
+          "provider": "openai",
+          "api_key": "one-key",
+          "base_url": "https://one.example/v1",
+          "models": {
+            "A": {
+              "name": "visual",
+              "supports_vision": true
+            },
+            "B": {
+              "name": "text",
+              "supports_vision": false
+            }
+          }
+        },
+        "two": {
+          "name": "Two",
+          "provider": "openai",
+          "api_key": "",
+          "base_url": "https://two.example/v1",
+          "models": {
+            "A": {
+              "supports_vision": false
+            }
+          }
+        }
+      },
+      "ai_routing": {
+        "assistant": {
+          "provider_id": "one",
+          "model_id": "A"
+        }
+      }
+    },
+    "env": {},
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "one-key",
+      "base_url": "https://one.example/v1",
+      "model": "A",
+      "profile_id": "one",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "v2 same provider text",
+    "config": {
+      "ai_config_version": 2,
+      "ai_providers": {
+        "one": {
+          "name": "One",
+          "provider": "openai",
+          "api_key": "one-key",
+          "base_url": "https://one.example/v1",
+          "models": {
+            "A": {
+              "name": "visual",
+              "supports_vision": true
+            },
+            "B": {
+              "name": "text",
+              "supports_vision": false
+            }
+          }
+        },
+        "two": {
+          "name": "Two",
+          "provider": "openai",
+          "api_key": "",
+          "base_url": "https://two.example/v1",
+          "models": {
+            "A": {
+              "supports_vision": false
+            }
+          }
+        }
+      },
+      "ai_routing": {
+        "assistant": {
+          "provider_id": "one",
+          "model_id": "B"
+        }
+      }
+    },
+    "env": {},
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "one-key",
+      "base_url": "https://one.example/v1",
+      "model": "B",
+      "profile_id": "one",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "v2 same model different provider empty key",
+    "config": {
+      "ai_config_version": 2,
+      "ai_providers": {
+        "one": {
+          "name": "One",
+          "provider": "openai",
+          "api_key": "one-key",
+          "base_url": "https://one.example/v1",
+          "models": {
+            "A": {
+              "name": "visual",
+              "supports_vision": true
+            },
+            "B": {
+              "name": "text",
+              "supports_vision": false
+            }
+          }
+        },
+        "two": {
+          "name": "Two",
+          "provider": "openai",
+          "api_key": "",
+          "base_url": "https://two.example/v1",
+          "models": {
+            "A": {
+              "supports_vision": false
+            }
+          }
+        }
+      },
+      "ai_routing": {
+        "assistant": {
+          "provider_id": "two",
+          "model_id": "A"
+        }
+      }
+    },
+    "env": {},
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "",
+      "base_url": "https://two.example/v1",
+      "model": "A",
+      "profile_id": "two",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "v2 explicit purpose override",
+    "config": {
+      "ai_config_version": 2,
+      "ai_providers": {
+        "one": {
+          "name": "One",
+          "provider": "openai",
+          "api_key": "one-key",
+          "base_url": "https://one.example/v1",
+          "models": {
+            "A": {
+              "name": "visual",
+              "supports_vision": true
+            },
+            "B": {
+              "name": "text",
+              "supports_vision": false
+            }
+          }
+        },
+        "two": {
+          "name": "Two",
+          "provider": "openai",
+          "api_key": "",
+          "base_url": "https://two.example/v1",
+          "models": {
+            "A": {
+              "supports_vision": false
+            }
+          }
+        }
+      },
+      "ai_routing": {
+        "assistant": {
+          "provider_id": "one",
+          "model_id": "A",
+          "supports_vision": false
+        }
+      }
+    },
+    "env": {},
+    "purpose": "assistant",
+    "expected": {
+      "api_key": "one-key",
+      "base_url": "https://one.example/v1",
+      "model": "A",
+      "profile_id": "one",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
   }
 ]

@@ -327,7 +327,10 @@ class ConfigStore:
             self._backup(current)
             self._atomic_write(self.path, encoded)
             self._prune_history()
-        return ConfigSnapshot(candidate, self.path)
+        persisted = self._read_file(self.path)
+        if not configs_equal(persisted, candidate):
+            raise ConfigPersistenceError("配置写入后校验不一致，请重新读取后重试")
+        return ConfigSnapshot(persisted, self.path)
 
     def replace(self, config: dict) -> ConfigSnapshot:
         """完整替换，明确保留字段删除语义；不接受缺失或已损坏的现有文件。"""

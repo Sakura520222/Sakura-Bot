@@ -38,6 +38,19 @@ def effective_ai_config(
         vision_ocr=profiles.vision.ocr,
         vision_description=profiles.vision.description,
     )
+    if route and route.provider_id:
+        provider = profiles.providers[route.provider_id]
+        model = provider.models[route.model_id]
+        return AIConnectionSettings(
+            api_key=provider.api_key,
+            base_url=provider.base_url,
+            model=route.model_id,
+            profile_id=route.provider_id,
+            supports_vision=model.supports_vision
+            if route.supports_vision is None
+            else route.supports_vision,
+            **vision,
+        )
     if route and route.profile_id:
         profile = profiles.profiles[route.profile_id]
         return AIConnectionSettings(

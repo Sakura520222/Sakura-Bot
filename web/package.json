@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/guard-autosave.test.ts tests/ai-profiles-form.test.ts",
+    "test": "node --experimental-strip-types --test tests/guard-autosave.test.ts tests/ai-profiles-form.test.ts tests/ai-providers-form.test.ts",
     "test:guard": "node --experimental-strip-types --test tests/guard-autosave.test.ts",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
