@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addProviderModels, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "../src/composables/ai-providers-form.ts";
+import { addProviderModels, createProviderId, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "../src/composables/ai-providers-form.ts";
 import type { AIProvidersConfig } from "../src/api/modules.ts";
+
+test("provider IDs use 128 random bits without requiring secure-context-only randomUUID", (t) => {
+  t.mock.method(globalThis.crypto, "randomUUID", () => { throw new Error("unavailable over HTTP"); });
+  const random = t.mock.method(globalThis.crypto, "getRandomValues", (bytes: Uint8Array) => {
+    assert.equal(bytes.byteLength, 16);
+    bytes.set(Array.from({ length: 16 }, (_, index) => index));
+    return bytes;
+  });
+  const id = createProviderId();
+  assert.equal(id, "provider_000102030405060708090a0b0c0d0e0f");
+  assert.match(id, /^[a-zA-Z0-9_-]{1,64}$/);
+  assert.equal(random.mock.callCount(), 1);
+});
+
+test("random source failures are reported without generating a fallback ID", (t) => {
+  t.mock.method(globalThis.crypto, "getRandomValues", () => { throw new Error("random source unavailable"); });
+  assert.throws(createProviderId, /random source unavailable/);
+});
 
 function snapshot(): AIProvidersConfig {
   const route = { provider_id: "p", model_id: "A", supports_vision: true };

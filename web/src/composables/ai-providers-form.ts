@@ -8,6 +8,13 @@ export interface AIProvidersDraft {
   vision: AIVisionSettings;
   revision: string;
 }
+
+/** getRandomValues also works on HTTP deployments where randomUUID is unavailable. */
+export function createProviderId(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `provider_${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function createProvidersDraft(config: AIProvidersConfig): AIProvidersDraft {
   return {
     providers: Object.fromEntries(Object.entries(config.providers).map(([id, provider]) => [id, {

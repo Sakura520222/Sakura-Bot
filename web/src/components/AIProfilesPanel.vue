@@ -100,7 +100,7 @@ import { useDialog, useMessage } from "naive-ui";
 import { getAIProviders, updateAIProviders, getAIProviderModels, testAIProvider } from "@/api/modules";
 import type { AIProvidersConfig, AIPurpose } from "@/api/modules";
 import { aiPurposes } from "@/composables/ai-profiles-form";
-import { addProviderModels, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "@/composables/ai-providers-form";
+import { addProviderModels, createProviderId, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "@/composables/ai-providers-form";
 import type { AIProvidersDraft } from "@/composables/ai-providers-form";
 import { saveError } from "@/composables/autosave";
 
@@ -150,7 +150,9 @@ async function save() {
 }
 function addProvider() {
   if (!draft.value || busy.value) return;
-  const id = `provider_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  let id: string;
+  try { id = createProviderId(); }
+  catch { message.error("暂时无法添加厂商，请重试或更换浏览器"); return; }
   draft.value.providers[id] = { name: "新厂商", provider: "openai", base_url: baseUrlPlaceholder, api_key: "", clear_api_key: false, api_key_set: false, api_key_preview: "", models: {} };
   selectedId.value = id;
 }
