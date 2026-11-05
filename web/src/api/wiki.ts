@@ -29,6 +29,14 @@ export interface WikiJob {
     review_complete?: boolean;
     published?: boolean;
     active_requests?: Record<string, WikiRequestProgress>;
+    generation_failures?: {
+      source_id: string;
+      chunk_id: string;
+      message_id?: number;
+      url?: string;
+      model: string;
+      reason: string;
+    }[];
     events?: { time: string; text: string }[];
   };
 }

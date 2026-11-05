@@ -325,6 +325,58 @@ class WikiEngine:
         return (await self.extract_many(job, config, [chunk], clients))[0]
 
     async def extract_many(self, job, config, batch, clients):
+        try:
+            result = await self._extract_many(job, config, batch, clients)
+        except Exception as error:
+            reason = str(getattr(error, "body", None) or error).lower()
+            refused = getattr(error, "status_code", None) in {400, 403, 422} and any(
+                marker in reason
+                for marker in (
+                    "content_filter",
+                    "content_policy",
+                    "data_inspection_failed",
+                    "法律法规",
+                    "内容审核",
+                )
+            )
+            if not refused:
+                raise
+            if len(batch) > 1:
+                middle = len(batch) // 2
+                left = await self.extract_many(job, config, batch[:middle], clients)
+                right = await self.extract_many(job, config, batch[middle:], clients)
+                return left + right
+            chunk = batch[0]
+            source = await self.store.one(
+                "SELECT s.message_id,c.username FROM wiki_sources s JOIN wiki_channels c ON c.id=s.channel_id WHERE s.id=%s",
+                (chunk["source_id"],),
+            )
+            failures = job["progress"].setdefault("generation_failures", [])
+            if not any(item["chunk_id"] == chunk["id"] for item in failures):
+                failures.append(
+                    {
+                        "source_id": chunk["source_id"],
+                        "chunk_id": chunk["id"],
+                        "message_id": source["message_id"] if source else None,
+                        "url": f"https://t.me/{source['username']}/{source['message_id']}"
+                        if source and source["username"] and source["message_id"]
+                        else None,
+                        "model": clients[0][1],
+                        "reason": "模型服务拒绝处理，原文已保留",
+                    }
+                )
+            await self.store.checkpoint(job, progress_only=True)
+            return [False]
+        completed = {chunk["id"] for chunk in batch}
+        if job["progress"].get("generation_failures"):
+            job["progress"]["generation_failures"] = [
+                item
+                for item in job["progress"]["generation_failures"]
+                if item["chunk_id"] not in completed
+            ]
+        return result
+
+    async def _extract_many(self, job, config, batch, clients):
         generator = clients[0]
         records, missing = {}, []
         for chunk in batch:

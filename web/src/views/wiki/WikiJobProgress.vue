@@ -73,6 +73,19 @@
         · {{ retryCountdown }} 秒后继续</span
       >
     </n-alert>
+    <n-alert v-if="p.generation_failures?.length" type="warning" :show-icon="false">
+      {{ p.generation_failures.length }} 个来源片段未生成，其他内容继续处理。
+      <details>
+        <summary>查看原因和原文</summary>
+        <p v-for="failure in p.generation_failures" :key="failure.chunk_id">
+          <a v-if="failure.url" :href="failure.url" target="_blank" rel="noopener noreferrer">
+            消息 {{ failure.message_id }}
+          </a>
+          <span v-else>来源 {{ failure.source_id.slice(0, 8) }}</span>
+          · {{ failure.model }}：{{ failure.reason }}
+        </p>
+      </details>
+    </n-alert>
     <div v-if="events.length" class="events">
       <div v-for="(event, index) in events" :key="index">
         <span>{{ time(event.time) }}</span
