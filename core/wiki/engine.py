@@ -543,9 +543,11 @@ class WikiEngine:
         if not job["cursor"].get("planning_done") and job["kind"] != "page":
             await self.plan_topics(job, channel, clients[0])
         await self.store.report(job, "正在批量整理频道内容", stage="extract")
+        # Keep enough batches queued so one slow request does not idle the other workers.
+        window_size = max(128, channel["config"].concurrency * 256)
         while job["cursor"]["source_index"] < len(manifest):
             start = job["cursor"]["source_index"]
-            identifiers = manifest[start : start + 128]
+            identifiers = manifest[start : start + window_size]
             placeholders = ",".join(["%s"] * len(identifiers))
             sources = await self.store.query(
                 f"""SELECT * FROM wiki_sources WHERE channel_id=%s AND id IN ({placeholders})
