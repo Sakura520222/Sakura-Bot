@@ -6,7 +6,7 @@
     }}</RouterLink>
     / 知识条目
   </p>
-  <p v-if="loading" class="wiki-empty" role="status">正在核对页面与来源…</p>
+  <p v-if="loading" class="wiki-empty" role="status">正在加载文章…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
   </div>
@@ -17,7 +17,7 @@
         v-for="(claim, index) in data.claims"
         :key="index"
         :href="`#claim-${index}`"
-        >{{ claim.key }}</a
+        >{{ sectionTitle(claim) }}</a
       ><a href="#sources">参考来源</a><a href="#history">修订记录</a
       ><RouterLink
         :to="{
@@ -32,7 +32,7 @@
       ><span class="wiki-tag">{{ kindLabels[data.kind] }}</span>
       <h1>{{ data.title }}</h1>
       <p class="wiki-meta">
-        {{ data.evidence_count }} 个证据来源 · 验证于
+        {{ data.evidence_count }} 条来源引用 · 整理于
         {{ formatDate(data.verified_at) }}<br />发布于
         {{ formatDate(data.updated_at) }} · 版本
         {{ data.publication_id.slice(0, 8) }}
@@ -43,12 +43,14 @@
         :key="index"
         class="wiki-claim"
       >
-        <h2>{{ claim.key }}</h2>
-        <span class="wiki-tag">{{ statusLabels[claim.status] }}</span
+        <h2 v-if="!claim.key.startsWith('md:')">{{ claim.key }}</h2>
+        <span v-if="claim.status !== 'current'" class="wiki-tag">{{
+          statusLabels[claim.status]
+        }}</span
         ><span v-if="claim.occurred_at" class="wiki-meta"
           >发生于 {{ formatDate(claim.occurred_at) }}</span
         >
-        <p>{{ claim.text }}</p>
+        <WikiMarkdown :text="claim.text" :channel="data.channel_id" />
         <span v-if="claim.valid_until" class="wiki-meta"
           >有效至 {{ formatDate(claim.valid_until) }}</span
         >
@@ -85,7 +87,7 @@
               target="_blank"
               rel="noopener noreferrer"
               >{{ source.type === "image" ? "图片 OCR / 描述" : "频道原帖" }}</a
-            ><span v-else>已核实来源 · {{ source.id.slice(0, 10) }}</span
+            ><span v-else>来源记录</span
             ><span class="wiki-meta">
               · {{ formatDate(source.created_at) }}</span
             >
@@ -117,6 +119,16 @@ import {
   type WikiArticle,
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
+import WikiMarkdown from "./WikiMarkdown.vue";
+function sectionTitle(claim: { key: string; text: string }) {
+  if (!claim.key.startsWith("md:")) return claim.key;
+  return claim.text
+    .trim()
+    .split("\n")[0]
+    .replace(/^#+\s*/, "")
+    .replace(/\*\*|__/g, "")
+    .slice(0, 60);
+}
 const route = useRoute(),
   router = useRouter();
 const { data, loading, error, reload } = useWikiLoad(

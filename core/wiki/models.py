@@ -152,7 +152,7 @@ class Fact(Strict):
     aliases: list[str] = Field(default_factory=list, max_length=20)
     topic: str = Field(default="其他", min_length=1, max_length=160)
     key: str = Field(min_length=1, max_length=160)
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1, max_length=16000)
     occurred_at: datetime | None = None
     valid_until: datetime | None = None
     status: Literal["current", "uncertain", "disputed", "superseded"] = "current"
@@ -217,7 +217,6 @@ def chunks(source_id, body, content_hash, size=5000, overlap=300):
 
 def validate_extraction(result: Extraction, chunk: dict):
     """JSON IDs are not trusted: require exact, bounded, current source quotations."""
-    names = {name_key(f.entity) for f in result.facts}
     for item in [*result.facts, *result.relations]:
         for evidence in item.evidence:
             if (
@@ -230,8 +229,6 @@ def validate_extraction(result: Extraction, chunk: dict):
                 != evidence.quote
             ):
                 raise ValueError("Citation does not match its source and offsets")
-        if isinstance(item, Relation) and (
-            name_key(item.source) not in names or name_key(item.target) not in names
-        ):
-            raise ValueError("Relation references an unknown entity")
+        # Named relation endpoints are resolved/created in the same transaction as
+        # their edges; an entity need not have a separate assertion in this chunk.
     return result

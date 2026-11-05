@@ -147,6 +147,13 @@ class WikiRuntime:
                 )
         self._last_refresh = utc()
 
+    def wake(self, delay=0):
+        if self.scheduler:
+            scheduled = self.scheduler.get_job("wiki_tick")
+            when = datetime.now(UTC) + timedelta(seconds=delay)
+            if scheduled and (not scheduled.next_run_time or scheduled.next_run_time > when):
+                self.scheduler.modify_job("wiki_tick", next_run_time=when)
+
     async def tick(self):
         if not self.ready:
             try:
@@ -229,24 +236,17 @@ class WikiRuntime:
                 await self.engine.assemble(job, channel)
             if job["phase"] == "ready":
                 fresh = await self.store.channel(channel["id"])
-                if fresh["source_generation"] != job["progress"]["source_generation"]:
-                    # A concurrent edit cannot be hidden behind a completed stale cursor.
-                    job["cursor"].pop("source_id", None)
-                    job["cursor"].pop("source_group", None)
-                    job["cursor"].pop("summary_topics", None)
-                    job["cursor"].pop("page_after", None)
-                    job["cursor"]["revisions"] = {}
-                    job["progress"]["source_generation"] = fresh["source_generation"]
-                    job["progress"]["review_rejections"] = 0
-                    await self.store.checkpoint(job, "extract")
-                    await self.store.finish(job, "partial", delay=15)
-                    return
+                # New messages do not invalidate a completed historical snapshot.
+                # Publication still checks every included source/hash transactionally.
+                job["progress"]["newer_sources_pending"] = (
+                    fresh["source_generation"] != job["progress"]["source_generation"]
+                )
                 if (
                     fresh["config"].publication_mode == "auto"
                     and job["progress"]["review_complete"]
                     and job["progress"].get("pages")
                 ):
-                    await self.store.report(job, "正在发布已审校的知识", stage="publish")
+                    await self.store.report(job, "正在发布频道内容", stage="publish")
                     pub = await self.engine.knowledge.publish(
                         channel["id"], job["id"], "wiki", running_job=job
                     )
@@ -288,9 +288,25 @@ class WikiRuntime:
             try:
                 channel = await self.store.channel(job["channel_id"])
                 retries = channel["config"].retries if channel else 3
-                delay = max(
-                    min(3600, 2 ** (job["attempts"] + 1) * 15), int(getattr(error, "seconds", 0))
-                )
+                delay = int(getattr(error, "seconds", 0))
+                if not delay and getattr(error, "status_code", None) == 429:
+                    response = getattr(error, "response", None)
+                    retry_after = response.headers.get("Retry-After", "5") if response else "5"
+                    delay = int(retry_after) if retry_after.isdecimal() else 5
+                if not delay:
+                    delay = (
+                        1
+                        if isinstance(error, (WikiResponseError, ValueError))
+                        else min(10, 2 ** job["attempts"])
+                    )
+                if str(error) == "Publication includes revoked, rejected or hidden evidence":
+                    job["phase"] = "assemble"
+                    job["cursor"].pop("page_after", None)
+                    job["cursor"]["revisions"] = {}
+                    job["progress"].update(
+                        assembled_pages=0, pages=0, activity="来源有更新，正在刷新文章"
+                    )
+                    delay = 1
                 await self.collector.coverage(job, "partial", type(error).__name__)
                 await self.store.finish(
                     job,
@@ -298,6 +314,7 @@ class WikiRuntime:
                     type(error).__name__,
                     delay,
                 )
+                self.wake(delay)
             except LeaseLost:
                 pass
             except Exception:

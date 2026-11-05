@@ -65,7 +65,7 @@
       </template>
       <div class="heading"><h3>用途绑定</h3></div>
       <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
-        <n-gi v-for="purpose in aiPurposes" :key="purpose.key" span="0:2 1024:1">
+        <n-gi v-for="purpose in visiblePurposes" :key="purpose.key" span="0:2 1024:1">
           <n-card size="small" :title="purpose.label">
             <n-form label-placement="top" :disabled="busy">
               <n-form-item label="厂商"><n-select :value="draft.routing[purpose.key].provider_id" :options="routingOptions" @update:value="setRouteProvider(purpose.key, $event)" /></n-form-item>
@@ -104,6 +104,7 @@ import { addProviderModels, createProviderId, createProvidersDraft, modelAssignm
 import type { AIProvidersDraft } from "@/composables/ai-providers-form";
 import { saveError } from "@/composables/autosave";
 
+const visiblePurposes = aiPurposes.filter(purpose => purpose.key !== "wiki_review");
 const props = defineProps<{ legacyRevision?: number }>();
 const message = useMessage(), dialog = useDialog();
 const loading = ref(false), saving = ref(false), modelLoading = ref(false), testLoading = ref("");

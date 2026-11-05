@@ -340,9 +340,9 @@
                 @click="jobControl(job.id, 'resume')"
                 >恢复</n-button
               ><n-button
-                v-if="job.status === 'failed'"
+                v-if="['failed', 'partial'].includes(job.status)"
                 @click="jobControl(job.id, 'retry')"
-                >重试</n-button
+                >立即重试</n-button
               ><n-button
                 v-if="
                   job.status === 'completed' && job.progress.review_complete
@@ -356,27 +356,6 @@
         </n-card>
       </template>
       <template v-else-if="tab === 'review'">
-        <n-collapse v-if="reviewQueue.length"
-          ><n-collapse-item
-            :title="`未通过审校（${reviewQueue.length}）`"
-            name="queue"
-            ><n-card
-              v-for="item in reviewQueue"
-              :key="item.cache_key"
-              size="small"
-              ><p>
-                {{
-                  item.review.pending
-                    ? "审校未完成"
-                    : item.review.reason || "审校未通过"
-                }}
-              </p>
-              <n-button :disabled="busy" @click="retryReview(item.cache_key)"
-                >重新审校</n-button
-              ></n-card
-            ></n-collapse-item
-          ></n-collapse
-        >
         <n-empty v-if="!revisions.length" description="暂无草稿" />
         <div class="review-grid">
           <div class="revision-list">
@@ -386,9 +365,7 @@
               :title="rev.title"
               size="small"
               ><n-space
-                ><n-tag>{{
-                  rev.rejected ? "已拒绝" : rev.approved ? "审校通过" : "待审核"
-                }}</n-tag
+                ><n-tag>{{ rev.rejected ? "已撤回" : "已生成" }}</n-tag
                 ><n-tag v-if="rev.locked">已锁定</n-tag
                 ><n-tag v-if="rev.hidden">已隐藏</n-tag></n-space
               >
@@ -421,7 +398,7 @@
             >
               <h3>{{ claim.key }}</h3>
               <n-tag size="small">{{ statusLabels[claim.status] }}</n-tag>
-              <p>{{ claim.text }}</p>
+              <WikiMarkdown :text="claim.text" :channel="selected" />
               <n-collapse
                 ><n-collapse-item title="修正此断言" :name="index"
                   ><n-input
@@ -538,7 +515,7 @@
             (tab === 'jobs'
               ? jobs.length
               : tab === 'review'
-                ? Math.max(revisions.length, reviewQueue.length)
+                ? revisions.length
                 : Math.max(publications.length, audit.length)) < 50
           "
           @click="
@@ -568,6 +545,7 @@ import {
 } from "../../composables/autosave";
 
 import WikiJobProgress from "./WikiJobProgress.vue";
+import WikiMarkdown from "./WikiMarkdown.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;
@@ -627,14 +605,6 @@ const channels = ref<Channel[]>([]),
   tab = ref("config"),
   purgeConfirm = ref("");
 const adminPage = ref(1);
-const reviewQueue = ref<
-  {
-    cache_key: string;
-    review: { reason?: string; pending?: boolean };
-    source_type: string;
-    created_at: string;
-  }[]
->([]);
 const jobs = ref<Job[]>([]),
   revisions = ref<Revision[]>([]),
   publications = ref<{ id: string; created_at: string }[]>([]),
@@ -661,7 +631,7 @@ const channelOptions = computed(() =>
   channels.value.map((ch) => ({ label: ch.title, value: ch.id })),
 );
 const publicationOptions = [
-  { label: "人工审核后发布", value: "review" },
+  { label: "手动发布", value: "review" },
   { label: "自动发布", value: "auto" },
 ];
 const frequencyOptions = [
@@ -882,12 +852,6 @@ async function loadChannel() {
     busy.value = false;
   }
 }
-function retryReview(key: string) {
-  return perform(
-    () => wikiAdmin(`${root()}/extractions/${key}/retry`, "POST"),
-    "审校重试已排队",
-  );
-}
 async function refreshData() {
   if (!selected.value) return;
   const current = selected.value;
@@ -902,14 +866,8 @@ async function refreshData() {
       channel.value = currentChannel;
     }
   } else if (tab.value === "review") {
-    const [rows, queue] = await Promise.all([
-      wikiAdmin<Revision[]>(`${root()}/revisions${suffix}`),
-      wikiAdmin<typeof reviewQueue.value>(`${root()}/extractions${suffix}`),
-    ]);
-    if (selected.value === current) {
-      revisions.value = rows;
-      reviewQueue.value = queue;
-    }
+    const rows = await wikiAdmin<Revision[]>(`${root()}/revisions${suffix}`);
+    if (selected.value === current) revisions.value = rows;
   } else if (tab.value === "history") {
     const [pubs, actions] = await Promise.all([
       wikiAdmin<typeof publications.value>(`${root()}/publications${suffix}`),

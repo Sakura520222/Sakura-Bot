@@ -211,6 +211,7 @@ async def create_job(channel: str, body: JobRequest, actor=ADMIN_AUTH):
         job_id = await service.store.enqueue(ch["id"], body.kind, actor, body.page_id)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
+    service.wake()
     return {"job_id": job_id}
 
 
@@ -234,6 +235,8 @@ async def control_job(
     service, ch = await managed(channel)
     try:
         await service.store.control_job(ch["id"], job_id, action, actor)
+        if action != "pause":
+            service.wake()
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
     return {"success": True}

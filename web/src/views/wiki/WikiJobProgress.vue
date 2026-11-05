@@ -73,12 +73,6 @@
         · {{ retryCountdown }} 秒后继续</span
       >
     </n-alert>
-    <n-text v-if="Number(p.review_rejections) > 0" type="warning">
-      {{
-        number(p.review_rejections)
-      }}
-      个候选未通过审校，已留在草稿区；不会加入公开内容。
-    </n-text>
     <div v-if="events.length" class="events">
       <div v-for="(event, index) in events" :key="index">
         <span>{{ time(event.time) }}</span
@@ -88,7 +82,7 @@
     <n-text depth="3" class="job-footer">
       开始于 {{ formatDate(job.created_at) }} · 最近进度
       {{ duration(elapsed(job.updated_at)) }}前
-      <template v-if="p.published"> · 已公开发布</template>
+      <template v-if="p.published"> · 已发布</template>
     </n-text>
   </div>
 </template>

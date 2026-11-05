@@ -102,9 +102,11 @@ class Knowledge:
                     ),
                 )
             for relation in result.relations:
-                source_page, target_page = (
-                    entities[name_key(relation.source)],
-                    entities[name_key(relation.target)],
+                source_page = entities.get(name_key(relation.source)) or await self.entity(
+                    cur, job["channel_id"], relation.source
+                )
+                target_page = entities.get(name_key(relation.target)) or await self.entity(
+                    cur, job["channel_id"], relation.target
                 )
                 await cur.execute(
                     """INSERT INTO wiki_edges
@@ -311,7 +313,6 @@ class Knowledge:
                     or (job["status"] == "running" and running_job is None)
                     or not progress.get("generation_complete")
                     or not progress.get("review_complete")
-                    or progress.get("source_generation") != ch["source_generation"]
                 ):
                     raise ValueError(
                         "Job has not completed validation, or sources changed; update before publishing"
@@ -519,6 +520,8 @@ def merge_facts(facts):
     merged = {}
     for fact in facts:
         key = (name_key(fact["key"]), name_key(fact["text"]))
+        if fact["key"].startswith("md:"):
+            key = (digest("markdown", key[1]), key[1])
         if key not in merged:
             merged[key] = dict(fact, evidence=list(fact["evidence"]))
         else:

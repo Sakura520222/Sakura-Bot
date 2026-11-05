@@ -394,12 +394,15 @@ class WikiStore:
                 return None
             job["lease_token"] = uuid.uuid4().hex
             await cur.execute(
-                """UPDATE wiki_jobs SET status='running',lease_token=%s,
+                """UPDATE wiki_jobs SET status='running',error_code=NULL,
+                progress=JSON_SET(progress,'$.error_detail',''),lease_token=%s,
                 lease_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 90 SECOND),updated_at=UTC_TIMESTAMP(6) WHERE id=%s""",
                 (job["lease_token"], job["id"]),
             )
             job["cursor"], job["progress"] = decode(job["cursor"]), decode(job["progress"])
             job["status"] = "running"
+            job["error_code"] = None
+            job["progress"]["error_detail"] = ""
             return job
 
     async def fence(self, cur, job):
@@ -493,10 +496,14 @@ class WikiStore:
                 raise ValueError("Another job is active")
             if job["status"] in {"completed", "published"}:
                 raise ValueError("Completed jobs are immutable; start a new job")
+            progress = decode(job["progress"])
+            progress["active_requests"] = {}
+            if action != "pause":
+                progress.update(error_detail="", activity="等待后台执行")
             await cur.execute(
                 """UPDATE wiki_jobs SET status=%s,lease_token=NULL,lease_until=NULL,
-                attempts=0,error_code=NULL,next_attempt=UTC_TIMESTAMP(6) WHERE id=%s""",
-                ("paused" if action == "pause" else "pending", job_id),
+                attempts=0,error_code=NULL,next_attempt=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),progress=%s WHERE id=%s""",
+                ("paused" if action == "pause" else "pending", encode(progress), job_id),
             )
             await cur.execute(
                 "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
