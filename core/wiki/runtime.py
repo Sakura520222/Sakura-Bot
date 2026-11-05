@@ -235,6 +235,10 @@ class WikiRuntime:
                 await self.store.report(job, "正在整理文章与知识地图", stage="assemble")
                 await self.engine.assemble(job, channel)
             if job["phase"] == "ready":
+                if job["kind"] in {"backfill", "reconcile"}:
+                    await self.collector.coverage(
+                        job, "accessible", "all_currently_accessible_messages_enumerated"
+                    )
                 fresh = await self.store.channel(channel["id"])
                 # New messages do not invalidate a completed historical snapshot.
                 # Publication still checks every included source/hash transactionally.
@@ -307,7 +311,11 @@ class WikiRuntime:
                         assembled_pages=0, pages=0, activity="来源有更新，正在刷新文章"
                     )
                     delay = 1
-                await self.collector.coverage(job, "partial", type(error).__name__)
+                if job["phase"] == "collect":
+                    job["progress"]["collection_failures"] = (
+                        job["progress"].get("collection_failures", 0) + 1
+                    )
+                    await self.collector.coverage(job, "partial", type(error).__name__)
                 await self.store.finish(
                     job,
                     "failed" if job["attempts"] >= retries else "partial",

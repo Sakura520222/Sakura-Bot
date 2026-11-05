@@ -300,7 +300,7 @@ class SourceCollector:
             "reason": reason,
             "enumerated": job["progress"].get("enumerated", 0),
             "estimated_total": job["progress"].get("estimated_total"),
-            "failures": job["attempts"],
+            "failures": job["progress"].get("collection_failures", 0),
             "missing_ranges": [],
             "updated_at": utc().isoformat(),
         }
