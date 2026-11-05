@@ -185,13 +185,14 @@ class WikiRuntime:
                         "UPDATE wiki_channels SET scheduled_at=UTC_TIMESTAMP(6) WHERE id=%s",
                         (row["id"],),
                     )
-            while len(self.tasks) < 2:
+            while True:
                 job = await self.store.claim_job()
                 if not job:
                     break
                 task = asyncio.create_task(self.run_job(job))
                 self.tasks.add(task)
                 task.add_done_callback(self.tasks.discard)
+                task.add_done_callback(lambda _: self.wake())
         except Exception as error:
             logger.warning("Wiki tick deferred: %s", type(error).__name__)
 
