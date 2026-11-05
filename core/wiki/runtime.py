@@ -192,7 +192,6 @@ class WikiRuntime:
                 task = asyncio.create_task(self.run_job(job))
                 self.tasks.add(task)
                 task.add_done_callback(self.tasks.discard)
-                task.add_done_callback(lambda _: self.wake())
         except Exception as error:
             logger.warning("Wiki tick deferred (%s): %s", type(error).__name__, error)
 
