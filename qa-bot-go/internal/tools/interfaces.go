@@ -10,7 +10,14 @@
 
 package tools
 
-import "context"
+import (
+	"context"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
+)
+
+type WikiRepository interface {
+	ReadWiki(context.Context, string, contracts.WikiOptions) (map[string]any, error)
+}
 
 // 本文件定义工具执行器对检索组件的窄接口（Go 惯例：消费者包内定义，
 // 由 main 装配实现）。行号出处为 Python 侧被移植方法的调用面。

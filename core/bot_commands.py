@@ -27,6 +27,15 @@ from telethon.tl.types import BotCommand, BotCommandScopeDefault
 # 每个命令是一个元组：(command, description)
 BOT_COMMANDS = [
     {
+        "category": "Sakura Wiki",
+        "i18n_key": "wiki",
+        "commands": [
+            ("wiki_status", "查看频道 Wiki 状态"),
+            ("wiki_build", "管理员触发 Wiki 历史构建"),
+            ("wiki_pause", "管理员暂停 Wiki 更新"),
+        ],
+    },
+    {
         "category": "Sakura Guard",
         "i18n_key": "guard",
         "commands": [

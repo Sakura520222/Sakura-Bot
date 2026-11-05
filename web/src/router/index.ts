@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { wikiRoutes } from "./wiki-routes";
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    wikiRoutes,
     {
       path: "/login",
       name: "Login",
@@ -13,6 +15,12 @@ const router = createRouter({
       path: "/",
       component: () => import("../components/AppLayout.vue"),
       children: [
+        {
+          path: "wiki/admin",
+          name: "WikiAdmin",
+          component: () => import("../views/wiki/WikiAdminView.vue"),
+          meta: { public: false },
+        },
         {
           path: "bot-chats",
           name: "BotChats",

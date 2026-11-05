@@ -41,6 +41,12 @@ func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 	if err != nil {
 		return contracts.AIConf{}
 	}
+	if purpose == "wiki_review" {
+		route := profiles.routing[purpose]
+		if route.providerID == "" && route.profileID == "" && route.model == "" {
+			purpose = "wiki"
+		}
+	}
 	result := contracts.AIConf{
 		VisionEnabled:     profiles.vision.enabled,
 		VisionOCR:         profiles.vision.ocr,
@@ -101,7 +107,7 @@ func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 // validAIPurpose 与 Python PURPOSES 保持一致。
 func validAIPurpose(purpose string) bool {
 	switch purpose {
-	case "summary", "assistant", "vision", "poll":
+	case "summary", "assistant", "vision", "poll", "wiki", "wiki_review":
 		return true
 	default:
 		return false

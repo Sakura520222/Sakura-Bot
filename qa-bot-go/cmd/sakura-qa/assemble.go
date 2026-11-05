@@ -280,9 +280,10 @@ func assembleEngine(cfg *config.Config, mgr *db.Manager, conversations *engine.C
 	rr := reranker.New(cfg.Env)
 
 	toolKit := &engineTools{
-		vs: &toolVectorStore{vec: vecStore, emb: embGen, log: logger},
-		mm: memoryTools{m: memMgr},
-		rr: rerankTools{r: rr},
+		vs:   &toolVectorStore{vec: vecStore, emb: embGen, log: logger},
+		mm:   memoryTools{m: memMgr},
+		rr:   rerankTools{r: rr},
+		wiki: &db.WikiRepository{DB: mgr.DB},
 	}
 
 	return engine.New(engine.Deps{
@@ -298,9 +299,10 @@ func assembleEngine(cfg *config.Config, mgr *db.Manager, conversations *engine.C
 // engineTools 实现引擎的 Tools 窄接口：schema 原样透传 + 每请求独立执行器
 // （qa_engine_v3.py:300 的 per-request ToolExecutor）。
 type engineTools struct {
-	vs tools.VectorStore
-	mm tools.MemoryManager
-	rr tools.Reranker
+	vs   tools.VectorStore
+	mm   tools.MemoryManager
+	rr   tools.Reranker
+	wiki tools.WikiRepository
 }
 
 // ToolSchemasJSON 实现 engine.Tools。
@@ -308,7 +310,7 @@ func (t *engineTools) ToolSchemasJSON() json.RawMessage { return tools.ToolSchem
 
 // NewExecutor 实现 engine.Tools。
 func (t *engineTools) NewExecutor() engine.ToolExecutor {
-	return executorAdapter{inner: tools.NewToolExecutor(t.vs, t.mm, t.rr)}
+	return executorAdapter{inner: tools.NewToolExecutor(t.vs, t.mm, t.rr, t.wiki)}
 }
 
 // executorAdapter 把 *tools.ToolExecutor 适配为 engine.ToolExecutor：

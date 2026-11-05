@@ -16,6 +16,7 @@
 
 import logging
 import time
+from collections import OrderedDict
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -25,6 +26,7 @@ from .auth import verify_token
 
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("core.web_api.access")
+_wiki_buckets = OrderedDict()
 
 # 不需要认证的路径
 PUBLIC_PATHS = {
@@ -48,6 +50,29 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
+
+        from .routes.wiki import is_public_wiki_request
+
+        if is_public_wiki_request(path, request.method):
+            # Trust the socket peer, never an arbitrary forwarded header. Bound memory.
+            peer = request.client.host if request.client else "unknown"
+            window = int(time.monotonic() // 60)
+            old_window, count = _wiki_buckets.pop(peer, (window, 0))
+            count = count + 1 if old_window == window else 1
+            _wiki_buckets[peer] = (window, count)
+            while len(_wiki_buckets) > 10000:
+                _wiki_buckets.popitem(last=False)
+            if count > 120:
+                return JSONResponse(
+                    {"detail": "Wiki 请求过于频繁"}, status_code=429, headers={"Retry-After": "60"}
+                )
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; frame-ancestors 'none'"
+            )
+            return response
 
         # 非 API 路径直接放行（静态文件等）
         if not path.startswith("/api"):

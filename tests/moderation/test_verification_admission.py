@@ -222,7 +222,8 @@ async def test_direct_restore_and_unproven_admin_intent_are_rejected(guard, stor
 
 async def test_changed_question_invalidates_an_existing_correct_receipt(guard, store):
     session = await pending_answer(guard, store)
-    session["payload"]["question"] = "1 + 1"
+    # The random original can already be "1 + 1"; always change the signed question.
+    session["payload"]["question"] += " (changed)"
     await store.save_verification(session)
     await guard.recover_once()
     saved = await store.verification(CHAT, USER)

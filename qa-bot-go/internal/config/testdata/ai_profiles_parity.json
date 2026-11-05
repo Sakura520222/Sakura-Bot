@@ -875,5 +875,210 @@
       "vision_ocr": true,
       "vision_description": true
     }
+  },
+  {
+    "name": "Wiki generation uses dedicated route",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        },
+        "wiki": {
+          "profile_id": "summarizer"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "wiki",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "summary-model",
+      "profile_id": "summarizer",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "Wiki review inherits generation route",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        },
+        "wiki": {
+          "profile_id": "summarizer"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "wiki_review",
+    "expected": {
+      "api_key": "summary-key",
+      "base_url": "https://summary.example/v1",
+      "model": "summary-model",
+      "profile_id": "summarizer",
+      "supports_vision": true,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
+  },
+  {
+    "name": "Wiki review uses separate route",
+    "config": {
+      "api_key": "legacy-key",
+      "base_url": "https://legacy.example/v1",
+      "model": "legacy-model",
+      "ai_profiles": {
+        "summarizer": {
+          "name": "Summary service",
+          "provider": "openai",
+          "api_key": "summary-key",
+          "base_url": "https://summary.example/v1",
+          "model": "summary-model",
+          "supports_vision": true
+        },
+        "assistant": {
+          "name": "Assistant service",
+          "provider": "openai",
+          "api_key": "assistant-key",
+          "base_url": "https://assistant.example/v1",
+          "model": "assistant-model",
+          "supports_vision": false
+        },
+        "local": {
+          "name": "Local service",
+          "base_url": "http://localhost:8000/v1",
+          "model": "local-model"
+        }
+      },
+      "ai_routing": {
+        "summary": {
+          "profile_id": "summarizer"
+        },
+        "assistant": {
+          "profile_id": "assistant"
+        },
+        "vision": {
+          "profile_id": "summarizer",
+          "model": "vision-model"
+        },
+        "poll": {
+          "profile_id": "assistant",
+          "model": "poll-model"
+        },
+        "wiki": {
+          "profile_id": "summarizer"
+        },
+        "wiki_review": {
+          "profile_id": "assistant",
+          "model": "review-model"
+        }
+      }
+    },
+    "env": {
+      "LLM_API_KEY": "env-key",
+      "LLM_BASE_URL": "https://env.example/v1",
+      "LLM_MODEL": "env-model",
+      "DEEPSEEK_API_KEY": "deprecated-key"
+    },
+    "purpose": "wiki_review",
+    "expected": {
+      "api_key": "assistant-key",
+      "base_url": "https://assistant.example/v1",
+      "model": "review-model",
+      "profile_id": "assistant",
+      "supports_vision": false,
+      "vision_enabled": false,
+      "vision_ocr": true,
+      "vision_description": true
+    }
   }
 ]

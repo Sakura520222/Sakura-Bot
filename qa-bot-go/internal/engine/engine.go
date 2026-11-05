@@ -443,6 +443,7 @@ func (e *Engine) buildSystemPrompt(ctx context.Context, channelHint string, incl
 	if includeTools {
 		systemPrompt += strings.ReplaceAll(agentToolInstructions,
 			"{max_iterations}", strconv.Itoa(AgentMaxIterations))
+		systemPrompt += wikiToolInstructions
 	}
 	return systemPrompt
 }
