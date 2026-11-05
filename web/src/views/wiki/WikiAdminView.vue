@@ -1,502 +1,537 @@
 <template>
-  <div class="wiki-shell wiki-admin">
-    <div class="wiki-section-head">
-      <div>
-        <h1>Wiki 管理</h1>
-      </div>
-      <RouterLink to="/wiki" target="_blank">打开公开 Wiki ↗</RouterLink>
-    </div>
-    <p class="wiki-muted">选择频道后启用 Wiki，再开始构建。</p>
-    <p v-if="error" class="wiki-error" role="alert">
-      {{ error }}<button @click="loadChannels">重新加载</button>
-    </p>
-    <p v-if="notice" role="status" class="wiki-coverage">{{ notice }}</p>
-    <div class="wiki-filters">
-      <label
-        >频道<select v-model="selected" @change="loadChannel">
-          <option value="">选择频道</option>
-          <option v-for="ch in channels" :key="ch.id" :value="ch.id">
-            {{ ch.title }} ({{ ch.id }})
-          </option>
-        </select></label
-      ><button :disabled="busy" @click="loadChannels">刷新目录</button>
-    </div>
-    <p v-if="!channels.length && !busy && !error" class="wiki-empty">
-      暂无完成身份核实的频道。请先在频道管理中添加频道并连接 UserBot。
-    </p>
-    <template v-if="channel && draft">
-      <div class="wiki-enable-bar">
-        <span>{{ channel.enabled ? "Wiki 已启用" : "Wiki 未启用" }}</span>
-        <button
-          v-if="!channel.enabled"
-          class="wiki-primary"
+  <div class="wiki-admin-page">
+    <n-card size="small" class="wiki-toolbar">
+      <div class="toolbar-row">
+        <n-select
+          :value="selected"
+          :options="channelOptions"
+          filterable
+          placeholder="选择频道"
+          aria-label="频道"
+          class="channel-picker"
+          :disabled="busy"
+          @update:value="switchChannel"
+        />
+        <n-tag
+          v-if="channel"
+          :type="channel.enabled ? 'success' : 'default'"
+          :bordered="false"
+          >{{ channel.enabled ? "已启用" : "未启用" }}</n-tag
+        >
+        <n-button
+          v-if="channel && !channel.enabled"
+          type="primary"
           :disabled="busy"
           @click="enableWiki"
+          >启用 Wiki</n-button
         >
-          启用 Wiki
-        </button>
-        <button
-          v-else
-          class="wiki-primary"
-          :disabled="busy"
-          @click="startBuild"
+        <n-button v-else-if="channel" :disabled="busy" @click="startBuild"
+          >开始构建</n-button
         >
-          开始构建
-        </button>
-      </div>
-      <nav class="wiki-tabs" aria-label="Wiki 管理栏目">
-        <button
-          v-for="item in tabs"
-          :key="item.key"
-          :class="{ 'wiki-primary': tab === item.key }"
-          @click="tab = item.key"
+        <n-button quaternary :loading="busy" @click="loadChannels"
+          >刷新</n-button
         >
-          {{ item.label }}
-        </button>
-      </nav>
-      <template v-if="tab === 'config'">
-        <section class="wiki-card">
-          <h2>公开范围与生成策略</h2>
-          <div class="wiki-admin-form">
-            <label class="wiki-check"
-              ><input v-model="draft.enabled" type="checkbox" />启用频道
-              Wiki</label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.public"
-                type="checkbox"
-                :disabled="!draft.enabled || !channel.access_verified"
-              />允许游客浏览已发布知识</label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.paused"
-                type="checkbox"
-              />暂停自动更新</label
-            ><label
-              >发布模式<select v-model="draft.publication_mode">
-                <option value="review">人工审核后发布</option>
-                <option value="auto">校验通过后自动发布</option>
-              </select></label
-            ><label
-              >更新频率<select v-model="draft.frequency">
-                <option value="manual">仅手动</option>
-                <option value="daily">每日</option>
-                <option value="weekly">每周</option>
-                <option value="cron">自定义 Cron</option>
-              </select></label
-            ><label
-              >时区<input
-                v-model="draft.timezone"
-                placeholder="Asia/Shanghai" /></label
-            ><label v-if="draft.frequency === 'cron'"
-              >Cron 表达式<input
-                v-model="draft.cron"
-                placeholder="0 3 * * *" /></label
-            ><label>内容语言<input v-model="draft.language" /></label
-            ><label
-              >首次回溯起点（留空为全部历史）<input
-                v-model="historySince"
-                type="datetime-local" /></label
-            ><label
-              >公开 WebUI 地址（用于 Go 助手引用）<input
-                v-model="draft.public_base_url"
-                type="url"
-                placeholder="https://你的现有WebUI地址" /></label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.include_summaries"
-                type="checkbox"
-              />收录已有总结为辅助来源</label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.include_images"
-                type="checkbox"
-              />使用已保存的图片 OCR / 描述</label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.show_quotes"
-                type="checkbox"
-              />公开引用原文</label
-            ><label class="wiki-check"
-              ><input
-                v-model="draft.show_telegram_links"
-                type="checkbox"
-              />展示公开 Telegram 原帖链接</label
-            >
-            <fieldset>
-              <legend>纳入消息类别</legend>
-              <label
-                v-for="type in ['text', 'image', 'other']"
-                :key="type"
-                class="wiki-check"
-                ><input
-                  v-model="draft.message_types"
-                  type="checkbox"
-                  :value="type"
-                />{{
-                  { text: "文字", image: "图片", other: "其他" }[type]
-                }}</label
-              >
-            </fieldset>
-            <fieldset>
-              <legend>展示栏目</legend>
-              <label
-                v-for="column in ['pages', 'graph', 'timeline', 'profile']"
-                :key="column"
-                class="wiki-check"
-                ><input
-                  v-model="draft.columns"
-                  type="checkbox"
-                  :value="column"
-                />{{
-                  {
-                    pages: "文章",
-                    graph: "知识地图",
-                    timeline: "时间轴",
-                    profile: "画像",
-                  }[column]
-                }}</label
-              >
-            </fieldset>
-            <label class="wide"
-              >不公开的主题（每行一个）<textarea
-                v-model="hiddenTopics"
-                rows="3"
-              ></textarea>
-            </label>
-          </div>
-          <p v-if="!channel.access_verified" class="wiki-muted">
-            频道当前不满足公开访问条件，公开读取会被阻止。
-          </p>
-        </section>
-        <section class="wiki-card">
-          <h2>生成设置</h2>
-          <div class="wiki-admin-form">
-            <label
-              >温度<input
-                v-model.number="draft.temperature"
-                type="number"
-                min="0"
-                max="1"
-                step="0.1" /></label
-            ><label
-              >每任务 Token 上限<input
-                v-model.number="draft.token_budget"
-                type="number"
-                min="1000"
-                max="10000000" /></label
-            ><label
-              >请求超时（秒）<input
-                v-model.number="draft.timeout_seconds"
-                type="number"
-                min="10"
-                max="1800" /></label
-            ><label
-              >最大重试次数<input
-                v-model.number="draft.retries"
-                type="number"
-                min="0"
-                max="8" /></label
-            ><label
-              >合并增量等待（秒）<input
-                v-model.number="draft.debounce_seconds"
-                type="number"
-                min="10"
-                max="86400" /></label
-            ><label
-              >输入单价 / 百万 Token（可选）<input
-                v-model.number="draft.input_cost_per_million"
-                type="number"
-                min="0"
-                step="0.01" /></label
-            ><label
-              >输出单价 / 百万 Token（可选）<input
-                v-model.number="draft.output_cost_per_million"
-                type="number"
-                min="0"
-                step="0.01"
-            /></label>
-          </div>
-          <p class="wiki-muted">
-            达到预算时保留游标并暂停。未提供单价时不显示猜测费用。
-          </p>
-        </section>
-        <div class="wiki-admin-actions">
-          <button class="wiki-primary" :disabled="busy" @click="saveConfig">
-            保存频道设置</button
-          ><button :disabled="busy" @click="loadChannel">放弃未保存修改</button>
+        <div class="toolbar-actions">
+          <n-text
+            v-if="draft && tab === 'config'"
+            :type="saveFailed ? 'error' : undefined"
+            class="save-state"
+            >{{ saveLabel }}</n-text
+          >
+          <n-button
+            v-if="draft && tab === 'config'"
+            type="primary"
+            :loading="configSaving"
+            :disabled="busy"
+            @click="saveConfig"
+            >保存设置</n-button
+          >
+          <RouterLink to="/ai-config"
+            ><n-button quaternary>模型设置</n-button></RouterLink
+          >
+          <RouterLink to="/wiki" target="_blank"
+            ><n-button quaternary>公开 Wiki</n-button></RouterLink
+          >
         </div>
-        <p class="wiki-muted">
-          <RouterLink to="/ai-config">模型设置</RouterLink>：在 AI 配置中选择
-          Wiki 生成和审校模型。
-        </p>
+      </div>
+    </n-card>
+    <n-alert
+      v-if="error || saveFailed"
+      type="error"
+      title="操作未完成"
+      :show-icon="true"
+      >{{ error || saveProblem }}</n-alert
+    >
+    <n-alert
+      v-if="notice"
+      type="success"
+      :show-icon="false"
+      closable
+      @close="notice = ''"
+      >{{ notice }}</n-alert
+    >
+    <n-skeleton v-if="busy && !channel" :repeat="4" text />
+    <n-card v-else-if="!channels.length && !error"
+      ><n-empty description="暂无频道"
+        ><template #extra
+          ><RouterLink to="/channels"
+            ><n-button>频道管理</n-button></RouterLink
+          ></template
+        ></n-empty
+      ></n-card
+    >
+    <template v-if="channel && draft">
+      <n-tabs v-model:value="tab" type="line" animated>
+        <n-tab v-for="item in tabs" :key="item.key" :name="item.key">{{
+          item.label
+        }}</n-tab>
+      </n-tabs>
+      <template v-if="tab === 'config'">
+        <n-card title="频道设置" size="small">
+          <n-form
+            label-placement="top"
+            :show-feedback="false"
+            :disabled="busy"
+            @compositionstart="autosave?.setComposing(true)"
+            @compositionend="autosave?.setComposing(false)"
+          >
+            <div class="settings-grid">
+              <n-form-item label="启用 Wiki"
+                ><n-switch v-model:value="draft.enabled"
+              /></n-form-item>
+              <n-form-item label="公开访问"
+                ><n-switch
+                  v-model:value="draft.public"
+                  :disabled="!draft.enabled || !channel.access_verified"
+              /></n-form-item>
+              <n-form-item label="暂停自动更新"
+                ><n-switch v-model:value="draft.paused"
+              /></n-form-item>
+              <n-form-item label="发布模式"
+                ><n-select
+                  v-model:value="draft.publication_mode"
+                  :options="publicationOptions"
+              /></n-form-item>
+              <n-form-item label="更新频率"
+                ><n-select
+                  v-model:value="draft.frequency"
+                  :options="frequencyOptions"
+              /></n-form-item>
+              <n-form-item label="时区"
+                ><n-input
+                  v-model:value="draft.timezone"
+                  placeholder="Asia/Shanghai"
+                  @blur="saveConfig(false)"
+              /></n-form-item>
+              <n-form-item v-if="draft.frequency === 'cron'" label="Cron 表达式"
+                ><n-input
+                  v-model:value="draft.cron"
+                  placeholder="0 3 * * *"
+                  @blur="saveConfig(false)"
+              /></n-form-item>
+              <n-form-item label="内容语言"
+                ><n-input
+                  v-model:value="draft.language"
+                  @blur="saveConfig(false)"
+              /></n-form-item>
+              <n-form-item label="历史起点（留空为全部）"
+                ><n-date-picker
+                  v-model:value="historyTimestamp"
+                  type="datetime"
+                  clearable
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="公开站点地址"
+                ><n-input
+                  v-model:value="draft.public_base_url"
+                  :placeholder="siteOrigin"
+                  @blur="saveConfig(false)"
+              /></n-form-item>
+              <n-form-item label="总结来源"
+                ><n-checkbox v-model:checked="draft.include_summaries"
+                  >使用已有总结</n-checkbox
+                ></n-form-item
+              >
+              <n-form-item label="图片来源"
+                ><n-checkbox v-model:checked="draft.include_images"
+                  >使用已保存的 OCR 和描述</n-checkbox
+                ></n-form-item
+              >
+              <n-form-item label="引用展示"
+                ><n-space
+                  ><n-checkbox v-model:checked="draft.show_quotes"
+                    >原文摘要</n-checkbox
+                  ><n-checkbox v-model:checked="draft.show_telegram_links"
+                    >Telegram 原帖链接</n-checkbox
+                  ></n-space
+                ></n-form-item
+              >
+              <n-form-item label="消息类别"
+                ><n-checkbox-group v-model:value="draft.message_types"
+                  ><n-space
+                    ><n-checkbox value="text">文字</n-checkbox
+                    ><n-checkbox value="image">图片</n-checkbox
+                    ><n-checkbox value="other">其他</n-checkbox></n-space
+                  ></n-checkbox-group
+                ></n-form-item
+              >
+              <n-form-item label="展示栏目"
+                ><n-checkbox-group v-model:value="draft.columns"
+                  ><n-space
+                    ><n-checkbox value="pages">文章</n-checkbox
+                    ><n-checkbox value="graph">知识地图</n-checkbox
+                    ><n-checkbox value="timeline">时间轴</n-checkbox
+                    ><n-checkbox value="profile">画像</n-checkbox></n-space
+                  ></n-checkbox-group
+                ></n-form-item
+              >
+              <n-form-item label="不公开的主题（每行一个）" class="wide"
+                ><n-input
+                  v-model:value="draft.hiddenTopics"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
+                  @blur="saveConfig(false)"
+              /></n-form-item>
+            </div>
+          </n-form>
+          <n-text v-if="!channel.access_verified" type="warning"
+            >频道公开状态尚未确认，请检查 UserBot 连接。</n-text
+          >
+        </n-card>
+        <n-card title="生成设置" size="small">
+          <n-form label-placement="top" :show-feedback="false" :disabled="busy">
+            <div class="settings-grid">
+              <n-form-item label="温度"
+                ><n-input-number
+                  v-model:value="draft.temperature"
+                  :min="0"
+                  :max="1"
+                  :step="0.1"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="每任务 Token 上限"
+                ><n-input-number
+                  v-model:value="draft.token_budget"
+                  :min="1000"
+                  :max="10000000"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="请求超时（秒）"
+                ><n-input-number
+                  v-model:value="draft.timeout_seconds"
+                  :min="10"
+                  :max="1800"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="重试次数"
+                ><n-input-number
+                  v-model:value="draft.retries"
+                  :min="0"
+                  :max="8"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="增量合并等待（秒）"
+                ><n-input-number
+                  v-model:value="draft.debounce_seconds"
+                  :min="10"
+                  :max="86400"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="输入单价 / 百万 Token（可选）"
+                ><n-input-number
+                  v-model:value="draft.input_cost_per_million"
+                  :min="0"
+                  :step="0.01"
+                  clearable
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="输出单价 / 百万 Token（可选）"
+                ><n-input-number
+                  v-model:value="draft.output_cost_per_million"
+                  :min="0"
+                  :step="0.01"
+                  clearable
+                  style="width: 100%"
+              /></n-form-item>
+            </div>
+          </n-form>
+        </n-card>
       </template>
-      <template v-else-if="tab === 'jobs'"
-        ><WikiCoverage :value="channel.coverage" />
-        <div class="wiki-admin-actions">
-          <button
-            class="wiki-primary"
+      <template v-else-if="tab === 'jobs'">
+        <n-card title="采集进度" size="small"
+          ><n-space
+            >已枚举 {{ channel.coverage.enumerated || 0 }} 条
+            <n-divider vertical />已收录 {{ channel.coverage.indexed || 0 }} 条
+            <n-divider vertical />排除
+            {{ channel.coverage.excluded || 0 }} 条</n-space
+          ></n-card
+        >
+        <n-space
+          ><n-button
+            type="primary"
             :disabled="busy || !channel.enabled"
             @click="enqueue('backfill')"
-          >
-            全量历史回溯</button
-          ><button
+            >全量回溯</n-button
+          ><n-button
             :disabled="busy || !channel.enabled"
             @click="enqueue('update')"
-          >
-            增量更新</button
-          ><button
+            >增量更新</n-button
+          ><n-button
             :disabled="busy || !channel.enabled"
             @click="enqueue('reconcile')"
-          >
-            历史核对与补扫</button
-          ><button
+            >核对历史</n-button
+          ><n-button
             :disabled="busy || !channel.enabled"
             @click="enqueue('reindex')"
+            >重建索引</n-button
+          ><n-button :disabled="busy" @click="refreshData"
+            >刷新状态</n-button
+          ></n-space
+        >
+        <n-empty v-if="!jobs.length" description="暂无任务" />
+        <n-card
+          v-for="job in jobs"
+          :key="job.id"
+          :title="jobLabels[job.kind] || job.kind"
+          size="small"
+        >
+          <template #header-extra
+            ><n-tag :bordered="false">{{
+              stateLabels[job.status] || job.status
+            }}</n-tag></template
           >
-            重建知识索引</button
-          ><button @click="refreshData">刷新状态</button>
-        </div>
-        <p v-if="!jobs.length" class="wiki-empty">
-          尚无任务。首次使用请运行全量历史回溯。
-        </p>
-        <article v-for="job in jobs" :key="job.id" class="wiki-card">
-          <div class="wiki-section-head">
-            <h3>{{ jobLabels[job.kind] || job.kind }}</h3>
-            <span class="wiki-tag"
-              >{{ stateLabels[job.status] || job.status }} ·
-              {{ job.phase }}</span
-            >
-          </div>
-          <p class="wiki-meta">
-            {{ formatDate(job.created_at) }} · {{ job.id }}
-          </p>
-          <div class="wiki-stats">
-            <div>
-              枚举 / 处理<strong
+          <n-text depth="3"
+            >{{ formatDate(job.created_at) }} · {{ job.phase }}</n-text
+          >
+          <n-grid :cols="3" :x-gap="16" class="job-stats"
+            ><n-gi
+              ><n-statistic label="枚举 / 处理"
                 >{{ job.progress.enumerated || 0 }} /
-                {{ job.progress.processed || 0 }}</strong
-              >
-            </div>
-            <div>
-              输入 / 输出 Token<strong
+                {{ job.progress.processed || 0 }}</n-statistic
+              ></n-gi
+            ><n-gi
+              ><n-statistic label="输入 / 输出 Token"
                 >{{ job.progress.input_tokens || 0 }} /
-                {{ job.progress.output_tokens || 0 }}</strong
-              >
-            </div>
-            <div>
-              缓存复用 / 页面<strong
+                {{ job.progress.output_tokens || 0 }}</n-statistic
+              ></n-gi
+            ><n-gi
+              ><n-statistic label="缓存命中 / 页面"
                 >{{ job.progress.cache_hits || 0 }} /
-                {{ job.progress.pages || 0 }}</strong
-              >
-            </div>
-          </div>
-          <p class="wiki-muted">
-            审校：{{
-              job.progress.review_complete
-                ? "全部通过"
-                : "待完成或存在未通过内容"
-            }}
-            · 发布：{{ job.progress.published ? "已发布" : "尚未发布"
-            }}<span v-if="job.progress.reserved_tokens">
-              · 未核实用量预留 {{ job.progress.reserved_tokens }} Token</span
-            ><span v-if="job.progress.estimated_cost != null">
-              · 费用估算 {{ job.progress.estimated_cost }}</span
-            >
-          </p>
-          <p v-if="job.error_code" class="wiki-error">
-            {{ job.error_code }} · 已尝试 {{ job.attempts }} 次
-          </p>
-          <div class="wiki-admin-actions">
-            <button
-              v-if="['pending', 'running', 'partial'].includes(job.status)"
-              @click="jobControl(job.id, 'pause')"
-            >
-              停止 / 保留进度</button
-            ><button
-              v-if="job.status === 'paused'"
-              @click="jobControl(job.id, 'resume')"
-            >
-              恢复</button
-            ><button
-              v-if="job.status === 'failed'"
-              @click="jobControl(job.id, 'retry')"
-            >
-              重试</button
-            ><button
-              v-if="job.status === 'completed' && job.progress.review_complete"
-              class="wiki-primary"
-              @click="publish(job.id)"
-            >
-              发布此任务
-            </button>
-          </div>
-        </article></template
-      >
-      <template v-else-if="tab === 'review'"
-        ><div class="wiki-section-head">
-          <h2>草稿与修订</h2>
-          <button @click="refreshData">刷新</button>
-        </div>
-        <p v-if="!revisions.length" class="wiki-empty">
-          知识生成完成后，在这里检查草稿与引用。
-        </p>
-        <details v-if="reviewQueue.length" class="wiki-card">
-          <summary>待审校或未通过的候选（{{ reviewQueue.length }}）</summary>
-          <article v-for="item in reviewQueue" :key="item.cache_key">
-            <p>
-              {{
-                item.review.pending
-                  ? "审校尚未完成"
-                  : item.review.reason || "审校未通过"
-              }}
-            </p>
-            <p class="wiki-meta">
-              {{ item.source_type }} · {{ formatDate(item.created_at) }}
-            </p>
-            <button :disabled="busy" @click="retryReview(item.cache_key)">
-              复用候选，重新审校
-            </button>
-          </article>
-        </details>
-        <div class="wiki-review-grid">
-          <section>
-            <article v-for="rev in revisions" :key="rev.id" class="wiki-card">
-              <span class="wiki-tag">{{
-                rev.rejected ? "已拒绝" : rev.approved ? "审校通过" : "待审核"
-              }}</span
-              ><span v-if="rev.locked" class="wiki-tag">人工锁定</span
-              ><span v-if="rev.hidden" class="wiki-tag">已隐藏</span>
-              <h3>{{ rev.title }}</h3>
-              <p class="wiki-meta">
-                {{ formatDate(rev.created_at) }} · {{ rev.id.slice(0, 8) }}
+                {{ job.progress.pages || 0 }}</n-statistic
+              ></n-gi
+            ></n-grid
+          >
+          <n-alert v-if="job.error_code" type="error" :show-icon="false"
+            >{{ job.error_code }} · 已重试 {{ job.attempts }} 次</n-alert
+          >
+          <n-text depth="3"
+            >审校：{{ job.progress.review_complete ? "通过" : "待完成" }} ·
+            发布：{{ job.progress.published ? "已发布" : "未发布" }}</n-text
+          >
+          <template #action
+            ><n-space
+              ><n-button
+                v-if="['pending', 'running', 'partial'].includes(job.status)"
+                @click="jobControl(job.id, 'pause')"
+                >暂停</n-button
+              ><n-button
+                v-if="job.status === 'paused'"
+                @click="jobControl(job.id, 'resume')"
+                >恢复</n-button
+              ><n-button
+                v-if="job.status === 'failed'"
+                @click="jobControl(job.id, 'retry')"
+                >重试</n-button
+              ><n-button
+                v-if="
+                  job.status === 'completed' && job.progress.review_complete
+                "
+                type="primary"
+                @click="publish(job.id)"
+                >发布</n-button
+              ></n-space
+            ></template
+          >
+        </n-card>
+      </template>
+      <template v-else-if="tab === 'review'">
+        <n-collapse v-if="reviewQueue.length"
+          ><n-collapse-item
+            :title="`未通过审校（${reviewQueue.length}）`"
+            name="queue"
+            ><n-card
+              v-for="item in reviewQueue"
+              :key="item.cache_key"
+              size="small"
+              ><p>
+                {{
+                  item.review.pending
+                    ? "审校未完成"
+                    : item.review.reason || "审校未通过"
+                }}
               </p>
-              <div class="wiki-admin-actions">
-                <button @click="previewRevision(rev)">预览与证据</button
-                ><button
+              <n-button :disabled="busy" @click="retryReview(item.cache_key)"
+                >重新审校</n-button
+              ></n-card
+            ></n-collapse-item
+          ></n-collapse
+        >
+        <n-empty v-if="!revisions.length" description="暂无草稿" />
+        <div class="review-grid">
+          <div class="revision-list">
+            <n-card
+              v-for="rev in revisions"
+              :key="rev.id"
+              :title="rev.title"
+              size="small"
+              ><n-space
+                ><n-tag>{{
+                  rev.rejected ? "已拒绝" : rev.approved ? "审校通过" : "待审核"
+                }}</n-tag
+                ><n-tag v-if="rev.locked">已锁定</n-tag
+                ><n-tag v-if="rev.hidden">已隐藏</n-tag></n-space
+              >
+              <p class="muted">{{ formatDate(rev.created_at) }}</p>
+              <n-space
+                ><n-button
+                  type="primary"
+                  secondary
+                  @click="previewRevision(rev)"
+                  >预览</n-button
+                ><n-button
                   @click="pageAction(rev, rev.locked ? 'unlock' : 'lock')"
-                >
-                  {{ rev.locked ? "解锁" : "锁定" }}</button
-                ><button @click="pageAction(rev, rev.hidden ? 'show' : 'hide')">
-                  {{ rev.hidden ? "恢复展示" : "撤回页面" }}</button
-                ><button @click="reject(rev.id)">拒绝修订</button
-                ><button @click="enqueue('page', rev.page_id)">重新生成</button>
-              </div>
-            </article>
-          </section>
-          <section v-if="preview" class="wiki-card wiki-preview">
-            <h2>{{ preview.document.title }}</h2>
-            <div
+                  >{{ rev.locked ? "解锁" : "锁定" }}</n-button
+                ><n-button
+                  @click="pageAction(rev, rev.hidden ? 'show' : 'hide')"
+                  >{{ rev.hidden ? "恢复展示" : "撤回" }}</n-button
+                ><n-button type="error" secondary @click="reject(rev.id)"
+                  >拒绝</n-button
+                ><n-button @click="enqueue('page', rev.page_id)"
+                  >重新生成</n-button
+                ></n-space
+              ></n-card
+            >
+          </div>
+          <n-card v-if="preview" :title="preview.document.title" size="small"
+            ><section
               v-for="(claim, index) in preview.document.claims"
               :key="index"
-              class="wiki-claim"
+              class="claim"
             >
               <h3>{{ claim.key }}</h3>
-              <span class="wiki-tag">{{ statusLabels[claim.status] }}</span>
+              <n-tag size="small">{{ statusLabels[claim.status] }}</n-tag>
               <p>{{ claim.text }}</p>
-              <details>
-                <summary>人工修正此断言</summary>
-                <textarea
-                  v-model="claim.text"
-                  rows="4"
-                  style="width: 100%"
-                ></textarea
-                ><button @click="correctClaim(index, claim.text)">
-                  保存修正并锁定页面
-                </button>
-              </details>
+              <n-collapse
+                ><n-collapse-item title="修正此断言" :name="index"
+                  ><n-input
+                    v-model:value="claim.text"
+                    type="textarea"
+                    :autosize="{ minRows: 3, maxRows: 8 }"
+                  /><n-button
+                    class="mt"
+                    @click="correctClaim(index, claim.text)"
+                    >保存修正并锁定</n-button
+                  ></n-collapse-item
+                ></n-collapse
+              >
               <blockquote v-for="(ev, i) in claim.evidence" :key="i">
-                {{ ev.quote }}
-                <div class="wiki-meta">
-                  来源 {{ ev.source_id }} · {{ ev.start }}—{{ ev.end }}
-                </div>
-                <button @click="hideSource(ev.source_id)">屏蔽此来源</button>
+                <p>{{ ev.quote }}</p>
+                <n-text depth="3">来源 {{ ev.source_id }}</n-text
+                ><n-button
+                  size="small"
+                  quaternary
+                  type="error"
+                  @click="hideSource(ev.source_id)"
+                  >屏蔽来源</n-button
+                >
               </blockquote>
-            </div>
-            <details>
-              <summary>与前一修订的差异</summary>
-              <pre>{{ preview.diff }}</pre>
-            </details>
-            <details>
-              <summary>人工修正与别名管理</summary>
-              <div class="wiki-admin-form">
-                <label>标题<input v-model="editTitle" /></label
-                ><label
-                  >稳定链接别名<input
-                    v-model="editSlug"
-                    pattern="[A-Za-z0-9_-]+" /></label
-                ><button @click="renamePage">保存标题与链接</button
-                ><label
-                  >要归入此页面的同义名称<input v-model="editAlias" /></label
-                ><button @click="bindAlias">合并 / 重定向别名</button>
-              </div>
-            </details>
-          </section>
-        </div></template
-      >
-      <template v-else-if="tab === 'history'"
-        ><h2>发布快照</h2>
-        <p class="wiki-muted">
-          回滚会再次检查来源；被撤回、删除或屏蔽的证据不能重新公开。
-        </p>
-        <article v-for="pub in publications" :key="pub.id" class="wiki-card">
-          <span class="wiki-tag">{{
-            pub.id === channel.published_revision ? "当前发布" : "历史版本"
-          }}</span>
-          <h3>{{ formatDate(pub.created_at) }}</h3>
-          <p class="wiki-meta">{{ pub.id }}</p>
-          <button
-            :disabled="pub.id === channel.published_revision"
-            @click="rollback(pub.id)"
+            </section>
+            <n-collapse
+              ><n-collapse-item title="修订差异" name="diff">
+                <pre>{{ preview.diff }}</pre></n-collapse-item
+              ><n-collapse-item title="标题与别名" name="aliases"
+                ><n-form label-placement="top"
+                  ><n-form-item label="标题"
+                    ><n-input v-model:value="editTitle" /></n-form-item
+                  ><n-form-item label="链接别名"
+                    ><n-input v-model:value="editSlug" /></n-form-item
+                  ><n-button @click="renamePage">保存标题与链接</n-button
+                  ><n-form-item label="同义名称" class="mt"
+                    ><n-input v-model:value="editAlias" /></n-form-item
+                  ><n-button @click="bindAlias">合并别名</n-button></n-form
+                ></n-collapse-item
+              ></n-collapse
+            ></n-card
           >
-            回滚到此快照
-          </button>
-        </article>
-        <button
-          :disabled="busy || !channel.published_revision"
-          @click="withdraw"
+        </div>
+      </template>
+      <template v-else-if="tab === 'history'">
+        <n-card title="发布记录" size="small"
+          ><n-empty
+            v-if="!publications.length"
+            description="暂无发布记录"
+          /><n-list v-else
+            ><n-list-item v-for="pub in publications" :key="pub.id"
+              ><n-thing
+                :title="formatDate(pub.created_at)"
+                :description="pub.id"
+              /><template #suffix
+                ><n-tag
+                  v-if="pub.id === channel.published_revision"
+                  type="success"
+                  >当前版本</n-tag
+                ><n-button v-else :disabled="busy" @click="rollback(pub.id)"
+                  >回滚</n-button
+                ></template
+              ></n-list-item
+            ></n-list
+          ><template #action
+            ><n-button
+              type="error"
+              secondary
+              :disabled="busy || !channel.published_revision"
+              @click="withdraw"
+              >撤回发布</n-button
+            ></template
+          ></n-card
         >
-          撤回整个频道发布
-        </button>
-        <h2>审计记录</h2>
-        <div v-for="(item, index) in audit" :key="index" class="wiki-card">
-          <strong>{{ item.action }}</strong> · {{ formatDate(item.created_at) }}
-          <p class="wiki-meta">{{ item.actor }} · {{ item.target_id }}</p>
-        </div></template
+        <n-card title="操作记录" size="small"
+          ><n-empty v-if="!audit.length" description="暂无记录" /><n-list v-else
+            ><n-list-item v-for="(item, index) in audit" :key="index"
+              ><n-thing
+                :title="item.action"
+                :description="`${formatDate(item.created_at)} · ${item.actor} · ${item.target_id || ''}`" /></n-list-item></n-list
+        ></n-card>
+      </template>
+      <n-card v-else title="清除 Wiki 数据" size="small"
+        ><p>
+          清除本频道的页面、修订、发布记录和任务，并关闭
+          Wiki。原始消息归档保留。
+        </p>
+        <n-form-item :label="`输入频道 ID ${channel.id} 确认`"
+          ><n-input
+            v-model:value="purgeConfirm"
+            :placeholder="channel.id"
+            style="max-width: 360px" /></n-form-item
+        ><n-button
+          type="error"
+          :disabled="busy || purgeConfirm !== channel.id"
+          @click="purge"
+          >清除频道 Wiki</n-button
+        ></n-card
       >
-      <template v-else
-        ><section class="wiki-card">
-          <h2>清除 Wiki 数据</h2>
-          <p>
-            清除本频道的页面、草稿、发布记录与任务，并关闭
-            Wiki。原始消息归档不会被删除；屏蔽与删除标记会保留，防止旧归档重新公开。
-          </p>
-          <label
-            >输入频道 ID {{ channel.id }} 确认<input
-              v-model="purgeConfirm"
-              :placeholder="channel.id" /></label
-          ><button
-            :disabled="busy || purgeConfirm !== channel.id"
-            @click="purge"
-          >
-            清除频道 Wiki
-          </button>
-        </section></template
-      >
-      <div
+      <n-space
         v-if="['jobs', 'review', 'history'].includes(tab)"
-        class="wiki-pagination"
-      >
-        <button
+        justify="center"
+        ><n-button
           :disabled="adminPage <= 1 || busy"
           @click="
             adminPage--;
             refreshData();
           "
-        >
-          上一页</button
-        ><span>第 {{ adminPage }} 页</span
-        ><button
+          >上一页</n-button
+        ><n-text>第 {{ adminPage }} 页</n-text
+        ><n-button
           :disabled="
             busy ||
             (tab === 'jobs'
@@ -509,15 +544,14 @@
             adminPage++;
             refreshData();
           "
-        >
-          下一页
-        </button>
-      </div>
+          >下一页</n-button
+        ></n-space
+      >
     </template>
   </div>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { computed, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
 import {
   wikiAdmin,
   formatDate,
@@ -525,8 +559,12 @@ import {
   type Coverage,
   type Claim,
 } from "../../api/wiki";
-import WikiCoverage from "./WikiCoverage.vue";
-import "./wiki.css";
+import {
+  createAutosave,
+  saveError,
+  type Autosave,
+} from "../../composables/autosave";
+
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;
@@ -586,15 +624,12 @@ interface Revision {
   created_at: string;
 }
 const channels = ref<Channel[]>([]),
-  selected = ref(""),
+  selected = ref(localStorage.getItem("sakura_wiki_channel") || ""),
   channel = ref<Channel>(),
-  draft = ref<Config>(),
   busy = ref(false),
   error = ref(""),
   notice = ref(""),
   tab = ref("config"),
-  historySince = ref(""),
-  hiddenTopics = ref(""),
   purgeConfirm = ref("");
 const adminPage = ref(1);
 const reviewQueue = ref<
@@ -620,12 +655,165 @@ const jobs = ref<Job[]>([]),
   editTitle = ref(""),
   editSlug = ref(""),
   editAlias = ref("");
+
+interface FormSettings extends Config {
+  hiddenTopics: string;
+}
+const autosave = shallowRef<Autosave<{ settings: FormSettings }> | null>(null);
+const draft = computed(() => autosave.value?.values.settings);
+const siteOrigin = window.location.origin;
+const channelOptions = computed(() =>
+  channels.value.map((ch) => ({ label: ch.title, value: ch.id })),
+);
+const publicationOptions = [
+  { label: "人工审核后发布", value: "review" },
+  { label: "自动发布", value: "auto" },
+];
+const frequencyOptions = [
+  { label: "仅手动", value: "manual" },
+  { label: "每日", value: "daily" },
+  { label: "每周", value: "weekly" },
+  { label: "自定义 Cron", value: "cron" },
+];
+const configSaving = computed(
+  () => autosave.value?.states.settings.status === "saving",
+);
+const saveFailed = computed(() =>
+  ["error", "invalid"].includes(autosave.value?.states.settings.status || ""),
+);
+const saveProblem = computed(() => autosave.value?.states.settings.error || "");
+const saveLabel = computed(
+  () =>
+    ({
+      saved: "已保存",
+      pending: "等待保存",
+      saving: "保存中…",
+      error: "保存失败",
+      invalid: "请检查输入",
+    })[autosave.value?.states.settings.status || "saved"],
+);
+const historyTimestamp = computed<number | null>({
+  get: () =>
+    draft.value?.history_since
+      ? new Date(draft.value.history_since).getTime()
+      : null,
+  set: (value) => {
+    if (draft.value)
+      draft.value.history_since =
+        value === null ? null : new Date(value).toISOString();
+  },
+});
+let stopDraftCache: (() => void) | undefined;
+function formSettings(config: Config): FormSettings {
+  return {
+    ...createWikiDraft(config),
+    hiddenTopics: config.hidden_topics.join("\n"),
+  };
+}
+function configPayload(settings: FormSettings): Config {
+  const { hiddenTopics, ...config } = createWikiDraft(settings);
+  const entered = config.public_base_url.trim() || siteOrigin;
+  const address = new URL(
+    entered.includes("://") ? entered : `${location.protocol}//${entered}`,
+  );
+  if (
+    !["http:", "https:"].includes(address.protocol) ||
+    address.username ||
+    address.password
+  )
+    throw new Error("请填写有效的公开站点地址");
+  return {
+    ...config,
+    public_base_url: address.origin,
+    hidden_topics: hiddenTopics
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  };
+}
+function applyChannel(loaded: Channel) {
+  stopDraftCache?.();
+  autosave.value?.stop();
+  channel.value = loaded;
+  const owner = loaded.id,
+    cacheKey = `sakura_wiki_draft_${owner}`;
+  const controller = createAutosave(
+    { settings: formSettings(loaded.config) },
+    {
+      delay: 500,
+      validate: (_field, values) => {
+        try {
+          configPayload(values);
+          return undefined;
+        } catch {
+          return "请填写有效的公开站点地址";
+        }
+      },
+      save: async (changes) => {
+        const submitted = changes.settings!;
+        const saved = await wikiAdmin<Channel>(
+          `/channels/${owner}/config`,
+          "PUT",
+          configPayload(submitted),
+        );
+        if (selected.value === owner) {
+          channel.value = saved;
+          channels.value = channels.value.map((ch) =>
+            ch.id === owner ? saved : ch,
+          );
+        }
+        return {
+          settings: {
+            ...formSettings(saved.config),
+            hiddenTopics: submitted.hiddenTopics,
+          },
+        };
+      },
+    },
+  );
+  autosave.value = controller;
+  stopDraftCache = watch(
+    () => [
+      JSON.stringify(controller.values.settings),
+      controller.states.settings.status,
+      controller.active.value,
+    ],
+    () => {
+      if (controller.hasUnsaved())
+        sessionStorage.setItem(
+          cacheKey,
+          JSON.stringify(controller.values.settings),
+        );
+      else sessionStorage.removeItem(cacheKey);
+    },
+    { flush: "sync" },
+  );
+  const cached = sessionStorage.getItem(cacheKey);
+  if (cached) {
+    try {
+      Object.assign(controller.values.settings, JSON.parse(cached));
+    } catch {
+      sessionStorage.removeItem(cacheKey);
+    }
+  }
+  if (!controller.values.settings.public_base_url)
+    controller.values.settings.public_base_url = siteOrigin;
+}
+async function switchChannel(value: string) {
+  if (value === selected.value) return;
+  await autosave.value?.flush();
+  selected.value = value;
+  localStorage.setItem("sakura_wiki_channel", value);
+  adminPage.value = 1;
+  await loadChannel();
+}
+
 let timer: ReturnType<typeof setInterval> | undefined;
 const tabs = [
-  { key: "config", label: "设置与模型" },
-  { key: "jobs", label: "任务与覆盖" },
-  { key: "review", label: "草稿与证据" },
-  { key: "history", label: "发布与审计" },
+  { key: "config", label: "设置" },
+  { key: "jobs", label: "任务" },
+  { key: "review", label: "草稿" },
+  { key: "history", label: "发布记录" },
   { key: "purge", label: "数据维护" },
 ];
 const jobLabels: Record<string, string> = {
@@ -648,13 +836,7 @@ function root() {
   return `/channels/${selected.value}`;
 }
 function problem(err: unknown) {
-  const detail = (err as { response?: { data?: { detail?: unknown } } })
-    .response?.data?.detail;
-  return typeof detail === "string"
-    ? detail
-    : err instanceof Error
-      ? err.message
-      : "操作失败";
+  return saveError(err);
 }
 async function perform(fn: () => Promise<unknown>, message = "操作完成") {
   if (busy.value) return;
@@ -663,7 +845,7 @@ async function perform(fn: () => Promise<unknown>, message = "操作完成") {
   try {
     await fn();
     notice.value = message;
-    await refreshData();
+    if (tab.value !== "config") await refreshData();
   } catch (err) {
     error.value = problem(err);
   } finally {
@@ -671,12 +853,14 @@ async function perform(fn: () => Promise<unknown>, message = "操作完成") {
   }
 }
 async function loadChannels() {
+  if (autosave.value?.hasUnsaved() && !(await autosave.value.flush(true)))
+    return;
   busy.value = true;
   error.value = "";
   try {
     channels.value = await wikiAdmin<Channel[]>("/channels");
-    if (!selected.value && channels.value.length)
-      selected.value = channels.value[0].id;
+    if (!channels.value.some((ch) => ch.id === selected.value))
+      selected.value = channels.value[0]?.id || "";
     if (selected.value) await loadChannel();
   } catch (err) {
     error.value = problem(err);
@@ -686,15 +870,21 @@ async function loadChannels() {
 }
 async function loadChannel() {
   if (!selected.value) return;
+  const owner = selected.value;
+  busy.value = true;
+  error.value = "";
+  notice.value = "";
   preview.value = undefined;
   try {
-    channel.value = await wikiAdmin<Channel>(`${root()}/config`);
-    draft.value = createWikiDraft(channel.value.config);
-    historySince.value = draft.value.history_since?.slice(0, 16) || "";
-    hiddenTopics.value = draft.value.hidden_topics.join("\n");
-    await refreshData();
+    const loaded = await wikiAdmin<Channel>(`/channels/${owner}/config`);
+    if (selected.value !== owner) return;
+    applyChannel(loaded);
+    localStorage.setItem("sakura_wiki_channel", owner);
+    if (tab.value !== "config") await refreshData();
   } catch (err) {
     error.value = problem(err);
+  } finally {
+    busy.value = false;
   }
 }
 function retryReview(key: string) {
@@ -725,36 +915,10 @@ async function refreshData() {
     reviewQueue.value,
   ] = results;
 }
-async function saveConfig() {
-  if (!draft.value) return;
-  const payload = {
-    ...draft.value,
-    history_since: historySince.value
-      ? new Date(historySince.value).toISOString()
-      : null,
-    hidden_topics: hiddenTopics.value
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean),
-    input_cost_per_million:
-      draft.value.input_cost_per_million == null ||
-      String(draft.value.input_cost_per_million) === ""
-        ? null
-        : Number(draft.value.input_cost_per_million),
-    output_cost_per_million:
-      draft.value.output_cost_per_million == null ||
-      String(draft.value.output_cost_per_million) === ""
-        ? null
-        : Number(draft.value.output_cost_per_million),
-  };
-  await perform(async () => {
-    channel.value = await wikiAdmin<Channel>(
-      `${root()}/config`,
-      "PUT",
-      payload,
-    );
-    draft.value = createWikiDraft(channel.value.config);
-  }, "频道设置已保存");
+async function saveConfig(showNotice = true) {
+  const saved = await autosave.value?.flush(true);
+  if (saved && showNotice) notice.value = "设置已保存";
+  return !!saved;
 }
 function enqueue(kind: string, page_id?: string) {
   return perform(
@@ -763,16 +927,12 @@ function enqueue(kind: string, page_id?: string) {
   );
 }
 async function enableWiki() {
-  if (!channel.value) return;
-  await perform(async () => {
-    channel.value = await wikiAdmin<Channel>(`${root()}/config`, "PUT", {
-      ...channel.value!.config,
-      enabled: true,
-    });
-    draft.value = createWikiDraft(channel.value.config);
-  }, "Wiki 已启用。点击“开始构建”生成频道内容。");
+  if (!draft.value) return;
+  draft.value.enabled = true;
+  if (await saveConfig(false)) notice.value = "Wiki 已启用";
 }
 async function startBuild() {
+  if (!(await saveConfig(false))) return;
   await enqueue("backfill");
   if (!error.value) tab.value = "jobs";
 }
@@ -863,6 +1023,13 @@ async function purge() {
   purgeConfirm.value = "";
   await loadChannel();
 }
+watch(tab, () => {
+  adminPage.value = 1;
+  if (tab.value !== "config" && channel.value)
+    refreshData().catch((err) => {
+      error.value = problem(err);
+    });
+});
 onMounted(() => {
   loadChannels();
   timer = setInterval(() => {
@@ -874,112 +1041,118 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
+  void autosave.value?.flush();
+  stopDraftCache?.();
+  autosave.value?.stop();
 });
 </script>
 <style scoped>
-.wiki-enable-bar {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  margin: 16px 0;
-  padding: 16px;
-  background: var(--wk-card);
-  border: 1px solid var(--wk-line);
-  border-radius: 8px;
-}
-.wiki-admin {
-  background: transparent;
-  min-height: 0;
-  padding: 24px;
-  font-family: inherit;
-}
-.wiki-admin h1 {
-  margin: 6px 0;
-}
-.wiki-admin .wiki-card {
-  margin-bottom: 18px;
-}
-.wiki-admin-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-.wiki-admin-form label {
-  font-size: 13px;
+.wiki-admin-page {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
+  color: var(--sb-text);
+  padding: 0;
 }
-.wiki-admin-form .wiki-check {
-  flex-direction: row;
+.wiki-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
+}
+.toolbar-row {
+  display: flex;
   align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.wiki-admin-form input[type="checkbox"] {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--wk-accent);
+.channel-picker {
+  width: 300px;
+  max-width: 100%;
 }
-.wiki-admin-form textarea {
-  background: var(--wk-bg);
-  color: var(--wk-text);
-  border: 1px solid var(--wk-line);
-  border-radius: 8px;
-  padding: 10px;
-  font: inherit;
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
 }
-.wiki-admin-form .wide {
+.save-state {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+.settings-grid .wide {
   grid-column: 1/-1;
 }
-.wiki-admin-form fieldset {
-  border: 1px solid var(--wk-line);
-  border-radius: 8px;
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 15px;
+.job-stats {
+  margin: 16px 0;
 }
-.wiki-admin-actions {
-  display: flex;
-  gap: 9px;
-  flex-wrap: wrap;
-  margin: 18px 0;
-}
-.wiki-admin .wiki-stats strong {
-  display: block;
-  font-size: 22px;
-  margin: 7px 0;
-}
-.wiki-review-grid {
+.review-grid {
   display: grid;
-  grid-template-columns: 1fr 1.3fr;
-  gap: 20px;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.5fr);
+  gap: 16px;
   align-items: start;
 }
-.wiki-preview pre {
+.revision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.claim {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--sb-border);
+}
+.claim h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.claim p,
+pre {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.claim blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background: var(--sb-surface-2);
+  border-left: 3px solid var(--sb-border);
+}
+.claim blockquote .n-text {
+  display: block;
   overflow-wrap: anywhere;
   font-size: 12px;
 }
-.wiki-preview blockquote .wiki-meta {
-  overflow-wrap: anywhere;
+.muted {
+  color: var(--sb-text-2);
+  font-size: 12px;
 }
-.wiki-preview details {
-  margin: 20px 0;
+.mt {
+  margin-top: 12px;
 }
-.wiki-admin summary {
-  cursor: pointer;
-  font-weight: 600;
+@media (min-width: 1600px) {
+  .settings-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
-.wiki-admin h2 {
-  font-size: 20px;
-}
-.wiki-admin button:disabled {
-  opacity: 0.5;
-}
-@media (max-width: 850px) {
-  .wiki-review-grid,
-  .wiki-admin-form {
+@media (max-width: 800px) {
+  .settings-grid,
+  .review-grid {
     grid-template-columns: 1fr;
+  }
+  .toolbar-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .channel-picker {
+    width: 100%;
+  }
+  .wiki-toolbar {
+    top: 0;
   }
 }
 </style>
