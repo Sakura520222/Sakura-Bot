@@ -111,7 +111,10 @@ class WikiEngine:
         }
         progress.setdefault("active_requests", {})[request_id] = meta
         await self.store.report(
-            job, f"正在{stage}", stage="planning" if stage == "整理总结主题" else job["phase"]
+            job,
+            f"正在{stage}",
+            stage="planning" if stage == "整理总结主题" else job["phase"],
+            progress_only=True,
         )
         started = time.monotonic()
         usage, failure, received, visible = None, None, 0, 0
@@ -157,7 +160,7 @@ class WikiEngine:
                             progress.update(
                                 ai_received_chars=received, ai_elapsed_seconds=round(now - started)
                             )
-                            await self.store.checkpoint(job)
+                            await self.store.checkpoint(job, progress_only=True)
                             last_checkpoint = now
                         if choice.finish_reason:
                             finish_reason = choice.finish_reason
@@ -212,7 +215,7 @@ class WikiEngine:
                 else None
             )
             try:
-                await self.store.checkpoint(job)
+                await self.store.checkpoint(job, progress_only=True)
             except LeaseLost:
                 if failure is None:
                     raise
@@ -638,8 +641,10 @@ class WikiEngine:
                 job["cursor"]["page_after"] = page["id"]
                 job["progress"]["assembled_pages"] = job["progress"].get("assembled_pages", 0) + 1
                 job["progress"]["pages"] = len(job["cursor"]["revisions"])
-                await self.store.checkpoint(job)
+                if job["progress"]["assembled_pages"] % 25 == 0:
+                    await self.store.checkpoint(job)
         job["progress"]["pages"] = len(job["cursor"]["revisions"])
+        await self.store.checkpoint(job)
         if job["progress"]["review_complete"] and job["progress"]["pages"]:
             await self.describe_channel(job, channel)
         await self.store.checkpoint(job, "ready")

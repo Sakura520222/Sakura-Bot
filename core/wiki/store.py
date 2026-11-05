@@ -436,26 +436,32 @@ class WikiStore:
         if not count:
             raise LeaseLost("Wiki job lease lost")
 
-    async def checkpoint(self, job, phase=None):
+    async def checkpoint(self, job, phase=None, *, progress_only=False):
         if phase:
             job["phase"] = phase
         lock = self._checkpoint_locks.setdefault(job["id"], asyncio.Lock())
         async with lock:
             async with self.transaction() as cur:
                 await self.fence(cur, job)
-                await cur.execute(
-                    "UPDATE wiki_jobs SET phase=%s,`cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
-                    (job["phase"], encode(job["cursor"]), encode(job["progress"]), job["id"]),
-                )
+                if progress_only:
+                    await cur.execute(
+                        "UPDATE wiki_jobs SET progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                        (encode(job["progress"]), job["id"]),
+                    )
+                else:
+                    await cur.execute(
+                        "UPDATE wiki_jobs SET phase=%s,`cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                        (job["phase"], encode(job["cursor"]), encode(job["progress"]), job["id"]),
+                    )
 
-    async def report(self, job, activity, **details):
+    async def report(self, job, activity, *, progress_only=False, **details):
         progress = job["progress"]
         if activity != progress.get("activity"):
             events = progress.setdefault("events", [])
             events.append({"time": utc().isoformat(), "text": activity})
             del events[:-12]
         progress.update(activity=activity, **details)
-        await self.checkpoint(job)
+        await self.checkpoint(job, progress_only=progress_only)
 
     async def finish(self, job, status="completed", error=None, delay=0):
         async with self.transaction() as cur:
