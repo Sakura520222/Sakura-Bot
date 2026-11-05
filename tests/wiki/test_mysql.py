@@ -551,6 +551,23 @@ async def test_unverified_channel_expiry_denies_all_public_views(store):
     assert not (await reader.search("中文"))["items"]
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "public=FALSE",
+        "enabled=FALSE",
+        "access_verified=FALSE",
+        "username=NULL",
+        "published_revision=NULL",
+        "verified_until=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 SECOND)",
+    ],
+)
+async def test_graph_denies_channel_metadata_when_publication_is_not_public(store, policy):
+    ch, _, _, _, _ = await published(store)
+    await store.query(f"UPDATE wiki_channels SET {policy} WHERE id=%s", (ch["id"],))
+    assert await PublicReader(store).graph(ch["id"]) is None
+
+
 async def test_summary_chunks_inform_planning_but_never_become_original_evidence(store):
     ch = await channel(store)
     await store.put_source(

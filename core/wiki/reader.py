@@ -277,6 +277,11 @@ class PublicReader:
         ch = await self.store.channel(channel)
         if not ch:
             return None
+        visible = await self.store.one(
+            f"SELECT c.id FROM wiki_channels c WHERE c.id=%s AND {CHANNEL_VISIBLE}", (ch["id"],)
+        )
+        if not visible:
+            return None
         limit, depth = max(1, min(limit, 120)), max(1, min(depth, 2))
         after, before = utc(after) if after else None, utc(before) if before else None
         if node_id:
