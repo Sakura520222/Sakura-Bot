@@ -64,7 +64,7 @@ SCHEMA = (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS wiki_entity_aliases (
         channel_id VARCHAR(32) NOT NULL, alias_key CHAR(64) NOT NULL, name VARCHAR(160) NOT NULL,
-        page_id CHAR(32) NOT NULL, manual BOOLEAN NOT NULL DEFAULT FALSE,
+        page_id CHAR(32) NOT NULL, `manual` BOOLEAN NOT NULL DEFAULT FALSE,
         PRIMARY KEY(channel_id,alias_key), INDEX wiki_entity_alias(page_id),
         FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE

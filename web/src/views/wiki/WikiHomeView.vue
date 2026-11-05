@@ -1,30 +1,26 @@
 <template>
   <section class="wiki-hero">
-    <p class="wiki-kicker">Sakura knowledge garden</p>
-    <h1>让频道里的好知识，<br />有迹可循。</h1>
-    <p class="wiki-lead">
-      从真实消息出发，沿着主题、关系和时间探索频道。每一条知识，都能回到它的来源。
-    </p>
+    <h1>频道百科</h1>
     <form class="wiki-searchbar" @submit.prevent="search">
       <input
         v-model="query"
         aria-label="搜索所有公开频道"
-        placeholder="搜索主题、项目、问题…"
+        placeholder="搜索条目、主题或关键词"
         maxlength="200"
-      /><button class="wiki-primary">搜索知识</button>
+      /><button class="wiki-primary">搜索</button>
     </form>
   </section>
   <div class="wiki-section-head">
     <h2>公开频道</h2>
-    <span class="wiki-muted">{{ data?.length || 0 }} 个知识空间</span>
+    <span v-if="data" class="wiki-muted">{{ data.length }} 个频道</span>
   </div>
-  <p v-if="loading" role="status" class="wiki-empty">正在打开知识目录…</p>
+  <p v-if="loading" role="status" class="wiki-empty">正在加载频道…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
   </div>
   <div v-else-if="!data?.length" class="wiki-empty">
-    <h3>知识花园尚待开放</h3>
-    管理员启用频道 Wiki 并发布经过审核的内容后，会出现在这里。
+    <h3>暂无已发布的频道</h3>
+    <RouterLink to="/wiki/admin">进入管理，启用频道并开始构建</RouterLink>
   </div>
   <div v-else class="wiki-grid">
     <RouterLink
@@ -49,7 +45,7 @@
     >
   </div>
   <div v-if="recent?.items.length" class="wiki-section-head">
-    <h2>最近知识更新</h2>
+    <h2>最近更新</h2>
     <RouterLink to="/wiki/search">全部条目 →</RouterLink>
   </div>
   <div v-if="recent?.items.length" class="wiki-grid">

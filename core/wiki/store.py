@@ -32,6 +32,14 @@ class LeaseLost(RuntimeError):
     pass
 
 
+class WikiSchemaError(RuntimeError):
+    def __init__(self, table, error):
+        self.table = table
+        self.mysql_code = error.args[0] if error.args and isinstance(error.args[0], int) else None
+        reason = f"MySQL {self.mysql_code}" if self.mysql_code else type(error).__name__
+        super().__init__(f"Wiki 建表失败：{table}（{reason}）")
+
+
 class WikiStore:
     def __init__(self, db):
         self.db = db
@@ -93,7 +101,10 @@ class WikiStore:
                 raise RuntimeError("Unsupported Wiki schema version")
             return
         for statement in SCHEMA:
-            await self.query(statement)
+            try:
+                await self.query(statement)
+            except Exception as error:
+                raise WikiSchemaError(statement.split()[5], error) from error
         await self.query(
             "INSERT IGNORE INTO wiki_schema VALUES (%s,UTC_TIMESTAMP(6))", (SCHEMA_VERSION,)
         )

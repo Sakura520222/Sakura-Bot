@@ -2,13 +2,10 @@
   <div class="wiki-shell">
     <header class="wiki-topbar">
       <RouterLink to="/wiki" class="wiki-brand"
-        ><span class="wiki-mark" aria-hidden="true">✳</span
-        ><span
-          >Sakura <strong>Wiki</strong><small>频道的知识，持续生长</small></span
-        ></RouterLink
+        ><span>Sakura <strong>Wiki</strong></span></RouterLink
       >
       <nav aria-label="站点导航">
-        <RouterLink to="/wiki/search">搜索知识</RouterLink
+        <RouterLink to="/wiki/search">搜索</RouterLink
         ><button
           class="wiki-icon-button"
           aria-label="切换深浅色"
@@ -20,8 +17,7 @@
     </header>
     <main id="wiki-main" class="wiki-main"><RouterView /></main>
     <footer class="wiki-footer">
-      <span>Sakura Wiki · 知识由 AI 整理，结论以引用证据为准。</span
-      ><RouterLink to="/wiki">浏览所有频道</RouterLink>
+      <span>Sakura Wiki</span><RouterLink to="/wiki">浏览所有频道</RouterLink>
     </footer>
   </div>
 </template>
@@ -51,7 +47,7 @@ watch(
       description.name = "description";
       document.head.append(description);
     }
-    description.content = "探索公开频道的主题、证据文章、知识地图与时间线。";
+    description.content = "频道百科、条目搜索、知识地图和更新记录。";
   },
   { immediate: true },
 );

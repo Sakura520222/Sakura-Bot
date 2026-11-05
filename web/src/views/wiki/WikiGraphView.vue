@@ -5,8 +5,7 @@
   </p>
   <div class="wiki-section-head">
     <div>
-      <p class="wiki-kicker">Connected knowledge</p>
-      <h1>沿着关系，发现知识</h1>
+      <h1>知识地图</h1>
     </div>
     <button @click="share">{{ shared ? "已复制链接" : "分享视图" }}</button>
   </div>

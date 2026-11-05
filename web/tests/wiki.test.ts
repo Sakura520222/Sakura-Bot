@@ -2,8 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemoryHistory, createRouter } from "vue-router";
 import cytoscape from "cytoscape";
+import { ref } from "vue";
+import { createWikiDraft } from "../src/composables/wiki-admin.ts";
 import { wikiRoutes } from "../src/router/wiki-routes.ts";
 import { highlight, mergeGraph } from "../src/views/wiki/wiki-utils.ts";
+
+test("Wiki settings clone Vue state and stay independent while enabling", () => {
+  const channel = ref({
+    config: {
+      enabled: false,
+      public: false,
+      columns: ["pages", "graph"],
+      budget: null,
+    },
+  });
+  const draft = createWikiDraft(channel.value.config);
+  draft.enabled = true;
+  draft.columns.push("timeline");
+  assert.equal(channel.value.config.enabled, false);
+  assert.deepEqual(channel.value.config.columns, ["pages", "graph"]);
+  assert.equal(draft.public, false);
+  assert.equal(draft.budget, null);
+});
 
 test("only declared Wiki routes are public; admin stays authenticated", () => {
   const router = createRouter({

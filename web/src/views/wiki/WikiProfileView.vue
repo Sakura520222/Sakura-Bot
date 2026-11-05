@@ -3,8 +3,7 @@
     <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
     频道画像
   </p>
-  <p class="wiki-kicker">A portrait in messages</p>
-  <h1>用真实消息，认识频道</h1>
+  <h1>频道画像</h1>
   <p v-if="loading" class="wiki-empty" role="status">正在统计…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>

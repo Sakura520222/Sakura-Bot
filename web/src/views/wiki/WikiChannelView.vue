@@ -10,10 +10,8 @@
     ><p class="wiki-kicker">@{{ data.username }}</p>
     <h1>{{ data.title }}</h1>
     <p class="wiki-lead">
-      {{
-        data.page_count
-      }}
-      个经过来源校验的条目。探索主题之间的联系，或沿时间了解知识如何变化。
+      {{ data.page_count }}
+      个条目
     </p>
     <nav class="wiki-tabs" aria-label="频道栏目">
       <RouterLink :to="base">知识首页</RouterLink
@@ -24,7 +22,7 @@
     </nav>
     <WikiCoverage :value="data.coverage" />
     <div class="wiki-section-head">
-      <h2>探索主题</h2>
+      <h2>主题</h2>
       <span class="wiki-muted">更新于 {{ formatDate(data.updated_at) }}</span>
     </div>
     <div class="wiki-tabs">

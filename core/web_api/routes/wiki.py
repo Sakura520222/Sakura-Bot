@@ -30,10 +30,11 @@ def is_public_wiki_request(path, method):
     )
 
 
-def runtime():
+def runtime(*, admin=False):
     service = get_wiki_runtime()
     if not service or not service.ready:
-        raise HTTPException(503, "Sakura Wiki 暂不可用")
+        detail = getattr(service, "startup_error", "") if admin else ""
+        raise HTTPException(503, detail or "Wiki 服务尚未启动")
     return service
 
 
@@ -174,7 +175,7 @@ class CorrectionRequest(Strict):
 
 
 async def managed(channel):
-    service = runtime()
+    service = runtime(admin=True)
     result = await service.store.channel(channel)
     if not result:
         raise HTTPException(404, "频道尚未完成身份核实，请检查 UserBot 和频道配置")
@@ -183,7 +184,7 @@ async def managed(channel):
 
 @admin.get("/channels")
 async def admin_channels():
-    service = runtime()
+    service = runtime(admin=True)
     rows = await service.store.query("SELECT id FROM wiki_channels ORDER BY title", fetch=True)
     return [await service.store.channel(r["id"]) for r in rows]
 

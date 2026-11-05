@@ -129,7 +129,9 @@ export async function publicWiki<T>(
         ? "内容不存在、已撤回或尚未公开。"
         : response.status === 429
           ? "访问较频繁，请稍后再试。"
-          : "Wiki 暂时无法连接，请稍后重试。",
+          : response.status === 503
+            ? "Wiki 服务未就绪。"
+            : `Wiki 请求失败（HTTP ${response.status}）。`,
     );
   return response.json() as Promise<T>;
 }

@@ -5,8 +5,7 @@
     }}</RouterLink>
     / 搜索
   </p>
-  <p class="wiki-kicker">Find the source</p>
-  <h1>搜索知识</h1>
+  <h1>搜索</h1>
   <form class="wiki-searchbar" @submit.prevent="submit">
     <input
       v-model="query"

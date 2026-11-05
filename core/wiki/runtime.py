@@ -13,7 +13,7 @@ from .engine import BudgetExceeded, WikiEngine
 from .models import WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
-from .store import LeaseLost, WikiStore, decode
+from .store import LeaseLost, WikiSchemaError, WikiStore, decode
 
 logger = logging.getLogger(__name__)
 _runtime = None
@@ -40,7 +40,7 @@ async def start_wiki(db, client, scheduler, bot_client=None):
     try:
         await runtime.start(bot_client)
     except Exception as error:
-        logger.warning("Wiki initialization unavailable: %s", type(error).__name__)
+        runtime.record_startup_error(error)
         # Retry through the existing scheduler without taking down the main Bot.
         runtime.ready = False
     return runtime
@@ -55,6 +55,7 @@ class WikiRuntime:
         self.tasks = set()
         self.listeners = []
         self.ready = False
+        self.startup_error = ""
         self._last_refresh = None
         self.bot_client = None
         self.outbox = EventOutbox()
@@ -70,6 +71,7 @@ class WikiRuntime:
             self._outbox_restored = True
         await self.flush_outbox()
         self.ready = True
+        self.startup_error = ""
         if self.client and not self.listeners:
             from telethon import events
 
@@ -86,6 +88,15 @@ class WikiRuntime:
 
             register_wiki_commands(bot_client, self)
         # Network verification runs in the scheduled tick, not the startup path.
+
+    def record_startup_error(self, error):
+        self.ready = False
+        self.startup_error = (
+            str(error)
+            if isinstance(error, WikiSchemaError)
+            else f"Wiki 启动失败（{type(error).__name__}）"
+        )
+        logger.warning("%s", self.startup_error)
 
     async def stop(self):
         self.ready = False
@@ -141,7 +152,7 @@ class WikiRuntime:
             try:
                 await self.start(self.bot_client)
             except Exception as error:
-                logger.warning("Wiki initialization deferred: %s", type(error).__name__)
+                self.record_startup_error(error)
                 return
         try:
             if not await self.flush_outbox():

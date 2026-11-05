@@ -20,7 +20,7 @@ import pytest_asyncio
 from core.wiki.collector import SourceCollector
 from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import Knowledge
-from core.wiki.models import WikiConfig, chunks, digest
+from core.wiki.models import WikiConfig, chunks, digest, name_key
 from core.wiki.reader import PublicReader
 from core.wiki.runtime import WikiRuntime
 from core.wiki.store import LeaseLost, WikiStore, decode
@@ -631,6 +631,17 @@ async def test_partial_manifest_cannot_publish_even_with_successful_extraction(s
     with pytest.raises(ValueError):
         await Knowledge(store).publish(ch["id"], job["id"], "test", running_job=job)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+
+
+async def test_manual_alias_override_supports_mysql_reserved_identifiers(store):
+    ch, _, page, _, _ = await published(store)
+    knowledge = Knowledge(store)
+    await knowledge.manage_page(ch["id"], page["id"], "merge", "test", alias="人工别名")
+    row = await store.one(
+        "SELECT page_id,`manual` FROM wiki_entity_aliases WHERE channel_id=%s AND alias_key=%s",
+        (ch["id"], digest(name_key("人工别名"))),
+    )
+    assert row["page_id"] == page["id"] and row["manual"]
 
 
 @pytest.mark.parametrize("target", ["current", "historical", "page_id"])

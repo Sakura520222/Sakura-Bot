@@ -495,7 +495,7 @@ class Knowledge:
                 alias = options["alias"]
                 # Explicitly rebind one alias. Move its facts only, not other entities.
                 await cur.execute(
-                    "INSERT INTO wiki_entity_aliases VALUES (%s,%s,%s,%s,TRUE) ON DUPLICATE KEY UPDATE page_id=VALUES(page_id),manual=TRUE",
+                    "INSERT INTO wiki_entity_aliases VALUES (%s,%s,%s,%s,TRUE) ON DUPLICATE KEY UPDATE page_id=VALUES(page_id),`manual`=TRUE",
                     (channel, digest(name_key(alias)), alias, page_id),
                 )
                 await cur.execute("SELECT id,fact FROM wiki_facts WHERE channel_id=%s", (channel,))

@@ -29,6 +29,7 @@ from core.wiki.models import (
 )
 from core.wiki.runtime import schedule_due
 from core.wiki.schema import CHANNEL_VISIBLE, REVISION_VISIBLE
+from core.wiki.store import WikiSchemaError, WikiStore
 
 
 def extraction(chunk, text="项目支持中文检索"):
@@ -221,3 +222,36 @@ def test_public_rate_limit_has_bounded_window(api):
     response = api.get("/api/public/wiki/channels")
     assert response.status_code == 429
     assert response.headers["retry-after"] == "60"
+
+
+async def test_schema_failure_names_table_and_does_not_mark_initialization_complete():
+    import aiomysql
+
+    store = WikiStore(SimpleNamespace(pool=None))
+    store.one = AsyncMock(return_value=None)
+    executed = []
+
+    async def query(sql, *args, **kwargs):
+        executed.append(sql)
+        if "CREATE TABLE IF NOT EXISTS wiki_entity_aliases" in sql:
+            raise aiomysql.ProgrammingError(1064, "syntax failure near reserved identifier")
+
+    store.query = query
+    with pytest.raises(WikiSchemaError, match="wiki_entity_aliases.*1064"):
+        await store.initialize()
+    assert not any("INSERT IGNORE INTO wiki_schema" in sql for sql in executed)
+
+
+def test_admin_sees_startup_failure_without_false_channel_empty_state(api, monkeypatch):
+    service = SimpleNamespace(
+        ready=False, startup_error="Wiki 建表失败：wiki_entity_aliases（MySQL 1064）"
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    monkeypatch.setattr(
+        "core.web_api.middleware.verify_token", lambda _: WebUIUser(user_id="admin")
+    )
+    response = api.get("/api/wiki/admin/channels", headers={"Authorization": "Bearer test"})
+    assert response.status_code == 503
+    assert "wiki_entity_aliases" in response.json()["detail"]
+    assert "1064" in response.json()["detail"]
+    assert api.get("/api/public/wiki/channels").json()["detail"] == "Wiki 服务尚未启动"

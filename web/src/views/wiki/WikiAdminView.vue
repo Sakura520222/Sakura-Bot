@@ -2,14 +2,11 @@
   <div class="wiki-shell wiki-admin">
     <div class="wiki-section-head">
       <div>
-        <p class="wiki-kicker">Sakura Wiki · 管理</p>
-        <h1>频道知识管理</h1>
+        <h1>Wiki 管理</h1>
       </div>
       <RouterLink to="/wiki" target="_blank">打开公开 Wiki ↗</RouterLink>
     </div>
-    <p class="wiki-muted">
-      先启用并构建，检查草稿和来源后发布。公开开关仅适用于已核实的公开频道。
-    </p>
+    <p class="wiki-muted">选择频道后启用 Wiki，再开始构建。</p>
     <p v-if="error" class="wiki-error" role="alert">
       {{ error }}<button @click="loadChannels">重新加载</button>
     </p>
@@ -24,10 +21,29 @@
         </select></label
       ><button :disabled="busy" @click="loadChannels">刷新目录</button>
     </div>
-    <p v-if="!channels.length && !busy" class="wiki-empty">
+    <p v-if="!channels.length && !busy && !error" class="wiki-empty">
       暂无完成身份核实的频道。请先在频道管理中添加频道并连接 UserBot。
     </p>
     <template v-if="channel && draft">
+      <div class="wiki-enable-bar">
+        <span>{{ channel.enabled ? "Wiki 已启用" : "Wiki 未启用" }}</span>
+        <button
+          v-if="!channel.enabled"
+          class="wiki-primary"
+          :disabled="busy"
+          @click="enableWiki"
+        >
+          启用 Wiki
+        </button>
+        <button
+          v-else
+          class="wiki-primary"
+          :disabled="busy"
+          @click="startBuild"
+        >
+          开始构建
+        </button>
+      </div>
       <nav class="wiki-tabs" aria-label="Wiki 管理栏目">
         <button
           v-for="item in tabs"
@@ -154,7 +170,7 @@
           </p>
         </section>
         <section class="wiki-card">
-          <h2>AI 预算与可靠性</h2>
+          <h2>生成设置</h2>
           <div class="wiki-admin-form">
             <label
               >温度<input
@@ -210,14 +226,10 @@
             保存频道设置</button
           ><button :disabled="busy" @click="loadChannel">放弃未保存修改</button>
         </div>
-        <details class="wiki-card">
-          <summary>Wiki 生成与审校模型</summary>
-          <p class="wiki-muted">
-            在用途绑定中选择「Wiki 生成」和「Wiki
-            审校」。复用现有厂商和模型；审校未单独绑定时使用 Wiki 生成模型。
-          </p>
-          <AIProfilesPanel />
-        </details>
+        <p class="wiki-muted">
+          <RouterLink to="/ai-config">模型设置</RouterLink>：在 AI 配置中选择
+          Wiki 生成和审校模型。
+        </p>
       </template>
       <template v-else-if="tab === 'jobs'"
         ><WikiCoverage :value="channel.coverage" />
@@ -514,8 +526,8 @@ import {
   type Claim,
 } from "../../api/wiki";
 import WikiCoverage from "./WikiCoverage.vue";
-import AIProfilesPanel from "../../components/AIProfilesPanel.vue";
 import "./wiki.css";
+import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;
   public: boolean;
@@ -677,7 +689,7 @@ async function loadChannel() {
   preview.value = undefined;
   try {
     channel.value = await wikiAdmin<Channel>(`${root()}/config`);
-    draft.value = structuredClone(channel.value.config);
+    draft.value = createWikiDraft(channel.value.config);
     historySince.value = draft.value.history_since?.slice(0, 16) || "";
     hiddenTopics.value = draft.value.hidden_topics.join("\n");
     await refreshData();
@@ -741,7 +753,7 @@ async function saveConfig() {
       "PUT",
       payload,
     );
-    draft.value = structuredClone(channel.value.config);
+    draft.value = createWikiDraft(channel.value.config);
   }, "频道设置已保存");
 }
 function enqueue(kind: string, page_id?: string) {
@@ -749,6 +761,20 @@ function enqueue(kind: string, page_id?: string) {
     () => wikiAdmin(`${root()}/jobs`, "POST", { kind, page_id }),
     "后台任务已排队",
   );
+}
+async function enableWiki() {
+  if (!channel.value) return;
+  await perform(async () => {
+    channel.value = await wikiAdmin<Channel>(`${root()}/config`, "PUT", {
+      ...channel.value!.config,
+      enabled: true,
+    });
+    draft.value = createWikiDraft(channel.value.config);
+  }, "Wiki 已启用。点击“开始构建”生成频道内容。");
+}
+async function startBuild() {
+  await enqueue("backfill");
+  if (!error.value) tab.value = "jobs";
 }
 function jobControl(id: string, action: string) {
   return perform(() => wikiAdmin(`${root()}/jobs/${id}/${action}`, "POST"));
@@ -851,9 +877,21 @@ onUnmounted(() => {
 });
 </script>
 <style scoped>
+.wiki-enable-bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--wk-card);
+  border: 1px solid var(--wk-line);
+  border-radius: 8px;
+}
 .wiki-admin {
   background: transparent;
   min-height: 0;
+  padding: 24px;
+  font-family: inherit;
 }
 .wiki-admin h1 {
   margin: 6px 0;

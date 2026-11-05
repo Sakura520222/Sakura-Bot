@@ -59,7 +59,7 @@
 .wiki-footer {
   max-width: 1280px;
   margin: auto;
-  padding: 22px 36px;
+  padding: 16px 28px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -105,7 +105,7 @@
 .wiki-main {
   max-width: 1208px;
   margin: auto;
-  padding: 40px 28px 72px;
+  padding: 24px 28px 40px;
   min-height: 75vh;
 }
 .wiki-footer {
@@ -122,15 +122,15 @@
   font-weight: 600;
 }
 .wiki-hero {
-  padding: 26px 0 45px;
-  max-width: 800px;
+  padding: 0 0 12px;
+  max-width: 900px;
 }
 .wiki-hero h1 {
-  font-size: clamp(30px, 5vw, 52px);
-  line-height: 1.2;
-  font-weight: 650;
-  letter-spacing: -1.8px;
-  margin: 0 0 22px;
+  font-size: 28px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: normal;
+  margin: 0 0 16px;
 }
 .wiki-lead {
   font-size: 16px;
@@ -141,13 +141,13 @@
 .wiki-searchbar {
   display: flex;
   gap: 10px;
-  margin: 25px 0;
-  max-width: 720px;
+  margin: 16px 0;
+  max-width: 900px;
 }
 .wiki-searchbar input {
   flex: 1;
   min-width: 0;
-  padding: 15px 18px;
+  padding: 11px 14px;
 }
 .wiki-shell .wiki-primary {
   background: var(--wk-accent);

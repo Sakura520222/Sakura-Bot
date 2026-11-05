@@ -3,11 +3,7 @@
     <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
     时间轴
   </p>
-  <p class="wiki-kicker">Knowledge through time</p>
-  <h1>知识的来龙去脉</h1>
-  <p class="wiki-lead">
-    对照事件时间与消息时间，查看结论、变更和仍有分歧的说法。
-  </p>
+  <h1>时间轴</h1>
   <p v-if="loading" class="wiki-empty" role="status">读取时间轴…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
