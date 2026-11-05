@@ -8,6 +8,10 @@
       <n-text depth="3"
         >原文仍保存在归档中。这里列出当前筛选条件、系统事件或重复总结对应的具体消息。</n-text
       >
+      <n-text v-if="data?.unverified_total" depth="3" class="exclusion-pending">
+        另有
+        {{ data.unverified_total }} 条旧归档尚未匹配原帖，重新核对时会一并补齐。
+      </n-text>
       <n-space vertical class="exclusion-controls">
         <n-select
           v-model:value="reason"
@@ -77,6 +81,7 @@ const page = ref(1),
   reason = ref<string | null>(null);
 const data = ref<{
   total: number;
+  unverified_total: number;
   reasons: { key: string; label: string; count: number }[];
   items: {
     message_id: number;
@@ -126,6 +131,8 @@ async function repair() {
     const result = await wikiAdmin<{ restored: number }>(
       `/channels/${props.channel}/excluded/refresh`,
       "POST",
+      undefined,
+      { timeout: 120000 },
     );
     notice.value = `已重新核对，恢复 ${result.restored} 条原文。`;
     page.value = 1;
@@ -148,6 +155,10 @@ watch(
 <style scoped>
 .exclusion-controls {
   margin: 16px 0;
+}
+.exclusion-pending {
+  display: block;
+  margin-top: 10px;
 }
 .exclusion-body {
   white-space: pre-wrap;

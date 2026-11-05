@@ -82,14 +82,14 @@ class SourceCollector:
     async def repair_exclusions(self, channel):
         await self.prepare_summary_refs(channel)
         rows = await self.store.query(
-            "SELECT * FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND excluded=TRUE AND deleted=FALSE ORDER BY message_id",
+            "SELECT * FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND (excluded=TRUE OR verified=FALSE) AND deleted=FALSE ORDER BY message_id",
             (channel["id"],),
             fetch=True,
         )
         known, inspect = {}, []
         for row in rows:
             reason = self.policy_exclusion(channel["config"], row["created_at"], row["category"])
-            if reason:
+            if reason and row["verified"]:
                 known.setdefault(reason, []).append(row["id"])
             else:
                 inspect.append(row)
@@ -120,7 +120,7 @@ class SourceCollector:
                             restored.append(row["message_id"])
                     else:
                         await self.store.query(
-                            "UPDATE wiki_sources SET exclusion_reason='unavailable' WHERE id=%s",
+                            "UPDATE wiki_sources SET excluded=TRUE,exclusion_reason='unavailable' WHERE id=%s",
                             (row["id"],),
                         )
         counts = await self.store.one(
@@ -134,7 +134,7 @@ class SourceCollector:
         if restored:
             placeholders = ",".join(["%s"] * len(restored))
             rows = await self.store.query(
-                f"SELECT message_id FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND excluded=FALSE AND message_id IN ({placeholders})",
+                f"SELECT message_id FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND excluded=FALSE AND verified=TRUE AND deleted=FALSE AND hidden=FALSE AND message_id IN ({placeholders})",
                 (channel["id"], *restored),
                 fetch=True,
             )

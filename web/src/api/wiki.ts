@@ -173,9 +173,15 @@ export async function wikiAdmin<T>(
   path: string,
   method = "GET",
   data?: unknown,
+  options: { timeout?: number } = {},
 ): Promise<T> {
   return (
-    await apiClient.request<T>({ url: `/wiki/admin${path}`, method, data })
+    await apiClient.request<T>({
+      url: `/wiki/admin${path}`,
+      method,
+      data,
+      ...options,
+    })
   ).data;
 }
 

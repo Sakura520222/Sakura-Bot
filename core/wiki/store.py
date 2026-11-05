@@ -251,7 +251,7 @@ class WikiStore:
             old = await cur.fetchone()
             if old and (
                 old["deleted"]
-                or changed_at < old["edited_at"]
+                or (changed_at < old["edited_at"] and (old["verified"] or not verified))
                 or (old["verified"] and not verified)
             ):
                 return source_id
@@ -273,7 +273,7 @@ class WikiStore:
                 (id,channel_id,source_type,external_id,message_id,body,original_length,content_hash,
                  created_at,edited_at,observed_at,verified,excluded,media_group,category,media_key,exclusion_reason)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),%s,%s,%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE body=VALUES(body),original_length=VALUES(original_length),
+                ON DUPLICATE KEY UPDATE body=VALUES(body),original_length=VALUES(original_length),created_at=VALUES(created_at),
                 content_hash=VALUES(content_hash),revision=revision+1,edited_at=VALUES(edited_at),
                 observed_at=VALUES(observed_at),verified=VALUES(verified),excluded=VALUES(excluded),media_group=VALUES(media_group),category=VALUES(category),media_key=VALUES(media_key),exclusion_reason=VALUES(exclusion_reason)""",
                 (
@@ -300,11 +300,12 @@ class WikiStore:
                     "INSERT IGNORE INTO wiki_chunks VALUES (%s,%s,%s,%s,%s)",
                     (chunk["id"], source_id, content_hash, chunk["start"], chunk["end"]),
                 )
-            await cur.execute(
-                """UPDATE wiki_channels SET source_generation=source_generation+1,
-                dirty_at=UTC_TIMESTAMP(6) WHERE id=%s""",
-                (channel,),
-            )
+            if not excluded or (old and not old["excluded"]):
+                await cur.execute(
+                    """UPDATE wiki_channels SET source_generation=source_generation+1,
+                    dirty_at=UTC_TIMESTAMP(6) WHERE id=%s""",
+                    (channel,),
+                )
         return source_id
 
     async def revoke(

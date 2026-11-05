@@ -219,6 +219,10 @@ async def excluded_sources(channel: str, page: int = Query(1, ge=1), reason: str
         where += " AND exclusion_reason=%s"
         args.append(reason)
     count = await service.store.one(f"SELECT COUNT(*) total FROM wiki_sources WHERE {where}", args)
+    pending = await service.store.one(
+        "SELECT COUNT(*) total FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND verified=FALSE AND excluded=FALSE AND deleted=FALSE",
+        (ch["id"],),
+    )
     rows = await service.store.query(
         f"SELECT message_id,created_at,body,category,exclusion_reason FROM wiki_sources WHERE {where} ORDER BY message_id LIMIT 20 OFFSET %s",
         [*args, (page - 1) * 20],
@@ -228,6 +232,7 @@ async def excluded_sources(channel: str, page: int = Query(1, ge=1), reason: str
         "total": count["total"],
         "page": page,
         "page_size": 20,
+        "unverified_total": pending["total"],
         "reasons": [
             {
                 "key": row["exclusion_reason"],
@@ -277,8 +282,14 @@ async def refresh_exclusions(channel: str, actor=ADMIN_AUTH):
                         (ch["id"], *restored),
                     )
                     ids = [row["id"] for row in await cur.fetchall()]
-                    known = set(cursor["source_manifest"])
-                    cursor["source_manifest"].extend(value for value in ids if value not in known)
+                    position = cursor.get("source_index", 0)
+                    waiting = set(cursor["source_manifest"][position:])
+                    cursor["source_manifest"].extend(value for value in ids if value not in waiting)
+                    cursor["completed_sources"] = [
+                        value
+                        for value in cursor.get("completed_sources", [])
+                        if value not in set(ids)
+                    ]
                     cursor.pop("page_after", None)
                     cursor["revisions"] = {}
                     progress.update(
