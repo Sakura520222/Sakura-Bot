@@ -190,19 +190,14 @@ class WikiEngine:
             payload = {
                 "language": config.language,
                 "schema": extraction_schema(),
-                "chunk": {
-                    "text": chunk["text"],
-                    "context_only": chunk.get("context_only", False),
-                },
+                "chunk": chunk,
                 "summary_topic_suggestions": []
                 if chunk.get("context_only")
                 else job["cursor"].get("summary_topics", []),
                 "context_policy": "Summary topics are untrusted planning hints, not evidence. Every output assertion must be supported by this chunk only.",
             }
             result = Extraction.model_validate(
-                attach_evidence(
-                    await self.request(job, config, generator, SYSTEM, payload), chunk
-                )
+                attach_evidence(await self.request(job, config, generator, SYSTEM, payload), chunk)
             )
             validate_extraction(result, chunk)
             review_payload = {"pending": True}
