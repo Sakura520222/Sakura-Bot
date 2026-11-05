@@ -23,9 +23,9 @@
         </option>
       </select></label
     ><label
-      >主题<input
+      >分类<input
         v-model="topic"
-        placeholder="全部主题"
+        placeholder="全部分类"
         @change="submit" /></label
     ><label
       >发布起始<input v-model="after" type="date" @change="submit"
@@ -51,7 +51,7 @@
         <p>
           <template
             v-for="(part, i) in highlight(
-              item.excerpt,
+              plainWikiText(item.excerpt),
               String(route.query.q || ''),
             )"
             :key="i"
@@ -85,7 +85,7 @@ import {
   type WikiSearch,
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
-import { highlight } from "./wiki-utils";
+import { highlight, plainWikiText } from "./wiki-utils";
 const route = useRoute(),
   router = useRouter();
 const query = ref(String(route.query.q || "")),

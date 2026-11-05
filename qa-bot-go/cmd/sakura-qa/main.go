@@ -130,10 +130,7 @@ func run() int {
 	defer func() { _ = vecStore.Close() }()
 
 	conversations := engine.NewConversations(dbMgr)
-	qaEngine := assembleEngine(cfg, dbMgr, conversations, vecStore, logger)
 	users := qauser.New(dbMgr)
-
-	logger.Info("问答Bot初始化完成（v3.0.0向量搜索版本 + 多轮对话支持 + 用户系统）")
 
 	// ── 7. MySQL 池 + 业务 DDL + guard schema（post_init，qa_bot.py:943-947；
 	// 失败 DatabaseError 上抛 → 进程启动失败非零退出）。
@@ -151,6 +148,9 @@ func run() int {
 		logger.Error(fmt.Sprintf("Guard schema 初始化失败: %v", err))
 		return 1
 	}
+	// SQL-backed readers capture the pool pointer, so assemble them only after Open.
+	qaEngine := assembleEngine(cfg, dbMgr, conversations, vecStore, logger)
+	logger.Info("问答Bot初始化完成（向量检索、Wiki、会话与用户系统）")
 
 	// ── 8/9. Bot 构造 + 分发链注册。
 	disp := tg.NewDispatcher(slogBridge{logger})

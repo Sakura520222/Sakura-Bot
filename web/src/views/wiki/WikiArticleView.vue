@@ -29,7 +29,9 @@
     </aside>
     <article class="wiki-article">
       <span class="wiki-tag">{{ data.topic }}</span
-      ><span class="wiki-tag">{{ kindLabels[data.kind] }}</span>
+      ><span v-if="data.kind !== 'Topic'" class="wiki-tag">{{
+        kindLabels[data.kind]
+      }}</span>
       <h1>{{ data.title }}</h1>
       <p class="wiki-meta">
         {{ data.evidence_count }} 条来源引用 · 整理于

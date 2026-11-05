@@ -54,7 +54,7 @@
       <h3>
         <RouterLink :to="item.url">{{ item.title }}</RouterLink>
       </h3>
-      <p>{{ item.excerpt }}</p>
+      <p>{{ plainWikiText(item.excerpt) }}</p>
       <div class="wiki-meta">
         {{ item.channel_title }} · {{ item.evidence_count }} 个来源
       </div>
@@ -71,6 +71,7 @@ import {
   type WikiSearch,
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
+import { plainWikiText } from "./wiki-utils";
 const router = useRouter();
 const query = ref("");
 const { data, loading, error, reload } = useWikiLoad(

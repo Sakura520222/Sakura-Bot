@@ -22,7 +22,7 @@
     </nav>
     <WikiCoverage :value="data.coverage" />
     <div class="wiki-section-head">
-      <h2>主题</h2>
+      <h2>分类</h2>
       <span class="wiki-muted">更新于 {{ formatDate(data.updated_at) }}</span>
     </div>
     <div class="wiki-tabs">
@@ -35,12 +35,14 @@
     </div>
     <div class="wiki-grid">
       <article v-for="item in data.pages" :key="item.id" class="wiki-card">
-        <span class="wiki-tag">{{ kindLabels[item.kind] || item.kind }}</span
+        <span v-if="item.kind !== 'Topic'" class="wiki-tag">{{
+          kindLabels[item.kind] || item.kind
+        }}</span
         ><span class="wiki-tag">{{ item.topic }}</span>
         <h3>
           <RouterLink :to="item.url">{{ item.title }}</RouterLink>
         </h3>
-        <p>{{ item.excerpt }}</p>
+        <p>{{ plainWikiText(item.excerpt) }}</p>
         <div class="wiki-meta">
           {{ item.evidence_count }} 个来源 · {{ formatDate(item.updated_at) }}
         </div>
@@ -60,6 +62,7 @@ import {
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
 import WikiCoverage from "./WikiCoverage.vue";
+import { plainWikiText } from "./wiki-utils";
 const route = useRoute();
 const base = computed(() => `/wiki/${route.params.channel}`);
 const { data, loading, error, reload } = useWikiLoad(

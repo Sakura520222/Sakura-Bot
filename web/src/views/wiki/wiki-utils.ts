@@ -1,5 +1,16 @@
 import type { WikiGraph } from "../../api/wiki";
 
+export function plainWikiText(text: string): string {
+  return text
+    .replace(/```[^\n]*\n?/g, "")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+)/gm, "")
+    .replace(/\*\*|__|`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function highlight(
   text: string,
   query: string,

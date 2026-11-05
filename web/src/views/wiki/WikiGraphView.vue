@@ -70,7 +70,9 @@
     <div v-if="hover" class="wiki-graph-hover">{{ hover }}</div>
     <aside class="wiki-graph-sidebar">
       <div v-if="selected" class="wiki-graph-detail">
-        <span class="wiki-tag">{{ kindLabels[selected.kind] }}</span>
+        <span v-if="selected.kind !== 'Topic'" class="wiki-tag">{{
+          kindLabels[selected.kind]
+        }}</span>
         <h3>{{ selected.title }}</h3>
         <p class="wiki-muted">{{ selected.topic }}</p>
         <RouterLink :to="selected.url">阅读知识条目 ↗</RouterLink>
@@ -93,7 +95,10 @@
           :aria-pressed="selected?.id === node.id"
           @click="select(node)"
         >
-          {{ node.title }}<small>{{ kindLabels[node.kind] }}</small>
+          {{ node.title
+          }}<small v-if="node.kind !== 'Topic'">{{
+            kindLabels[node.kind]
+          }}</small>
         </button>
       </div>
     </aside>

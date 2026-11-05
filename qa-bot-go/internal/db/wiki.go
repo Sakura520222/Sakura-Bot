@@ -42,7 +42,7 @@ type WikiRepository struct{ DB *sql.DB }
 
 func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts contracts.WikiOptions) (map[string]any, error) {
 	if w == nil || w.DB == nil {
-		return nil, errors.New("Wiki unavailable; use existing RAG tools")
+		return nil, errors.New("Wiki database pool is not initialized")
 	}
 	if len([]rune(opts.Query)) > 200 || len(opts.Channel) > 255 {
 		return nil, errors.New("invalid Wiki query")
@@ -71,16 +71,20 @@ func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts co
 	}
 	tx, err := w.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
-		return nil, errors.New("Wiki unavailable; use existing RAG tools")
+		return nil, fmt.Errorf("begin Wiki read: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if opts.Channel != "" {
 		key := normalizeWikiChannel(opts.Channel)
 		if err := tx.QueryRowContext(ctx, `SELECT c.id FROM wiki_channels c JOIN wiki_channel_aliases a ON a.channel_id=c.id WHERE a.alias=? AND `+wikiChannelVisible, key).Scan(&opts.Channel); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return map[string]any{"available": false, "items": []any{}, "reason": "No public published Wiki; use existing RAG tools"}, nil
+				channels, catalogErr := wikiChannels(ctx, tx)
+				if catalogErr != nil {
+					return nil, fmt.Errorf("list published Wiki channels: %w", catalogErr)
+				}
+				return map[string]any{"available": false, "items": []any{}, "status": "not_published", "reason": "该频道尚未启用或公开 Wiki，可改用 available_channels 中的频道", "available_channels": channels}, nil
 			}
-			return nil, errors.New("Wiki unavailable; use existing RAG tools")
+			return nil, fmt.Errorf("resolve Wiki channel: %w", err)
 		}
 	}
 	var result map[string]any
@@ -97,12 +101,45 @@ func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts co
 		return nil, errors.New("unknown Wiki read operation")
 	}
 	if err != nil {
-		return nil, errors.New("Wiki unavailable or content withdrawn; use existing RAG tools")
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	if opts.Channel == "" {
+		channels, catalogErr := wikiChannels(ctx, tx)
+		if catalogErr != nil {
+			return nil, fmt.Errorf("list published Wiki channels: %w", catalogErr)
+		}
+		result["available_channels"] = channels
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, errors.New("Wiki read interrupted; retry or use RAG")
+		return nil, fmt.Errorf("finish Wiki read: %w", err)
 	}
+	result["available"] = true
+	result["status"] = "ok"
 	return result, nil
+}
+
+func wikiChannels(ctx context.Context, tx *sql.Tx) ([]map[string]any, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT c.id,c.title,c.username,c.config,COUNT(*)`+wikiPageJoin+` WHERE `+wikiVisible+` GROUP BY c.id ORDER BY c.title`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	channels := []map[string]any{}
+	for rows.Next() {
+		var id, title, username string
+		var configRaw []byte
+		var count int
+		if err := rows.Scan(&id, &title, &username, &configRaw, &count); err != nil {
+			return nil, err
+		}
+		var config map[string]any
+		if err := json.Unmarshal(configRaw, &config); err != nil {
+			return nil, err
+		}
+		path := "/wiki/" + url.PathEscape(id)
+		channels = append(channels, map[string]any{"channel_id": id, "title": title, "username": username, "page_count": count, "url": path, "wiki_url": wikiAbsoluteURL(config, path)})
+	}
+	return channels, rows.Err()
 }
 
 func normalizeWikiChannel(value string) string {
@@ -393,7 +430,8 @@ func wikiProfile(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (m
 			}
 		}
 	}
-	return map[string]any{"channel_id": opts.Channel, "title": title, "publication_id": pub, "coverage": safeCoverage, "statistics": map[string]any{"message_count": count, "avg_message_length": average, "earliest": nullWikiTime(first), "latest": nullWikiTime(last)}, "hours_utc": hours, "months": months, "topics": topics, "topic_trends": trends, "narrative": narrative, "as_of": time.Now().UTC().Format(time.RFC3339), "method": "Actual verified messages; topics may overlap. No user profiling."}, nil
+	path := "/wiki/" + url.PathEscape(opts.Channel) + "/profile"
+	return map[string]any{"url": path, "wiki_url": wikiAbsoluteURL(config, path), "channel_id": opts.Channel, "title": title, "publication_id": pub, "coverage": safeCoverage, "statistics": map[string]any{"message_count": count, "avg_message_length": average, "earliest": nullWikiTime(first), "latest": nullWikiTime(last)}, "hours_utc": hours, "months": months, "topics": topics, "topic_trends": trends, "narrative": narrative, "as_of": time.Now().UTC().Format(time.RFC3339), "method": "Actual verified messages; topics may overlap. No user profiling."}, nil
 }
 
 // Only fixed, field-whitelisted profile SELECTs use this helper.
