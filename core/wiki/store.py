@@ -101,6 +101,11 @@ class WikiStore:
         if version and version["version"] is not None:
             if version["version"] != SCHEMA_VERSION:
                 raise RuntimeError("Unsupported Wiki schema version")
+            column = await self.one("SHOW COLUMNS FROM wiki_sources LIKE 'exclusion_reason'")
+            if not column:
+                await self.query(
+                    "ALTER TABLE wiki_sources ADD COLUMN exclusion_reason VARCHAR(32) NOT NULL DEFAULT ''"
+                )
             return
         for statement in SCHEMA:
             try:
@@ -229,6 +234,7 @@ class WikiStore:
         message_id=None,
         original_length=0,
         excluded=False,
+        exclusion_reason=None,
         media_group=None,
         category="text",
         media_key=None,
@@ -258,18 +264,18 @@ class WikiStore:
             ):
                 if verified:
                     await cur.execute(
-                        "UPDATE wiki_sources SET observed_at=UTC_TIMESTAMP(6) WHERE id=%s",
-                        (source_id,),
+                        "UPDATE wiki_sources SET observed_at=UTC_TIMESTAMP(6),exclusion_reason=COALESCE(%s,exclusion_reason) WHERE id=%s",
+                        (exclusion_reason, source_id),
                     )
                 return source_id
             await cur.execute(
                 """INSERT INTO wiki_sources
                 (id,channel_id,source_type,external_id,message_id,body,original_length,content_hash,
-                 created_at,edited_at,observed_at,verified,excluded,media_group,category,media_key)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),%s,%s,%s,%s,%s)
+                 created_at,edited_at,observed_at,verified,excluded,media_group,category,media_key,exclusion_reason)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),%s,%s,%s,%s,%s,%s)
                 ON DUPLICATE KEY UPDATE body=VALUES(body),original_length=VALUES(original_length),
                 content_hash=VALUES(content_hash),revision=revision+1,edited_at=VALUES(edited_at),
-                observed_at=VALUES(observed_at),verified=VALUES(verified),excluded=VALUES(excluded),media_group=VALUES(media_group),category=VALUES(category),media_key=VALUES(media_key)""",
+                observed_at=VALUES(observed_at),verified=VALUES(verified),excluded=VALUES(excluded),media_group=VALUES(media_group),category=VALUES(category),media_key=VALUES(media_key),exclusion_reason=VALUES(exclusion_reason)""",
                 (
                     source_id,
                     channel,
@@ -286,6 +292,7 @@ class WikiStore:
                     media_group,
                     category,
                     media_key,
+                    exclusion_reason or "",
                 ),
             )
             for chunk in chunks(source_id, body, content_hash):

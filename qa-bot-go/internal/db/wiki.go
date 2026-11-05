@@ -82,7 +82,7 @@ func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts co
 				if catalogErr != nil {
 					return nil, fmt.Errorf("list published Wiki channels: %w", catalogErr)
 				}
-				return map[string]any{"available": false, "items": []any{}, "status": "not_published", "reason": "该频道尚未启用或公开 Wiki，可改用 available_channels 中的频道", "available_channels": channels}, nil
+				return map[string]any{"available": false, "items": []any{}, "status": "not_published", "reason": "该频道当前没有可公开读取的 Wiki 版本，可改用 available_channels 中的频道", "available_channels": channels}, nil
 			}
 			return nil, fmt.Errorf("resolve Wiki channel: %w", err)
 		}
@@ -161,9 +161,23 @@ func wikiSearch(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (ma
 		where += " AND c.id=?"
 		args = append(args, opts.Channel)
 	}
-	if opts.Query != "" {
-		where += ` AND (r.search_text LIKE ? ESCAPE '=' OR EXISTS (SELECT 1 FROM wiki_entity_aliases a WHERE a.page_id=p.id AND a.name LIKE ? ESCAPE '='))`
-		args = append(args, wikiLike(opts.Query), wikiLike(opts.Query))
+	terms, seen := []string{}, map[string]bool{}
+	for _, term := range strings.Fields(opts.Query) {
+		if !seen[term] {
+			terms = append(terms, term)
+			seen[term] = true
+		}
+	}
+	ranking, rankArgs := []string{}, []any{}
+	if len(terms) > 0 {
+		matches := []string{}
+		for _, term := range terms {
+			matches = append(matches, `(r.search_text LIKE ? ESCAPE '=' OR EXISTS (SELECT 1 FROM wiki_entity_aliases a WHERE a.page_id=p.id AND a.name LIKE ? ESCAPE '='))`)
+			args = append(args, wikiLike(term), wikiLike(term))
+			ranking = append(ranking, `(CASE WHEN p.title LIKE ? ESCAPE '=' THEN 4 ELSE 0 END + CASE WHEN r.search_text LIKE ? ESCAPE '=' THEN 1 ELSE 0 END)`)
+			rankArgs = append(rankArgs, wikiLike(term), wikiLike(term))
+		}
+		where += " AND (" + strings.Join(matches, " OR ") + ")"
 	}
 	if opts.Kind != "" {
 		where += " AND p.kind=?"
@@ -183,7 +197,12 @@ func wikiSearch(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (ma
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*)"+wikiPageJoin+" WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id,c.title,c.published_revision,r.id,r.created_at,r.document,c.config`+wikiPageJoin+" WHERE "+where+" ORDER BY r.created_at DESC,p.id LIMIT ? OFFSET ?", append(args, opts.PageSize, (opts.Page-1)*opts.PageSize)...)
+	order := "r.created_at DESC,p.id"
+	if len(ranking) > 0 {
+		order = "(" + strings.Join(ranking, "+") + ") DESC," + order
+	}
+	queryArgs := append(append(append([]any{}, args...), rankArgs...), opts.PageSize, (opts.Page-1)*opts.PageSize)
+	rows, err := tx.QueryContext(ctx, `SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id,c.title,c.published_revision,r.id,r.created_at,r.document,c.config`+wikiPageJoin+" WHERE "+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +215,7 @@ func wikiSearch(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (ma
 		}
 		items = append(items, card)
 	}
-	return map[string]any{"items": items, "total": total, "page": opts.Page, "page_size": opts.PageSize}, rows.Err()
+	return map[string]any{"items": items, "total": total, "page": opts.Page, "page_size": opts.PageSize, "terms": terms}, rows.Err()
 }
 
 type wikiScanner interface{ Scan(...any) error }

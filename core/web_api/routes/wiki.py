@@ -195,6 +195,119 @@ async def config(channel: str):
     return ch
 
 
+EXCLUSION_LABELS = {
+    "service": "频道系统事件",
+    "generated_summary": "机器人已生成的重复总结",
+    "before_history_since": "早于设置的历史起点",
+    "message_type": "未选择的消息类型",
+    "unavailable": "原消息暂不可读取",
+    "": "旧记录，等待重新核对",
+}
+
+
+@admin.get("/channels/{channel}/excluded")
+async def excluded_sources(channel: str, page: int = Query(1, ge=1), reason: str | None = None):
+    service, ch = await managed(channel)
+    where = "channel_id=%s AND source_type='message' AND excluded=TRUE AND deleted=FALSE"
+    groups = await service.store.query(
+        f"SELECT exclusion_reason,COUNT(*) total FROM wiki_sources WHERE {where} GROUP BY exclusion_reason",
+        (ch["id"],),
+        fetch=True,
+    )
+    args = [ch["id"]]
+    if reason is not None:
+        where += " AND exclusion_reason=%s"
+        args.append(reason)
+    count = await service.store.one(f"SELECT COUNT(*) total FROM wiki_sources WHERE {where}", args)
+    rows = await service.store.query(
+        f"SELECT message_id,created_at,body,category,exclusion_reason FROM wiki_sources WHERE {where} ORDER BY message_id LIMIT 20 OFFSET %s",
+        [*args, (page - 1) * 20],
+        fetch=True,
+    )
+    return {
+        "total": count["total"],
+        "page": page,
+        "page_size": 20,
+        "reasons": [
+            {
+                "key": row["exclusion_reason"],
+                "label": EXCLUSION_LABELS.get(row["exclusion_reason"], row["exclusion_reason"]),
+                "count": row["total"],
+            }
+            for row in groups
+        ],
+        "items": [
+            {
+                **row,
+                "reason": EXCLUSION_LABELS.get(row["exclusion_reason"], row["exclusion_reason"]),
+                "url": f"https://t.me/{ch['username']}/{row['message_id']}"
+                if ch["username"]
+                else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@admin.post("/channels/{channel}/excluded/refresh")
+async def refresh_exclusions(channel: str, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    active = (
+        await service.store.one("SELECT * FROM wiki_jobs WHERE id=%s", (ch["active_job"],))
+        if ch["active_job"]
+        else None
+    )
+    resume = bool(active and active["status"] in {"running", "pending", "partial"})
+    if resume:
+        await service.store.control_job(ch["id"], active["id"], "pause", actor)
+    try:
+        restored = await service.collector.repair_exclusions(ch)
+        if restored and active:
+            async with service.store.transaction() as cur:
+                await cur.execute(
+                    "SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (ch["id"],)
+                )
+                await cur.execute("SELECT * FROM wiki_jobs WHERE id=%s FOR UPDATE", (active["id"],))
+                job = await cur.fetchone()
+                cursor, progress = decode(job["cursor"]), decode(job["progress"])
+                if "source_manifest" in cursor:
+                    placeholders = ",".join(["%s"] * len(restored))
+                    await cur.execute(
+                        f"SELECT id FROM wiki_sources WHERE channel_id=%s AND message_id IN ({placeholders}) AND excluded=FALSE AND deleted=FALSE AND hidden=FALSE",
+                        (ch["id"], *restored),
+                    )
+                    ids = [row["id"] for row in await cur.fetchall()]
+                    known = set(cursor["source_manifest"])
+                    cursor["source_manifest"].extend(value for value in ids if value not in known)
+                    cursor.pop("page_after", None)
+                    cursor["revisions"] = {}
+                    progress.update(
+                        source_total=len(cursor["source_manifest"]),
+                        generation_complete=False,
+                        review_complete=False,
+                    )
+                    await cur.execute(
+                        "UPDATE wiki_jobs SET phase='extract',`cursor`=%s,progress=%s WHERE id=%s",
+                        (encode(cursor), encode(progress), job["id"]),
+                    )
+        elif restored and ch["enabled"]:
+            await service.store.enqueue(ch["id"], "reindex", actor)
+        async with service.store.transaction() as cur:
+            await service.store.audit(
+                cur,
+                ch["id"],
+                "repair_exclusions",
+                ch["id"],
+                actor,
+                {"restored_message_ids": restored},
+            )
+        return {"restored": len(restored), "message_ids": restored}
+    finally:
+        if resume:
+            await service.store.control_job(ch["id"], active["id"], "resume", actor)
+        service.wake()
+
+
 @admin.put("/channels/{channel}/config")
 async def set_config(channel: str, body: WikiConfig, actor=ADMIN_AUTH):
     service, ch = await managed(channel)

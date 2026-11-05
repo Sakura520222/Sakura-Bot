@@ -33,6 +33,7 @@ SCHEMA = (
         observed_at DATETIME(6) NOT NULL, verified BOOLEAN NOT NULL DEFAULT FALSE,
         deleted BOOLEAN NOT NULL DEFAULT FALSE, hidden BOOLEAN NOT NULL DEFAULT FALSE,
         excluded BOOLEAN NOT NULL DEFAULT FALSE, media_group VARCHAR(64), media_key VARCHAR(128),
+        exclusion_reason VARCHAR(32) NOT NULL DEFAULT '',
         UNIQUE KEY wiki_source_identity(channel_id,source_type,external_id),
         INDEX wiki_source_message(channel_id,source_type,message_id),
         INDEX wiki_source_scan(channel_id,id), INDEX wiki_source_time(channel_id,created_at),

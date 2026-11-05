@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -18,6 +19,127 @@ from .store import decode, encode
 class SourceCollector:
     def __init__(self, store, client=None):
         self.store, self.client = store, client
+        self.summary_refs = {}
+
+    @staticmethod
+    def policy_exclusion(config, created_at, category):
+        if config.history_since and utc(created_at) < utc(config.history_since):
+            return "before_history_since"
+        if category not in config.message_types:
+            return "message_type"
+        return ""
+
+    @staticmethod
+    def summary_text(value):
+        lines = value.splitlines()
+        if lines and lines[0].lstrip().startswith("📋"):
+            lines = lines[1:]
+        value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", "\n".join(lines))
+        return re.sub(r"[\s*_`#>]+", "", value)
+
+    async def prepare_summary_refs(self, channel):
+        aliases = await self.store.query(
+            "SELECT alias FROM wiki_channel_aliases WHERE channel_id=%s",
+            (channel["id"],),
+            fetch=True,
+        )
+        keys, refs, after = {row["alias"] for row in aliases}, {}, 0
+        while True:
+            rows = await self.store.query(
+                "SELECT id,channel_id,created_at,summary_text,summary_message_ids FROM summaries WHERE id>%s ORDER BY id LIMIT 100",
+                (after,),
+                fetch=True,
+            )
+            if not rows:
+                break
+            for row in rows:
+                after = row["id"]
+                try:
+                    belongs = alias_key(row["channel_id"]) in keys
+                except ValueError:
+                    belongs = False
+                if belongs:
+                    text = self.summary_text(row["summary_text"] or "")
+                    if not text or not row["created_at"]:
+                        continue
+                    for mid in decode(row.get("summary_message_ids"), []) or []:
+                        if str(mid).isdecimal():
+                            refs.setdefault(int(mid), []).append((utc(row["created_at"]), text))
+        self.summary_refs[channel["id"]] = refs
+
+    def is_summary(self, channel, message_id, body, created_at):
+        plain = self.summary_text(body)
+        if not plain:
+            return False
+        for sent_at, text in self.summary_refs.get(channel, {}).get(message_id, []):
+            # Legacy records can contain administrator-DM IDs. A number alone is
+            # not a channel message identity: require matching send time and body.
+            if abs((utc(created_at) - sent_at).total_seconds()) <= 600:
+                if plain == text or (len(plain) >= 200 and plain in text):
+                    return True
+        return False
+
+    async def repair_exclusions(self, channel):
+        await self.prepare_summary_refs(channel)
+        rows = await self.store.query(
+            "SELECT * FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND excluded=TRUE AND deleted=FALSE ORDER BY message_id",
+            (channel["id"],),
+            fetch=True,
+        )
+        known, inspect = {}, []
+        for row in rows:
+            reason = self.policy_exclusion(channel["config"], row["created_at"], row["category"])
+            if reason:
+                known.setdefault(reason, []).append(row["id"])
+            else:
+                inspect.append(row)
+        for reason, ids in known.items():
+            for start in range(0, len(ids), 250):
+                batch = ids[start : start + 250]
+                await self.store.query(
+                    "UPDATE wiki_sources SET exclusion_reason=%s WHERE id IN ("
+                    + ",".join(["%s"] * len(batch))
+                    + ")",
+                    (reason, *batch),
+                )
+        restored = []
+        if inspect:
+            if not self.client or not self.client.is_connected():
+                raise ConnectionError("UserBot 未连接，旧排除记录暂未修改")
+            from telethon.tl.types import PeerChannel
+
+            for start in range(0, len(inspect), 100):
+                batch = inspect[start : start + 100]
+                messages = await self.client.get_messages(
+                    PeerChannel(int(channel["id"])), ids=[row["message_id"] for row in batch]
+                )
+                for row, message in zip(batch, messages, strict=True):
+                    if message and getattr(message, "date", None):
+                        _, excluded = await self.capture(channel, message)
+                        if not excluded:
+                            restored.append(row["message_id"])
+                    else:
+                        await self.store.query(
+                            "UPDATE wiki_sources SET exclusion_reason='unavailable' WHERE id=%s",
+                            (row["id"],),
+                        )
+        counts = await self.store.one(
+            "SELECT SUM(excluded) excluded FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND deleted=FALSE",
+            (channel["id"],),
+        )
+        await self.store.query(
+            "UPDATE wiki_channels SET coverage=JSON_SET(coverage,'$.excluded',%s) WHERE id=%s",
+            (int(counts["excluded"] or 0), channel["id"]),
+        )
+        if restored:
+            placeholders = ",".join(["%s"] * len(restored))
+            rows = await self.store.query(
+                f"SELECT message_id FROM wiki_sources WHERE channel_id=%s AND source_type='message' AND excluded=FALSE AND message_id IN ({placeholders})",
+                (channel["id"], *restored),
+                fetch=True,
+            )
+            restored = [row["message_id"] for row in rows]
+        return restored
 
     async def capture(self, channel, message, *, summary_ids=()):
         from core.media.image_pipeline import get_image_pipeline, image_media
@@ -26,12 +148,14 @@ class SourceCollector:
         body = getattr(message, "message", None) or ""
         image = image_media(message)
         kind = "image" if image else "text" if body else "other"
-        excluded = (
-            message.id in summary_ids
-            or kind not in config.message_types
-            or bool(config.history_since and utc(message.date) < utc(config.history_since))
-            or bool(getattr(message, "action", None))
-        )
+        if channel["id"] not in self.summary_refs:
+            await self.prepare_summary_refs(channel)
+        reason = self.policy_exclusion(config, message.date, kind)
+        if not reason and getattr(message, "action", None):
+            reason = "service"
+        if not reason and self.is_summary(channel["id"], message.id, body, message.date):
+            reason = "generated_summary"
+        excluded = bool(reason)
         source = await self.store.put_source(
             channel["id"],
             "message",
@@ -43,6 +167,7 @@ class SourceCollector:
             message_id=message.id,
             original_length=len(body),
             excluded=excluded,
+            exclusion_reason=reason,
             media_group=str(getattr(message, "grouped_id", "") or ""),
             category=kind,
             media_key=image,
@@ -93,6 +218,7 @@ class SourceCollector:
             verified=True,
             message_id=message_id,
             excluded=not channel["config"].include_images,
+            exclusion_reason="images_disabled" if not channel["config"].include_images else "",
             media_group=row.get("grouped_id"),
             category="image",
             media_key=row["media_id"],
@@ -100,6 +226,7 @@ class SourceCollector:
 
     async def import_local(self, job, channel):
         await self.store.report(job, "正在导入已有归档和总结", stage="import")
+        await self.prepare_summary_refs(channel)
         aliases = await self.store.query(
             "SELECT alias FROM wiki_channel_aliases WHERE channel_id=%s",
             (channel["id"],),
@@ -189,13 +316,11 @@ class SourceCollector:
                         row["summary_text"],
                         row["created_at"],
                         excluded=not channel["config"].include_summaries,
+                        exclusion_reason="summaries_disabled"
+                        if not channel["config"].include_summaries
+                        else "",
                     )
                     summary_ids = decode(row.get("summary_message_ids"), [])
-                    for message_id in summary_ids:
-                        await self.store.query(
-                            "UPDATE wiki_sources SET excluded=TRUE WHERE channel_id=%s AND source_type='message' AND message_id=%s",
-                            (channel["id"], message_id),
-                        )
                     job["cursor"].setdefault("summary_message_ids", []).extend(summary_ids)
                 job["cursor"]["summary"] = row["id"]
             await self.store.checkpoint(job)

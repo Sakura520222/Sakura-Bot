@@ -104,11 +104,20 @@ class PublicReader:
                 return {"items": [], "total": 0, "page": page, "page_size": page_size}
             conditions.append("c.id=%s")
             params.append(resolved["id"])
-        if q:
-            conditions.append(
-                "(r.search_text LIKE %s ESCAPE '=' OR EXISTS (SELECT 1 FROM wiki_entity_aliases a WHERE a.page_id=p.id AND a.name LIKE %s ESCAPE '='))"
-            )
-            params.extend([like(q), like(q)])
+        terms = list(dict.fromkeys((q or "").split()))
+        ranking, rank_params = [], []
+        if terms:
+            matches = []
+            for term in terms:
+                matches.append(
+                    "(r.search_text LIKE %s ESCAPE '=' OR EXISTS (SELECT 1 FROM wiki_entity_aliases a WHERE a.page_id=p.id AND a.name LIKE %s ESCAPE '='))"
+                )
+                params.extend([like(term), like(term)])
+                ranking.append(
+                    "(CASE WHEN p.title LIKE %s ESCAPE '=' THEN 4 ELSE 0 END + CASE WHEN r.search_text LIKE %s ESCAPE '=' THEN 1 ELSE 0 END)"
+                )
+                rank_params.extend([like(term), like(term)])
+            conditions.append("(" + " OR ".join(matches) + ")")
         for column, value, operator in [
             ("p.kind", kind, "="),
             ("p.topic", topic, "="),
@@ -119,12 +128,13 @@ class PublicReader:
                 conditions.append(f"{column}{operator}%s")
                 params.append(value)
         where = " AND ".join(conditions)
+        order = ("(" + "+".join(ranking) + ") DESC," if ranking else "") + "r.created_at DESC,p.id"
         count = await self.store.one(f"SELECT COUNT(*) total {PAGE_JOIN} WHERE {where}", params)
         rows = await self.store.query(
             f"""SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id channel_id,c.title channel_title,
             c.published_revision,r.id revision_id,r.created_at,r.document {PAGE_JOIN} WHERE {where}
-            ORDER BY r.created_at DESC,p.id LIMIT %s OFFSET %s""",
-            [*params, page_size, (page - 1) * page_size],
+            ORDER BY {order} LIMIT %s OFFSET %s""",
+            [*params, *rank_params, page_size, (page - 1) * page_size],
             fetch=True,
         )
         return {
@@ -132,6 +142,7 @@ class PublicReader:
             "total": count["total"],
             "page": page,
             "page_size": page_size,
+            "terms": terms,
         }
 
     @consistent_read

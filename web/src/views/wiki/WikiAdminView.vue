@@ -280,10 +280,12 @@
           ><n-space
             >已枚举 {{ channel.coverage.enumerated || 0 }} 条
             <n-divider vertical />原文归档
-            {{ channel.coverage.indexed || 0 }} 条 <n-divider vertical />排除
-            {{ channel.coverage.excluded || 0 }} 条</n-space
-          ></n-card
-        >
+            {{ channel.coverage.indexed || 0 }} 条 <n-divider vertical />
+            <WikiExclusions
+              :channel="selected"
+              :count="channel.coverage.excluded"
+              @refreshed="refreshData" /></n-space
+        ></n-card>
         <n-space
           ><n-button
             type="primary"
@@ -545,6 +547,7 @@ import {
 } from "../../composables/autosave";
 
 import WikiJobProgress from "./WikiJobProgress.vue";
+import WikiExclusions from "./WikiExclusions.vue";
 import WikiMarkdown from "./WikiMarkdown.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
