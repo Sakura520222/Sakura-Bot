@@ -405,7 +405,8 @@ class WikiStore:
             job["lease_token"] = uuid.uuid4().hex
             await cur.execute(
                 """UPDATE wiki_jobs SET status='running',error_code=NULL,
-                progress=JSON_SET(progress,'$.error_detail',''),lease_token=%s,
+                progress=JSON_SET(progress,'$.error_detail','',
+                    '$.reserved_tokens',0,'$.active_requests',JSON_OBJECT()),lease_token=%s,
                 lease_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 90 SECOND),updated_at=UTC_TIMESTAMP(6) WHERE id=%s""",
                 (job["lease_token"], job["id"]),
             )
@@ -413,6 +414,8 @@ class WikiStore:
             job["status"] = "running"
             job["error_code"] = None
             job["progress"]["error_detail"] = ""
+            job["progress"]["reserved_tokens"] = 0
+            job["progress"]["active_requests"] = {}
             return job
 
     async def fence(self, cur, job):
