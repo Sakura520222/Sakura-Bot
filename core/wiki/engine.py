@@ -66,7 +66,8 @@ class WikiEngine:
         text = encode(payload)
         # Conservative reservation is persisted before billing can occur. Failed/unknown
         # requests retain the reservation; the UI distinguishes reservations from measured usage.
-        reserve = len(text) + len(system) + 6000
+        output_limit = 16384
+        reserve = len(text) + len(system) + output_limit
         progress = job["progress"]
         used = (
             progress.get("reserved_tokens", 0)
@@ -82,13 +83,34 @@ class WikiEngine:
             response = await client.with_options(max_retries=0).chat.completions.create(
                 model=model,
                 temperature=config.temperature,
-                max_tokens=6000,
+                max_tokens=output_limit,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
+                stream=True,
+                stream_options={"include_usage": True},
             )
+            if hasattr(response, "__aiter__"):
+                parts, finish_reason, usage = [], None, None
+                async with response:
+                    async for event in response:
+                        if event.usage:
+                            usage = event.usage
+                        if not event.choices:
+                            continue
+                        choice = event.choices[0]
+                        if choice.delta.content:
+                            parts.append(choice.delta.content)
+                        if choice.finish_reason:
+                            finish_reason = choice.finish_reason
+                content = "".join(parts)
+            else:
+                # Some compatible gateways return a complete response even with stream=True.
+                usage = response.usage
+                choice = response.choices[0] if response.choices else None
+                content = choice.message.content if choice else ""
+                finish_reason = choice.finish_reason if choice else None
         progress["ai_seconds"] = round(
             progress.get("ai_seconds", 0) + time.monotonic() - started, 3
         )
-        usage = getattr(response, "usage", None)
         if usage:
             progress["reserved_tokens"] -= reserve
             progress["input_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
@@ -104,9 +126,9 @@ class WikiEngine:
             else None
         )
         await self.store.checkpoint(job)
-        if not response.choices or response.choices[0].finish_reason != "stop":
-            raise ValueError("Incomplete Wiki AI response")
-        return parse_json(response.choices[0].message.content or "")
+        if finish_reason != "stop":
+            raise ValueError(f"Incomplete Wiki AI response: {finish_reason}")
+        return parse_json(content or "")
 
     async def extract(self, job, config, chunk, clients):
         generator, reviewer = clients
