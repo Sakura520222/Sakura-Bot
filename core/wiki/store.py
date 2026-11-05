@@ -392,14 +392,16 @@ class WikiStore:
 
     async def claim_job(self):
         async with self.transaction() as cur:
-            await cur.execute("""SELECT j.* FROM wiki_jobs j JOIN wiki_channels c ON c.id=j.channel_id
+            await cur.execute("""SELECT j.id FROM wiki_jobs j JOIN wiki_channels c ON c.id=j.channel_id
                 WHERE c.enabled=TRUE AND JSON_EXTRACT(c.config,'$.paused')=FALSE
                 AND c.active_job=j.id AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
                 OR (j.status='running' AND j.lease_until<UTC_TIMESTAMP(6)))
                 ORDER BY c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
-            job = await cur.fetchone()
-            if not job:
+            selected = await cur.fetchone()
+            if not selected:
                 return None
+            await cur.execute("SELECT * FROM wiki_jobs WHERE id=%s", (selected["id"],))
+            job = await cur.fetchone()
             job["lease_token"] = uuid.uuid4().hex
             await cur.execute(
                 """UPDATE wiki_jobs SET status='running',error_code=NULL,
