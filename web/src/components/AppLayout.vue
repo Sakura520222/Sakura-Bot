@@ -68,7 +68,10 @@
       </n-layout-header>
 
       <!-- 内容 -->
-      <n-layout-content content-class="app-content">
+      <n-layout-content
+        content-class="app-content"
+        :class="{ 'wiki-admin-content': route.path === '/wiki/admin' }"
+      >
         <router-view />
       </n-layout-content>
 
@@ -416,6 +419,10 @@ html.dark .status-chip:not(.online) {
   padding: 28px;
   min-height: calc(100vh - 68px - 44px);
   background: transparent;
+}
+.wiki-admin-content,
+.wiki-admin-content :deep(.app-content) {
+  overflow: visible;
 }
 .app-footer {
   height: 44px;

@@ -1052,7 +1052,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
   color: var(--sb-text);
-  padding: 0;
+  padding: 20px 24px;
 }
 .wiki-toolbar {
   position: sticky;
@@ -1140,6 +1140,9 @@ pre {
   }
 }
 @media (max-width: 800px) {
+  .wiki-admin-page {
+    padding: 16px;
+  }
   .settings-grid,
   .review-grid {
     grid-template-columns: 1fr;
