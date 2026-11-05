@@ -1,5 +1,38 @@
 import apiClient from "./client";
 
+export interface WikiRequestProgress {
+  id: string;
+  stage: string;
+  model: string;
+  sources: number;
+  started_at: string;
+  received_chars: number;
+  output_chars: number;
+  output_limit: number;
+  state: string;
+}
+export interface WikiJob {
+  id: string;
+  kind: string;
+  status: string;
+  phase: string;
+  created_at: string;
+  updated_at: string;
+  next_attempt?: string;
+  attempts: number;
+  error_code?: string;
+  progress: {
+    [key: string]: unknown;
+    activity?: string;
+    stage?: string;
+    error_detail?: string;
+    review_complete?: boolean;
+    published?: boolean;
+    active_requests?: Record<string, WikiRequestProgress>;
+    events?: { time: string; text: string }[];
+  };
+}
+
 export interface Coverage {
   status: string;
   reason?: string;

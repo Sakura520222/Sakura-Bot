@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from .models import alias_key, digest, utc
@@ -98,6 +99,7 @@ class SourceCollector:
         )
 
     async def import_local(self, job, channel):
+        await self.store.report(job, "正在导入已有归档和总结", stage="import")
         aliases = await self.store.query(
             "SELECT alias FROM wiki_channel_aliases WHERE channel_id=%s",
             (channel["id"],),
@@ -209,6 +211,8 @@ class SourceCollector:
             count = await self.client.get_messages(entity, limit=0)
             job["progress"]["estimated_total"] = getattr(count, "total", None)
         summary_ids = set(job["cursor"].get("summary_message_ids", []))
+        await self.store.report(job, "正在读取 Telegram 历史消息", stage="history")
+        last_checkpoint = time.monotonic()
         while True:
             count = 0
             # min_id + reverse scans the entire accessible history, not the previous week.
@@ -226,10 +230,12 @@ class SourceCollector:
                 job["progress"].setdefault("earliest", utc(message.date).isoformat())
                 job["progress"]["latest"] = utc(message.date).isoformat()
                 count += 1
-                # Persist after each message. Replaying one transaction is idempotent.
-                await self.store.checkpoint(job)
+                if count % 25 == 0 or time.monotonic() - last_checkpoint >= 2:
+                    await self.store.checkpoint(job)
+                    last_checkpoint = time.monotonic()
             if count == 0:
                 break
+            await self.store.checkpoint(job)
             await self.coverage(job, "partial", "scanning")
         await self.coverage(job, "accessible", "all_currently_accessible_messages_enumerated")
 
@@ -239,11 +245,28 @@ class SourceCollector:
             raise ConnectionError("Wiki UserBot is offline")
         from telethon.tl.types import PeerChannel
 
+        # The history scan has just verified current messages. Only older or imported
+        # records need another Telegram lookup to detect deletions and offline edits.
+        cutoff = job["created_at"]
+        counts = await self.store.one(
+            """SELECT COUNT(*) total FROM wiki_sources WHERE channel_id=%s
+            AND source_type='message' AND deleted=FALSE AND message_id>%s
+            AND (verified=FALSE OR observed_at<%s)""",
+            (channel["id"], job["cursor"].get("reconcile_id", 0), cutoff),
+        )
+        await self.store.report(
+            job,
+            "正在核对未确认的历史记录",
+            stage="reconcile",
+            reconcile_total=counts["total"],
+            reconciled=0,
+        )
         while True:
             rows = await self.store.query(
                 """SELECT message_id FROM wiki_sources WHERE channel_id=%s
-                AND source_type='message' AND deleted=FALSE AND message_id>%s ORDER BY message_id LIMIT 100""",
-                (channel["id"], job["cursor"].get("reconcile_id", 0)),
+                AND source_type='message' AND deleted=FALSE AND message_id>%s
+                AND (verified=FALSE OR observed_at<%s) ORDER BY message_id LIMIT 100""",
+                (channel["id"], job["cursor"].get("reconcile_id", 0), cutoff),
                 fetch=True,
             )
             if not rows:
@@ -261,7 +284,9 @@ class SourceCollector:
                         channel["id"], message_ids=[row["message_id"]], deleted=True
                     )
                 job["cursor"]["reconcile_id"] = row["message_id"]
+                job["progress"]["reconciled"] += 1
             await self.store.checkpoint(job)
+        await self.coverage(job, "accessible", "all_currently_accessible_messages_enumerated")
 
     async def coverage(self, job, status, reason):
         counts = await self.store.one(

@@ -4,6 +4,7 @@
 
 """MySQL persistence, identity mapping and fenced per-channel jobs."""
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -43,6 +44,7 @@ class WikiSchemaError(RuntimeError):
 class WikiStore:
     def __init__(self, db):
         self.db = db
+        self._checkpoint_locks = {}
 
     @asynccontextmanager
     async def snapshot(self):
@@ -254,6 +256,11 @@ class WikiStore:
                 and bool(old["excluded"]) == excluded
                 and old["category"] == category
             ):
+                if verified:
+                    await cur.execute(
+                        "UPDATE wiki_sources SET observed_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                        (source_id,),
+                    )
                 return source_id
             await cur.execute(
                 """INSERT INTO wiki_sources
@@ -381,7 +388,7 @@ class WikiStore:
                 WHERE c.enabled=TRUE AND JSON_EXTRACT(c.config,'$.paused')=FALSE
                 AND c.active_job=j.id AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
                 OR (j.status='running' AND j.lease_until<UTC_TIMESTAMP(6)))
-                ORDER BY j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
+                ORDER BY c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
             job = await cur.fetchone()
             if not job:
                 return None
@@ -416,12 +423,23 @@ class WikiStore:
     async def checkpoint(self, job, phase=None):
         if phase:
             job["phase"] = phase
-        async with self.transaction() as cur:
-            await self.fence(cur, job)
-            await cur.execute(
-                "UPDATE wiki_jobs SET phase=%s,`cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
-                (job["phase"], encode(job["cursor"]), encode(job["progress"]), job["id"]),
-            )
+        lock = self._checkpoint_locks.setdefault(job["id"], asyncio.Lock())
+        async with lock:
+            async with self.transaction() as cur:
+                await self.fence(cur, job)
+                await cur.execute(
+                    "UPDATE wiki_jobs SET phase=%s,`cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                    (job["phase"], encode(job["cursor"]), encode(job["progress"]), job["id"]),
+                )
+
+    async def report(self, job, activity, **details):
+        progress = job["progress"]
+        if activity != progress.get("activity"):
+            events = progress.setdefault("events", [])
+            events.append({"time": utc().isoformat(), "text": activity})
+            del events[:-12]
+        progress.update(activity=activity, **details)
+        await self.checkpoint(job)
 
     async def finish(self, job, status="completed", error=None, delay=0):
         async with self.transaction() as cur:

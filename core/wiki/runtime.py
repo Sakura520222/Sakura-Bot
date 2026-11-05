@@ -9,7 +9,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from .collector import SourceCollector
-from .engine import BudgetExceeded, WikiEngine
+from .engine import BudgetExceeded, WikiEngine, WikiResponseError
 from .models import WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
@@ -189,10 +189,15 @@ class WikiRuntime:
             logger.warning("Wiki tick deferred: %s", type(error).__name__)
 
     async def run_job(self, job):
+        owner = asyncio.current_task()
+
         async def keep_lease():
-            while True:
-                await asyncio.sleep(20)
-                await self.store.heartbeat(job)
+            try:
+                while True:
+                    await asyncio.sleep(20)
+                    await self.store.heartbeat(job)
+            except LeaseLost:
+                owner.cancel()
 
         heartbeat = asyncio.create_task(keep_lease())
         try:
@@ -220,6 +225,7 @@ class WikiRuntime:
             if job["phase"] == "extract":
                 await self.engine.generate(job, channel)
             if job["phase"] == "assemble":
+                await self.store.report(job, "正在整理文章与知识地图", stage="assemble")
                 await self.engine.assemble(job, channel)
             if job["phase"] == "ready":
                 fresh = await self.store.channel(channel["id"])
@@ -240,11 +246,17 @@ class WikiRuntime:
                     and job["progress"]["review_complete"]
                     and job["progress"].get("pages")
                 ):
+                    await self.store.report(job, "正在发布已审校的知识", stage="publish")
                     pub = await self.engine.knowledge.publish(
                         channel["id"], job["id"], "wiki", running_job=job
                     )
                     job["progress"]["publication_id"] = pub
                     job["progress"]["published"] = True
+                job["progress"]["activity"] = (
+                    "构建完成，内容已发布" if job["progress"]["published"] else "构建完成"
+                )
+                job["progress"]["stage"] = "done"
+                job["progress"]["active_requests"] = {}
                 await self.store.query(
                     "UPDATE wiki_channels SET dirty_at=NULL WHERE id=%s AND source_generation=%s",
                     (channel["id"], job["progress"]["source_generation"]),
@@ -256,11 +268,23 @@ class WikiRuntime:
             raise
         except LeaseLost:
             logger.info("Wiki job lease superseded")
-        except BudgetExceeded:
+        except BudgetExceeded as error:
+            job["progress"]["error_detail"] = str(error)
+            job["progress"]["activity"] = "任务预算不足，已保留当前进度"
             await self.store.finish(job, "paused", "token_budget_reached")
         except Exception as error:
-            # Only class names are persisted/logged. Provider payloads may contain secrets/text.
-            logger.warning("Wiki job deferred: %s", type(error).__name__)
+            if isinstance(error, WikiResponseError):
+                detail = str(error)
+            elif getattr(error, "status_code", None):
+                detail = f"模型服务返回 HTTP {error.status_code}"
+            elif getattr(error, "seconds", None):
+                detail = f"Telegram 限流，等待 {error.seconds} 秒后继续"
+            elif isinstance(error, TimeoutError) or "Timeout" in type(error).__name__:
+                detail = "请求长时间未返回数据，正在保留进度并安排重试"
+            else:
+                detail = f"处理失败：{type(error).__name__}"
+            job["progress"].update(error_detail=detail, activity=detail, active_requests={})
+            logger.warning("Wiki job %s (%s): %s", job["id"], job["phase"], detail)
             try:
                 channel = await self.store.channel(job["channel_id"])
                 retries = channel["config"].retries if channel else 3

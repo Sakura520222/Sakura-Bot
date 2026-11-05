@@ -218,7 +218,8 @@ async def create_job(channel: str, body: JobRequest, actor=ADMIN_AUTH):
 async def jobs(channel: str, page: int = Query(1, ge=1, le=10000)):
     service, ch = await managed(channel)
     rows = await service.store.query(
-        """SELECT id,kind,status,phase,progress,attempts,error_code,created_at,updated_at
+        """SELECT id,kind,status,phase,progress,attempts,error_code,created_at,updated_at,
+        next_attempt,lease_until,UTC_TIMESTAMP(6) server_time
         FROM wiki_jobs WHERE channel_id=%s ORDER BY created_at DESC LIMIT 50 OFFSET %s""",
         (ch["id"], (page - 1) * 50),
         fetch=True,

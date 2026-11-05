@@ -25,8 +25,11 @@
           @click="enableWiki"
           >启用 Wiki</n-button
         >
-        <n-button v-else-if="channel" :disabled="busy" @click="startBuild"
-          >开始构建</n-button
+        <n-button
+          v-else-if="channel"
+          :disabled="busy"
+          @click="channel.active_job ? (tab = 'jobs') : startBuild()"
+          >{{ channel.active_job ? "查看当前任务" : "开始构建" }}</n-button
         >
         <n-button quaternary :loading="busy" @click="loadChannels"
           >刷新</n-button
@@ -213,7 +216,22 @@
                 ><n-input-number
                   v-model:value="draft.token_budget"
                   :min="1000"
-                  :max="10000000"
+                  :step="100000"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="单次最大输出 Token"
+                ><n-input-number
+                  v-model:value="draft.max_output_tokens"
+                  :min="1024"
+                  :max="262144"
+                  :step="1024"
+                  style="width: 100%"
+              /></n-form-item>
+              <n-form-item label="同时处理批次"
+                ><n-input-number
+                  v-model:value="draft.concurrency"
+                  :min="1"
+                  :max="4"
                   style="width: 100%"
               /></n-form-item>
               <n-form-item label="请求超时（秒）"
@@ -258,11 +276,11 @@
         </n-card>
       </template>
       <template v-else-if="tab === 'jobs'">
-        <n-card title="采集进度" size="small"
+        <n-card title="历史消息采集" size="small"
           ><n-space
             >已枚举 {{ channel.coverage.enumerated || 0 }} 条
-            <n-divider vertical />已收录 {{ channel.coverage.indexed || 0 }} 条
-            <n-divider vertical />排除
+            <n-divider vertical />原文归档
+            {{ channel.coverage.indexed || 0 }} 条 <n-divider vertical />排除
             {{ channel.coverage.excluded || 0 }} 条</n-space
           ></n-card
         >
@@ -296,38 +314,21 @@
           size="small"
         >
           <template #header-extra
-            ><n-tag :bordered="false">{{
-              stateLabels[job.status] || job.status
-            }}</n-tag></template
+            ><n-tag
+              :bordered="false"
+              :type="
+                ['published', 'completed'].includes(job.status)
+                  ? 'success'
+                  : job.status === 'failed'
+                    ? 'error'
+                    : job.status === 'paused'
+                      ? 'warning'
+                      : 'info'
+              "
+              >{{ stateLabels[job.status] || job.status }}</n-tag
+            ></template
           >
-          <n-text depth="3"
-            >{{ formatDate(job.created_at) }} · {{ job.phase }}</n-text
-          >
-          <n-grid :cols="3" :x-gap="16" class="job-stats"
-            ><n-gi
-              ><n-statistic label="枚举 / 处理"
-                >{{ job.progress.enumerated || 0 }} /
-                {{ job.progress.processed || 0 }}</n-statistic
-              ></n-gi
-            ><n-gi
-              ><n-statistic label="输入 / 输出 Token"
-                >{{ job.progress.input_tokens || 0 }} /
-                {{ job.progress.output_tokens || 0 }}</n-statistic
-              ></n-gi
-            ><n-gi
-              ><n-statistic label="缓存命中 / 页面"
-                >{{ job.progress.cache_hits || 0 }} /
-                {{ job.progress.pages || 0 }}</n-statistic
-              ></n-gi
-            ></n-grid
-          >
-          <n-alert v-if="job.error_code" type="error" :show-icon="false"
-            >{{ job.error_code }} · 已重试 {{ job.attempts }} 次</n-alert
-          >
-          <n-text depth="3"
-            >审校：{{ job.progress.review_complete ? "通过" : "待完成" }} ·
-            发布：{{ job.progress.published ? "已发布" : "未发布" }}</n-text
-          >
+          <WikiJobProgress :job="job" />
           <template #action
             ><n-space
               ><n-button
@@ -558,6 +559,7 @@ import {
   statusLabels,
   type Coverage,
   type Claim,
+  type WikiJob as Job,
 } from "../../api/wiki";
 import {
   createAutosave,
@@ -565,6 +567,7 @@ import {
   type Autosave,
 } from "../../composables/autosave";
 
+import WikiJobProgress from "./WikiJobProgress.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;
@@ -589,6 +592,7 @@ interface Config {
   retries: number;
   concurrency: number;
   token_budget: number;
+  max_output_tokens: number;
   input_cost_per_million: number | null;
   output_cost_per_million: number | null;
   debounce_seconds: number;
@@ -601,16 +605,7 @@ interface Channel {
   config: Config;
   coverage: Coverage;
   published_revision: string | null;
-}
-interface Job {
-  id: string;
-  kind: string;
-  status: string;
-  phase: string;
-  created_at: string;
-  attempts: number;
-  error_code?: string;
-  progress: Record<string, number | boolean | string | null>;
+  active_job: string | null;
 }
 interface Revision {
   id: string;
@@ -897,30 +892,42 @@ async function refreshData() {
   if (!selected.value) return;
   const current = selected.value;
   const suffix = `?page=${adminPage.value}`;
-  const results = await Promise.all([
-    wikiAdmin<Job[]>(`${root()}/jobs${suffix}`),
-    wikiAdmin<Revision[]>(`${root()}/revisions${suffix}`),
-    wikiAdmin<{ id: string; created_at: string }[]>(
-      `${root()}/publications${suffix}`,
-    ),
-    wikiAdmin<typeof audit.value>(`${root()}/audit${suffix}`),
-    wikiAdmin<typeof reviewQueue.value>(`${root()}/extractions${suffix}`),
-  ]);
-  if (selected.value !== current) return;
-  [
-    jobs.value,
-    revisions.value,
-    publications.value,
-    audit.value,
-    reviewQueue.value,
-  ] = results;
+  if (tab.value === "jobs") {
+    const [currentJobs, currentChannel] = await Promise.all([
+      wikiAdmin<Job[]>(`${root()}/jobs${suffix}`),
+      wikiAdmin<Channel>(`${root()}/config`),
+    ]);
+    if (selected.value === current) {
+      jobs.value = currentJobs;
+      channel.value = currentChannel;
+    }
+  } else if (tab.value === "review") {
+    const [rows, queue] = await Promise.all([
+      wikiAdmin<Revision[]>(`${root()}/revisions${suffix}`),
+      wikiAdmin<typeof reviewQueue.value>(`${root()}/extractions${suffix}`),
+    ]);
+    if (selected.value === current) {
+      revisions.value = rows;
+      reviewQueue.value = queue;
+    }
+  } else if (tab.value === "history") {
+    const [pubs, actions] = await Promise.all([
+      wikiAdmin<typeof publications.value>(`${root()}/publications${suffix}`),
+      wikiAdmin<typeof audit.value>(`${root()}/audit${suffix}`),
+    ]);
+    if (selected.value === current) {
+      publications.value = pubs;
+      audit.value = actions;
+    }
+  }
 }
 async function saveConfig(showNotice = true) {
   const saved = await autosave.value?.flush(true);
   if (saved && showNotice) notice.value = "设置已保存";
   return !!saved;
 }
-function enqueue(kind: string, page_id?: string) {
+async function enqueue(kind: string, page_id?: string) {
+  if (!(await saveConfig(false))) return;
   return perform(
     () => wikiAdmin(`${root()}/jobs`, "POST", { kind, page_id }),
     "后台任务已排队",
@@ -936,7 +943,8 @@ async function startBuild() {
   await enqueue("backfill");
   if (!error.value) tab.value = "jobs";
 }
-function jobControl(id: string, action: string) {
+async function jobControl(id: string, action: string) {
+  if (action !== "pause" && !(await saveConfig(false))) return;
   return perform(() => wikiAdmin(`${root()}/jobs/${id}/${action}`, "POST"));
 }
 function publish(job_id: string) {
@@ -1037,7 +1045,7 @@ onMounted(() => {
       refreshData().catch((err) => {
         error.value = problem(err);
       });
-  }, 5000);
+  }, 2000);
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
