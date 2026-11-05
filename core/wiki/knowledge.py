@@ -472,8 +472,19 @@ class Knowledge:
                 )
             elif action == "rename":
                 title, slug = options["title"], options["slug"]
+                # 页面 ID、现用 slug 与历史链接共用命名空间；不能夺取其他条目的链接。
                 await cur.execute(
-                    "INSERT IGNORE INTO wiki_slug_aliases VALUES (%s,%s,%s)",
+                    """SELECT id FROM wiki_pages WHERE channel_id=%s
+                    AND (slug=%s OR id=%s) AND id<>%s
+                    UNION ALL SELECT page_id FROM wiki_slug_aliases
+                    WHERE channel_id=%s AND slug IN (%s,%s) AND page_id<>%s LIMIT 1""",
+                    (channel, slug, slug, page_id, channel, slug, page["slug"], page_id),
+                )
+                if await cur.fetchone():
+                    raise ValueError("该链接已被其他页面或其历史版本占用")
+                await cur.execute(
+                    """INSERT INTO wiki_slug_aliases VALUES (%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE page_id=VALUES(page_id)""",
                     (channel, page["slug"], page_id),
                 )
                 await cur.execute(

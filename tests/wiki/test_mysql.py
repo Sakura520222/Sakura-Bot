@@ -631,3 +631,112 @@ async def test_partial_manifest_cannot_publish_even_with_successful_extraction(s
     with pytest.raises(ValueError):
         await Knowledge(store).publish(ch["id"], job["id"], "test", running_job=job)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+
+
+@pytest.mark.parametrize("target", ["current", "historical", "page_id"])
+async def test_rename_rejects_other_page_links_without_partial_writes(store, target):
+    ch, _, first, _, _ = await published(store)
+    knowledge = Knowledge(store)
+    async with store.transaction() as cur:
+        other_id = await knowledge.entity(cur, ch["id"], "另一个项目")
+    await knowledge.manage_page(
+        ch["id"], other_id, "rename", "test", title="其他", slug="historical"
+    )
+    await knowledge.manage_page(ch["id"], other_id, "rename", "test", title="其他", slug="current")
+    slug = other_id if target == "page_id" else target
+    before = await store.channel(ch["id"])
+    with pytest.raises(ValueError, match="占用"):
+        await knowledge.manage_page(
+            ch["id"], first["id"], "rename", "test", title="冲突", slug=slug
+        )
+    current = await store.one("SELECT title,slug FROM wiki_pages WHERE id=%s", (first["id"],))
+    assert current == {"title": first["title"], "slug": first["slug"]}
+    assert (await store.channel(ch["id"]))["source_generation"] == before["source_generation"]
+    await knowledge.manage_page(
+        ch["id"], first["id"], "rename", "test", title="新标题", slug="available"
+    )
+    reader = PublicReader(store)
+    assert (await reader.page(ch["id"], first["slug"]))["id"] == first["id"]
+    assert (await reader.page(ch["id"], "available"))["id"] == first["id"]
+
+
+async def test_healthy_inflight_event_does_not_revoke_public_channel(store, tmp_path, monkeypatch):
+    ch, _, page, _, _ = await published(store)
+    import core.config as config_module
+    from core.wiki.outbox import EventOutbox
+
+    runtime = WikiRuntime(store, None, None)
+    # 配置已加入但频道缓存尚未刷新的正面路径仍应立即采集。
+    monkeypatch.setattr(config_module, "CHANNELS", ["@channel_12345"])
+    runtime.outbox = EventOutbox(tmp_path / "events")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_capture(*args):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(runtime.collector, "capture", hold_capture)
+    event = SimpleNamespace(
+        is_channel=True,
+        chat=SimpleNamespace(id=12345, username="channel_12345", title="知识频道", broadcast=True),
+        message=SimpleNamespace(
+            id=2,
+            message="新消息",
+            date=datetime(2020, 1, 2),
+            edit_date=None,
+            photo=None,
+            document=None,
+        ),
+    )
+    task = asyncio.create_task(runtime.on_message(event))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert runtime.outbox.pending()
+        assert await runtime.flush_outbox()
+        assert (await store.channel(ch["id"]))["access_verified"]
+        assert await runtime.reader.page(ch["id"], page["slug"])
+    finally:
+        release.set()
+        await task
+    assert not runtime.outbox.pending()
+
+
+async def test_restart_recovers_unacknowledged_outbox_files(store, tmp_path):
+    ch, _, page, _, _ = await published(store)
+    from core.wiki.outbox import EventOutbox
+
+    runtime = WikiRuntime(store, None, None)
+    runtime.outbox = EventOutbox(tmp_path / "events")
+    runtime.outbox.put({"kind": "delete", "channel_id": ch["id"], "ids": [1]})
+    await runtime.start()
+    assert not runtime.recovery_keys and not runtime.outbox.pending()
+    assert await runtime.reader.page(ch["id"], page["slug"]) is None
+
+
+async def test_unconfigured_channel_does_not_query_mysql_on_each_message(store, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import core.config as config_module
+
+    runtime = WikiRuntime(store, None, None)
+    monkeypatch.setattr(config_module, "CHANNELS", ["@configured_channel"])
+    lookup = AsyncMock()
+    monkeypatch.setattr(store, "channel", lookup)
+    await runtime.on_message(
+        SimpleNamespace(is_channel=True, chat=SimpleNamespace(id=77777, username="unrelated_group"))
+    )
+    lookup.assert_not_awaited()
+
+
+async def test_timeline_batches_sources_without_loading_whole_articles(store, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    ch, _, page, _, publication = await published(store)
+    query = AsyncMock(wraps=store.query)
+    monkeypatch.setattr(store, "query", query)
+    timeline = await PublicReader(store).timeline(ch["id"])
+    assert query.await_count == 4
+    item = timeline["items"][0]
+    assert item["page_id"] == page["id"] and item["publication_id"] == publication
+    assert item["evidence"][0]["quote"] is None
+    assert item["evidence"][0]["url"] == "https://t.me/channel_12345/1"

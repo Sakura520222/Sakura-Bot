@@ -231,28 +231,45 @@ class PublicReader:
             f"SELECT COUNT(*) n {join} WHERE c.id=%s AND {VISIBLE}", (ch["id"],)
         )
         rows = await self.store.query(
-            f"""SELECT p.slug,wc.ordinal,r.id revision_id {join}
+            f"""SELECT p.id,p.slug,c.id channel_id,c.username,c.config,c.published_revision,
+            JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,wc.payload {join}
             WHERE c.id=%s AND {VISIBLE} ORDER BY COALESCE(wc.occurred_at,wc.source_created_at) DESC,r.id,wc.ordinal
             LIMIT %s OFFSET %s""",
             (ch["id"], page_size, (page - 1) * page_size),
             fetch=True,
         )
+        # 按断言合并引用，再分批读取来源；避免每个条目反复读取整页及历史。
+        source_ids = sorted(
+            {e["source_id"] for row in rows for e in decode(row["payload"])["evidence"]}
+        )
+        sources = {}
+        for offset in range(0, len(source_ids), 500):
+            batch = source_ids[offset : offset + 500]
+            placeholders = ",".join(["%s"] * len(batch))
+            sources.update(
+                {
+                    source["id"]: source
+                    for source in await self.store.query(
+                        f"""SELECT id,source_type,message_id,created_at,edited_at FROM wiki_sources
+                    WHERE channel_id=%s AND id IN ({placeholders})""",
+                        [ch["id"], *batch],
+                        fetch=True,
+                    )
+                }
+            )
         events = []
-        pages = {}
         for row in rows:
-            if row["slug"] not in pages:
-                pages[row["slug"]] = await self.page(channel, row["slug"])
-            doc = pages[row["slug"]]
-            if doc and doc["revision_id"] == row["revision_id"]:
-                events.append(
-                    {
-                        "page_id": doc["id"],
-                        "title": doc["title"],
-                        "url": doc["url"],
-                        "publication_id": doc["publication_id"],
-                        **doc["claims"][row["ordinal"]],
-                    }
-                )
+            events.append(
+                {
+                    "page_id": row["id"],
+                    "title": row["title"],
+                    "url": f"/wiki/{row['channel_id']}/page/{row['slug']}",
+                    "publication_id": row["published_revision"],
+                    **public_claim(
+                        decode(row["payload"]), sources, row["username"], decode(row["config"])
+                    ),
+                }
+            )
         return {
             "items": events,
             "page": page,

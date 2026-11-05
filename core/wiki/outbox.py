@@ -37,11 +37,16 @@ class EventOutbox:
                 temporary.unlink(missing_ok=True)
         return key
 
-    def pending(self, limit=100):
+    def keys(self):
+        return {path.stem for path in self.root.glob("*.json")} if self.root.exists() else set()
+
+    def pending(self, limit=100, keys=None):
         result = []
         if not self.root.exists():
             return result
         for path in self.root.glob("*.json"):
+            if keys is not None and path.stem not in keys:
+                continue
             result.append((path.stem, json.loads(path.read_text(encoding="utf-8"))))
             if len(result) >= limit:
                 break

@@ -58,11 +58,16 @@ class WikiRuntime:
         self._last_refresh = None
         self.bot_client = None
         self.outbox = EventOutbox()
+        self.recovery_keys = set()
+        self._outbox_restored = False
         self.enabled_channels = set()
         self.known_channels = set()
 
     async def start(self, bot_client=None):
         await self.store.initialize()
+        if not self._outbox_restored:
+            self.recovery_keys.update(await asyncio.to_thread(self.outbox.keys))
+            self._outbox_restored = True
         await self.flush_outbox()
         self.ready = True
         if self.client and not self.listeners:
@@ -267,12 +272,26 @@ class WikiRuntime:
             await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def on_message(self, event):
+        key = None
         try:
             if not event.is_channel:
                 return
             chat = event.chat or await event.get_chat()
             cid = canonical_id(chat.id)
             if cid not in self.enabled_channels:
+                if cid not in self.known_channels:
+                    import core.config as config_module
+
+                    # 新配置的频道仍可立即采集，普通群组不逐消息查询数据库。
+                    candidates = {cid, (getattr(chat, "username", None) or "").lower()}
+                    allowed = set()
+                    for configured in config_module.CHANNELS:
+                        try:
+                            allowed.add(alias_key(configured))
+                        except ValueError:
+                            continue
+                    if not candidates.intersection(allowed):
+                        return
                 candidate = await self.store.channel(cid)
                 if not candidate or not candidate["enabled"]:
                     return
@@ -299,10 +318,14 @@ class WikiRuntime:
                 channel = await self.store.register_channel(chat, channel["id"])
                 await self.collector.capture(channel, event.message)
             await asyncio.to_thread(self.outbox.acknowledge, key)
+            self.recovery_keys.discard(key)
         except Exception as error:
+            if key:
+                self.recovery_keys.add(key)
             logger.warning("Wiki capture deferred: %s", type(error).__name__)
 
     async def on_delete(self, event):
+        key = None
         try:
             if event.chat_id:
                 cid = canonical_id(event.chat_id)
@@ -317,11 +340,20 @@ class WikiRuntime:
                         channel["id"], message_ids=event.deleted_ids, deleted=True
                     )
                 await asyncio.to_thread(self.outbox.acknowledge, key)
+                self.recovery_keys.discard(key)
         except Exception as error:
+            if key:
+                self.recovery_keys.add(key)
             logger.warning("Wiki deletion deferred: %s", type(error).__name__)
 
     async def flush_outbox(self):
-        pending = await asyncio.to_thread(self.outbox.pending)
+        if not self.recovery_keys:
+            return True
+        # 仅回放确认失败或重启遗留的事件；健康的在途写入由原处理器确认。
+        pending = await asyncio.to_thread(self.outbox.pending, 100, self.recovery_keys.copy())
+        if not pending:
+            self.recovery_keys.intersection_update(await asyncio.to_thread(self.outbox.keys))
+            return not self.recovery_keys
         if pending:
             await self.store.query(
                 "UPDATE wiki_channels SET access_verified=FALSE,verified_until=NULL WHERE enabled=TRUE"
@@ -361,7 +393,8 @@ class WikiRuntime:
                             channel["id"], message_ids=[record["message_id"]], deleted=True
                         )
             await asyncio.to_thread(self.outbox.acknowledge, key)
-        return not await asyncio.to_thread(self.outbox.pending, 1)
+            self.recovery_keys.discard(key)
+        return not self.recovery_keys
 
 
 def schedule_due(config, previous, now=None):
