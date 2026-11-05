@@ -42,6 +42,7 @@ from .routes import (
     system,
     userbot,
     vector_store,
+    wiki,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,16 @@ def create_app() -> FastAPI:
     app.include_router(database.router, prefix="/api/tables", tags=["数据库管理"])
     app.include_router(guard.router, prefix="/api/guard", tags=["Sakura Guard"])
     app.include_router(images.router, prefix="/api/images", tags=["图片任务"])
+    app.include_router(wiki.public, prefix="/api/public/wiki", tags=["公开 Wiki"])
+    app.include_router(wiki.admin, prefix="/api/wiki/admin", tags=["Wiki 管理"])
+
+    @app.get("/wiki-preview/{channel}", include_in_schema=False)
+    async def wiki_channel_preview(channel: str):
+        return await wiki.crawler_html(channel)
+
+    @app.get("/wiki-preview/{channel}/{slug}", include_in_schema=False)
+    async def wiki_page_preview(channel: str, slug: str):
+        return await wiki.crawler_html(channel, slug)
 
     # 注册健康检查端点
     @app.get("/api/health", tags=["健康检查"])

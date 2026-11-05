@@ -33,6 +33,10 @@ def effective_ai_config(
         raise ValueError("Unknown AI purpose")
     profiles = parse_ai_profiles(config)
     route = profiles.routing.get(purpose)
+    if purpose == "wiki_review" and not (
+        route and (route.provider_id or route.profile_id or route.model)
+    ):
+        route = profiles.routing.get("wiki")
     vision = dict(
         vision_enabled=profiles.vision.enabled,
         vision_ocr=profiles.vision.ocr,

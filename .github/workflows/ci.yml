@@ -120,7 +120,19 @@ jobs:
   tests:
     name: 单元测试
     runs-on: ubuntu-latest
+    services:
+      wiki-mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=15
     env:
+      WIKI_TEST_PORT: "3306"
       # 收集测试模块时就会创建 Settings，必须在 pytest 启动前提供合法配置。
       # 以下均为测试占位值，单元测试通过 mock 隔离外部服务。
       TELEGRAM_API_ID: "123456"
@@ -155,6 +167,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: 设置 Go（Wiki 跨语言快照验证）
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: qa-bot-go/go.mod
+          cache-dependency-path: qa-bot-go/go.sum
       
       - name: 运行单元测试并收集覆盖率
         id: unit_tests

@@ -199,6 +199,16 @@ class ImagePipeline:
         if not current or current["deleted"] or current["revision"] != job["revision"]:
             return
         text = combined_text(current["caption"], asset)
+        try:
+            from core.wiki.runtime import get_wiki_runtime
+
+            wiki = get_wiki_runtime()
+            if wiki and wiki.ready:
+                channel = await wiki.store.channel(current["channel_id"])
+                if channel and channel["enabled"]:
+                    await wiki.collector.capture_image(channel, current["message_id"])
+        except Exception as error:
+            logger.warning("Wiki 图片证据更新延后: %s", type(error).__name__)
         if not await self.publisher(current, text):
             raise RuntimeError("image_index_unavailable")
         await self.store.update_job(job, "complete", sha256=digest)

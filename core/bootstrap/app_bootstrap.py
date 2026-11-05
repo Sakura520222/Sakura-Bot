@@ -128,6 +128,10 @@ class AppBootstrap:
             # 第11.5步：初始化实时RAG功能
             await self._initialize_realtime_rag()
 
+            from core.wiki.runtime import start_wiki
+
+            await start_wiki(get_db_manager(), self.userbot_client, self.scheduler, self.client)
+
             # 第12步：启动 WebUI API 服务器
             await self._initialize_web_api()
 
@@ -256,6 +260,15 @@ class AppBootstrap:
     async def _cleanup(self) -> None:
         """清理资源"""
         self.logger.info("正在清理资源...")
+
+        from core.wiki.runtime import get_wiki_runtime
+
+        wiki = get_wiki_runtime()
+        if wiki:
+            try:
+                await wiki.stop()
+            except Exception as error:
+                self.logger.warning("关闭 Wiki 时出错: %s", type(error).__name__)
 
         try:
             await self.moderation_initializer.shutdown()

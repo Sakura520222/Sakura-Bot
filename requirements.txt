@@ -10,6 +10,7 @@ openai>=1.0.0
 
 # 异步任务调度器
 apscheduler>=3.10.0
+tzdata>=2025.2
 
 # 环境变量管理
 python-dotenv>=1.0.0

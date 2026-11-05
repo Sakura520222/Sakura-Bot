@@ -5,6 +5,8 @@ export const aiPurposes: { key: AIPurpose; label: string; description: string }[
   { key: "assistant", label: "助手问答", description: "助手 Bot 的 AI 问答" },
   { key: "vision", label: "图片识别", description: "图片 OCR 与内容描述" },
   { key: "poll", label: "投票生成", description: "从总结生成投票" },
+  { key: "wiki", label: "Wiki 生成", description: "频道百科知识抽取与增量维护" },
+  { key: "wiki_review", label: "Wiki 审校", description: "独立核查事实与公开权限；未绑定时使用 Wiki 生成模型" },
 ];
 
 export interface AIProfileDraft extends AIProfile {

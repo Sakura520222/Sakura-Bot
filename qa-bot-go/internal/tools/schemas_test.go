@@ -23,6 +23,7 @@ func TestToolSchemasShape(t *testing.T) {
 		"semantic_search", "keyword_search", "list_channels", "resolve_channel",
 		"get_recent_summaries", "get_channel_stats", "get_source_detail",
 		"rerank_results", "get_channel_info",
+		"wiki_search", "wiki_get_page", "wiki_get_related", "wiki_get_changes", "wiki_get_channel_profile",
 	}
 	if got := ToolNames(); strings.Join(got, ",") != strings.Join(wantNames, ",") {
 		t.Fatalf("工具名/顺序漂移: got %v, want %v", got, wantNames)
@@ -55,8 +56,8 @@ func TestToolSchemasRequiredField(t *testing.T) {
 	if err := json.Unmarshal(ToolSchemasJSON, &raw); err != nil {
 		t.Fatalf("ToolSchemasJSON 非法: %v", err)
 	}
-	if len(raw) != 9 {
-		t.Fatalf("schema 数量 = %d, 期望 9", len(raw))
+	if len(raw) != 14 {
+		t.Fatalf("schema 数量 = %d, 期望 14", len(raw))
 	}
 	byName := make(map[string]map[string]any, len(raw))
 	for _, item := range raw {

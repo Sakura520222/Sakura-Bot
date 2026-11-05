@@ -33,16 +33,21 @@ type ToolExecutor struct {
 	memoryMgr   MemoryManager
 	reranker    Reranker
 	resultStore *resultStore
+	wiki        WikiRepository
 }
 
 // NewToolExecutor 创建每请求隔离的工具执行上下文。
-func NewToolExecutor(vs VectorStore, mm MemoryManager, rr Reranker) *ToolExecutor {
-	return &ToolExecutor{
+func NewToolExecutor(vs VectorStore, mm MemoryManager, rr Reranker, wiki ...WikiRepository) *ToolExecutor {
+	executor := &ToolExecutor{
 		vectorStore: vs,
 		memoryMgr:   mm,
 		reranker:    rr,
 		resultStore: newResultStore(),
 	}
+	if len(wiki) > 0 {
+		executor.wiki = wiki[0]
+	}
+	return executor
 }
 
 // Reset 重置结果存储（对齐 ToolExecutor.reset，agent_tools.py:298-303）。
@@ -98,6 +103,8 @@ func (e *ToolExecutor) Execute(ctx context.Context, toolName string, args map[st
 // JSON 载荷），由 Execute 统一记录并包装。
 func (e *ToolExecutor) dispatch(ctx context.Context, toolName string, args map[string]any) (string, error) {
 	switch toolName {
+	case "wiki_search", "wiki_get_page", "wiki_get_related", "wiki_get_changes", "wiki_get_channel_profile":
+		return e.executeWiki(ctx, toolName, args)
 	case "semantic_search":
 		return e.executeSemanticSearch(ctx, args)
 	case "keyword_search":

@@ -165,6 +165,7 @@ const menuGroups: MenuGroupDef[] = [
     items: [
       { key: "/ai-config", label: "AI 配置", icon: AutoAwesomeOutlined },
       { key: "/vector-store", label: "向量存储", icon: DatabaseOutlined },
+      { key: "/wiki/admin", label: "Sakura Wiki", icon: AutoAwesomeOutlined },
     ],
   },
   {
