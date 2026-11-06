@@ -67,9 +67,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     {"detail": "Wiki 请求过于频繁"}, status_code=429, headers={"Retry-After": "60"}
                 )
             response = await call_next(request)
-            # 仅成功的头像响应允许浏览器短缓存（404/503 保持 no-store）；
-            # 其余匿名 Wiki 响应一律 no-store。
-            if response.status_code == 200 and WIKI_AVATAR_ROUTE.fullmatch(path):
+            # 仅成功的头像响应（含 304 条件请求）允许浏览器短缓存；
+            # 404/503 与其余匿名 Wiki 响应一律 no-store。
+            if response.status_code in {200, 304} and WIKI_AVATAR_ROUTE.fullmatch(path):
                 response.headers["Cache-Control"] = "public, max-age=3600"
             else:
                 response.headers["Cache-Control"] = "no-store"

@@ -83,7 +83,7 @@ async def page(channel: str, slug: str):
 
 
 @public.api_route("/channels/{channel}/avatar", methods=["GET", "HEAD"])
-async def avatar(channel: str):
+async def avatar(channel: str, request: Request):
     """公开频道头像：可见性门禁 + 磁盘缓存；未就绪/不可见/缺失一律 404。"""
     service = runtime()
     ch = found(await service.store.channel(channel))
@@ -99,8 +99,13 @@ async def avatar(channel: str):
     if not result:
         raise HTTPException(404, "Wiki 内容不存在或尚未公开")
     data, media_type, photo_id = result
+    etag = f'"av-{photo_id}"'
+    # 条件请求：ETag 匹配时返回 304，浏览器在 max-age 过期后不必整包重传；
+    # 304 与 200 同样由中间件下发缓存头（RFC 9110 要求缓存语义一致）。
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
     # Cache-Control 由中间件统一改写（单一写者）；路由只负责内容与 ETag。
-    return Response(content=data, media_type=media_type, headers={"ETag": f'"av-{photo_id}"'})
+    return Response(content=data, media_type=media_type, headers={"ETag": etag})
 
 
 @public.api_route("/search", methods=["GET", "HEAD"])

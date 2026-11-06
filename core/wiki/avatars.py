@@ -51,7 +51,7 @@ class WikiAvatarService:
         self._refreshed_at = {}  # channel_id -> monotonic 时间，用于过期后台刷新
         self._negative = {}  # channel_id -> monotonic 时间，短负缓存避免高频回源
         self._locks = {}
-        self._revalidating = {}
+        self._revalidating = set()
         self._tasks = set()
 
     async def get(self, channel_id):
