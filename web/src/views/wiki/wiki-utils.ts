@@ -1,4 +1,33 @@
+import { customRef, type Ref } from "vue";
 import type { WikiGraph } from "../../api/wiki";
+
+/** 覆盖状态的短词（频道头行内联用） */
+const COVERAGE_LABELS: Record<string, string> = {
+  accessible: "历史完整",
+  partial: "部分覆盖",
+  unavailable: "历史不可用",
+};
+export function coverageLabel(status?: string): string {
+  return COVERAGE_LABELS[status ?? ""] ?? "覆盖待核实";
+}
+
+/** 防抖 ref：写入后延迟 ms 才对外生效（条目浏览器的即输即搜） */
+export function useDebouncedRef<T>(value: T, delay = 300): Ref<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return customRef((track, trigger) => ({
+    get() {
+      track();
+      return value;
+    },
+    set(newValue: T) {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        value = newValue;
+        trigger();
+      }, delay);
+    },
+  }));
+}
 
 /** 解析后端时间字符串；缺时区时按 UTC 处理，与 api/wiki.ts 的 formatDate 保持一致 */
 function parseDate(value: string): Date | undefined {

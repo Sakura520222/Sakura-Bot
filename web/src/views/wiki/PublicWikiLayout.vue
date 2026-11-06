@@ -16,7 +16,23 @@
         ><RouterLink to="/wiki/admin" class="wiki-admin-link">管理</RouterLink>
       </nav>
     </header>
-    <main id="wiki-main" class="wiki-main"><RouterView /></main>
+    <div
+      class="wiki-reload-bar"
+      :class="{ 'wiki-reload-active': refreshingCount > 0 }"
+      aria-hidden="true"
+    ></div>
+    <main id="wiki-main" class="wiki-main">
+      <RouterView v-slot="{ Component, route: view }">
+        <Transition name="wiki-fade" mode="out-in">
+          <KeepAlive :include="WIKI_KEEP_ALIVE" :max="12">
+            <component
+              :is="Component"
+              :key="`${String(view.name)}:${String(view.params.channel ?? '')}`"
+            />
+          </KeepAlive>
+        </Transition>
+      </RouterView>
+    </main>
     <footer class="wiki-footer">
       <span>Sakura Wiki · 条目整理自频道公开消息，历史范围可能存在缺口</span>
     </footer>
@@ -25,12 +41,18 @@
 <script setup lang="ts">
 import { watch } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
+import { WIKI_KEEP_ALIVE } from "../../router/wiki-routes";
+import { refreshingCount } from "../../composables/wiki-store";
 import "./wiki.css";
 const route = useRoute();
+// 标题/规范地址：文章页由 WikiArticleView 用真实数据接管，避免这里用通用标题覆盖；
+// 其余路由保持通用标题。canonical 与 description 永远无条件刷新。
 watch(
   () => route.fullPath,
   () => {
-    document.title = "Sakura Wiki · 频道知识百科";
+    if (route.name !== "WikiArticle") {
+      document.title = "Sakura Wiki · 频道知识百科";
+    }
     let canonical = document.querySelector<HTMLLinkElement>(
       'link[rel="canonical"]',
     );

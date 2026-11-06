@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from core.web_api.auth import WebUIUser
 from core.web_api.middleware import AuthMiddleware, _wiki_buckets
 from core.web_api.routes import wiki
+from core.wiki.avatars import sniff_media_type
 from core.wiki.knowledge import merge_facts
 from core.wiki.models import (
     Extraction,
@@ -197,6 +198,103 @@ def test_public_reads_without_token_and_no_cache(api):
     assert api.get("/api/public/wiki/channels/private/pages/hidden").status_code == 404
 
 
+def test_avatar_route_regex_contract():
+    assert wiki.is_public_wiki_request("/api/public/wiki/channels/123/avatar", "GET")
+    assert wiki.is_public_wiki_request("/api/public/wiki/channels/123/avatar", "HEAD")
+    assert wiki.WIKI_AVATAR_ROUTE.fullmatch("/api/public/wiki/channels/123/avatar")
+    for method, path in [
+        ("POST", "/api/public/wiki/channels/123/avatar"),
+        ("GET", "/api/public/wiki/channels/123/avatar/x"),
+        ("GET", "/api/public/wiki/channels/123/publish"),
+        ("GET", "/api/public/wiki/channels/123/../admin/config"),
+    ]:
+        assert not wiki.is_public_wiki_request(path, method)
+
+
+def test_avatar_sniffing_rejects_unknown_magic_bytes():
+    assert sniff_media_type(b"\xff\xd8\xff\xe0rest") == "image/jpeg"
+    assert sniff_media_type(b"\x89PNG\r\n\x1a\n") == "image/png"
+    assert sniff_media_type(b"GIF89a") is None
+    assert sniff_media_type(b"") is None
+
+
+def test_avatar_response_carries_public_cache_headers(api, monkeypatch):
+    payload = b"\xff\xd8\xff\xe0" + b"jpeg" * 8
+    service = SimpleNamespace(
+        ready=True,
+        reader=SimpleNamespace(channels=AsyncMock(return_value=[])),
+        store=SimpleNamespace(
+            channel=AsyncMock(return_value={"id": "123"}),
+            one=AsyncMock(return_value={"id": "123"}),
+        ),
+        avatar=SimpleNamespace(get=AsyncMock(return_value=(payload, "image/jpeg", 42))),
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    response = api.get("/api/public/wiki/channels/123/avatar")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=3600"
+    assert response.headers["etag"] == '"av-42"'
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content == payload
+    service.avatar.get.assert_awaited_once_with("123")
+    assert api.get("/api/public/wiki/channels").headers["cache-control"] == "no-store"
+
+
+def test_avatar_failure_keeps_no_store(api, monkeypatch):
+    """缓存白名单只对 200 生效：404/503 的头像响应必须保持 no-store。"""
+    service = SimpleNamespace(
+        ready=True,
+        reader=SimpleNamespace(channels=AsyncMock(return_value=[])),
+        store=SimpleNamespace(
+            channel=AsyncMock(return_value={"id": "123"}),
+            one=AsyncMock(return_value=None),  # 可见性门禁不通过
+        ),
+        avatar=SimpleNamespace(get=AsyncMock(return_value=(b"\xff\xd8\xff", "image/jpeg", 42))),
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    response = api.get("/api/public/wiki/channels/123/avatar")
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+
+    invisible = SimpleNamespace(
+        ready=True,
+        reader=SimpleNamespace(channels=AsyncMock(return_value=[])),
+        store=SimpleNamespace(
+            channel=AsyncMock(return_value={"id": "123"}),
+            one=AsyncMock(return_value={"id": "123"}),
+        ),
+        avatar=SimpleNamespace(get=AsyncMock(return_value=None)),
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: invisible)
+    response = api.get("/api/public/wiki/channels/123/avatar")
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_avatar_missing_or_invisible_channel_is_404(api, monkeypatch):
+    store = SimpleNamespace(
+        channel=AsyncMock(return_value={"id": "123"}),
+        one=AsyncMock(return_value={"id": "123"}),
+    )
+
+    def runtime_with(avatar):
+        return SimpleNamespace(ready=True, store=store, avatar=avatar)
+
+    avatar = SimpleNamespace(get=AsyncMock(return_value=None))
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime_with(avatar))
+    # 头像服务返回 None：仍以 404 表达，绝不向匿名调用方暴露内部差异。
+    assert api.get("/api/public/wiki/channels/123/avatar").status_code == 404
+    store.one = AsyncMock(return_value=None)  # CHANNEL_VISIBLE 门禁未通过
+    assert api.get("/api/public/wiki/channels/123/avatar").status_code == 404
+    store.channel = AsyncMock(return_value=None)  # 频道不存在
+    assert api.get("/api/public/wiki/channels/123/avatar").status_code == 404
+    # 头像服务未装配（avatar 属性缺失）同样是 404。
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: SimpleNamespace(ready=True, store=store))
+    store.channel = AsyncMock(return_value={"id": "123"})
+    store.one = AsyncMock(return_value={"id": "123"})
+    assert api.get("/api/public/wiki/channels/123/avatar").status_code == 404
+
+
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
 @pytest.mark.parametrize(
     "path",
@@ -206,6 +304,7 @@ def test_public_reads_without_token_and_no_cache(api):
         "/api/wiki/admin/channels/123/publish",
         "/api/public/wiki/admin/channels",
         "/api/public/wiki/channels/123/publish",
+        "/api/public/wiki/channels/123/avatar/x",
         "/api/public/wiki/channels/123/../admin/config",
     ],
 )
@@ -214,8 +313,11 @@ def test_no_anonymous_admin_or_prefix_bypass(api, method, path):
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
-def test_public_read_paths_never_authorize_writes(api, method):
-    assert api.request(method, "/api/public/wiki/channels").status_code == 401
+@pytest.mark.parametrize(
+    "path", ["/api/public/wiki/channels", "/api/public/wiki/channels/123/avatar"]
+)
+def test_public_read_paths_never_authorize_writes(api, method, path):
+    assert api.request(method, path).status_code == 401
 
 
 def test_signed_non_admin_denied(api, monkeypatch):

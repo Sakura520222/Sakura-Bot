@@ -52,6 +52,7 @@ class WikiRuntime:
         self.collector = SourceCollector(store, client)
         self.engine = WikiEngine(store)
         self.reader = PublicReader(store)
+        self.avatar = None
         self.tasks = set()
         self.listeners = []
         self.ready = False
@@ -72,6 +73,12 @@ class WikiRuntime:
         await self.flush_outbox()
         self.ready = True
         self.startup_error = ""
+        if self.client or bot_client:
+            from .avatars import WikiAvatarService
+
+            self.avatar = self.avatar or WikiAvatarService(
+                self.store, lambda: (self.client, self.bot_client)
+            )
         if self.client and not self.listeners:
             from telethon import events
 
@@ -256,6 +263,10 @@ class WikiRuntime:
                     )
                     job["progress"]["publication_id"] = pub
                     job["progress"]["published"] = True
+                    if self.avatar:
+                        task = asyncio.create_task(self.refresh_avatar(channel["id"]))
+                        self.tasks.add(task)
+                        task.add_done_callback(self.tasks.discard)
                 job["progress"]["activity"] = (
                     "构建完成，内容已发布" if job["progress"]["published"] else "构建完成"
                 )
@@ -330,6 +341,13 @@ class WikiRuntime:
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
+
+    async def refresh_avatar(self, channel_id):
+        """发布成功后后台回源一次频道头像；任何失败都只记录，不影响任务结果。"""
+        try:
+            await self.avatar.refresh(channel_id)
+        except Exception as error:
+            logger.info("Wiki avatar refresh deferred: %s", type(error).__name__)
 
     async def on_message(self, event):
         key = None
