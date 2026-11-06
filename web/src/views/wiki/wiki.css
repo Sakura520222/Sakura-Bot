@@ -441,7 +441,8 @@
 /* 文章页 */
 .wiki-shell .wiki-article-layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  /* 目录列随内容塌缩：短条目（无目录）时目录列为 0，避免正文被挤进 200px 窄列 */
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
   gap: 24px;
 }
 .wiki-shell .wiki-toc {
