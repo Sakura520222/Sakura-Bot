@@ -821,15 +821,32 @@
   width: 100%;
 }
 .wiki-shell .wiki-sk-w20 {
+  width: 20%;
+}
 .wiki-shell .wiki-sk-w30 {
+  width: 30%;
+}
 .wiki-shell .wiki-sk-w40 {
+  width: 40%;
+}
 .wiki-shell .wiki-sk-w60 {
+  width: 60%;
+}
 .wiki-shell .wiki-sk-w80 {
+  width: 80%;
+}
 .wiki-shell .wiki-sk-w90 {
+  width: 90%;
+}
+/* 骨架屏微光：透明度脉冲；prefers-reduced-motion 时由尾部媒体查询关闭 */
 @keyframes wiki-sk-shimmer {
-  .wiki-shell 0%,
-.wiki-shell 100% {
-  .wiki-shell 50% {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 .wiki-shell .wiki-state {
   padding: 24px;
