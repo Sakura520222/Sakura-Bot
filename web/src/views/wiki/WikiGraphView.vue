@@ -4,16 +4,14 @@
     知识地图
   </p>
   <div class="wiki-section-head">
-    <div>
-      <h1>知识地图</h1>
-    </div>
+    <h1>知识地图</h1>
     <button @click="share">{{ shared ? "已复制链接" : "分享视图" }}</button>
   </div>
   <div class="wiki-filters">
     <label
       >定位<input
         v-model="query"
-        placeholder="搜索实体或主题"
+        placeholder="定位节点"
         @keydown.enter="load()" /></label
     ><label
       >类型<select v-model="kind" @change="load()">
@@ -39,7 +37,7 @@
         <option :value="60">60</option>
         <option :value="120">120</option>
       </select></label
-    ><button @click="load()">查找</button>
+    ><button class="wiki-primary" @click="load()">查找</button>
   </div>
   <p v-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="load()">重试</button>
@@ -61,33 +59,25 @@
       role="img"
       aria-label="可拖拽、缩放的知识地图；也可使用右侧节点列表操作"
     ></div>
-    <div v-if="loading" class="wiki-graph-notice" role="status">
-      加载相关知识…
-    </div>
+    <div v-if="loading" class="wiki-graph-notice" role="status">加载中…</div>
     <div v-else-if="!graph?.nodes.length" class="wiki-graph-notice">
-      暂无符合筛选条件的知识节点。
+      无匹配节点，调整筛选后重试
     </div>
     <div v-if="hover" class="wiki-graph-hover">{{ hover }}</div>
     <aside class="wiki-graph-sidebar">
       <div v-if="selected" class="wiki-graph-detail">
-        <span v-if="selected.kind !== 'Topic'" class="wiki-tag">{{
+        <span v-if="selected.kind !== 'Topic'" class="wiki-tag wiki-chip-accent">{{
           kindLabels[selected.kind]
         }}</span>
         <h3>{{ selected.title }}</h3>
         <p class="wiki-muted">{{ selected.topic }}</p>
-        <RouterLink :to="selected.url">阅读知识条目 ↗</RouterLink>
+        <RouterLink :to="selected.url">阅读条目</RouterLink>
         <div class="wiki-graph-actions">
           <button @click="load(selected.id, true)" :disabled="loading">
             展开邻居</button
           ><button @click="collapse">折叠邻居</button>
         </div>
       </div>
-      <p class="wiki-muted">
-        {{ graph?.nodes.length || 0 }} 个节点 ·
-        {{ graph?.edges.length || 0 }} 条关系<span v-if="graph?.truncated">
-          · 已达密度限制</span
-        >
-      </p>
       <div class="wiki-graph-list" aria-label="知识节点">
         <button
           v-for="node in graph?.nodes"
@@ -103,14 +93,20 @@
       </div>
     </aside>
   </div>
-  <div class="wiki-graph-legend">
-    <span v-for="(color, key) in colors" :key="key"
-      ><i :style="{ background: color }"></i>{{ kindLabels[key] }}</span
-    >
+  <div class="wiki-graph-foot">
+    <div class="wiki-graph-legend">
+      <span v-for="(color, key) in palette.kinds" :key="key"
+        ><i :style="{ background: color }"></i>{{ kindLabels[key] }}</span
+      >
+    </div>
+    <span class="wiki-muted">
+      {{ graph?.nodes.length || 0 }} 个节点 ·
+      {{ graph?.edges.length || 0 }} 条关系<span v-if="graph?.truncated">
+        · 已截断</span
+      >
+    </span>
+    <span class="wiki-muted">滚轮缩放 · 拖拽平移 · 点击节点展开邻居 · 箭头为关系方向</span>
   </div>
-  <p class="wiki-muted">
-    拖动节点或空白画布，滚轮/双指缩放。点击节点查看详情，再按需展开邻居。关系箭头表示方向。
-  </p>
 </template>
 <script setup lang="ts">
 import { ref, shallowRef, onMounted, onUnmounted, watch } from "vue";
@@ -143,14 +139,101 @@ const query = ref(String(route.query.q || "")),
   after = ref(String(route.query.after || "")),
   limit = ref(Math.min(120, Math.max(30, Number(route.query.limit) || 60))),
   layout = ref(String(route.query.layout || "cose"));
-const colors: Record<string, string> = {
-  Topic: "#59896a",
-  Entity: "#6c8bb2",
-  Event: "#d49956",
-  Claim: "#aa7ca5",
-  FAQ: "#67a5a0",
-  Procedure: "#ae9f5f",
+
+/* 画布是 canvas 渲染，读不到 CSS 变量，因此节点/边/标签配色按主题各备一套常量，
+   取值与 --sb-* token 保持同源（亮色 = Google 控制台，暗色 = X）。 */
+interface GraphPalette {
+  kinds: Record<string, string>;
+  label: string;
+  edge: string;
+  selected: string;
+}
+const palettes: Record<"light" | "dark", GraphPalette> = {
+  light: {
+    kinds: {
+      Topic: "#1a73e8",
+      Entity: "#188038",
+      Event: "#e37400",
+      Claim: "#9334e6",
+      FAQ: "#12b5cb",
+      Procedure: "#5f6368",
+    },
+    label: "#5f6368", // = 浅色 --sb-text-2
+    edge: "#bdc1c6", // = 浅色 --sb-border-strong
+    selected: "#1a73e8", // = 浅色 --sb-accent
+  },
+  dark: {
+    kinds: {
+      Topic: "#8ab4f8",
+      Entity: "#81c995",
+      Event: "#fa903e",
+      Claim: "#c58af9",
+      FAQ: "#78d9ed",
+      Procedure: "#9ca0a6",
+    },
+    label: "#9ca0a6", // = 深色 --sb-text-2
+    edge: "#5f6368", // #000 画布上箭头方向必须可读，不能更暗
+    selected: "#1d9bf0", // = 深色 --sb-accent
+  },
 };
+const palette = ref<GraphPalette>(palettes.light);
+function syncPalette() {
+  // App.vue 在根组件 onMounted 才写入 html.dark（晚于本子组件挂载），
+  // 首屏判定需兼读持久化设置，避免暗色用户先渲染成亮色画布
+  const dark =
+    document.documentElement.classList.contains("dark") ||
+    localStorage.getItem("sakura_bot_theme") === "dark";
+  palette.value = dark ? palettes.dark : palettes.light;
+}
+function nodeColor(kind: string): string {
+  return palette.value.kinds[kind] || palette.value.kinds.Entity;
+}
+function cyStyle(): cytoscape.StylesheetJson {
+  const value = palette.value;
+  return [
+    {
+      selector: "node",
+      style: {
+        label: "data(label)",
+        "background-color": "data(color)",
+        color: value.label,
+        "font-size": 11,
+        "text-wrap": "wrap",
+        "text-max-width": "100px",
+        "text-valign": "bottom",
+        "text-margin-y": 8,
+        width: 28,
+        height: 28,
+      },
+    },
+    {
+      selector: "edge",
+      style: {
+        width: 1.5,
+        "line-color": value.edge,
+        "target-arrow-color": value.edge,
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+        label: "data(label)",
+        "font-size": 9,
+        color: value.label,
+        "text-rotation": "autorotate",
+      },
+    },
+    {
+      selector: ":selected",
+      style: { "border-width": 3, "border-color": value.selected },
+    },
+  ];
+}
+function handleThemeChange() {
+  syncPalette();
+  if (!cy) return;
+  cy.style(cyStyle());
+  cy.nodes().forEach((node) => {
+    node.data("color", nodeColor(String(node.data("kind"))));
+  });
+}
 const relations: Record<string, string> = {
   belongs_to: "属于",
   depends_on: "依赖",
@@ -209,7 +292,7 @@ function render() {
       data: {
         ...node,
         label: node.title,
-        color: colors[node.kind] || colors.Entity,
+        color: nodeColor(node.kind),
       },
       position: saved.get(node.id),
     })),
@@ -290,46 +373,14 @@ async function fullscreen() {
   }
 }
 onMounted(() => {
+  syncPalette();
+  // wheelSensitivity 保持 cytoscape 默认值 1（缩放速率与之成正比）；
+  // 此前显式设为 0.25，滚轮缩放比原生慢 4 倍。
   cy = cytoscape({
     container: canvas.value,
-    style: [
-      {
-        selector: "node",
-        style: {
-          label: "data(label)",
-          "background-color": "data(color)",
-          color: "#718177",
-          "font-size": 11,
-          "text-wrap": "wrap",
-          "text-max-width": "100px",
-          "text-valign": "bottom",
-          "text-margin-y": 8,
-          width: 28,
-          height: 28,
-        },
-      },
-      {
-        selector: "edge",
-        style: {
-          width: 1.5,
-          "line-color": "#9aaea0",
-          "target-arrow-color": "#9aaea0",
-          "target-arrow-shape": "triangle",
-          "curve-style": "bezier",
-          label: "data(label)",
-          "font-size": 9,
-          color: "#718177",
-          "text-rotation": "autorotate",
-        },
-      },
-      {
-        selector: ":selected",
-        style: { "border-width": 3, "border-color": "#d09b51" },
-      },
-    ],
+    style: cyStyle(),
     minZoom: 0.2,
     maxZoom: 3,
-    wheelSensitivity: 0.25,
   });
   cy.on("tap", "node", (event) => {
     const node = graph.value?.nodes.find((n) => n.id === event.target.id());
@@ -341,6 +392,7 @@ onMounted(() => {
   cy.on("mouseout", "node,edge", () => {
     hover.value = "";
   });
+  window.addEventListener("theme-change", handleThemeChange);
   load(route.query.node ? String(route.query.node) : undefined);
 });
 onMounted(() => {
@@ -356,6 +408,7 @@ watch(
 );
 onUnmounted(() => {
   controller?.abort();
+  window.removeEventListener("theme-change", handleThemeChange);
   resize?.disconnect();
   cy?.destroy();
 });
@@ -364,102 +417,142 @@ onUnmounted(() => {
 .wiki-graph-frame {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
-  border: 1px solid var(--wk-line);
-  border-radius: 14px;
-  background: var(--wk-card);
+  grid-template-columns: minmax(0, 1fr) 240px;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface);
   overflow: hidden;
   min-height: 560px;
 }
 .wiki-graph-canvas {
   height: 600px;
-  background-image: radial-gradient(var(--wk-line) 1px, transparent 1px);
+  background: var(--sb-bg);
+  background-image: radial-gradient(var(--sb-border) 1px, transparent 1px);
   background-size: 22px 22px;
 }
 .wiki-graph-tools {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: 12px;
+  left: 12px;
   z-index: 2;
   display: flex;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
-  max-width: calc(100% - 290px);
+  max-width: calc(100% - 270px);
 }
 .wiki-graph-tools button,
 .wiki-graph-tools select {
+  height: 28px;
+  padding: 0 10px;
   font-size: 12px;
-  padding: 7px 10px;
+  border-radius: var(--sb-radius-pill);
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  box-shadow: var(--sb-shadow-1);
+}
+.wiki-graph-tools button:hover,
+.wiki-graph-tools select:hover {
+  background: var(--sb-surface-2);
 }
 .wiki-graph-sidebar {
-  padding: 20px;
-  border-left: 1px solid var(--wk-line);
+  padding: 14px;
+  border-left: 1px solid var(--sb-border);
   overflow: auto;
   max-height: 600px;
+}
+.wiki-graph-detail {
+  padding-bottom: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--sb-border);
+}
+.wiki-graph-detail h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+.wiki-graph-actions {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0;
+}
+.wiki-graph-actions button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .wiki-graph-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 .wiki-graph-list button {
+  height: auto;
   text-align: left;
   font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-text-2);
   border: 0;
-  background: var(--wk-soft);
+  border-radius: var(--sb-radius-s);
+  background: transparent;
+  padding: 6px 10px;
+}
+.wiki-graph-list button:hover {
+  background: var(--sb-surface-2);
 }
 .wiki-graph-list small {
   display: block;
-  color: var(--wk-muted);
-  margin-top: 3px;
+  color: var(--sb-text-3);
+  font-weight: 400;
+  margin-top: 2px;
 }
 .wiki-graph-list button[aria-pressed="true"] {
-  outline: 2px solid var(--wk-accent);
-}
-.wiki-graph-actions {
-  display: flex;
-  gap: 5px;
-  margin: 15px 0;
-}
-.wiki-graph-actions button {
-  padding: 7px;
-  font-size: 12px;
-}
-.wiki-graph-detail {
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--wk-line);
+  background: var(--sb-accent-soft);
+  color: var(--sb-accent);
 }
 .wiki-graph-notice {
   position: absolute;
   top: 45%;
   left: 15%;
-  padding: 15px;
-  background: var(--wk-card);
-  border-radius: 8px;
+  padding: 12px 16px;
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius-s);
+  box-shadow: var(--sb-shadow-1);
+  font-size: 13px;
+  color: var(--sb-text-2);
   pointer-events: none;
 }
 .wiki-graph-hover {
   position: absolute;
   bottom: 16px;
   left: 16px;
-  padding: 8px 14px;
-  border-radius: 6px;
-  background: var(--wk-soft);
-  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: var(--sb-radius-pill);
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  box-shadow: var(--sb-shadow-1);
+  font-size: 12px;
+  color: var(--sb-text-2);
+}
+.wiki-graph-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 12px 0;
+  font-size: 12px;
 }
 .wiki-graph-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 18px;
-  margin: 18px 0;
-  font-size: 12px;
+  gap: 6px 14px;
 }
 .wiki-graph-legend i {
   display: inline-block;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin-right: 6px;
+  margin-right: 5px;
 }
 .wiki-graph-frame:fullscreen {
   border-radius: 0;
@@ -476,7 +569,7 @@ onUnmounted(() => {
   }
   .wiki-graph-sidebar {
     border-left: 0;
-    border-top: 1px solid var(--wk-line);
+    border-top: 1px solid var(--sb-border);
     max-height: 260px;
   }
   .wiki-graph-list {
@@ -497,9 +590,6 @@ onUnmounted(() => {
   }
   .wiki-section-head > button {
     margin-top: 10px;
-  }
-  .wiki-section-head h1 {
-    font-size: 28px;
   }
 }
 </style>

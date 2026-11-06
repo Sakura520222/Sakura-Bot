@@ -22,7 +22,7 @@ const html = computed(() => {
 <style scoped>
 .wiki-markdown {
   overflow-wrap: anywhere;
-  line-height: 1.75;
+  line-height: 1.7;
 }
 .wiki-markdown :deep(p:first-child) {
   margin-top: 0;
@@ -38,8 +38,8 @@ const html = computed(() => {
   overflow-x: auto;
   white-space: pre;
   padding: 14px;
-  border-radius: 8px;
-  background: var(--wk-bg, var(--sb-surface-2));
+  border-radius: var(--sb-radius-s);
+  background: var(--sb-surface-2);
 }
 .wiki-markdown :deep(table) {
   display: block;
@@ -48,7 +48,7 @@ const html = computed(() => {
 }
 .wiki-markdown :deep(th),
 .wiki-markdown :deep(td) {
-  border: 1px solid var(--wk-line, var(--sb-border));
+  border: 1px solid var(--sb-border);
   padding: 8px 12px;
 }
 </style>

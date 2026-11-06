@@ -2,7 +2,8 @@
   <div class="wiki-shell">
     <header class="wiki-topbar">
       <RouterLink to="/wiki" class="wiki-brand"
-        ><span>Sakura <strong>Wiki</strong></span></RouterLink
+        ><span class="wiki-logo-mark" aria-hidden="true">🌸</span
+        ><span>Sakura Wiki</span></RouterLink
       >
       <nav aria-label="站点导航">
         <RouterLink to="/wiki/search">搜索</RouterLink
@@ -17,7 +18,7 @@
     </header>
     <main id="wiki-main" class="wiki-main"><RouterView /></main>
     <footer class="wiki-footer">
-      <span>Sakura Wiki</span><RouterLink to="/wiki">浏览所有频道</RouterLink>
+      <span>Sakura Wiki · 条目整理自频道公开消息，历史范围可能存在缺口</span>
     </footer>
   </div>
 </template>

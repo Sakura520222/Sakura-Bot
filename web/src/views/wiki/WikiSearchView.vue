@@ -5,15 +5,17 @@
     }}</RouterLink>
     / 搜索
   </p>
-  <h1>搜索</h1>
-  <form class="wiki-searchbar" @submit.prevent="submit">
-    <input
-      v-model="query"
-      aria-label="搜索关键词"
-      maxlength="200"
-      placeholder="主题、实体、关键字…"
-    /><button class="wiki-primary">搜索</button>
-  </form>
+  <section class="wiki-hero">
+    <h1>搜索</h1>
+    <form class="wiki-searchbar" @submit.prevent="submit">
+      <input
+        v-model="query"
+        aria-label="搜索关键词"
+        maxlength="200"
+        placeholder="搜索条目"
+      /><button class="wiki-primary">搜索</button>
+    </form>
+  </section>
   <div class="wiki-filters">
     <label
       >类型<select v-model="kind" @change="submit">
@@ -30,25 +32,22 @@
     ><label
       >发布起始<input v-model="after" type="date" @change="submit"
     /></label>
+    <span v-if="data" class="wiki-count">共 {{ data.total }} 条结果</span>
   </div>
-  <p v-if="loading" class="wiki-empty" role="status">正在搜索已发布知识…</p>
+  <p v-if="loading" class="wiki-empty" role="status">搜索中…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
   </div>
   <template v-else-if="data"
-    ><p class="wiki-muted">
-      共 {{ data.total }} 条结果 · 仅展示当前可公开的已发布内容
-    </p>
-    <div v-if="!data.items.length" class="wiki-empty">
-      没有匹配的公开知识。试试更短的关键词，或浏览频道主题。
+    ><div v-if="!data.items.length" class="wiki-empty">
+      无匹配条目，换个关键词或调整筛选条件试试。
     </div>
-    <div class="wiki-grid">
-      <article v-for="item in data.items" :key="item.id" class="wiki-card">
-        <span class="wiki-tag">{{ item.topic }}</span>
+    <div v-else class="wiki-result-list">
+      <article v-for="item in data.items" :key="item.id" class="wiki-result-row">
         <h3>
           <RouterLink :to="item.url">{{ item.title }}</RouterLink>
         </h3>
-        <p>
+        <p class="wiki-excerpt">
           <template
             v-for="(part, i) in highlight(
               plainWikiText(item.excerpt),
@@ -60,9 +59,8 @@
           >
         </p>
         <div class="wiki-meta">
-          {{ item.channel_title }} · {{ item.evidence_count }} 个来源<br />{{
-            formatDate(item.updated_at)
-          }}
+          {{ item.channel_title }} · {{ item.evidence_count }} 个来源 ·
+          {{ formatDay(item.updated_at) }}
         </div>
       </article>
     </div>
@@ -81,11 +79,10 @@ import { useRoute, useRouter } from "vue-router";
 import {
   publicWiki,
   kindLabels,
-  formatDate,
   type WikiSearch,
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
-import { highlight, plainWikiText } from "./wiki-utils";
+import { formatDay, highlight, plainWikiText } from "./wiki-utils";
 const route = useRoute(),
   router = useRouter();
 const query = ref(String(route.query.q || "")),

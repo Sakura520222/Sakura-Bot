@@ -6,7 +6,7 @@
     }}</RouterLink>
     / 知识条目
   </p>
-  <p v-if="loading" class="wiki-empty" role="status">正在加载文章…</p>
+  <p v-if="loading" class="wiki-empty" role="status">加载中…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
   </div>
@@ -24,7 +24,7 @@
           path: `/wiki/${data.channel_id}/graph`,
           query: { node: data.id },
         }"
-        >在知识地图中查看 ↗</RouterLink
+        >在知识地图中查看</RouterLink
       >
     </aside>
     <article class="wiki-article">
@@ -34,9 +34,9 @@
       }}</span>
       <h1>{{ data.title }}</h1>
       <p class="wiki-meta">
-        {{ data.evidence_count }} 条来源引用 · 整理于
-        {{ formatDate(data.verified_at) }}<br />发布于
-        {{ formatDate(data.updated_at) }} · 版本
+        {{ data.evidence_count }} 条来源 · 核实于
+        {{ formatDay(data.verified_at) }} · 发布于
+        {{ formatDay(data.updated_at) }} · 版本
         {{ data.publication_id.slice(0, 8) }}
       </p>
       <section
@@ -63,7 +63,7 @@
             :href="e.url"
             target="_blank"
             rel="noopener noreferrer"
-            >Telegram 来源 {{ i + 1 }} ↗</a
+            >来源 {{ i + 1 }}</a
           >
         </div>
         <details v-if="claim.evidence.some((e) => e.quote)">
@@ -78,9 +78,7 @@
       </section>
       <section id="sources" class="wiki-claim">
         <h2>参考来源</h2>
-        <p class="wiki-muted">
-          来源可能因原帖撤回或频道权限变化而不再可用。管理者决定是否展示原文与外部链接。
-        </p>
+        <p class="wiki-muted">原帖撤回或权限变化后，来源链接可能失效。</p>
         <ol>
           <li v-for="source in data.sources" :key="source.id">
             <a
@@ -122,6 +120,7 @@ import {
 } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
 import WikiMarkdown from "./WikiMarkdown.vue";
+import { formatDay } from "./wiki-utils";
 function sectionTitle(claim: { key: string; text: string }) {
   if (!claim.key.startsWith("md:")) return claim.key;
   return claim.text

@@ -2,17 +2,21 @@
   <p class="wiki-breadcrumb">
     <RouterLink to="/wiki">所有频道</RouterLink> / 频道首页
   </p>
-  <p v-if="loading" class="wiki-empty" role="status">正在读取频道知识…</p>
+  <p v-if="loading" class="wiki-empty" role="status">加载中…</p>
   <div v-else-if="error" class="wiki-error" role="alert">
     {{ error }}<button @click="reload">重试</button>
   </div>
   <template v-else-if="data"
-    ><p class="wiki-kicker">@{{ data.username }}</p>
-    <h1>{{ data.title }}</h1>
-    <p class="wiki-lead">
-      {{ data.page_count }}
-      个条目
-    </p>
+    ><div class="wiki-channel-head">
+      <span class="wiki-channel-avatar" aria-hidden="true">{{
+        avatarChar
+      }}</span>
+      <h1>{{ data.title }}</h1>
+      <span class="wiki-tag">@{{ data.username }}</span>
+      <span class="wiki-meta">
+        {{ data.page_count }} 条目 · 更新 {{ formatMinute(data.updated_at) }}
+      </span>
+    </div>
     <nav class="wiki-tabs" aria-label="频道栏目">
       <RouterLink :to="base">知识首页</RouterLink
       ><RouterLink :to="`${base}/graph`">知识地图</RouterLink
@@ -23,9 +27,8 @@
     <WikiCoverage :value="data.coverage" />
     <div class="wiki-section-head">
       <h2>分类</h2>
-      <span class="wiki-muted">更新于 {{ formatDate(data.updated_at) }}</span>
     </div>
-    <div class="wiki-tabs">
+    <div class="wiki-chips">
       <RouterLink
         v-for="topic in topics"
         :key="topic"
@@ -42,27 +45,22 @@
         <h3>
           <RouterLink :to="item.url">{{ item.title }}</RouterLink>
         </h3>
-        <p>{{ plainWikiText(item.excerpt) }}</p>
+        <p class="wiki-excerpt">{{ plainWikiText(item.excerpt) }}</p>
         <div class="wiki-meta">
-          {{ item.evidence_count }} 个来源 · {{ formatDate(item.updated_at) }}
+          {{ item.evidence_count }} 个来源 · {{ formatDay(item.updated_at) }}
         </div>
       </article>
     </div>
-    <p v-if="!data.pages?.length" class="wiki-empty">目前没有可公开的条目。</p>
+    <p v-if="!data.pages?.length" class="wiki-empty">暂无公开条目</p>
   </template>
 </template>
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import {
-  publicWiki,
-  formatDate,
-  kindLabels,
-  type WikiChannel,
-} from "../../api/wiki";
+import { publicWiki, kindLabels, type WikiChannel } from "../../api/wiki";
 import { useWikiLoad } from "../../composables/wiki";
 import WikiCoverage from "./WikiCoverage.vue";
-import { plainWikiText } from "./wiki-utils";
+import { formatDay, formatMinute, plainWikiText } from "./wiki-utils";
 const route = useRoute();
 const base = computed(() => `/wiki/${route.params.channel}`);
 const { data, loading, error, reload } = useWikiLoad(
@@ -73,6 +71,9 @@ const { data, loading, error, reload } = useWikiLoad(
       {},
       signal,
     ),
+);
+const avatarChar = computed(
+  () => Array.from(data.value?.title?.trim() || "?")[0] || "?",
 );
 const topics = computed(() => [
   ...new Set(data.value?.pages?.map((p) => p.topic)),

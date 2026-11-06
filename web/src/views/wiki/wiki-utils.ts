@@ -1,5 +1,35 @@
 import type { WikiGraph } from "../../api/wiki";
 
+/** 解析后端时间字符串；缺时区时按 UTC 处理，与 api/wiki.ts 的 formatDate 保持一致 */
+function parseDate(value: string): Date | undefined {
+  const date = new Date(
+    value.endsWith("Z") || /[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`,
+  );
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** 短日期 YYYY-MM-DD：列表与 meta 行用，长格式见 api/wiki.ts 的 formatDate */
+export function formatDay(value?: string): string {
+  if (!value) return "";
+  const date = parseDate(value);
+  return date
+    ? `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    : value;
+}
+
+/** 日期 + 分钟 YYYY-MM-DD HH:mm：页头 meta 等需要精确到分钟的场合 */
+export function formatMinute(value?: string): string {
+  if (!value) return "";
+  const date = parseDate(value);
+  return date
+    ? `${formatDay(value)} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    : value;
+}
+
 export function plainWikiText(text: string): string {
   return text
     .replace(/```[^\n]*\n?/g, "")
