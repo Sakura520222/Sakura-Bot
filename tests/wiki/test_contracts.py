@@ -75,9 +75,7 @@ def test_identity_and_complete_chunk_coverage():
     assert parts == list(chunks(digest("source"), body, digest(body)))
 
 
-@pytest.mark.parametrize(
-    "change", ["wrong_source", "wrong_chunk", "outside", "wrong_quote"]
-)
+@pytest.mark.parametrize("change", ["wrong_source", "wrong_chunk", "outside", "wrong_quote"])
 def test_citation_ids_are_not_trusted(change):
     chunk = next(chunks(digest("source"), "Sakura 项目支持中文检索。", digest("body")))
     result = extraction(chunk)
