@@ -246,8 +246,11 @@ class Knowledge:
             f"SELECT p.topic,COUNT(DISTINCT s.id) message_count {topic_scope} GROUP BY p.topic ORDER BY message_count DESC LIMIT 100",
             (publication, channel),
         )
+        # 趋势只统计最近 24 个月；全量 topics 查询共享同一 scope，但不受窗口限制。
         trends = await rows(
-            f"SELECT p.topic,DATE_FORMAT(s.created_at,'%%Y-%%m') month,COUNT(DISTINCT s.id) message_count {topic_scope} GROUP BY p.topic,month ORDER BY month,p.topic",
+            f"""SELECT p.topic,DATE_FORMAT(s.created_at,'%%Y-%%m') month,COUNT(DISTINCT s.id) message_count {topic_scope}
+            AND s.created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 MONTH)
+            GROUP BY p.topic,month ORDER BY month,p.topic""",
             (publication, channel),
         )
         return {

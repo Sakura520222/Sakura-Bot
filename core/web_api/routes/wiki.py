@@ -9,18 +9,21 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import Field
 
 from core.wiki.models import Strict, WikiConfig
 from core.wiki.runtime import get_wiki_runtime
+from core.wiki.schema import CHANNEL_VISIBLE
 from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|pages/[A-Za-z0-9_-]{{1,180}}))?)"
 )
+# avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
+WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
 
 
 def is_public_wiki_request(path, method):
@@ -77,6 +80,32 @@ async def channel_home(channel: str):
 @public.api_route("/channels/{channel}/pages/{slug}", methods=["GET", "HEAD"])
 async def page(channel: str, slug: str):
     return found(await runtime().reader.page(channel, slug))
+
+
+@public.api_route("/channels/{channel}/avatar", methods=["GET", "HEAD"])
+async def avatar(channel: str, request: Request):
+    """公开频道头像：可见性门禁 + 磁盘缓存；未就绪/不可见/缺失一律 404。"""
+    service = runtime()
+    ch = found(await service.store.channel(channel))
+    found(
+        await service.store.one(
+            f"SELECT c.id FROM wiki_channels c WHERE c.id=%s AND {CHANNEL_VISIBLE}", (ch["id"],)
+        )
+    )
+    avatar_service = getattr(service, "avatar", None)
+    if not avatar_service:
+        raise HTTPException(404, "Wiki 内容不存在或尚未公开")
+    result = await avatar_service.get(ch["id"])
+    if not result:
+        raise HTTPException(404, "Wiki 内容不存在或尚未公开")
+    data, media_type, photo_id = result
+    etag = f'"av-{photo_id}"'
+    # 条件请求：ETag 匹配时返回 304，浏览器在 max-age 过期后不必整包重传；
+    # 304 与 200 同样由中间件下发缓存头（RFC 9110 要求缓存语义一致）。
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    # Cache-Control 由中间件统一改写（单一写者）；路由只负责内容与 ETag。
+    return Response(content=data, media_type=media_type, headers={"ETag": etag})
 
 
 @public.api_route("/search", methods=["GET", "HEAD"])
@@ -590,12 +619,22 @@ async def crawler_html(channel, slug=None):
     """Small same-process HTML view for crawlers/link previews; text is always escaped."""
     import html
 
+    service = runtime()
     data = (
-        await runtime().reader.page(channel, slug)
-        if slug
-        else await runtime().reader.channel(channel)
+        await service.reader.page(channel, slug) if slug else await service.reader.channel(channel)
     )
     found(data)
+    # og:image 供分享卡使用：只在配置了公开基础 URL 时输出，绝不回退到请求头 Host
+    og_image = ""
+    try:
+        ch_row = await service.store.channel(channel)
+        base = str(getattr((ch_row or {}).get("config"), "public_base_url", "") or "")
+    except Exception:
+        base = ""
+    if base.startswith(("http://", "https://")):
+        channel_id = data.get("channel_id") or data.get("id")
+        avatar = f"{base.rstrip('/')}/api/public/wiki/channels/{channel_id}/avatar"
+        og_image = f'<meta property="og:image" content="{html.escape(avatar, quote=True)}">'
     title = html.escape(data["title"])
     body = "".join(f"<p>{html.escape(claim['text'])}</p>" for claim in data.get("claims", []))
     body += "".join(
@@ -604,6 +643,6 @@ async def crawler_html(channel, slug=None):
     )
     path = data.get("url", f"/wiki/{data['id']}")
     return HTMLResponse(
-        f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>{title} · Sakura Wiki</title><meta property="og:title" content="{title}"><link rel="canonical" href="{html.escape(path, quote=True)}"></head><body><h1>{title}</h1>{body}<a href="{html.escape(path, quote=True)}">打开交互页面</a></body></html>',
+        f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>{title} · Sakura Wiki</title><meta property="og:title" content="{title}">{og_image}<link rel="canonical" href="{html.escape(path, quote=True)}"></head><body><h1>{title}</h1>{body}<a href="{html.escape(path, quote=True)}">打开交互页面</a></body></html>',
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )

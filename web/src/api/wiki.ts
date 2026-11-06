@@ -79,6 +79,11 @@ export interface WikiChannel {
   pages?: WikiCard[];
   columns?: string[];
 }
+
+/** 频道头像地址（后端按 CHANNEL_VISIBLE 把关，非公开/无照片返回 404，前端回退首字块） */
+export function avatarUrl(channelId: string): string {
+  return `/api/public/wiki/channels/${encodeURIComponent(channelId)}/avatar`;
+}
 export interface Evidence {
   source_id: string;
   quote?: string;
@@ -103,6 +108,9 @@ export interface WikiArticle extends WikiCard {
   claims: Claim[];
   sources: { id: string; type: string; created_at: string; url?: string }[];
   history: { revision_id: string; created_at: string }[];
+  /** 来源/修订在服务端封顶后的真实总数（来源上限 500、修订上限 50） */
+  sources_total?: number;
+  history_total?: number;
 }
 export interface WikiSearch {
   items: WikiCard[];
@@ -150,20 +158,8 @@ export interface WikiProfile {
   as_of: string;
 }
 
-export async function publicWiki<T>(
-  path: string,
-  params: Record<string, unknown> = {},
-  signal?: AbortSignal,
-): Promise<T> {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params))
-    if (value !== undefined && value !== null && value !== "")
-      query.set(key, String(value));
-  const response = await fetch(`/api/public/wiki${path}?${query}`, {
-    signal,
-    credentials: "omit",
-    cache: "no-store",
-  });
+async function requestWiki<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal, credentials: "omit", cache: "no-store" });
   if (!response.ok)
     throw new Error(
       response.status === 404
@@ -175,6 +171,32 @@ export async function publicWiki<T>(
             : `Wiki 请求失败（HTTP ${response.status}）。`,
     );
   return response.json() as Promise<T>;
+}
+
+export async function publicWiki<T>(
+  path: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params))
+    if (value !== undefined && value !== null && value !== "")
+      query.set(key, String(value));
+  const suffix = query.toString();
+  // 15s 超时：挂起的连接不应把视图钉在加载态（与调用方的 signal 合并）
+  const timeout = AbortSignal.timeout(15000);
+  return requestWiki<T>(
+    `/api/public/wiki${path}${suffix ? `?${suffix}` : ""}`,
+    signal ? AbortSignal.any([signal, timeout]) : timeout,
+  );
+}
+
+/** SWR 数据层使用：按完整 URL 请求（URL 同时是缓存键），超时与错误映射同 publicWiki */
+export function publicWikiUrl<T>(url: string, signal?: AbortSignal): Promise<T> {
+  return requestWiki<T>(
+    url,
+    signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+  );
 }
 
 export async function wikiAdmin<T>(

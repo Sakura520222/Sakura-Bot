@@ -162,9 +162,15 @@ class PublicReader:
         config = decode(row["config"])
         evidence_rows = await self.store.query(
             """SELECT DISTINCT s.id,s.source_type,s.message_id,s.created_at,s.edited_at
-            FROM wiki_evidence e JOIN wiki_sources s ON s.id=e.source_id WHERE e.revision_id=%s""",
+            FROM wiki_evidence e JOIN wiki_sources s ON s.id=e.source_id WHERE e.revision_id=%s
+            ORDER BY s.created_at DESC,s.id LIMIT 500""",
             (row["revision_id"],),
             fetch=True,
+        )
+        sources_total = await self.store.one(
+            """SELECT COUNT(DISTINCT s.id) total FROM wiki_evidence e
+            JOIN wiki_sources s ON s.id=e.source_id WHERE e.revision_id=%s""",
+            (row["revision_id"],),
         )
         evidence = {r["id"]: r for r in evidence_rows}
         result = page_card(row)
@@ -176,6 +182,8 @@ class PublicReader:
         result["sources"] = [
             source_card(source, row["username"], config) for source in evidence_rows
         ]
+        # 总量独立于上方 500 条截断，前端据此提示"未全部展示"。
+        result["sources_total"] = sources_total["total"]
         # Historical metadata is restricted to revisions that were actually published.
         history = await self.store.query(
             f"""SELECT DISTINCT r.id,r.created_at FROM wiki_page_revisions r
@@ -184,9 +192,16 @@ class PublicReader:
             (row["id"],),
             fetch=True,
         )
+        history_total = await self.store.one(
+            f"""SELECT COUNT(DISTINCT r.id) total FROM wiki_page_revisions r
+            JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
+            WHERE p.id=%s AND {REVISION_VISIBLE}""",
+            (row["id"],),
+        )
         result["history"] = [
             {"revision_id": r["id"], "created_at": r["created_at"]} for r in history
         ]
+        result["history_total"] = history_total["total"]
         # Recheck the same snapshot and visibility after multi-query assembly.
         valid = await self.store.one(
             f"""SELECT r.id {PAGE_JOIN} WHERE c.id=%s AND c.published_revision=%s

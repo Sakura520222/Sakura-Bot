@@ -3,6 +3,9 @@ import { wikiRoutes } from "./wiki-routes";
 
 const router = createRouter({
   history: createWebHistory(),
+  // 前进/后退恢复滚动位置；普通导航回顶部；目录锚点跳转到对应元素（Wiki TOC 深链）
+  scrollBehavior: (to, _from, savedPosition) =>
+    savedPosition ?? (to.hash ? { el: to.hash } : { top: 0 }),
   routes: [
     wikiRoutes,
     {

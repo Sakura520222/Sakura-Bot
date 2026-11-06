@@ -51,7 +51,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        from .routes.wiki import is_public_wiki_request
+        from .routes.wiki import WIKI_AVATAR_ROUTE, is_public_wiki_request
 
         if is_public_wiki_request(path, request.method):
             # Trust the socket peer, never an arbitrary forwarded header. Bound memory.
@@ -67,7 +67,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     {"detail": "Wiki 请求过于频繁"}, status_code=429, headers={"Retry-After": "60"}
                 )
             response = await call_next(request)
-            response.headers["Cache-Control"] = "no-store"
+            # 仅成功的头像响应（含 304 条件请求）允许浏览器短缓存；
+            # 404/503 与其余匿名 Wiki 响应一律 no-store。
+            if response.status_code in {200, 304} and WIKI_AVATAR_ROUTE.fullmatch(path):
+                response.headers["Cache-Control"] = "public, max-age=3600"
+            else:
+                response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; frame-ancestors 'none'"

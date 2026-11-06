@@ -157,6 +157,8 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     assert article["publication_id"] == publication and article["revision_id"] == revision
     assert article["sources"][0]["url"] == "https://t.me/channel_12345/1"
     assert article["claims"][0]["evidence"][0]["quote"] is None
+    # 增量总量字段与截断后的列表必须同时存在且一致
+    assert article["sources_total"] == 1 and article["history_total"] == 1
     assert (await reader.search("中文"))["total"] == 1
     published_job = await store.one("SELECT * FROM wiki_jobs WHERE channel_id=%s", (ch["id"],))
     assert published_job["status"] == "published" and decode(published_job["progress"])["published"]
@@ -167,6 +169,30 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     with pytest.raises(ValueError, match="revoked"):
         await Knowledge(store).publish(ch["id"], None, "test", rollback=publication)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+
+
+async def test_page_additive_counts_match_true_totals(store):
+    ch, _, page, _, _ = await published(store)
+    article = await PublicReader(store).page(ch["id"], page["slug"])
+    # 夹具只有一条来源与一次发布：500/50 截断不会触发，但总量键必须与真实值一致
+    assert article["sources_total"] == len(article["sources"]) == 1
+    assert article["history_total"] == len(article["history"]) == 1
+
+
+async def test_topic_trends_window_is_bounded_but_topics_remain_all_time(store):
+    ch, source, _, _, _ = await published(store)
+    knowledge = Knowledge(store)
+    # 夹具来源创建于 2020-01-01：全量主题统计到它，24 个月趋势窗口不包含它
+    profile = await knowledge.profile(ch["id"])
+    assert [t["message_count"] for t in profile["topics"]] == [1]
+    assert profile["topic_trends"] == []
+    await store.query(
+        "UPDATE wiki_sources SET created_at=UTC_TIMESTAMP(6) WHERE id=%s", (source["id"],)
+    )
+    fresh = await knowledge.profile(ch["id"])
+    # 移入窗口后趋势恢复，且与按月统计的最新月份一致
+    assert fresh["topic_trends"][0]["message_count"] == 1
+    assert fresh["topic_trends"][0]["month"] == fresh["months"][-1]["month"]
 
 
 async def test_source_dedup_stale_edits_and_delete_tombstone(store):
