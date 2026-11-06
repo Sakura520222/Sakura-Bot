@@ -62,6 +62,18 @@ async def store():
     try:
         await result.initialize()
         await result.initialize()  # additive migration is safe to repeat
+        # collector.prepare_summary_refs 会读应用侧 summaries 表（生产库由
+        # DatabaseInitializer 建表）；测试库只有 wiki_* 表，这里补最小镜像，
+        # 列与 core/wiki/collector.py 的 SELECT 保持一致。
+        await result.query(
+            """CREATE TABLE IF NOT EXISTS summaries (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            channel_id VARCHAR(255) NOT NULL,
+            summary_text TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            summary_message_ids JSON
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+        )
         yield result
     finally:
         pool.close()
@@ -333,9 +345,14 @@ async def test_go_reads_identical_publication_and_revocation(store):
 
 
 class FakeAI:
-    def __init__(self, *, reject=False, incomplete=False):
+    """按 wiki-2 markdown 管线契约返回：分批 Markdown、主题行、纯文本简介。
+
+    1aafed9 起引擎不再发送 JSON schema / 独立审核请求，直接按负载形状分发。
+    """
+
+    def __init__(self, *, incomplete=False):
         self.calls = 0
-        self.reject, self.incomplete = reject, incomplete
+        self.incomplete = incomplete
         self.chat = SimpleNamespace(completions=self)
         self.base_url = "https://fixture.invalid"
 
@@ -345,44 +362,28 @@ class FakeAI:
     async def create(self, **request):
         self.calls += 1
         payload = json.loads(request["messages"][1]["content"])
-        if "extraction" in payload:
-            result = {
-                "approved": not self.reject,
-                "sensitive": self.reject,
-                "unsupported": [],
-                "reason": "fixture review",
-            }
+        if "summaries" in payload:
+            content = "中文检索\nSakura"
+        elif "sources" in payload or "source" in payload:
+            sources = payload.get("sources") or [{"source": 0, "text": payload["source"]}]
+            sections = []
+            for item in sources:
+                index, text = item["source"], item["text"]
+                title = "频道资料 / 中文搜索" if index % 2 else "软件工具 / Sakura"
+                body = f"根据原文整理：{text[:80]}"
+                if index == 0:
+                    body += "\n\n相关条目：[[中文搜索]]"
+                sections.append(f"## [{index}] {title}\n\n{body}")
+            content = "\n\n".join(sections)
         elif "statistics" in payload:
-            result = {
-                "description": "频道关注中文搜索。",
-                "style": "有限样本以技术说明为主。",
-                "limitations": "风格仅反映已核实样本。",
-            }
+            content = "频道以中文检索与技术说明为主，长期保持稳定的更新节奏。"
         else:
-            chunk = payload["chunk"]
-            result = extraction(chunk).model_dump(mode="json")
-            second = {
-                **result["facts"][0],
-                "entity": "中文搜索",
-                "kind": "Topic",
-                "key": "能力",
-                "text": "中文检索是项目能力",
-            }
-            result["facts"].append(second)
-            result["relations"] = [
-                {
-                    "source": "Sakura",
-                    "target": "中文搜索",
-                    "kind": "supports",
-                    "confidence": 0.9,
-                    "evidence": second["evidence"],
-                }
-            ]
+            raise AssertionError(f"未知的生成请求负载：{sorted(payload)}")
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
                     finish_reason="length" if self.incomplete else "stop",
-                    message=SimpleNamespace(content=json.dumps(result, ensure_ascii=False)),
+                    message=SimpleNamespace(content=content),
                 )
             ],
             usage=SimpleNamespace(prompt_tokens=100, completion_tokens=100),
@@ -410,7 +411,7 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     await runtime.run_job(await store.claim_job())
     first = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (first_id,))
     assert first["status"] == "published", first
-    assert fake.calls >= 4  # all chunks plus independent review, not just the first window
+    assert fake.calls == 3  # 两个提取批次 + 一次频道简介；独立审核已随管线移除
     publication = (await store.channel(ch["id"]))["published_revision"]
     graph = await runtime.reader.graph(ch["id"], limit=3)
     assert len(graph["nodes"]) == 2 and graph["edges"]
@@ -427,7 +428,7 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     assert not (await runtime.reader.graph(ch["id"]))["nodes"]
 
 
-async def test_review_rejection_and_budget_pause_do_not_publish(store):
+async def test_manual_mode_and_budget_pause_do_not_publish(store):
     ch = await channel(store)
     await store.put_source(
         ch["id"],
@@ -439,14 +440,14 @@ async def test_review_rejection_and_budget_pause_do_not_publish(store):
         message_id=1,
     )
     runtime = WikiRuntime(store, None, None)
-    runtime.engine = WikiEngine(store, runtime=lambda _: (FakeAI(reject=True), "fixture-model"))
+    runtime.engine = WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model"))
     job_id = await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     job = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
-    assert job["status"] == "completed" and not decode(job["progress"])["review_complete"]
+    # 审核门已随 markdown 管线移除（review_complete 恒为 True）；非 auto 发布模式下仍不发布
+    assert job["status"] == "completed", job
+    assert decode(job["progress"])["review_complete"]
     assert (await store.channel(ch["id"]))["published_revision"] is None
-    with pytest.raises(ValueError):
-        await Knowledge(store).publish(ch["id"], job_id, "test")
     ch = await store.channel(ch["id"])
     await store.configure(ch["id"], ch["config"].model_copy(update={"token_budget": 1000}), "test")
     fake = FakeAI()
@@ -591,10 +592,11 @@ async def test_summary_chunks_inform_planning_but_never_become_original_evidence
     saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job["id"],))
     assert saved["status"] == "completed", saved
     assert decode(saved["cursor"])["summary_topics"]
+    # 新管线中 summary 来源只进入规划上下文，不产生提取行，更不会成为原始证据
     contexts = await store.one(
         "SELECT COUNT(*) n FROM wiki_extractions e JOIN wiki_chunks c ON c.id=e.chunk_id JOIN wiki_sources s ON s.id=c.source_id WHERE s.source_type='summary'"
     )
-    assert contexts["n"] >= 2
+    assert contexts["n"] == 0
     evidence = await store.query(
         "SELECT DISTINCT s.source_type FROM wiki_evidence e JOIN wiki_sources s ON s.id=e.source_id",
         fetch=True,
