@@ -76,9 +76,9 @@ def test_identity_and_complete_chunk_coverage():
 
 
 @pytest.mark.parametrize(
-    "change", ["wrong_source", "wrong_chunk", "outside", "wrong_quote", "unknown_entity"]
+    "change", ["wrong_source", "wrong_chunk", "outside", "wrong_quote"]
 )
-def test_citation_ids_and_graph_entities_are_not_trusted(change):
+def test_citation_ids_are_not_trusted(change):
     chunk = next(chunks(digest("source"), "Sakura 项目支持中文检索。", digest("body")))
     result = extraction(chunk)
     evidence = result.facts[0].evidence[0]
@@ -90,20 +90,40 @@ def test_citation_ids_and_graph_entities_are_not_trusted(change):
         evidence.end += 1
     if change == "wrong_quote":
         evidence.quote = "伪造原文"
-    if change == "unknown_entity":
-        from core.wiki.models import Relation
-
-        result.relations.append(
-            Relation(
-                source="Sakura",
-                target="missing",
-                kind="supports",
-                evidence=[evidence],
-                confidence=0.9,
-            )
-        )
     with pytest.raises(ValueError):
         validate_extraction(result, chunk)
+
+
+def test_relation_endpoints_resolve_without_local_fact_assertions():
+    # 关系端点与其边在同一事务内解析/创建，实体不必在本 chunk 另有事实断言；
+    # 但关系自带引用的引文仍按同一规则校验
+    chunk = next(chunks(digest("source"), "Sakura 项目支持中文检索。", digest("body")))
+    result = extraction(chunk)
+    from core.wiki.models import Relation
+
+    result.relations.append(
+        Relation(
+            source="Sakura",
+            target="missing",
+            kind="supports",
+            evidence=[result.facts[0].evidence[0]],
+            confidence=0.9,
+        )
+    )
+    assert validate_extraction(result, chunk) is result
+
+    forged = extraction(chunk)
+    forged.relations.append(
+        Relation(
+            source="Sakura",
+            target="missing",
+            kind="supports",
+            evidence=[forged.facts[0].evidence[0].model_copy(update={"quote": "伪造原文"})],
+            confidence=0.9,
+        )
+    )
+    with pytest.raises(ValueError):
+        validate_extraction(forged, chunk)
 
 
 def test_fact_dedup_conflicts_and_expiry_are_explicit():
