@@ -63,8 +63,8 @@ async def summarize_complete(messages, prompt, client, model):
     }
     _save_run(path, record)
     try:
-        context_limit = int(os.getenv("SUMMARY_CONTEXT_TOKENS", "16384"))
-        output_limit = int(os.getenv("SUMMARY_OUTPUT_TOKENS", "8192"))
+        context_limit = int(os.getenv("SUMMARY_CONTEXT_TOKENS", "65536"))
+        output_limit = int(os.getenv("SUMMARY_OUTPUT_TOKENS", "16384"))
         # 为 chat 包装、来源标签和输出预留空间，提示词本身也计入预算。
         budget = context_limit - output_limit - token_upper_bound(SYSTEM) - 256
         data_budget = budget - token_upper_bound(prompt + MERGE) - 128
@@ -72,34 +72,61 @@ async def summarize_complete(messages, prompt, client, model):
             raise SummaryIntegrityError("Summary context budget is too small for prompt and output")
 
         async def request(text, instruction):
-            if token_upper_bound(text + instruction) > budget:
+            input_bound = token_upper_bound(text + instruction)
+            if input_bound > budget:
                 raise SummaryIntegrityError("Summary request exceeds configured context budget")
+            # finish_reason=length 是确定性失败：同参数重试必然再次截断。
+            # 在上下文余量内放大输出上限后立即重试；余量耗尽则快速失败，
+            # 绝不用相同参数退避重试（那只会白白烧掉时间和配额）。
+            max_output = output_limit
             for attempt in range(3):
                 try:
                     response = await client.chat.completions.create(
                         model=model,
-                        max_tokens=output_limit,
+                        max_tokens=max_output,
                         messages=[
                             {"role": "system", "content": SYSTEM},
                             {"role": "user", "content": instruction + text},
                         ],
                     )
-                    if not response.choices:
-                        raise SummaryIntegrityError("Model returned no choices")
-                    choice = response.choices[0]
-                    if (
-                        choice.finish_reason != "stop"
-                        or not choice.message.content
-                        or not choice.message.content.strip()
-                    ):
-                        raise SummaryIntegrityError(
-                            f"Incomplete model output: finish_reason={choice.finish_reason}"
-                        )
-                    return choice.message.content
                 except Exception:
                     if attempt == 2:
                         raise
                     await asyncio.sleep(2**attempt)
+                    continue
+                if not response.choices:
+                    if attempt == 2:
+                        raise SummaryIntegrityError("Model returned no choices")
+                    await asyncio.sleep(2**attempt)
+                    continue
+                choice = response.choices[0]
+                if choice.finish_reason == "length":
+                    headroom = context_limit - input_bound - token_upper_bound(SYSTEM) - 128
+                    if attempt == 2 or max_output >= headroom:
+                        raise SummaryIntegrityError(
+                            f"Output truncated at max_tokens={max_output} with context "
+                            f"headroom {headroom}; raise SUMMARY_OUTPUT_TOKENS or "
+                            "SUMMARY_CONTEXT_TOKENS"
+                        )
+                    max_output = min(max_output * 2, headroom)
+                    logger.warning(
+                        "Summary run=%s output truncated, retrying with max_tokens=%s",
+                        run_id,
+                        max_output,
+                    )
+                    continue
+                if (
+                    choice.finish_reason != "stop"
+                    or not choice.message.content
+                    or not choice.message.content.strip()
+                ):
+                    if attempt == 2:
+                        raise SummaryIntegrityError(
+                            f"Incomplete model output: finish_reason={choice.finish_reason}"
+                        )
+                    await asyncio.sleep(2**attempt)
+                    continue
+                return choice.message.content
 
         combined = "\n\n---\n\n".join(str(message) for message in messages)
         if token_upper_bound(combined) <= data_budget:

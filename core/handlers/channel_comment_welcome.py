@@ -703,16 +703,20 @@ async def handle_summary_request_callback(event: events.CallbackQuery.Event):
     """
     try:
         # 解析callback_data: req_summary:<channel_id>:<msg_id>
+        # channel_id 是规范配置键，可能是 https://t.me/xxx 形式的 URL（自带 "://"），
+        # 整体 split(":") 会把它切碎：先取动作前缀，再按最后一个冒号从右侧切出消息ID。
         data_str = event.data.decode()
-        parts = data_str.split(":")
-
-        if len(parts) != 3 or parts[0] != "req_summary":
+        action, _, rest = data_str.partition(":")
+        channel_id, sep, msg_part = rest.rpartition(":")
+        try:
+            msg_id = int(msg_part)
+        except ValueError:
+            msg_id = None
+        if action != "req_summary" or not sep or not channel_id or msg_id is None:
             logger.warning(f"无效的callback_data格式: {data_str}")
             await event.answer("无效的请求")
             return
 
-        channel_id = parts[1]
-        msg_id = int(parts[2])
         user_id = event.sender_id
 
         # 标准化频道ID

@@ -67,7 +67,7 @@ async def test_all_chunks_including_tail_and_head_in_final(runtime):
         assert sum(token_upper_bound(m["content"]) for m in call.kwargs["messages"]) + 256 < 2048
 
 
-@pytest.mark.parametrize("reason", ["length", "content_filter", None])
+@pytest.mark.parametrize("reason", ["content_filter", None])
 async def test_incomplete_output_fails_and_audits(runtime, reason):
     client, path = runtime
     client.chat.completions.create.return_value = response("partial", reason)
@@ -78,6 +78,44 @@ async def test_incomplete_output_fails_and_audits(runtime, reason):
     assert audit["status"] == "failed"
     assert audit["failed_count"] == 1
     assert "summary" not in audit
+
+
+async def test_truncated_output_escalates_then_fails(runtime):
+    """截断是确定性失败：每次重试都在上下文余量内放大 max_tokens，最后失败要带可操作的提示。"""
+    client, path = runtime
+    client.chat.completions.create.return_value = response("partial", "length")
+    with pytest.raises(SummaryIntegrityError, match="Output truncated at max_tokens=1024"):
+        await summarize_complete(["data"], "prompt", client, "test")
+    assert client.chat.completions.create.await_count == 3
+    used = [call.kwargs["max_tokens"] for call in client.chat.completions.create.call_args_list]
+    assert used == [256, 512, 1024]
+    audit = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
+    assert audit["status"] == "failed"
+    assert "SUMMARY_OUTPUT_TOKENS" in audit["error"]
+
+
+async def test_truncated_output_is_rescued_by_escalation(runtime):
+    """首次截断后放大 max_tokens 重试成功，无需人工干预。"""
+    client, _ = runtime
+    client.chat.completions.create.side_effect = [
+        response("partial", "length"),
+        response("complete summary"),
+    ]
+    assert await summarize_complete(["data"], "prompt", client, "test") == "complete summary"
+    used = [call.kwargs["max_tokens"] for call in client.chat.completions.create.call_args_list]
+    assert used == [256, 512]
+
+
+async def test_truncation_without_headroom_fails_fast(runtime, monkeypatch):
+    """输出放大到上下文余量上限仍截断时立即失败，不再用相同参数烧掉剩余重试。"""
+    monkeypatch.setenv("SUMMARY_CONTEXT_TOKENS", "2000")
+    monkeypatch.setenv("SUMMARY_OUTPUT_TOKENS", "1024")
+    client, _ = runtime
+    client.chat.completions.create.return_value = response("partial", "length")
+    with pytest.raises(SummaryIntegrityError, match="Output truncated"):
+        await summarize_complete(["data"], "prompt", client, "test")
+    # 第一次 1024 截断 → 放大到余量上限后再截断 → 立即失败，没有第三次同参数尝试
+    assert client.chat.completions.create.await_count == 2
 
 
 async def test_chunk_failure_no_partial_success(runtime):

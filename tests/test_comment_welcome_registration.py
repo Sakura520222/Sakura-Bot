@@ -116,6 +116,42 @@ async def test_handle_summary_request_invalid_callback_data(mock_db, mock_event)
 
 
 @pytest.mark.asyncio
+async def test_handle_summary_request_url_channel_key(mock_db, mock_event):
+    """测试频道ID为 URL 规范键（自带 "://"）的回调数据解析"""
+    # 按钮构造使用规范配置键（如 https://t.me/Nahida_Leak），URL 中的冒号
+    # 不应破坏 callback_data 解析（旧实现 split(":") 会切成 4 段并丢弃请求）
+    channel_url = "https://t.me/Nahida_Leak"
+    msg_id = 12969
+    mock_event.data = f"req_summary:{channel_url}:{msg_id}".encode()
+
+    mock_db.is_user_registered = AsyncMock(return_value=True)
+    mock_db.check_pending_summary_request = AsyncMock(return_value=False)
+    mock_db.add_summary_request = AsyncMock(return_value=1)
+
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
+        await handle_summary_request_callback(mock_event)
+
+    mock_db.add_summary_request.assert_called_once()
+    call_args = mock_db.add_summary_request.call_args
+    assert call_args[1]["channel_id"] == channel_url
+    assert call_args[1]["message_id"] == msg_id
+    assert call_args[1]["requested_by"] == mock_event.sender_id
+    mock_event.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_summary_request_url_key_without_msg_id(mock_db, mock_event):
+    """测试缺少消息ID的 URL 回调数据应被拒绝"""
+    mock_event.data = b"req_summary:https://t.me/foo"
+
+    with patch("core.handlers.channel_comment_welcome.get_db_manager", return_value=mock_db):
+        await handle_summary_request_callback(mock_event)
+
+    mock_event.answer.assert_called_once_with("无效的请求")
+    assert not mock_db.is_user_registered.called
+
+
+@pytest.mark.asyncio
 async def test_handle_summary_request_pending_request_exists(mock_db, mock_event):
     """测试已存在待处理请求的情况"""
     # 设置回调数据
