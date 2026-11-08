@@ -63,8 +63,8 @@ async def summarize_complete(messages, prompt, client, model):
     }
     _save_run(path, record)
     try:
-        context_limit = int(os.getenv("SUMMARY_CONTEXT_TOKENS", "65536"))
-        output_limit = int(os.getenv("SUMMARY_OUTPUT_TOKENS", "16384"))
+        context_limit = int(os.getenv("SUMMARY_CONTEXT_TOKENS", "1000000"))
+        output_limit = int(os.getenv("SUMMARY_OUTPUT_TOKENS", "64000"))
         # 为 chat 包装、来源标签和输出预留空间，提示词本身也计入预算。
         budget = context_limit - output_limit - token_upper_bound(SYSTEM) - 256
         data_budget = budget - token_upper_bound(prompt + MERGE) - 128
