@@ -652,7 +652,7 @@ class Knowledge:
                 LEFT JOIN wiki_evidence ev ON ev.chunk_id=ch.id
                 LEFT JOIN wiki_edges e ON e.chunk_id=ch.id
                 LEFT JOIN wiki_publication_edges pe ON pe.edge_id=e.id
-                WHERE s.channel_id=%s AND ch.content_hash<>s.content_hash
+                WHERE s.channel_id=%s AND s.revision>1 AND ch.content_hash<>s.content_hash
                 AND ev.revision_id IS NULL AND pe.publication_id IS NULL""",
                 (channel,),
             )
