@@ -327,15 +327,15 @@ class Knowledge:
         return merged
 
     @staticmethod
-    def publication_fingerprint(candidates, profile, coverage):
-        """发布内容指纹：页面/修订清单 + 频道画像 + 覆盖统计（不含时间戳）。"""
+    def publication_fingerprint(candidates, profile):
+        """发布内容指纹：页面/修订清单 + 频道画像（不含时间戳）。
+
+        coverage 的扫描状态键（unavailable/accessible 等）与首次枚举后的计数
+        填充不代表知识内容变化，不参与指纹；画像 statistics 已覆盖可见内容
+        规模（消息数、时间范围等）。"""
         return digest(
             sorted((item["page_id"], item["revision_id"]) for item in candidates),
             {key: value for key, value in profile.items() if key != "as_of"},
-            {
-                key: decode(coverage).get(key)
-                for key in ("indexed", "earliest", "latest", "excluded")
-            },
         )
 
     async def publish(self, channel, job_id, actor, *, rollback=None, running_job=None):
@@ -425,7 +425,7 @@ class Knowledge:
                 profile = await self.profile(channel, cur, ch["published_revision"])
                 profile["narrative"] = manifest.get("profile_narrative", {})
                 profile["source_generation"] = manifest.get("profile_generation")
-                fingerprint = self.publication_fingerprint(candidates, profile, ch["coverage"])
+                fingerprint = self.publication_fingerprint(candidates, profile)
                 await cur.execute(
                     "SELECT id,content_hash FROM wiki_publications WHERE id=%s AND channel_id=%s",
                     (ch["published_revision"], channel),
@@ -456,8 +456,7 @@ class Knowledge:
                     "UPDATE wiki_publications SET profile=%s,content_hash=%s WHERE id=%s",
                     (
                         encode(profile),
-                        content_hash
-                        or self.publication_fingerprint(candidates, profile, ch["coverage"]),
+                        content_hash or self.publication_fingerprint(candidates, profile),
                         publication_id,
                     ),
                 )

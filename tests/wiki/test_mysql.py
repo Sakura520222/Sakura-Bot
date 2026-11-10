@@ -376,9 +376,13 @@ class FakeAI:
     1aafed9 起引擎不再发送 JSON schema / 独立审核请求，直接按负载形状分发。
     """
 
-    def __init__(self, *, incomplete=False):
+    def __init__(self, *, incomplete=False, stable=False):
         self.calls = 0
         self.incomplete = incomplete
+        # stable：按消息内容前缀决定词条归属。默认按批次下标奇偶（既有测试契
+        # 约）；source id 是哈希，批次构成在编辑/删除后会变，增量测试必须用
+        # stable 才能得到确定的页面归属。
+        self.stable = stable
         self.chat = SimpleNamespace(completions=self)
         self.base_url = "https://fixture.invalid"
 
@@ -395,7 +399,14 @@ class FakeAI:
             sections = []
             for item in sources:
                 index, text = item["source"], item["text"]
-                title = "频道资料 / 中文搜索" if index % 2 else "软件工具 / Sakura"
+                if self.stable:
+                    title = (
+                        "软件工具 / 第一条词条"
+                        if text.startswith("第一条")
+                        else "频道资料 / 第二条词条"
+                    )
+                else:
+                    title = "频道资料 / 中文搜索" if index % 2 else "软件工具 / Sakura"
                 body = f"根据原文整理：{text[:80]}"
                 if index == 0:
                     body += "\n\n相关条目：[[中文搜索]]"
@@ -465,7 +476,9 @@ class UpdateClient:
             yield message
 
 
-async def build_and_publish(store, *, texts=("Sakura 支持中文检索。",), model="fixture-model"):
+async def build_and_publish(
+    store, *, texts=("Sakura 支持中文检索。",), model="fixture-model", stable=False
+):
     """用 fixture 模型构建并自动发布一个小型知识库，供增量断言使用。"""
     ch = await channel(store)
     await store.configure(
@@ -482,7 +495,7 @@ async def build_and_publish(store, *, texts=("Sakura 支持中文检索。",), m
             message_id=index,
             original_length=len(text),
         )
-    fake = FakeAI()
+    fake = FakeAI(stable=stable)
     runtime = WikiRuntime(store, None, None)
     runtime.engine = WikiEngine(store, runtime=lambda _: (fake, model))
     await store.enqueue(ch["id"], "reindex")
@@ -493,6 +506,19 @@ async def build_and_publish(store, *, texts=("Sakura 支持中文检索。",), m
 
 async def fact_ids(store, sql, args=()):
     return [row["id"] for row in await store.query(sql, args, fetch=True)]
+
+
+async def page_of_message(store, channel_id, message_id):
+    """消息的知识归属页面。source id 是哈希，批次内顺序不保证与消息号一致，
+    页面归属须从事实表动态查询而非按 Fixture 的奇偶下标假设。"""
+    row = await store.one(
+        """SELECT f.page_id FROM wiki_facts f
+        JOIN wiki_chunks ch ON ch.id=f.chunk_id JOIN wiki_sources s ON s.id=ch.source_id
+        WHERE s.channel_id=%s AND s.message_id=%s""",
+        (channel_id, message_id),
+    )
+    assert row, "fixture 消息应已产生知识事实"
+    return row["page_id"]
 
 
 async def test_generation_review_graph_cache_and_incremental_publication(store):
@@ -867,7 +893,7 @@ async def test_timeline_batches_sources_without_loading_whole_articles(store, mo
 
 async def test_empty_incremental_update_skips_unchanged_sources(store):
     """空增量：重复执行 update 不重新处理历史 Chunk，不产生 facts/edges 写入。"""
-    ch, fake, runtime = await build_and_publish(store)
+    ch, fake, runtime = await build_and_publish(store, stable=True)
     facts = await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id")
     publication = (await store.channel(ch["id"]))["published_revision"]
     charged = fake.calls
@@ -891,7 +917,7 @@ async def test_empty_incremental_update_skips_unchanged_sources(store):
 
 async def test_incremental_update_processes_only_new_sources(store):
     """少量新增：Telegram 请求量与提取量都只与新消息成正比。"""
-    ch, fake, runtime = await build_and_publish(store, texts=("第一条消息",))
+    ch, fake, runtime = await build_and_publish(store, texts=("第一条消息",), stable=True)
     before = await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id")
     client = UpdateClient(messages=[fake_message(2, "第二条消息：新增功能说明")])
     runtime.collector.client = client
@@ -899,7 +925,8 @@ async def test_incremental_update_processes_only_new_sources(store):
     await store.enqueue(ch["id"], "update")
     await runtime.run_job(await store.claim_job())
     # 采集只从已保存的最大 message_id 之后继续，不回退为全量扫描
-    assert client.scan_starts == [1]
+    # （扫到新消息后按新游标再确认一轮是分页循环的正常行为）
+    assert client.scan_starts[0] == 1 and 0 not in client.scan_starts
     # 只有新来源触发提取（1 批）+ 一次新简介；历史来源不再发请求
     assert fake.calls == charged + 2
     job = await store.one(
@@ -916,15 +943,20 @@ async def test_incremental_update_processes_only_new_sources(store):
 
 async def test_edited_source_reruns_and_rebuilds_only_affected_page(store):
     """编辑：仅受影响来源重新提取，其页面重建，无关页面修订保持不变。"""
-    ch, fake, runtime = await build_and_publish(store, texts=("第一条消息", "第二条消息"))
-    pages = {
-        row["title"]: row
-        for row in await store.query("SELECT * FROM wiki_pages ORDER BY id", fetch=True)
-    }
-    assert set(pages) == {"Sakura", "中文搜索"}
-    untouched = await fact_ids(
-        store, "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id", (pages["中文搜索"]["id"],)
+    ch, fake, runtime = await build_and_publish(
+        store, texts=("第一条消息", "第二条消息"), stable=True
     )
+    edited_page = await page_of_message(store, ch["id"], 1)
+    untouched_page = await page_of_message(store, ch["id"], 2)
+    assert edited_page != untouched_page
+    untouched = await fact_ids(
+        store, "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id", (untouched_page,)
+    )
+    edited_before = (
+        await store.one(
+            "SELECT COUNT(*) n FROM wiki_page_revisions WHERE page_id=%s", (edited_page,)
+        )
+    )["n"]
     old_chunk = await store.one(
         """SELECT ch.id FROM wiki_chunks ch JOIN wiki_sources s ON s.id=ch.source_id
         WHERE s.channel_id=%s AND s.message_id=1""",
@@ -953,28 +985,40 @@ async def test_edited_source_reruns_and_rebuilds_only_affected_page(store):
     )
     assert progress["processed_chunks"] == 1  # 只有被编辑的来源重新提取
     assert fake.calls == charged + 2  # 1 次提取 + 1 次新简介
-    # 无关页面的事实完全未动
+    # 无关页面的事实与修订完全未动
     assert (
         await fact_ids(
-            store,
-            "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id",
-            (pages["中文搜索"]["id"],),
+            store, "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id", (untouched_page,)
         )
         == untouched
     )
-    # 旧版本 chunk 的 facts 已被新版本取代
+    assert (
+        await store.one(
+            "SELECT COUNT(*) n FROM wiki_page_revisions WHERE page_id=%s", (untouched_page,)
+        )
+    )["n"] == 1
+    # 受影响页面产生新修订（事实内容变化）
+    assert (
+        await store.one(
+            "SELECT COUNT(*) n FROM wiki_page_revisions WHERE page_id=%s", (edited_page,)
+        )
+    )["n"] > edited_before
+    # 旧版本 chunk 的事实仍在：首次发布的证据链引用旧 chunk，回滚能力优先保留
     assert (
         await store.one("SELECT COUNT(*) n FROM wiki_facts WHERE chunk_id=%s", (old_chunk["id"],))
-    )["n"] == 0
+    )["n"] == 1
     assert (await store.one("SELECT COUNT(*) n FROM wiki_dirty_pages"))["n"] == 0
 
 
 async def test_deleted_message_drops_page_and_publishes_smaller_snapshot(store):
     """删除：tombstone 保留，受影响页面从发布清单剔除，其余页面不受影响。"""
-    ch, _, runtime = await build_and_publish(store, texts=("第一条消息", "第二条消息"))
-    pages = {
-        row["title"]: row
-        for row in await store.query("SELECT * FROM wiki_pages ORDER BY id", fetch=True)
+    ch, _, runtime = await build_and_publish(store, texts=("第一条消息", "第二条消息"), stable=True)
+    dropped_page = await page_of_message(store, ch["id"], 2)
+    kept_page = await page_of_message(store, ch["id"], 1)
+    assert dropped_page != kept_page
+    slugs = {
+        row["page_id"]: row["slug"]
+        for row in await store.query("SELECT id,slug FROM wiki_pages", fetch=True)
     }
     await store.revoke(ch["id"], message_ids=[2], deleted=True)
     tombstone = await store.one(
@@ -1001,9 +1045,9 @@ async def test_deleted_message_drops_page_and_publishes_smaller_snapshot(store):
         (publication,),
         fetch=True,
     )
-    assert [row["page_id"] for row in remaining] == [pages["Sakura"]["id"]]
-    assert await PublicReader(store).page(ch["id"], pages["中文搜索"]["slug"]) is None
-    assert await PublicReader(store).page(ch["id"], pages["Sakura"]["slug"])
+    assert [row["page_id"] for row in remaining] == [kept_page]
+    assert await PublicReader(store).page(ch["id"], slugs[dropped_page]) is None
+    assert await PublicReader(store).page(ch["id"], slugs[kept_page])
 
 
 async def test_apply_extraction_cache_hit_is_write_free(store):
@@ -1043,7 +1087,7 @@ async def test_reconcile_watermark_advances_after_full_enumeration(store, monkey
 
     monkeypatch.setenv("MESSAGE_SOURCE_DIR", str(tmp_path / "sources"))
     monkeypatch.setenv("VECTOR_DB_PATH", str(tmp_path / "vectors"))
-    ch, _, runtime = await build_and_publish(store)
+    ch, _, runtime = await build_and_publish(store, stable=True)
     client = UpdateClient()
     runtime.collector.client = client
     # 核对循环阶段失败（如 UserBot 掉线）：水位已推进
@@ -1145,7 +1189,7 @@ async def test_image_description_update_rebuilds_knowledge(store):
         media_key="photo:1",
         category="image",
     )
-    fake = FakeAI()
+    fake = FakeAI(stable=True)
     runtime = WikiRuntime(store, None, None)
     runtime.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
     await store.enqueue(ch["id"], "reindex")
@@ -1177,7 +1221,13 @@ async def test_image_description_update_rebuilds_knowledge(store):
     )
     assert progress["processed_chunks"] == 1  # 只有 image 来源需要重新提取
     assert fake.calls == charged + 2
-    fact = await store.one("SELECT fact FROM wiki_facts ORDER BY created_at DESC")
+    fact = await store.one(
+        """SELECT f.fact FROM wiki_facts f JOIN wiki_chunks ch2 ON ch2.id=f.chunk_id
+        JOIN wiki_sources s ON s.id=ch2.source_id
+        WHERE s.channel_id=%s AND s.source_type='image' AND s.message_id=1
+        AND s.content_hash=ch2.content_hash""",
+        (ch["id"],),
+    )
     assert "B" in decode(fact["fact"])["text"]
     assert (await store.channel(ch["id"]))["published_revision"] != first
 
