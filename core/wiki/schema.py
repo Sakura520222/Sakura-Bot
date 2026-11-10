@@ -5,6 +5,14 @@
 """Additive, idempotent MySQL migration. Wiki owns all wiki_* tables."""
 
 SCHEMA_VERSION = 1
+# 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
+# 增量装配只重建这些页面而不是遍历全部历史页面。
+DIRTY_PAGES_TABLE = """CREATE TABLE IF NOT EXISTS wiki_dirty_pages (
+    channel_id VARCHAR(32) NOT NULL, page_id CHAR(32) NOT NULL,
+    PRIMARY KEY(channel_id,page_id),
+    FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE,
+    FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_schema (
         version INT PRIMARY KEY, applied_at DATETIME(6) NOT NULL
@@ -42,6 +50,7 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_chunks (
         id CHAR(64) PRIMARY KEY, source_id CHAR(64) NOT NULL, content_hash CHAR(64) NOT NULL,
         start_offset INT NOT NULL, end_offset INT NOT NULL,
+        applied_key CHAR(64) NOT NULL DEFAULT '',
         FOREIGN KEY(source_id) REFERENCES wiki_sources(id) ON DELETE CASCADE,
         INDEX wiki_chunk_source(source_id,content_hash)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
@@ -121,6 +130,7 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_publications (
         id CHAR(32) PRIMARY KEY, channel_id VARCHAR(32) NOT NULL, job_id CHAR(32),
         profile JSON NOT NULL, coverage JSON NOT NULL, created_at DATETIME(6) NOT NULL,
+        content_hash CHAR(64) NOT NULL DEFAULT '',
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE,
         INDEX wiki_publication_time(channel_id,created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
@@ -158,6 +168,9 @@ SCHEMA = (
         narrative JSON NOT NULL, review JSON NOT NULL, created_at DATETIME(6) NOT NULL,
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
+    # 增量装配只重建这些页面而不是遍历全部历史页面。
+    DIRTY_PAGES_TABLE,
 )
 
 # Shared with Go (contract-tested). No snapshot, rollback or index bypasses this gate.

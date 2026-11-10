@@ -22,6 +22,7 @@
 |------|------|------|
 | **[问答 Bot 指南](User-QA-Bot-Guide.md)** | 智能问答功能完整指南 | ⭐⭐ |
 | **[多轮对话功能](User-Multi-Turn-Conversation.md)** | 上下文感知对话说明 | ⭐⭐ |
+| **[Sakura Wiki 使用与管理](User-Sakura-Wiki.md)** | 频道百科：增量索引、发布快照与回滚 | ⭐⭐ |
 
 ### ⚙️ 功能配置
 

@@ -93,6 +93,8 @@ class WikiConfig(Strict):
     concurrency: int = Field(default=1, ge=1, le=4)
     token_budget: int = Field(default=10000000, ge=1000)
     max_output_tokens: int = Field(default=65536, ge=1024, le=262144)
+    # 发布快照保留数量（含当前发布）：超出部分在发布成功后清理，回滚仍可用
+    retention_publications: int = Field(default=20, ge=2, le=200)
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
     debounce_seconds: int = Field(default=120, ge=10, le=86400)

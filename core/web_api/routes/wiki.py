@@ -304,25 +304,17 @@ async def refresh_exclusions(channel: str, actor=ADMIN_AUTH):
                 await cur.execute("SELECT * FROM wiki_jobs WHERE id=%s FOR UPDATE", (active["id"],))
                 job = await cur.fetchone()
                 cursor, progress = decode(job["cursor"]), decode(job["progress"])
-                if "source_manifest" in cursor:
-                    placeholders = ",".join(["%s"] * len(restored))
-                    await cur.execute(
-                        f"SELECT id FROM wiki_sources WHERE channel_id=%s AND message_id IN ({placeholders}) AND excluded=FALSE AND deleted=FALSE AND hidden=FALSE",
-                        (ch["id"], *restored),
-                    )
-                    ids = [row["id"] for row in await cur.fetchall()]
-                    position = cursor.get("source_index", 0)
-                    waiting = set(cursor["source_manifest"][position:])
-                    cursor["source_manifest"].extend(value for value in ids if value not in waiting)
-                    cursor["completed_sources"] = [
-                        value
-                        for value in cursor.get("completed_sources", [])
-                        if value not in set(ids)
-                    ]
+                if "batch_pipeline" in cursor:
+                    # 恢复的来源重新进入待处理集合：重置提取游标与装配状态即可，
+                    # 已应用的来源会通过 chunk 应用标记快速跳过，不会重复写入。
+                    cursor["source_after"] = ""
+                    cursor["processed_count"] = 0
                     cursor.pop("page_after", None)
                     cursor["revisions"] = {}
+                    cursor.pop("dropped_pages", None)
                     progress.update(
-                        source_total=len(cursor["source_manifest"]),
+                        processed=0,
+                        processed_chunks=0,
                         generation_complete=False,
                         review_complete=False,
                     )

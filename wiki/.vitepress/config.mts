@@ -57,6 +57,7 @@ export default defineConfig({
           { text: '快速开始', link: '/User-Getting-Started' },
           { text: '命令参考', link: '/User-Commands' },
           { text: 'WebUI 管理面板', link: '/User-WebUI-Guide' },
+          { text: 'Sakura Wiki 使用与管理', link: '/User-Sakura-Wiki' },
           { text: 'Sakura Guard 智能群管', link: '/User-Sakura-Guard' },
           { text: '问答 Bot', link: '/User-QA-Bot-Guide' },
           { text: 'RAG 快速启动', link: '/User-RAG-Quickstart' },
