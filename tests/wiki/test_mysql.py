@@ -1017,7 +1017,7 @@ async def test_deleted_message_drops_page_and_publishes_smaller_snapshot(store):
     kept_page = await page_of_message(store, ch["id"], 1)
     assert dropped_page != kept_page
     slugs = {
-        row["page_id"]: row["slug"]
+        row["id"]: row["slug"]
         for row in await store.query("SELECT id,slug FROM wiki_pages", fetch=True)
     }
     await store.revoke(ch["id"], message_ids=[2], deleted=True)
