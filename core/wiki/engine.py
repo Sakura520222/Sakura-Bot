@@ -398,19 +398,21 @@ class WikiEngine:
                 result = Extraction.model_validate(decode(cached["result"]))
                 validate_extraction(result, chunk)
                 records[chunk["id"]] = result
-                await self.store.query(
-                    "UPDATE wiki_extractions SET approved=TRUE,review=%s WHERE cache_key=%s",
-                    (
-                        encode(
-                            {
-                                "approved": True,
-                                "mode": "source_bound",
-                                "reason": "按当前生成流程直接整理",
-                            }
+                if not cached["approved"] or decode(cached["review"]).get("mode") != "source_bound":
+                    # 缓存命中时审校结论不变：仅在旧管线下遗留的行上补一次回写
+                    await self.store.query(
+                        "UPDATE wiki_extractions SET approved=TRUE,review=%s WHERE cache_key=%s",
+                        (
+                            encode(
+                                {
+                                    "approved": True,
+                                    "mode": "source_bound",
+                                    "reason": "按当前生成流程直接整理",
+                                }
+                            ),
+                            cached["cache_key"],
                         ),
-                        cached["cache_key"],
-                    ),
-                )
+                    )
                 job["progress"]["cache_hits"] += 1
             else:
                 missing.append(chunk)
