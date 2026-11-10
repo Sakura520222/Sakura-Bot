@@ -416,6 +416,85 @@ class FakeAI:
         )
 
 
+class FlakyAI(FakeAI):
+    """前 fail_on 次调用抛连接错误，用于验证任务中断恢复。"""
+
+    def __init__(self, fail_on=1):
+        super().__init__()
+        self.fail_on = fail_on
+
+    async def create(self, **request):
+        if self.calls < self.fail_on:
+            self.calls += 1
+            raise ConnectionError("model offline")
+        return await super().create(**request)
+
+
+def fake_message(id, text, edited=None):
+    return SimpleNamespace(
+        id=id,
+        message=text,
+        date=datetime(2020, 1, 1) + timedelta(days=id),
+        edit_date=edited,
+        photo=None,
+        document=None,
+        action=None,
+    )
+
+
+class UpdateClient:
+    """模拟在线 UserBot：记录 update 任务的历史扫描起点，按需回放新消息。"""
+
+    def __init__(self, messages=()):
+        self.messages = list(messages)
+        self.scan_starts = []
+
+    def is_connected(self):
+        return True
+
+    async def get_entity(self, _):
+        return SimpleNamespace(id=12345, username="channel_12345", title="知识频道", broadcast=True)
+
+    async def get_messages(self, _, **kwargs):
+        return SimpleNamespace(total=len(self.messages))
+
+    async def iter_messages(self, _, min_id, reverse, limit, wait_time):
+        assert reverse and limit == 100
+        self.scan_starts.append(min_id)
+        for message in [m for m in self.messages if m.id > min_id][:limit]:
+            yield message
+
+
+async def build_and_publish(store, *, texts=("Sakura 支持中文检索。",), model="fixture-model"):
+    """用 fixture 模型构建并自动发布一个小型知识库，供增量断言使用。"""
+    ch = await channel(store)
+    await store.configure(
+        ch["id"], ch["config"].model_copy(update={"publication_mode": "auto"}), "test"
+    )
+    for index, text in enumerate(texts, start=1):
+        await store.put_source(
+            ch["id"],
+            "message",
+            index,
+            text,
+            datetime(2020, 1, index),
+            verified=True,
+            message_id=index,
+            original_length=len(text),
+        )
+    fake = FakeAI()
+    runtime = WikiRuntime(store, None, None)
+    runtime.engine = WikiEngine(store, runtime=lambda _: (fake, model))
+    await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    assert (await store.channel(ch["id"]))["published_revision"]
+    return ch, fake, runtime
+
+
+async def fact_ids(store, sql, args=()):
+    return [row["id"] for row in await store.query(sql, args, fetch=True)]
+
+
 async def test_generation_review_graph_cache_and_incremental_publication(store):
     ch = await channel(store)
     await store.configure(
@@ -448,7 +527,9 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     assert fake.calls == charged
-    assert (await store.channel(ch["id"]))["published_revision"] != publication
+    # 内容未变化：不创建重复 publication，沿用当前发布快照
+    assert (await store.channel(ch["id"]))["published_revision"] == publication
+    assert (await store.one("SELECT COUNT(*) n FROM wiki_publications"))["n"] == 1
     # Current visibility is always checked even after a successful prior graph request.
     await store.revoke(ch["id"], message_ids=[1], deleted=True)
     assert not (await runtime.reader.graph(ch["id"]))["nodes"]
@@ -779,3 +860,389 @@ async def test_timeline_batches_sources_without_loading_whole_articles(store, mo
     assert item["page_id"] == page["id"] and item["publication_id"] == publication
     assert item["evidence"][0]["quote"] is None
     assert item["evidence"][0]["url"] == "https://t.me/channel_12345/1"
+
+
+# ---------- Issue #153：增量索引、写入放大与快照治理的回归测试 ----------
+
+
+async def test_empty_incremental_update_skips_unchanged_sources(store):
+    """空增量：重复执行 update 不重新处理历史 Chunk，不产生 facts/edges 写入。"""
+    ch, fake, runtime = await build_and_publish(store)
+    facts = await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id")
+    publication = (await store.channel(ch["id"]))["published_revision"]
+    charged = fake.calls
+    runtime.collector.client = UpdateClient()
+    await store.enqueue(ch["id"], "update")
+    await runtime.run_job(await store.claim_job())
+    job = await store.one(
+        "SELECT * FROM wiki_jobs WHERE kind='update' ORDER BY created_at DESC LIMIT 1"
+    )
+    progress = decode(job["progress"])
+    assert job["status"] == "published", job
+    assert progress["processed_chunks"] == 0 and progress["cache_hits"] == 0
+    assert fake.calls == charged  # 简介等全部命中缓存
+    assert await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id") == facts
+    assert (await store.channel(ch["id"]))["published_revision"] == publication
+    assert (await store.one("SELECT COUNT(*) n FROM wiki_publications"))["n"] == 1
+    cursor = decode(job["cursor"])
+    assert "source_manifest" not in cursor and "completed_sources" not in cursor
+    assert "source_after" not in cursor  # 终态游标已清理临时窗口状态
+
+
+async def test_incremental_update_processes_only_new_sources(store):
+    """少量新增：Telegram 请求量与提取量都只与新消息成正比。"""
+    ch, fake, runtime = await build_and_publish(store, texts=("第一条消息",))
+    before = await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id")
+    client = UpdateClient(messages=[fake_message(2, "第二条消息：新增功能说明")])
+    runtime.collector.client = client
+    charged = fake.calls
+    await store.enqueue(ch["id"], "update")
+    await runtime.run_job(await store.claim_job())
+    # 采集只从已保存的最大 message_id 之后继续，不回退为全量扫描
+    assert client.scan_starts == [1]
+    # 只有新来源触发提取（1 批）+ 一次新简介；历史来源不再发请求
+    assert fake.calls == charged + 2
+    job = await store.one(
+        "SELECT * FROM wiki_jobs WHERE kind='update' ORDER BY created_at DESC LIMIT 1"
+    )
+    progress = decode(job["progress"])
+    assert progress["processed_chunks"] == 1 and progress["source_total"] == 1
+    # 新事实写入且旧事实原样保留
+    after = await fact_ids(store, "SELECT id FROM wiki_facts ORDER BY id")
+    assert set(before) < set(after)
+    # 内容变化产生新的发布快照
+    assert (await store.channel(ch["id"]))["published_revision"] is not None
+
+
+async def test_edited_source_reruns_and_rebuilds_only_affected_page(store):
+    """编辑：仅受影响来源重新提取，其页面重建，无关页面修订保持不变。"""
+    ch, fake, runtime = await build_and_publish(store, texts=("第一条消息", "第二条消息"))
+    pages = {
+        row["title"]: row
+        for row in await store.query("SELECT * FROM wiki_pages ORDER BY id", fetch=True)
+    }
+    assert set(pages) == {"Sakura", "中文搜索"}
+    untouched = await fact_ids(
+        store, "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id", (pages["中文搜索"]["id"],)
+    )
+    old_chunk = await store.one(
+        """SELECT ch.id FROM wiki_chunks ch JOIN wiki_sources s ON s.id=ch.source_id
+        WHERE s.channel_id=%s AND s.message_id=1""",
+        (ch["id"],),
+    )
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "第一条消息（编辑后的内容）",
+        datetime(2020, 1, 1),
+        edited_at=datetime(2021, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    runtime.collector.client = UpdateClient()
+    charged = fake.calls
+    await store.enqueue(ch["id"], "update")
+    await runtime.run_job(await store.claim_job())
+    progress = decode(
+        (
+            await store.one(
+                "SELECT progress FROM wiki_jobs WHERE kind='update' ORDER BY created_at DESC LIMIT 1"
+            )
+        )["progress"]
+    )
+    assert progress["processed_chunks"] == 1  # 只有被编辑的来源重新提取
+    assert fake.calls == charged + 2  # 1 次提取 + 1 次新简介
+    # 无关页面的事实完全未动
+    assert (
+        await fact_ids(
+            store,
+            "SELECT id FROM wiki_facts WHERE page_id=%s ORDER BY id",
+            (pages["中文搜索"]["id"],),
+        )
+        == untouched
+    )
+    # 旧版本 chunk 的 facts 已被新版本取代
+    assert (
+        await store.one("SELECT COUNT(*) n FROM wiki_facts WHERE chunk_id=%s", (old_chunk["id"],))
+    )["n"] == 0
+    assert (await store.one("SELECT COUNT(*) n FROM wiki_dirty_pages"))["n"] == 0
+
+
+async def test_deleted_message_drops_page_and_publishes_smaller_snapshot(store):
+    """删除：tombstone 保留，受影响页面从发布清单剔除，其余页面不受影响。"""
+    ch, _, runtime = await build_and_publish(store, texts=("第一条消息", "第二条消息"))
+    pages = {
+        row["title"]: row
+        for row in await store.query("SELECT * FROM wiki_pages ORDER BY id", fetch=True)
+    }
+    await store.revoke(ch["id"], message_ids=[2], deleted=True)
+    tombstone = await store.one(
+        "SELECT deleted,body FROM wiki_sources WHERE channel_id=%s AND message_id=2 AND source_type='message'",
+        (ch["id"],),
+    )
+    assert tombstone["deleted"] and tombstone["body"] == ""
+    runtime.collector.client = UpdateClient()
+    await store.enqueue(ch["id"], "update")
+    await runtime.run_job(await store.claim_job())
+    # 旧归档不会复活已删除内容
+    await runtime.collector.capture(
+        await store.channel(ch["id"]), fake_message(2, "扫描得到的旧原文")
+    )
+    row = await store.one(
+        "SELECT deleted FROM wiki_sources WHERE channel_id=%s AND message_id=2 AND source_type='message'",
+        (ch["id"],),
+    )
+    assert row["deleted"]
+    # 新发布快照只保留未受影响页面
+    publication = (await store.channel(ch["id"]))["published_revision"]
+    remaining = await store.query(
+        """SELECT pp.page_id FROM wiki_publication_pages pp WHERE pp.publication_id=%s""",
+        (publication,),
+        fetch=True,
+    )
+    assert [row["page_id"] for row in remaining] == [pages["Sakura"]["id"]]
+    assert await PublicReader(store).page(ch["id"], pages["中文搜索"]["slug"]) is None
+    assert await PublicReader(store).page(ch["id"], pages["Sakura"]["slug"])
+
+
+async def test_apply_extraction_cache_hit_is_write_free(store):
+    """缓存命中：来源内容与提取结果未变时跳过 facts 删除重建（零写入）。"""
+    ch = await channel(store)
+    sid = await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "Sakura 支持中文检索。",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    source = await store.one("SELECT * FROM wiki_sources WHERE id=%s", (sid,))
+    chunk = next(chunks(sid, source["body"], source["content_hash"]))
+    await store.enqueue(ch["id"], "backfill")
+    job = await store.claim_job()
+    knowledge = Knowledge(store)
+    await knowledge.apply_extraction(job, chunk, extraction(chunk))
+    assert (await store.one("SELECT applied_key FROM wiki_chunks WHERE id=%s", (chunk["id"],)))[
+        "applied_key"
+    ]
+    # 在既有事实上打标记：若重放仍执行删除重建，标记会丢失
+    await store.query(
+        "UPDATE wiki_facts SET fact=JSON_SET(fact,'$.marker','kept') WHERE chunk_id=%s",
+        (chunk["id"],),
+    )
+    await knowledge.apply_extraction(job, chunk, extraction(chunk))
+    row = await store.one("SELECT fact FROM wiki_facts WHERE chunk_id=%s", (chunk["id"],))
+    assert decode(row["fact"]).get("marker") == "kept"
+
+
+async def test_reconcile_watermark_advances_after_full_enumeration(store, monkeypatch, tmp_path):
+    """定期核对：全量枚举完成即推进水位，后续失败不再把调度带回全量扫描。"""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("MESSAGE_SOURCE_DIR", str(tmp_path / "sources"))
+    monkeypatch.setenv("VECTOR_DB_PATH", str(tmp_path / "vectors"))
+    ch, _, runtime = await build_and_publish(store)
+    client = UpdateClient()
+    runtime.collector.client = client
+    # 核对循环阶段失败（如 UserBot 掉线）：水位已推进
+    monkeypatch.setattr(
+        runtime.collector, "reconcile", AsyncMock(side_effect=ConnectionError("offline"))
+    )
+    await store.enqueue(ch["id"], "reconcile")
+    await runtime.run_job(await store.claim_job())
+    row = await store.one("SELECT reconciled_at FROM wiki_channels WHERE id=%s", (ch["id"],))
+    assert row["reconciled_at"] is not None
+    # 水位新鲜时，日常调度逻辑选择 update 而非 reconcile
+    from core.wiki.models import utc as wiki_utc
+
+    stale = not row["reconciled_at"] or wiki_utc(row["reconciled_at"]) - wiki_utc() >= timedelta(
+        days=7
+    )
+    assert not stale
+    # 恢复后核对任务可续跑完成，不影响最终状态
+    monkeypatch.setattr(
+        runtime.collector,
+        "reconcile",
+        AsyncMock(return_value=None),
+    )
+    await store.control_job(
+        ch["id"],
+        (
+            await store.one(
+                "SELECT id FROM wiki_jobs WHERE kind='reconcile' ORDER BY created_at DESC LIMIT 1"
+            )
+        )["id"],
+        "retry",
+        "test",
+    )
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one(
+        "SELECT status FROM wiki_jobs WHERE kind='reconcile' ORDER BY created_at DESC LIMIT 1"
+    )
+    assert saved["status"] == "published"
+
+
+async def test_generation_resumes_after_model_failure(store):
+    """任务中断恢复：失败的批次不丢不重，续跑后知识完整。"""
+    ch = await channel(store)
+    await store.configure(
+        ch["id"], ch["config"].model_copy(update={"publication_mode": "auto"}), "test"
+    )
+    for index in range(1, 4):
+        await store.put_source(
+            ch["id"],
+            "message",
+            index,
+            f"第{index}条消息的内容",
+            datetime(2020, 1, index),
+            verified=True,
+            message_id=index,
+        )
+    flaky = FlakyAI(fail_on=1)
+    runtime = WikiRuntime(store, None, None)
+    runtime.engine = WikiEngine(store, runtime=lambda _: (flaky, "flaky-model"))
+    await store.enqueue(ch["id"], "reindex")
+    job = await store.claim_job()
+    await runtime.run_job(job)
+    saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (job["id"],))
+    assert saved["status"] == "partial"
+    await store.control_job(ch["id"], job["id"], "retry", "test")
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (job["id"],))
+    assert saved["status"] == "published"
+    # 每个来源恰好应用一次：无重复事实，两个词条各一个修订
+    assert (await store.one("SELECT COUNT(*) n FROM wiki_facts"))["n"] == 3
+    assert (await store.one("SELECT COUNT(*) n FROM wiki_page_revisions"))["n"] == 2
+
+
+async def test_image_description_update_rebuilds_knowledge(store):
+    """图片 OCR/描述更新：对应 image 来源失效并局部重建。"""
+    ch = await channel(store)
+    await store.configure(
+        ch["id"], ch["config"].model_copy(update={"publication_mode": "auto"}), "test"
+    )
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "图文",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+        media_key="photo:1",
+        category="image",
+    )
+    await store.put_source(
+        ch["id"],
+        "image",
+        1,
+        "识别文字 A",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+        media_key="photo:1",
+        category="image",
+    )
+    fake = FakeAI()
+    runtime = WikiRuntime(store, None, None)
+    runtime.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    first = (await store.channel(ch["id"]))["published_revision"]
+    # OCR 结果更新：image 来源内容变化
+    await store.put_source(
+        ch["id"],
+        "image",
+        1,
+        "识别文字 B（重新识别）",
+        datetime(2020, 1, 1),
+        edited_at=datetime(2021, 1, 1),
+        verified=True,
+        message_id=1,
+        media_key="photo:1",
+        category="image",
+    )
+    runtime.collector.client = UpdateClient()
+    charged = fake.calls
+    await store.enqueue(ch["id"], "update")
+    await runtime.run_job(await store.claim_job())
+    progress = decode(
+        (
+            await store.one(
+                "SELECT progress FROM wiki_jobs WHERE kind='update' ORDER BY created_at DESC LIMIT 1"
+            )
+        )["progress"]
+    )
+    assert progress["processed_chunks"] == 1  # 只有 image 来源需要重新提取
+    assert fake.calls == charged + 2
+    fact = await store.one("SELECT fact FROM wiki_facts ORDER BY created_at DESC")
+    assert "B" in decode(fact["fact"])["text"]
+    assert (await store.channel(ch["id"]))["published_revision"] != first
+
+
+async def test_prune_keeps_evidence_referenced_chunks(store):
+    """清理保护：无引用的旧版本 chunk 被删除；发布证据引用的必须保留。"""
+    ch = await channel(store)
+    sid = await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "初始内容",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    await store.enqueue(ch["id"], "backfill")
+    job = await store.claim_job()
+    knowledge = Knowledge(store)
+    source = await store.one("SELECT * FROM wiki_sources WHERE id=%s", (sid,))
+    chunk_v1 = next(chunks(sid, source["body"], source["content_hash"]))
+    await knowledge.apply_extraction(job, chunk_v1, extraction(chunk_v1))
+    # 编辑产生新版本并应用：未发布的旧版本无任何引用
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "编辑后的内容",
+        datetime(2020, 1, 1),
+        edited_at=datetime(2021, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    source = await store.one("SELECT * FROM wiki_sources WHERE id=%s", (sid,))
+    chunk_v2 = next(chunks(sid, source["body"], source["content_hash"]))
+    await knowledge.apply_extraction(job, chunk_v2, extraction(chunk_v2))
+    await knowledge.prune(ch["id"], 20)
+    assert not await store.one("SELECT id FROM wiki_chunks WHERE id=%s", (chunk_v1["id"],))
+    assert await store.one("SELECT id FROM wiki_chunks WHERE id=%s", (chunk_v2["id"],))
+    # 发布后证据链引用 v2：再次编辑清理时 v2 必须保留（回滚能力）
+    page = await store.one("SELECT * FROM wiki_pages WHERE channel_id=%s", (ch["id"],))
+    revision = await knowledge.build_page(job, page)
+    job["cursor"]["revisions"] = {page["id"]: revision}
+    fresh = await store.channel(ch["id"])
+    job["progress"].update(
+        generation_complete=True,
+        review_complete=True,
+        source_generation=fresh["source_generation"],
+    )
+    await store.checkpoint(job, "ready")
+    await store.finish(job)
+    await knowledge.publish(ch["id"], job["id"], "test")
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "再次编辑的内容",
+        datetime(2020, 1, 1),
+        edited_at=datetime(2022, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    source = await store.one("SELECT * FROM wiki_sources WHERE id=%s", (sid,))
+    chunk_v3 = next(chunks(sid, source["body"], source["content_hash"]))
+    await knowledge.apply_extraction(job, chunk_v3, extraction(chunk_v3))
+    removed = await knowledge.prune(ch["id"], 20)
+    assert removed["chunks"] == 0  # v2 仍被发布证据引用
+    assert await store.one("SELECT id FROM wiki_chunks WHERE id=%s", (chunk_v2["id"],))

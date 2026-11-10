@@ -14,7 +14,7 @@ from datetime import timedelta
 import aiomysql
 
 from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
-from .schema import SCHEMA, SCHEMA_VERSION
+from .schema import DIRTY_PAGES_TABLE, SCHEMA, SCHEMA_VERSION
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
 
@@ -106,6 +106,17 @@ class WikiStore:
                 await self.query(
                     "ALTER TABLE wiki_sources ADD COLUMN exclusion_reason VARCHAR(32) NOT NULL DEFAULT ''"
                 )
+            column = await self.one("SHOW COLUMNS FROM wiki_chunks LIKE 'applied_key'")
+            if not column:
+                await self.query(
+                    "ALTER TABLE wiki_chunks ADD COLUMN applied_key CHAR(64) NOT NULL DEFAULT ''"
+                )
+            column = await self.one("SHOW COLUMNS FROM wiki_publications LIKE 'content_hash'")
+            if not column:
+                await self.query(
+                    "ALTER TABLE wiki_publications ADD COLUMN content_hash CHAR(64) NOT NULL DEFAULT ''"
+                )
+            await self.query(DIRTY_PAGES_TABLE)
             return
         for statement in SCHEMA:
             try:
@@ -204,6 +215,11 @@ class WikiStore:
                     channel,
                 ),
             )
+            # 策略翻转可能影响任意来源的可见性：保守登记全部页面待局部重建
+            await cur.execute(
+                "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s",
+                (channel, channel),
+            )
             await self.audit(
                 cur, channel, "configure", channel, actor, config.model_dump(mode="json")
             )
@@ -297,7 +313,8 @@ class WikiStore:
             )
             for chunk in chunks(source_id, body, content_hash):
                 await cur.execute(
-                    "INSERT IGNORE INTO wiki_chunks VALUES (%s,%s,%s,%s,%s)",
+                    """INSERT IGNORE INTO wiki_chunks
+                    (id,source_id,content_hash,start_offset,end_offset) VALUES (%s,%s,%s,%s,%s)""",
                     (chunk["id"], source_id, content_hash, chunk["start"], chunk["end"]),
                 )
             if not excluded or (old and not old["excluded"]):
@@ -341,6 +358,23 @@ class WikiStore:
                 "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
                 (channel,),
             )
+            # 撤销会让相关页面的事实立即不可见：登记失效页面供增量装配局部重建
+            if source_id:
+                await cur.execute(
+                    """INSERT IGNORE INTO wiki_dirty_pages
+                    SELECT %s,f.page_id FROM wiki_facts f JOIN wiki_chunks ch ON ch.id=f.chunk_id
+                    WHERE ch.source_id=%s""",
+                    (channel, source_id),
+                )
+            elif message_ids:
+                placeholders = ",".join(["%s"] * len(message_ids))
+                await cur.execute(
+                    f"""INSERT IGNORE INTO wiki_dirty_pages
+                    SELECT DISTINCT %s,f.page_id FROM wiki_facts f
+                    JOIN wiki_chunks ch ON ch.id=f.chunk_id JOIN wiki_sources s ON s.id=ch.source_id
+                    WHERE s.channel_id=%s AND s.message_id IN ({placeholders})""",
+                    (channel, channel, *message_ids),
+                )
             await self.audit(
                 cur,
                 channel,
@@ -463,12 +497,25 @@ class WikiStore:
         progress.update(activity=activity, **details)
         await self.checkpoint(job, progress_only=progress_only)
 
+    # 终态任务仅保留发布/展示所需的清单与叙述，窗口游标等临时状态不再回写
+    TERMINAL_CURSOR_KEYS = (
+        "page_id",
+        "revisions",
+        "dropped_pages",
+        "profile_narrative",
+        "profile_generation",
+        "summary_topics",
+    )
+
     async def finish(self, job, status="completed", error=None, delay=0):
         async with self.transaction() as cur:
             await cur.execute(
                 "SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (job["channel_id"],)
             )
             await self.fence(cur, job)
+            cursor = job["cursor"]
+            if status in {"completed", "published"}:
+                cursor = {key: cursor[key] for key in self.TERMINAL_CURSOR_KEYS if key in cursor}
             await cur.execute(
                 """UPDATE wiki_jobs SET status=%s,error_code=%s,attempts=attempts+%s,
                 `cursor`=%s,progress=%s,lease_token=NULL,lease_until=NULL,
@@ -477,7 +524,7 @@ class WikiStore:
                     status,
                     error,
                     int(bool(error)),
-                    encode(job["cursor"]),
+                    encode(cursor),
                     encode(job["progress"]),
                     delay,
                     job["id"],

@@ -220,11 +220,14 @@ class WikiRuntime:
                 if job["kind"] in {"backfill", "reconcile"}:
                     await self.collector.import_local(job, channel)
                     await self.collector.history(job, channel)
-                    await self.collector.reconcile(job, channel)
+                    # 全量枚举一完成就推进核对水位：之后的核对循环、提取或发布
+                    # 失败都不会再把日常调度带回全量历史扫描（核对循环自身可从
+                    # reconcile_id 续跑）。
                     await self.store.query(
                         "UPDATE wiki_channels SET reconciled_at=UTC_TIMESTAMP(6) WHERE id=%s",
                         (channel["id"],),
                     )
+                    await self.collector.reconcile(job, channel)
                 elif job["kind"] == "update":
                     # Recover new messages missed while UserBot was disconnected.
                     last = await self.store.one(
@@ -318,6 +321,12 @@ class WikiRuntime:
                     job["phase"] = "assemble"
                     job["cursor"].pop("page_after", None)
                     job["cursor"]["revisions"] = {}
+                    job["cursor"].pop("dropped_pages", None)
+                    # 兜底全量重建：把所有页面标记为脏，防止失效登记遗漏的页面
+                    await self.store.query(
+                        "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s AND hidden=FALSE",
+                        (job["channel_id"], job["channel_id"]),
+                    )
                     job["progress"].update(
                         assembled_pages=0, pages=0, activity="来源有更新，正在刷新文章"
                     )

@@ -227,6 +227,14 @@
                   :step="1024"
                   style="width: 100%"
               /></n-form-item>
+              <n-form-item label="发布快照保留数量"
+                ><n-input-number
+                  v-model:value="draft.retention_publications"
+                  :min="2"
+                  :max="200"
+                  :step="1"
+                  style="width: 100%"
+              /></n-form-item>
               <n-form-item label="同时处理批次"
                 ><n-input-number
                   v-model:value="draft.concurrency"
@@ -574,6 +582,7 @@ interface Config {
   concurrency: number;
   token_budget: number;
   max_output_tokens: number;
+  retention_publications: number;
   input_cost_per_million: number | null;
   output_cost_per_million: number | null;
   debounce_seconds: number;
