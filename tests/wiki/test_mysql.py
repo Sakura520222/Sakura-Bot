@@ -1242,7 +1242,10 @@ async def test_prune_keeps_evidence_referenced_chunks(store):
     )
     source = await store.one("SELECT * FROM wiki_sources WHERE id=%s", (sid,))
     chunk_v3 = next(chunks(sid, source["body"], source["content_hash"]))
-    await knowledge.apply_extraction(job, chunk_v3, extraction(chunk_v3))
+    # 终态任务的租约已释放：v3 的应用需要一个新的运行中任务
+    await store.enqueue(ch["id"], "backfill")
+    job2 = await store.claim_job()
+    await knowledge.apply_extraction(job2, chunk_v3, extraction(chunk_v3))
     removed = await knowledge.prune(ch["id"], 20)
     assert removed["chunks"] == 0  # v2 仍被发布证据引用
     assert await store.one("SELECT id FROM wiki_chunks WHERE id=%s", (chunk_v2["id"],))
