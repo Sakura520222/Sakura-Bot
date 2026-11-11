@@ -1,5 +1,8 @@
 # 🌸 Sakura-Bot Wiki
 
+- [v2.4.2 更新与升级](Release-2.4.2.md)
+- [Go 小妲助手：回合、计费与评论架构](Developer-QA-Turns-Billing.md)
+
 欢迎来到 Sakura-Bot 项目文档中心！这里汇集了所有面向用户和开发者的详细文档。
 
 ---

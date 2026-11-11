@@ -814,3 +814,14 @@ export async function deleteTableRow(table: string, pk: string | number) {
   );
   return res.data;
 }
+
+export interface AssistantConfig {
+ assistant: {timezone:string;checkin_enabled:boolean;require_subscription:boolean;required_channels:string[];comments:{channel:string;enabled:boolean;wake_word:string}[];max_messages:number;inbox_capacity:number;per_user_concurrency:number};
+ pool:{workers:number;queue_capacity:number;timeout_seconds:number};
+ channels?:string[];
+}
+export async function getAssistantConfig(){return (await apiClient.get<{success:boolean;data:AssistantConfig}>("/ai/assistant")).data;}
+export async function updateAssistantConfig(data:AssistantConfig){return (await apiClient.put("/ai/assistant",{assistant:data.assistant,pool:data.pool}, {timeout:120000})).data;}
+export async function diagnoseAssistant(data:AssistantConfig){return (await apiClient.post<{success:boolean;data:{channel:string;ok:boolean;message:string}[]}>("/ai/assistant/diagnostics",{assistant:data.assistant,pool:data.pool},{timeout:120000})).data;}
+
+export async function backfillQAComments(channel:string,post_id:number){return (await apiClient.post<{success:boolean;data:{inserted:number;truncated:boolean;visibility:string}}>("/ai/assistant/backfill",{channel,post_id},{timeout:190000})).data;}

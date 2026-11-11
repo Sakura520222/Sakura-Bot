@@ -46,6 +46,7 @@ export default defineConfig({
         text: '开始阅读',
         items: [
           { text: '全部文档', link: '/Home' },
+          { text: 'v2.4.2 更新与升级', link: '/Release-2.4.2' },
           { text: '用户文档概览', link: '/User-Guide' },
           { text: '开发者文档概览', link: '/Developer-Guide' }
         ]
@@ -59,7 +60,7 @@ export default defineConfig({
           { text: 'WebUI 管理面板', link: '/User-WebUI-Guide' },
           { text: 'Sakura Wiki 使用与管理', link: '/User-Sakura-Wiki' },
           { text: 'Sakura Guard 智能群管', link: '/User-Sakura-Guard' },
-          { text: '问答 Bot', link: '/User-QA-Bot-Guide' },
+          { text: '小妲助手（v2.4.2）', link: '/User-QA-Bot-Guide' },
           { text: 'RAG 快速启动', link: '/User-RAG-Quickstart' },
           { text: '多轮对话', link: '/User-Multi-Turn-Conversation' },
           { text: '频道投票', link: '/User-Poll-Feature' }
@@ -80,7 +81,8 @@ export default defineConfig({
         text: 'AI 功能实现',
         collapsed: true,
         items: [
-          { text: '问答 Bot 实施', link: '/Developer-QA-Bot-Implementation' },
+          { text: 'Go 助手回合与计费', link: '/Developer-QA-Turns-Billing' },
+          { text: '早期问答 Bot 实施记录', link: '/Developer-QA-Bot-Implementation' },
           { text: 'RAG 技术文档', link: '/Developer-RAG-Feature-V3' },
           { text: '查询改写增强', link: '/Developer-Query-Rewrite-Enhancement' }
         ]

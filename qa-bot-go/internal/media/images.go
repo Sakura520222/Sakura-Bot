@@ -21,7 +21,10 @@ type InputError string
 
 func (e InputError) Error() string { return string(e) }
 
-type Scope struct{ UserID, ChatID int64 }
+type Scope struct {
+	UserID, ChatID int64
+	Thread         string
+}
 type Ref struct {
 	FileID    string
 	MessageID int
@@ -227,3 +230,10 @@ func WithRequest(ctx context.Context, r *Request) context.Context {
 	return context.WithValue(ctx, requestKey{}, r)
 }
 func RequestFrom(ctx context.Context) *Request { r, _ := ctx.Value(requestKey{}).(*Request); return r }
+
+func (s *Store) ClearScope(scope Scope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.states, scope)
+	delete(s.expired, scope)
+}

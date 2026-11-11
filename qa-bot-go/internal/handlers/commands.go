@@ -20,6 +20,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"html"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -96,6 +97,9 @@ type SubmissionStates interface {
 
 // CommandsDeps Commands 的装配依赖（除 log 外均不可为 nil；submissions 允许 nil）。
 type CommandsDeps struct {
+	Pool      *AIPool
+	Access    func(context.Context, *models.Message, int64) bool
+	Community *Community
 	// TG Telegram 客户端（发送/编辑）。
 	TG TGClient
 	// Users 用户系统（internal/qauser）。
@@ -121,6 +125,9 @@ type CommandsDeps struct {
 
 // Commands 承载 QA Bot 命令层与 AI 问答主路径（qa_bot.py QABot 命令方法的移植）。
 type Commands struct {
+	pool        *AIPool
+	access      func(context.Context, *models.Message, int64) bool
+	community   *Community
 	tg          TGClient
 	users       *qauser.System
 	quota       QuotaManager
@@ -150,6 +157,7 @@ func NewCommands(d CommandsDeps) *Commands {
 		d.Images = media.NewStore(5 * time.Minute)
 	}
 	return &Commands{
+		pool: d.Pool, access: d.Access, community: d.Community,
 		tg:          d.TG,
 		users:       d.Users,
 		quota:       d.Quota,
@@ -440,6 +448,12 @@ func (c *Commands) Help(ctx context.Context, upd *models.Update) {
 // Status 处理/status命令（qa_bot.py:234-286）：配额 + 会话状态，HTML；
 // get_usage_status 失败（dict 含 "error" 键）→ "❌ 获取状态失败，请稍后再试。"。
 func (c *Commands) Status(ctx context.Context, upd *models.Update) {
+	if upd != nil && upd.Message != nil {
+		ctx = engine.WithScope(ctx, messageScope(upd.Message))
+		if c.community != nil {
+			ctx = c.community.ScopeContext(ctx, upd.Message)
+		}
+	}
 	user, msg, ok := effectiveUserMessage(upd)
 	if !ok {
 		return
@@ -476,7 +490,17 @@ func (c *Commands) Status(ctx context.Context, upd *models.Update) {
 			preview, info.MessageCount, statusEmoji)
 	}
 
-	message := fmt.Sprintf("📊 <b>系统状态</b>\n\n%s%s%s", quotaText, sessionText, statusResetLine)
+	if c.pool != nil && c.pool.ActiveScope(user.ID, engine.Scope(ctx)) {
+		sessionText += "\n⏳ AI 回合排队或生成中。\n"
+	}
+	resetLine := statusResetLine
+	if billing, ok := c.quota.(interface {
+		BillingStatus(context.Context, int64) string
+	}); ok {
+		sessionText += html.EscapeString(billing.BillingStatus(ctx, user.ID))
+		resetLine = ""
+	}
+	message := fmt.Sprintf("📊 <b>系统状态</b>\n\n%s%s%s", quotaText, sessionText, resetLine)
 
 	// 使用HTML模式以避免Markdown解析错误（qa_bot.py:281-286）。
 	c.replyHTML(ctx, msg, message)
@@ -484,13 +508,22 @@ func (c *Commands) Status(ctx context.Context, upd *models.Update) {
 
 // Clear 处理/clear命令（qa_bot.py:288-305）：清除全部对话历史，Markdown。
 func (c *Commands) Clear(ctx context.Context, upd *models.Update) {
+	if upd != nil && upd.Message != nil {
+		ctx = engine.WithScope(ctx, messageScope(upd.Message))
+		if c.community != nil {
+			ctx = c.community.ScopeContext(ctx, upd.Message)
+		}
+	}
 	user, msg, ok := effectiveUserMessage(upd)
 	if !ok {
 		return
 	}
+	if c.pool != nil {
+		c.pool.CancelScope(user.ID, engine.Scope(ctx))
+	}
 	deletedCount := c.sessions.ClearUserHistory(ctx, user.ID, "")
-	c.images.ClearUser(user.ID)
-	c.albums.clearUser(user.ID)
+	c.images.ClearScope(mediaScope(ctx, user.ID, msg))
+	c.albums.clearScope(mediaScope(ctx, user.ID, msg))
 	message := fmt.Sprintf("🗑️ **对话记忆已清除**\n\n已清除 **%d** 条对话记录。\n\n现在，我们的对话是全新的开始。有什么可以帮你的吗？", deletedCount)
 	c.replyMarkdown(ctx, msg, message)
 }
@@ -673,16 +706,7 @@ func (c *Commands) Ask(ctx context.Context, upd *models.Update) {
 		return
 	}
 
-	// 配额检查（Python check_quota 内部自捕获异常，从不抛出）。
-	quotaCheck := c.quota.CheckQuota(ctx, user.ID)
-	if !quotaCheck.Allowed {
-		// quota_check.get("message", "配额不足")：键恒存在。
-		c.replyPlain(ctx, msg, quotaCheck.Message)
-		return
-	}
-
-	c.runStream(ctx, msg, user.ID, query, channelHint,
-		tg.PlaceholderThinkingChannel, quotaCheck, "处理指定频道查询失败")
+	c.submitAI(ctx, msg, user.ID, query, channelHint, tg.PlaceholderThinkingChannel, "处理指定频道查询失败")
 }
 
 // HandleMessage 处理用户消息（AI 问答主路径，qa_bot.py:632-684 的移植）。
@@ -703,7 +727,15 @@ func (c *Commands) HandleMessage(ctx context.Context, upd *models.Update) {
 			c.replyPlain(ctx, msg, media.VisionDisabled)
 			return
 		}
-		added, first, err := c.images.Add(media.Scope{UserID: user.ID, ChatID: msg.Chat.ID}, *ref)
+		if c.pool != nil && c.pool.ActiveScope(user.ID, engine.Scope(ctx)) {
+			query = msg.Caption
+			if strings.TrimSpace(query) == "" {
+				query = "请结合这张图片继续回答。"
+			}
+			c.answerMessage(ctx, upd, query)
+			return
+		}
+		added, first, err := c.images.Add(mediaScope(ctx, user.ID, msg), *ref)
 		if err != nil {
 			c.replyPlain(ctx, msg, err.Error())
 			return
@@ -735,7 +767,7 @@ func (c *Commands) answerMessage(ctx context.Context, upd *models.Update, query 
 		return
 	}
 	userID := user.ID
-	c.albums.clearScope(media.Scope{UserID: userID, ChatID: msg.Chat.ID})
+	c.albums.clearScope(mediaScope(ctx, userID, msg))
 	if query == "" || strings.TrimSpace(query) == "" {
 		return
 	}
@@ -745,16 +777,7 @@ func (c *Commands) answerMessage(ctx context.Context, upd *models.Update, query 
 
 	c.log.Infof("收到查询: user_id=%d, query=%s", userID, query)
 
-	// 配额检查（Python check_quota 内部自捕获异常，从不抛出；
-	// 外层 except 分支在 Go 侧不可达，见 QuotaManager 接口注释）。
-	quotaCheck := c.quota.CheckQuota(ctx, userID)
-	if !quotaCheck.Allowed {
-		c.replyPlain(ctx, msg, quotaCheck.Message)
-		return
-	}
-
-	c.runStream(ctx, msg, userID, query, "",
-		tg.PlaceholderThinking, quotaCheck, "处理消息失败")
+	c.submitAI(ctx, msg, userID, query, "", tg.PlaceholderThinking, "处理消息失败")
 }
 
 // runStream 占位 → 流式编辑 → 失败退款的公共序列
@@ -764,6 +787,8 @@ func (c *Commands) answerMessage(ctx context.Context, upd *models.Update, query 
 //     再包一层 try/except pass，失败静默）。
 func (c *Commands) runStream(ctx context.Context, msg *models.Message, userID int64,
 	query, channelHint, placeholderText string, quotaCheck contracts.QuotaCheckResult, errLogPrefix string) {
+	success := false
+	defer func() { c.finishBilling(ctx, msg, userID, success) }()
 	ctx = c.imageRequestContext(ctx, msg, userID)
 
 	var streamErr error
@@ -774,6 +799,13 @@ func (c *Commands) runStream(ctx context.Context, msg *models.Message, userID in
 			}
 		}()
 
+		if rich, ok := c.tg.(interface {
+			StreamRich(context.Context, *models.Message, <-chan tg.StreamChunk) bool
+		}); ok {
+			chunks := adaptEngineChunks(ctx, c.engine.ProcessQueryStream(ctx, query, userID, channelHint))
+			success = rich.StreamRich(ctx, msg, chunks)
+			return
+		}
 		// 发送初始占位消息（纯文本，无 parse_mode）。
 		placeholder, err := c.tg.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: msg.Chat.ID,
@@ -786,21 +818,17 @@ func (c *Commands) runStream(ctx context.Context, msg *models.Message, userID in
 
 		// 流式处理并实时编辑消息（_stream_and_edit 等价：复用 internal/tg 状态机）。
 		chunks := adaptEngineChunks(ctx, c.engine.ProcessQueryStream(ctx, query, userID, channelHint))
-		success := tg.StreamAndEdit(ctx, c.tg, c.log, c.now,
+		success = tg.StreamAndEdit(ctx, c.tg, c.log, c.now,
 			tg.MessageRef{ChatID: placeholder.Chat.ID, MessageID: placeholder.ID},
 			chunks,
 			tg.QuotaCheck{IsAdmin: quotaCheck.IsAdmin, Remaining: int(quotaCheck.Remaining)})
 
-		// 内部失败时回退本次配额占用（普通用户不为失败请求扣费）。
-		if !success {
-			c.quota.RefundQuota(ctx, userID)
-		}
 	}()
 
 	if streamErr != nil {
 		// 异常发生在配额预留之后，回退本次占用。
 		c.log.Errorf("%s: %s", errLogPrefix, streamErr.Error())
-		c.quota.RefundQuota(ctx, userID)
+
 		// Python：错误回复自身再包 try/except pass（失败静默）。
 		func() {
 			defer func() { _ = recover() }()

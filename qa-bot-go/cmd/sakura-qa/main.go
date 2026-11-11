@@ -143,6 +143,24 @@ func run() int {
 		logger.Error(fmt.Sprintf("数据库初始化失败: %v", err))
 		return 1
 	}
+	if err := dbMgr.InitComments(ctx); err != nil {
+		logger.Error("评论表初始化失败", "error", err)
+		return 1
+	}
+	if err := dbMgr.InitReservations(ctx); err != nil {
+		logger.Error("初始化消息计费失败", "error", err)
+		return 1
+	}
+	releaseLease, err := dbMgr.HoldAssistantLease(ctx, stop)
+	if err != nil {
+		logger.Error("助手运行锁获取失败", "error", err)
+		return 1
+	}
+	defer releaseLease()
+	if err := dbMgr.RecoverReservations(ctx); err != nil {
+		logger.Error("恢复消息计费失败", "error", err)
+		return 1
+	}
 	guardRepo := guard.New(dbMgr.DB)
 	if err := guardRepo.Initialize(ctx); err != nil {
 		logger.Error(fmt.Sprintf("Guard schema 初始化失败: %v", err))
@@ -198,7 +216,24 @@ func run() int {
 		imageTTL = 5 * time.Minute
 	}
 	imageStore := media.NewStore(imageTTL)
+	poolConfig, err := cfg.AIPoolConfig()
+	if err != nil {
+		logger.Error("AI 并发配置无效", "error", err)
+		return 1
+	}
+	aiPool := handlers.NewAIPool(ctx, poolConfig.Workers, poolConfig.QueueCapacity, time.Duration(poolConfig.TimeoutSeconds)*time.Second)
+	defer aiPool.Close()
+	assistantSettings, err := cfg.AssistantSettings()
+	if err != nil {
+		logger.Error("助手配置无效", "error", err)
+		return 1
+	}
+	aiPool.MaxMessages = assistantSettings.MaxMessages
+	aiPool.InboxCapacity = assistantSettings.InboxCapacity
+	aiPool.PerUser = assistantSettings.PerUserConcurrency
+	community := &handlers.Community{Config: cfg, DB: dbMgr, TG: tgClient}
 	commands := handlers.NewCommands(handlers.CommandsDeps{
+		Pool: aiPool, Access: community.Access, Community: community,
 		TG:          tgClient,
 		Users:       users,
 		Quota:       quota,

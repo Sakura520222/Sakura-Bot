@@ -19,12 +19,12 @@ func (w wikiFake) ReadWiki(_ context.Context, name string, options contracts.Wik
 }
 func TestWikiToolsFallbackAndRequestIsolation(t *testing.T) {
 	disabled := NewToolExecutor(nil, nil, nil)
-	if result := disabled.Execute(context.Background(), "wiki_search", nil); !strings.Contains(result, "fallback") {
+	if result := disabled.Execute(context.Background(), "wiki_search", nil); !strings.Contains(result, "wiki_not_initialized") {
 		t.Fatal(result)
 	}
 	failed := NewToolExecutor(nil, nil, nil, wikiFake{fail: true})
 	result := failed.Execute(context.Background(), "wiki_search", nil)
-	if strings.Contains(result, "private provider") || !strings.Contains(result, "RAG") {
+	if strings.Contains(result, "private provider") || !strings.Contains(result, "error") {
 		t.Fatal(result)
 	}
 	var group sync.WaitGroup

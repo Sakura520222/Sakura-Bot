@@ -203,3 +203,12 @@ func (c *Client) ReplyText(ctx context.Context, ref MessageRef, text string, mod
 	}
 	return &MessageRef{ChatID: msg.Chat.ID, MessageID: msg.ID}, nil
 }
+func (c *Client) GetChat(ctx context.Context, p *bot.GetChatParams) (*models.ChatFullInfo, error) {
+	return call(ctx, c.timeout, func(ctx context.Context) (*models.ChatFullInfo, error) { return c.b.GetChat(ctx, p) })
+}
+func (c *Client) GetChatMember(ctx context.Context, p *bot.GetChatMemberParams) (*models.ChatMember, error) {
+	return call(ctx, c.timeout, func(ctx context.Context) (*models.ChatMember, error) { return c.b.GetChatMember(ctx, p) })
+}
+func (c *Client) GetMe(ctx context.Context) (*models.User, error) {
+	return call(ctx, c.timeout, func(ctx context.Context) (*models.User, error) { return c.b.GetMe(ctx) })
+}

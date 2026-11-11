@@ -24,6 +24,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/config"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
@@ -232,11 +233,16 @@ func (q *quotaManager) GetUsageStatus(ctx context.Context, userID int64) handler
 		return handlers.UsageStatus{Err: err.Error()}
 	}
 	isAdmin := q.cfg.IsAdmin(userID)
-	used, _, err := q.db.GetQuotaUsage(ctx, userID, "")
+	settings, err := q.cfg.AssistantSettings()
 	if err != nil {
 		return handlers.UsageStatus{Err: err.Error()}
 	}
-	totalUsed, err := q.db.GetTotalDailyUsage(ctx, "")
+	day := settings.BillingDay(time.Now())
+	used, _, err := q.db.GetQuotaUsage(ctx, userID, day)
+	if err != nil {
+		return handlers.UsageStatus{Err: err.Error()}
+	}
+	_, totalUsed, err := q.db.BillingUsage(ctx, userID, day)
 	if err != nil {
 		return handlers.UsageStatus{Err: err.Error()}
 	}

@@ -49,7 +49,7 @@ func (a *imageAlbums) clearScope(scope media.Scope) {
 }
 func (c *Commands) scheduleImageAlbum(ctx context.Context, upd *models.Update, query string) {
 	msg := upd.Message
-	key := albumKey{media.Scope{UserID: msg.From.ID, ChatID: msg.Chat.ID}, msg.MediaGroupID}
+	key := albumKey{mediaScope(ctx, msg.From.ID, msg), msg.MediaGroupID}
 	c.albums.mu.Lock()
 	defer c.albums.mu.Unlock()
 	if c.albums.pending == nil {
@@ -63,7 +63,7 @@ func (c *Commands) scheduleImageAlbum(ctx context.Context, upd *models.Update, q
 		}
 	}
 	if strings.TrimSpace(query) != "" {
-		captions[msg.ID] = strings.TrimSpace(query)
+		captions[msg.ID] = query
 	}
 	ids := make([]int, 0, len(captions))
 	for id := range captions {
@@ -96,7 +96,7 @@ func (c *Commands) imageRequestContext(ctx context.Context, msg *models.Message,
 	}
 	return media.WithRequest(ctx, &media.Request{
 		Store:         c.images,
-		Scope:         media.Scope{UserID: userID, ChatID: msg.Chat.ID},
+		Scope:         mediaScope(ctx, userID, msg),
 		Reply:         msg.ReplyToMessage != nil,
 		RequireImages: len(msg.Photo) > 0 || msg.Document != nil,
 		Download: func(ctx context.Context, ref media.Ref) (string, error) {
