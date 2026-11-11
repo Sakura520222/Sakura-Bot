@@ -202,6 +202,24 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 	return c.DB.CommentRoot(ctx, msg.Chat.ID, msg.ID)
 }
 
+// commentWakeRequested checks Telegram's reply sender ID, never a display name or
+// quoted text. The caller must still validate the enabled channel and post root.
+func commentWakeRequested(msg *models.Message, wakeWord string, assistantID int64) bool {
+	if msg == nil {
+		return false
+	}
+	query := msg.Text
+	if query == "" {
+		query = msg.Caption
+	}
+	if wakeWord != "" && strings.HasPrefix(strings.TrimLeftFunc(query, unicode.IsSpace), wakeWord) {
+		return true
+	}
+	reply := msg.ReplyToMessage
+	return assistantID > 0 && reply != nil && reply.Chat.ID == msg.Chat.ID &&
+		reply.From != nil && reply.From.ID == assistantID && reply.From.IsBot
+}
+
 // EarlyUpdate runs before private-chat FSMs so public comments never enter appeals/submission state.
 func (c *Commands) EarlyUpdate(ctx context.Context, upd *models.Update) bool {
 	community := c.community
@@ -301,18 +319,15 @@ func (c *Commands) EarlyUpdate(ctx context.Context, upd *models.Update) bool {
 			}
 			return true
 		}
-		query := msg.Text
-		if query == "" {
-			query = msg.Caption
-		}
+		wakeRequested := commentWakeRequested(msg, rule.WakeWord, community.TG.Bot().ID())
 		if root == 0 {
-			if strings.HasPrefix(strings.TrimLeftFunc(query, unicode.IsSpace), rule.WakeWord) {
+			if wakeRequested {
 				community.say(ctx, msg, "未能识别帖子上下文，请回复频道帖子后重试。", nil)
 			}
 			return true
 		}
 		active := c.pool != nil && c.pool.ActiveScope(msg.From.ID, engine.Scope(ctx))
-		if !active && !strings.HasPrefix(strings.TrimLeftFunc(query, unicode.IsSpace), rule.WakeWord) {
+		if !active && !wakeRequested {
 			return true
 		}
 		refresh := func(ctx context.Context) string {

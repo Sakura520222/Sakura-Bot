@@ -75,7 +75,7 @@
       <section class="settings-section">
         <h3>评论区助手</h3>
         <n-text depth="3"
-          >选择小妲参与的频道，用户在评论开头使用唤醒词即可提问。</n-text
+          >选择小妲参与的频道，用户可在评论开头使用唤醒词，或直接回复助手消息提问。</n-text
         >
         <n-empty
           v-if="!form.assistant.comments.length"
