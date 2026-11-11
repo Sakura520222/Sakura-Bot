@@ -418,6 +418,14 @@ class AIRules:
             (utc_now_naive(), rule["id"]),
         )
 
+    async def set_action(self, store, rule, action):
+        """管理员手动调整命中动作；版本递增使后续命中审计可区分动作来源。"""
+        await store.execute(
+            "UPDATE moderation_ai_rules SET action=%s,version=version+1,updated_at=%s WHERE id=%s",
+            (action, utc_now_naive(), rule["id"]),
+        )
+        return await self.get(store, rule["id"])
+
     async def active_rules(self):
         """已激活规则连同显式共享作用域；共享开关由调用方按配置过滤。"""
         async with self.repository.pool.acquire() as connection:

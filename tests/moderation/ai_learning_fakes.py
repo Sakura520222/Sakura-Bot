@@ -294,6 +294,11 @@ class MemoryAIRules:
         row = self.rows[rule["id"]]
         row.update(corrections=row["corrections"] + 1, updated_at=utc_now_naive())
 
+    async def set_action(self, store, rule, action):
+        row = self.rows[rule["id"]]
+        row.update(action=action, version=row["version"] + 1, updated_at=utc_now_naive())
+        return deepcopy(row)
+
     async def active_rules(self):
         return deepcopy(
             [

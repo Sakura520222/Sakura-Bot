@@ -359,6 +359,9 @@ export async function getAIRules(params: AILearningQuery) {
 export async function manageAIRule(id: string, action: "activate" | "reject" | "pause" | "resume" | "delete") {
   return (await api.post(`/guard/ai-learning/rules/${id}`, { action })).data;
 }
+export async function updateAIRuleAction(id: string, action: GuardAction) {
+  return (await api.patch<{ success: boolean; rule: AIRule }>(`/guard/ai-learning/rules/${id}`, { action })).data.rule;
+}
 export async function getAIRuleDetail(id: string) {
   return (await api.get<{ rule: AIRule; shared_chats: number[]; sharing_enabled: boolean }>(`/guard/ai-learning/rules/${id}`)).data;
 }

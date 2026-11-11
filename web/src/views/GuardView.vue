@@ -542,8 +542,18 @@
         <n-descriptions-item label="群组 / 状态">{{ aiRuleDetail.chat_id }} · {{ aiRuleStatusName(aiRuleDetail.status) }}{{ aiRuleDetail.error ? ` · ${aiRuleDetail.error}` : '' }}</n-descriptions-item>
         <n-descriptions-item label="类型 / 匹配">{{ aiRuleTypeName(aiRuleDetail.rule_type) }} · {{ aiRuleDetail.match_kind === 'keyword' ? '关键词' : aiRuleDetail.match_kind === 'regex' ? '正则' : '域名' }}</n-descriptions-item>
         <n-descriptions-item label="内容"><span class="evidence">{{ aiRuleDetail.value }}</span></n-descriptions-item>
-        <n-descriptions-item label="命中动作">{{ actions.find(action => action.value === aiRuleDetail!.action)?.label || aiRuleDetail.action }}</n-descriptions-item>
-        <n-descriptions-item label="样本统计">正 {{ aiRuleDetail.positives }} / 负 {{ aiRuleDetail.negatives }} · 举报人数 {{ aiRuleDetail.reporters }} · 目标用户 {{ aiRuleDetail.target_users }} · 误判纠正 {{ aiRuleDetail.corrections }}</n-descriptions-item>
+        <n-descriptions-item label="命中动作">
+          <div class="scope-row">
+            <n-select v-model:value="aiRuleActionDraft" class="rule-action-select" size="small" :options="actions" :disabled="aiActionSaving" />
+            <n-button
+              size="small" type="primary" secondary :loading="aiActionSaving"
+              :disabled="!aiRuleDetail || aiRuleActionDraft === aiRuleDetail.action"
+              @click="saveAIRuleAction"
+            >保存动作</n-button>
+          </div>
+          <span class="hint-line">默认低风险动作；切换为禁言/踢出/封禁由管理员显式决定，保存后版本递增并记审计。</span>
+        </n-descriptions-item>
+        <n-descriptions-item label="样本统计">正 {{ aiRuleDetail.positives }} / 负 {{ aiRuleDetail.negatives }} · 举报人 {{ aiRuleDetail.reporters }} · 目标用户 {{ aiRuleDetail.target_users }} · 误判纠正 {{ aiRuleDetail.corrections }}</n-descriptions-item>
         <n-descriptions-item label="命中情况">共 {{ aiRuleDetail.hits }} 次<span v-if="aiRuleDetail.last_hit_at"> · 最近 {{ aiRuleDetail.last_hit_at }}</span></n-descriptions-item>
         <n-descriptions-item label="AI 依据">{{ Math.round(aiRuleDetail.confidence * 100) }}% · {{ aiRuleDetail.model || '—' }} · {{ aiRuleDetail.explanation }}</n-descriptions-item>
         <n-descriptions-item label="来源样本">{{ aiRuleDetail.sample_ids.join('、') || '—' }}</n-descriptions-item>
@@ -552,8 +562,9 @@
             <div class="scope-row">
               <n-dynamic-tags :value="aiRuleScopes.map(String)" @update:value="(values: string[]) => setAIRuleScopeValues(values)" />
               <n-button size="small" secondary :loading="aiScopeSaving" :disabled="!aiRuleDetail" @click="saveAIRuleScopes">保存共享群组</n-button>
+              <n-button size="small" quaternary :disabled="!aiRuleDetail" title="把除来源群外的全部受管群加入共享" @click="shareToAllGroups">共享到全部受管群</n-button>
             </div>
-            <span class="hint-line">仅列出的群组生效，且这些群仍需开启本群 AI 学习；来源群之外的规则不会自动传播。</span>
+            <span class="hint-line">仅来源群与列出的群组生效，且这些群仍需开启本群 AI 学习；不会自动传播到未列出的群。</span>
           </template>
           <span v-else>未开启：可在上方 AI 智能风控设置中显式启用跨群共享。</span>
         </n-descriptions-item>
@@ -590,7 +601,7 @@ import {
   addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleDetail, getAIRuleHits, getAIRules,
   getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist,
   retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
-  saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist,
+  saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist, updateAIRuleAction,
   type AILearningJob, type AILearningSettings, type AIRule, type AIRuleHit, type AISample,
   type GuardAction, type GuardChat, type GuardGroup, type GuardRecord, type GuardRule, type GuardTable,
 } from "@/api/guard";
@@ -1024,6 +1035,7 @@ async function openAiRule(rule: AIRule) {
   aiRuleHits.value = [];
   aiRuleScopes.value = [];
   aiRuleSharingEnabled.value = false;
+  aiRuleActionDraft.value = rule.action as GuardAction;
   showAiRuleModal.value = true;
   try {
     const [hits, detail] = await Promise.all([getAIRuleHits(rule.id), getAIRuleDetail(rule.id)]);
@@ -1031,14 +1043,46 @@ async function openAiRule(rule: AIRule) {
     aiRuleDetail.value = detail.rule;
     aiRuleScopes.value = detail.shared_chats;
     aiRuleSharingEnabled.value = detail.sharing_enabled;
+    aiRuleActionDraft.value = detail.rule.action as GuardAction;
   } catch { /* 详情加载失败时仍展示列表快照 */ }
 }
 const aiRuleScopes = ref<number[]>([]);
 const aiRuleSharingEnabled = ref(false);
 const aiScopeSaving = ref(false);
+const aiRuleActionDraft = ref<GuardAction>("delete");
+const aiActionSaving = ref(false);
 function setAIRuleScopeValues(values: string[]) {
   try { aiRuleScopes.value = [...new Set(values.map(value => numeric(value.trim(), true)))]; }
   catch (error) { report(error); }
+}
+function shareToAllGroups() {
+  const rule = aiRuleDetail.value;
+  if (!rule) return;
+  // 来源群始终生效，共享列表只需覆盖其余受管群；仍需逐群开启本群 AI 学习。
+  const managed = Object.keys(groups.value).map(Number).filter(chat_id => chat_id !== rule.chat_id);
+  aiRuleScopes.value = [...new Set([...aiRuleScopes.value, ...managed])].sort((a, b) => a - b);
+  message.info(`已加入 ${managed.length} 个受管群，保存后生效`);
+}
+async function saveAIRuleAction() {
+  const rule = aiRuleDetail.value;
+  if (!rule || aiRuleActionDraft.value === rule.action) return;
+  const target = aiRuleActionDraft.value;
+  dialog.warning({
+    title: "确认调整命中动作",
+    content: target === "ban" || target === "kick"
+      ? "高影响动作（封禁/踢出）将随规则立即生效，历史命中不受影响。确认调整？"
+      : `命中动作将调整为「${actions.find(item => item.value === target)?.label}」，保存后立即生效。`,
+    positiveText: "确认",
+    negativeText: "取消",
+    onPositiveClick: async () => {
+      aiActionSaving.value = true;
+      try {
+        aiRuleDetail.value = await updateAIRuleAction(rule.id, target);
+        message.success("命中动作已更新");
+        await loadAiRules();
+      } catch (error) { report(error); return false; } finally { aiActionSaving.value = false; }
+    },
+  });
 }
 async function saveAIRuleScopes() {
   const rule = aiRuleDetail.value;
@@ -1394,6 +1438,7 @@ onUnmounted(() => {
 .master-secondary { display: flex; align-items: center; gap: 8px; }
 .master-hint { margin-top: 4px; font-size: 12.5px; color: var(--sb-text-2); }
 .scope-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rule-action-select { width: 200px; }
 
 /* 开关网格与字段网格：自适应多列 */
 .switch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; }
