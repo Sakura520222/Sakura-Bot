@@ -414,3 +414,28 @@ func TestAccumulateToolCall(t *testing.T) {
 		t.Fatalf("空分片不应追加: %q", acc[0].Arguments)
 	}
 }
+
+func TestStreamDiagnosticsRetainsFinishReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = flushWriter{w}.Write([]byte(sseLines(`data: {bad json`, `data: {"choices":[{"delta":{"reasoning_content":"not an answer"},"finish_reason":"length"}]}`, `data: {"choices":[],"usage":{"completion_tokens":42}}`, `data: [DONE]`)))
+	}))
+	defer srv.Close()
+	stream, err := newTestClient(t, srv.URL).StreamChat(context.Background(), PlainChatRequest(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deltas, err := collectDeltas(t, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delta := range deltas {
+		if delta.Content != "" {
+			t.Fatal("reasoning surfaced as answer")
+		}
+	}
+	info := stream.Diagnostics()
+	if info.FinishReason != "length" || info.DataChunks != 3 || info.MalformedChunks != 1 {
+		t.Fatal(info)
+	}
+}

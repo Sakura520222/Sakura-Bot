@@ -506,3 +506,12 @@ func TestRequestSummaryReceipt(t *testing.T) {
 		t.Fatalf("请求回执应为 HTML")
 	}
 }
+
+func TestEmptyResponseErrorRefundsQuota(t *testing.T) {
+	quota := &fakeQuota{result: contracts.QuotaCheckResult{Allowed: true}}
+	c := newTestCommands(&fakeTG{sendOK: true}, quota, &fakeSessions{}, &fakeEngine{chunks: []engine.Chunk{engine.ErrChunk("未能生成回答，请稍后重试。")}})
+	c.HandleMessage(context.Background(), qaTextUpdate("问题", 7))
+	if quota.refund != 1 {
+		t.Fatalf("failed empty response should refund once, got %d", quota.refund)
+	}
+}

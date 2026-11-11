@@ -104,7 +104,8 @@ type FunctionDelta struct {
 // streamChunk 是单条 SSE data 载荷的解析载体，只需 choices[0].delta。
 type streamChunk struct {
 	Choices []struct {
-		Delta deltaWire `json:"delta"`
+		Delta        deltaWire `json:"delta"`
+		FinishReason string    `json:"finish_reason"`
 	} `json:"choices"`
 }
 

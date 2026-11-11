@@ -93,23 +93,17 @@ func TestProcessQueryStreamFallbackVerbatim(t *testing.T) {
 		}
 	})
 
-	t.Run("直连空回答_逐字空兜底", func(t *testing.T) {
-		h := newHarness(t, []scriptEntry{
-			{status: 500},
-			{lines: nil},
-		})
+	t.Run("直连持续空回答_返回失败且不写成功历史", func(t *testing.T) {
+		h := newHarness(t, []scriptEntry{{status: 500}, {lines: nil}, {lines: nil}})
 		chunks := collectChunks(t, h.engine.ProcessQueryStream(context.Background(), "问题", 4, ""))
-		assertChunks(t, chunks, []Chunk{
-			CtrlChunk(contracts.CtrlNewSession),
-			TextChunk(emptyAnswerText),
-			CtrlChunk(contracts.CtrlDone),
-		})
+		assertChunks(t, chunks, []Chunk{CtrlChunk(contracts.CtrlNewSession), ErrChunk(emptyAnswerText)})
 		h.store.mu.Lock()
-		saved := append([]db.HistoryItem(nil), h.store.saved...)
-		h.store.mu.Unlock()
-		want := "🍃 *开始新的对话。*\n\n" + emptyAnswerText
-		if saved[1].Content != want {
-			t.Fatalf("assistant 持久化 = %q, 期望 %q", saved[1].Content, want)
+		defer h.store.mu.Unlock()
+		if len(h.store.saved) != 1 || h.store.saved[0].Role != "user" {
+			t.Fatalf("empty response saved as success: %+v", h.store.saved)
+		}
+		if h.llm.requestCount() != 3 {
+			t.Fatal("unbounded empty retry")
 		}
 	})
 }

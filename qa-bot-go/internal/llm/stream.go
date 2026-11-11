@@ -24,13 +24,14 @@ import (
 // Stream 一次流式响应的增量迭代器。
 // 单 goroutine 消费（对齐 Python 单协程消费流对象），非并发安全。
 type Stream struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	timer   *time.Timer
-	idle    time.Duration
-	resp    *http.Response
-	scanner *bufio.Scanner
-	closed  bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	timer       *time.Timer
+	idle        time.Duration
+	resp        *http.Response
+	scanner     *bufio.Scanner
+	closed      bool
+	diagnostics StreamDiagnostics
 }
 
 // Next 返回下一个增量分片。
@@ -68,13 +69,23 @@ func (s *Stream) Next() (Delta, error) {
 			return Delta{}, io.EOF
 		}
 
+		s.diagnostics.DataChunks++
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			s.diagnostics.MalformedChunks++
 			// 无法解析的 data 行跳过（对齐引擎逐片容错的消费方式）
 			continue
 		}
 		if len(chunk.Choices) == 0 {
 			continue
+		}
+		if reason := chunk.Choices[0].FinishReason; reason != "" {
+			switch reason {
+			case "stop", "length", "tool_calls", "content_filter", "function_call":
+				s.diagnostics.FinishReason = reason
+			default:
+				s.diagnostics.FinishReason = "unknown"
+			}
 		}
 		w := chunk.Choices[0].Delta
 		return Delta{Content: w.Content, ToolCalls: w.ToolCalls}, nil
@@ -132,3 +143,12 @@ func (ir *idleReader) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// StreamDiagnostics contains protocol metadata only, never prompt or reasoning text.
+type StreamDiagnostics struct {
+	DataChunks      int
+	MalformedChunks int
+	FinishReason    string
+}
+
+func (s *Stream) Diagnostics() StreamDiagnostics { return s.diagnostics }

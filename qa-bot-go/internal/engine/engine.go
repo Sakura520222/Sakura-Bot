@@ -274,6 +274,9 @@ func (e *Engine) ProcessQueryStream(ctx context.Context, query string, userID in
 			// 外层兜底（qa_engine_v3.py:219-221）
 			e.log.Error(fmt.Sprintf("[stream] 处理查询失败: %T", err))
 			text := errQueryFailedText
+			if errors.Is(err, errEmptyResponse) {
+				text = emptyAnswerText
+			}
 			var imageErr media.InputError
 			if errors.As(err, &imageErr) {
 				text = imageErr.Error()
@@ -350,7 +353,7 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 	// 3. Agentic 处理：模型自主决定是否检索
 	fullAnswer := ""
 	if err := e.agenticStream(ctx, send, &fullAnswer, query, history, channelHint); err != nil {
-		if errors.Is(err, errConsumerGone) || ctx.Err() != nil || Inbox(ctx) != nil {
+		if errors.Is(err, errConsumerGone) || errors.Is(err, errEmptyResponse) || ctx.Err() != nil || Inbox(ctx) != nil {
 			return err
 		}
 		// 降级策略（qa_engine_v3.py:185-203）：一次无工具的直连对话；
@@ -368,12 +371,9 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 		}
 	}
 
-	// 空回答兜底（可观测，避免占位消息永远停留在"思考中"）
+	// An empty response is a failed turn: no success history or DONE marker.
 	if strings.TrimSpace(fullAnswer) == "" {
-		fullAnswer = emptyAnswerText
-		if !send(TextChunk(fullAnswer)) {
-			return errConsumerGone
-		}
+		return errEmptyResponse
 	}
 
 	// 4. 保存完整回答到对话历史（新会话时前缀拼入持久化内容，

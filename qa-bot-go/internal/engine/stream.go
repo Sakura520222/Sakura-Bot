@@ -79,12 +79,13 @@ func (e *Engine) agenticStream(
 		if err != nil && ctx.Err() == nil && toolsEnabled && Inbox(ctx) != nil {
 			toolsEnabled = false
 			e.log.Warn("[agent] 工具请求失败，保留现有消息序列尝试直接回答")
-			stream, err = e.llm.StreamChat(ctx, llm.PlainChatRequest(messages))
+			request = llm.PlainChatRequest(messages)
+			stream, err = e.llm.StreamChat(ctx, request)
 		}
 		if err != nil {
 			return err
 		}
-		content, toolCalls, err := consumeAgentStream(stream, send, fullAnswer)
+		content, toolCalls, err := e.consumeNonEmptyStream(ctx, stream, request, send, fullAnswer)
 		if err != nil {
 			return err
 		}
@@ -149,7 +150,7 @@ func (e *Engine) agenticStream(
 		if err != nil {
 			return err
 		}
-		content, _, err := consumeAgentStream(stream, send, fullAnswer)
+		content, _, err := e.consumeNonEmptyStream(ctx, stream, llm.PlainChatRequest(messages), send, fullAnswer)
 		if err != nil {
 			return err
 		}
@@ -190,7 +191,7 @@ func (e *Engine) plainChatStream(
 	if err != nil {
 		return err
 	}
-	_, _, err = consumeAgentStream(stream, send, fullAnswer)
+	_, _, err = e.consumeNonEmptyStream(ctx, stream, llm.PlainChatRequest(messages), send, fullAnswer)
 	return err
 }
 
@@ -288,4 +289,33 @@ func materializeToolCalls(acc map[int]*llm.ToolCallSlot) []llm.ToolCall {
 		})
 	}
 	return calls
+}
+
+var errEmptyResponse = errors.New("模型响应没有可见正文或工具调用")
+
+// Retry an empty model stage once using the identical messages and tool results.
+// Never restart the agent, recreate its executor, or insert a fake assistant reply.
+func (e *Engine) consumeNonEmptyStream(ctx context.Context, stream *llm.Stream, request llm.ChatRequest, send func(Chunk) bool, fullAnswer *string) (string, map[int]*llm.ToolCallSlot, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		content, calls, err := consumeAgentStream(stream, send, fullAnswer)
+		if err != nil {
+			return content, calls, err
+		}
+		if strings.TrimSpace(content) != "" || len(calls) > 0 {
+			return content, calls, nil
+		}
+		if ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
+		info := stream.Diagnostics()
+		e.log.Warn("[stream] 模型阶段未返回正文或工具调用", "attempt", attempt+1, "finish_reason", info.FinishReason, "data_chunks", info.DataChunks, "malformed_chunks", info.MalformedChunks)
+		if attempt == 1 {
+			return "", nil, errEmptyResponse
+		}
+		stream, err = e.llm.StreamChat(ctx, request)
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: 重试失败: %w", errEmptyResponse, err)
+		}
+	}
+	return "", nil, errEmptyResponse
 }
