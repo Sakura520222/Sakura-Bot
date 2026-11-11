@@ -44,6 +44,10 @@ def validate_words(values):
 NicknameKeywords = Annotated[list[str], Field(max_length=MAX_NICKNAME_KEYWORDS)]
 _legacy_keywords = TypeAdapter(Annotated[list[str], Field(max_length=100)])
 
+# 举报 AI 复核的可自动执行类别；缺省与旧版硬编码行为一致（仅排除 other）。
+AIVerdictCategory = Literal["rule_match", "spam", "scam", "malware", "harassment", "other"]
+DEFAULT_AI_REVIEW_CATEGORIES = ["rule_match", "spam", "scam", "malware", "harassment"]
+
 
 class GuardRule(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -96,6 +100,13 @@ class GuardGroup(BaseModel):
     ai_report_review_enabled: bool = False
     ai_report_review_delay_minutes: int = Field(default=10, ge=1, le=1440)
     ai_report_review_action: Action = "ban"
+    ai_report_review_confidence: float = Field(default=0.95, ge=0.5, le=1, allow_inf_nan=False)
+    ai_report_review_categories: list[AIVerdictCategory] = Field(
+        default_factory=lambda: DEFAULT_AI_REVIEW_CATEGORIES.copy(), max_length=6
+    )
+    ai_report_review_history_window_days: int = Field(default=14, ge=1, le=90)
+    ai_report_review_history_limit: int = Field(default=10, ge=1, le=50)
+    ai_learning_enabled: bool = False
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
     rules: list[GuardRule] = Field(default_factory=list, max_length=100)
     ban_any_traditional: bool = False
@@ -115,6 +126,11 @@ class GuardGroup(BaseModel):
     @classmethod
     def validate_words(cls, values):
         return validate_words(values)
+
+    @field_validator("ai_report_review_categories")
+    @classmethod
+    def unique_review_categories(cls, values):
+        return list(dict.fromkeys(values))
 
     @field_validator("trusted_bot_ids", "reviewer_ids", "notification_ids")
     @classmethod
@@ -148,12 +164,71 @@ class DeletedUserCleanupSettings(BaseModel):
     interval_hours: int = Field(default=24, ge=1, le=720)
 
 
+AILearningSource = Literal["admin_report", "member_report", "review_outcome", "ai_review"]
+AILearningTarget = Literal["nickname", "username", "message", "caption", "link"]
+DEFAULT_AI_LEARNING_SOURCES = [
+    "admin_report",
+    "member_report",
+    "review_outcome",
+    "ai_review",
+]
+DEFAULT_AI_LEARNING_TARGETS = ["nickname", "username", "message", "caption", "link"]
+
+
+class AILearningSettings(BaseModel):
+    """AI 自适应风控全局设置；默认关闭，历史配置行为不变。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool = False
+    shared_rules_enabled: bool = False
+    sources: list[AILearningSource] = Field(
+        default_factory=lambda: DEFAULT_AI_LEARNING_SOURCES.copy(), max_length=4
+    )
+    targets: list[AILearningTarget] = Field(
+        default_factory=lambda: DEFAULT_AI_LEARNING_TARGETS.copy(), max_length=5
+    )
+    activation: Literal["manual", "auto"] = "manual"
+    min_positive_samples: int = Field(default=3, ge=1, le=50)
+    min_reporters: int = Field(default=2, ge=1, le=50)
+    min_target_users: int = Field(default=2, ge=1, le=50)
+    min_confidence: float = Field(default=0.8, ge=0.5, le=1, allow_inf_nan=False)
+    default_action: Action = "delete"
+    rule_expiry_days: int = Field(default=30, ge=1, le=365)
+    negative_pause_threshold: int = Field(default=2, ge=1, le=10)
+    analysis_window_days: int = Field(default=14, ge=1, le=90)
+    history_sample_limit: int = Field(default=20, ge=1, le=100)
+    sample_retention_days: int = Field(default=90, ge=7, le=3650)
+
+    @field_validator("sources", "targets")
+    @classmethod
+    def unique_options(cls, values):
+        return list(dict.fromkeys(values))
+
+
+class AIReportReviewSettings(BaseModel):
+    """举报超时 AI 复核的可配置阈值与上下文窗口；缺省值与历史硬编码行为一致。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    confidence: float = Field(default=0.95, ge=0.5, le=1, allow_inf_nan=False)
+    categories: list[AIVerdictCategory] = Field(
+        default_factory=lambda: DEFAULT_AI_REVIEW_CATEGORIES.copy(), max_length=6
+    )
+    history_window_days: int = Field(default=14, ge=1, le=90)
+    history_limit: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("categories")
+    @classmethod
+    def unique_options(cls, values):
+        return list(dict.fromkeys(values))
+
+
 class GuardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     nickname_keywords: NicknameKeywords = Field(default_factory=lambda: DEFAULT_WORDS.copy())
     deleted_user_cleanup: DeletedUserCleanupSettings = Field(
         default_factory=DeletedUserCleanupSettings
     )
+    ai_learning: AILearningSettings = Field(default_factory=AILearningSettings)
     groups: dict[str, GuardGroup] = Field(default_factory=dict, max_length=500)
     retention_days: int = Field(default=90, ge=7, le=3650)
 

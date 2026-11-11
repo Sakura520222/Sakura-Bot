@@ -22,13 +22,18 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   ai_report_review_enabled: "举报超时 AI 自动审核",
   ai_report_review_delay_minutes: "AI 审核等待时间",
   ai_report_review_action: "AI 明确违规默认动作",
+  ai_report_review_confidence: "AI 自动处罚置信度门槛",
+  ai_report_review_categories: "允许自动执行的风险类别",
+  ai_report_review_history_window_days: "相似证据回看窗口（天）",
+  ai_report_review_history_limit: "相似证据数量上限",
+  ai_learning_enabled: "AI 自适应风控学习（本群）",
 };
 export const guardSwitches: GuardSwitch[] = [
   "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
   "block_button_messages", "block_forwarded_messages", "block_contact_messages",
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
-  "ai_report_review_enabled",
+  "ai_report_review_enabled", "ai_learning_enabled",
 ];
 export const immediateGuardFields: (keyof GuardGroup)[] = [
   ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",
@@ -36,12 +41,35 @@ export const immediateGuardFields: (keyof GuardGroup)[] = [
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
   "button_message_action", "forwarded_message_action", "contact_message_action",
-  "ai_report_review_action",
+  "ai_report_review_action", "ai_report_review_categories",
 ];
 
 export function integerError(value: unknown, min: number, max: number) {
   return typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max
     ? `请输入 ${min}–${max} 范围内的整数` : undefined;
+}
+
+export function validateAILearningField(field: keyof import("../api/guard").AILearningSettings, value: unknown): string | undefined {
+  if (field === "min_positive_samples") return integerError(value, 1, 50);
+  if (field === "min_reporters") return integerError(value, 1, 50);
+  if (field === "min_target_users") return integerError(value, 1, 50);
+  if (field === "min_confidence") {
+    return typeof value !== "number" || value < 0.5 || value > 1 ? "置信度阈值需在 0.5–1 之间" : undefined;
+  }
+  if (field === "rule_expiry_days") return integerError(value, 1, 365);
+  if (field === "negative_pause_threshold") return integerError(value, 1, 10);
+  if (field === "analysis_window_days") return integerError(value, 1, 90);
+  if (field === "history_sample_limit") return integerError(value, 1, 100);
+  if (field === "sample_retention_days") return integerError(value, 7, 3650);
+  if (field === "sources") {
+    const items = value as string[];
+    if (!items.length) return "至少保留一个样本来源，或直接关闭 AI 学习总开关";
+  }
+  if (field === "targets") {
+    const items = value as string[];
+    if (!items.length) return "至少保留一个学习目标，或直接关闭 AI 学习总开关";
+  }
+  return undefined;
 }
 
 export function validateNicknameKeywords(value: string[]): string | undefined {
@@ -52,6 +80,11 @@ export function validateNicknameKeywords(value: string[]): string | undefined {
 export function validateGuardField(field: keyof GuardGroup, value: unknown): string | undefined {
   if (field === "verification_timeout") return integerError(value, 30, 600);
   if (field === "ai_report_review_delay_minutes") return integerError(value, 1, 1440);
+  if (field === "ai_report_review_confidence") {
+    return typeof value !== "number" || value < 0.5 || value > 1 ? "置信度门槛需在 0.5–1 之间" : undefined;
+  }
+  if (field === "ai_report_review_history_window_days") return integerError(value, 1, 90);
+  if (field === "ai_report_review_history_limit") return integerError(value, 1, 50);
   if (field === "verification_max_attempts") return integerError(value, 1, 10);
   if (field === "mute_seconds") return integerError(value, 30, 2592000);
   if (field === "review_chat_id") return value === null ? undefined : integerError(value, -Number.MAX_SAFE_INTEGER, -1);

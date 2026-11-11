@@ -230,9 +230,15 @@
               <div class="field-grid">
                 <n-form-item label="AI 审核等待时间（分钟）"><n-input-number v-model:value="form.ai_report_review_delay_minutes" :min="1" :max="1440" /></n-form-item>
                 <n-form-item label="AI 明确违规默认动作"><n-select v-model:value="form.ai_report_review_action" :options="actions" /></n-form-item>
+                <n-form-item label="自动处罚置信度门槛"><n-input-number v-model:value="form.ai_report_review_confidence" :min="0.5" :max="1" :step="0.05" /></n-form-item>
+                <n-form-item label="允许自动执行的风险类别">
+                  <n-select v-model:value="form.ai_report_review_categories" multiple clearable :options="aiReviewCategoryOptions" placeholder="清空后 AI 复核仅记录结论，不自动处罚" />
+                </n-form-item>
+                <n-form-item label="相似证据回看窗口（天）"><n-input-number v-model:value="form.ai_report_review_history_window_days" :min="1" :max="90" /></n-form-item>
+                <n-form-item label="相似证据数量上限"><n-input-number v-model:value="form.ai_report_review_history_limit" :min="1" :max="50" /></n-form-item>
               </div>
               <n-alert type="info" :bordered="false" class="block-gap-sm">
-                举报超时 AI 审核需同时启用本群群管与上方开关，仅处理启用后的新举报。默认等待 10 分钟；管理员先处理即停止 AI 审核。复用“AI 配置”中的模型，核对被举报消息、昵称、用户名、简介及现有规则和黑名单。命中现有规则时执行该规则动作；其他明确违规执行默认动作。不确定、证据变化或调用失败则继续等待管理员。AI 不修改全局黑名单或白名单，封禁后立即清理该用户在本群的全部消息。
+                举报超时 AI 审核需同时启用本群群管与上方开关，仅处理启用后的新举报。默认等待 10 分钟；管理员先处理即停止 AI 审核。复用“AI 配置”中的模型，核对被举报消息、昵称、用户名、简介及现有规则和黑名单，并可参考回看窗口内同群相似样本与该用户此前的规则命中记录识别重复广告与跨账号变体（相似证据不能单独作为违规依据）。命中现有规则时执行该规则动作；其他明确违规执行默认动作。不确定、证据变化或调用失败则继续等待管理员。AI 不修改全局黑名单或白名单，封禁后立即清理该用户在本群的全部消息；确认处罚成功后结果会写入 AI 学习正样本，人工驳回或申诉成功会反向修正。
               </n-alert>
             </div>
 
@@ -262,6 +268,120 @@
         </template>
         <!-- 未选择群组时的空态：告诉用户下一步 -->
         <n-empty v-else class="table-empty" description="选择已加入的群组或输入群 ID，点击添加后立即保存" />
+      </n-card>
+
+      <!-- ==================== AI 智能风控与学习 ==================== -->
+      <n-card title="AI 智能风控与学习" :bordered="true">
+        <template #header-extra>
+          <span class="gpill" :class="aiLearningEditor?.values.enabled ? 'accent' : 'neutral'">
+            <span class="gpdot"></span>{{ aiLearningEditor?.values.enabled ? '学习中' : '未启用' }}
+          </span>
+        </template>
+        <p class="section-hint">
+          AI 从管理员上报、成员举报和审核结论中异步提取候选规则；实时拦截仍由本地规则引擎执行，不会对每条消息调用模型。
+          与手工关键词/正则、用户 ID 黑名单、白名单相互独立，AI 规则永不覆盖手工规则。默认关闭，各群需在上方“AI 自适应风控学习”开关单独启用。
+        </p>
+        <template v-if="aiLearningEditor">
+          <div class="master-strip">
+            <div>
+              <div class="master-label">
+                AI 学习总开关
+                <span class="gpill" :class="aiLearningEditor.values.enabled ? 'success' : 'neutral'">
+                  <span class="gpdot"></span>{{ aiLearningEditor.values.enabled ? '已启用' : '未启用' }}
+                </span>
+              </div>
+              <div class="master-hint">全局默认关闭；关闭后不再收集样本，已生效规则继续由本地缓存执行。</div>
+            </div>
+            <div class="master-secondary">
+              <label class="master-label master-label--sm">
+                允许跨群共享规则
+                <n-switch v-model:value="aiLearningEditor.values.shared_rules_enabled" aria-label="允许跨群共享规则" size="small" :loading="aiLearningEditor.active.value === 'shared_rules_enabled'" />
+              </label>
+            </div>
+            <n-switch v-model:value="aiLearningEditor.values.enabled" aria-label="AI 学习总开关" :loading="aiLearningEditor.active.value === 'enabled'" />
+          </div>
+          <n-form label-placement="top" class="settings-form" :disabled="loading" @focusout="aiLearningEditor?.flush()">
+            <div class="field-grid mt-block">
+              <n-form-item label="样本来源">
+                <n-select v-model:value="aiLearningEditor.values.sources" multiple :options="aiSourceOptions" />
+              </n-form-item>
+              <n-form-item label="学习目标">
+                <n-select v-model:value="aiLearningEditor.values.targets" multiple :options="aiTargetOptions" />
+              </n-form-item>
+              <n-form-item label="自动激活策略">
+                <n-select v-model:value="aiLearningEditor.values.activation" :options="aiActivationOptions" />
+              </n-form-item>
+              <n-form-item label="新规则默认动作">
+                <n-select v-model:value="aiLearningEditor.values.default_action" :options="aiRuleActions" />
+              </n-form-item>
+              <n-form-item label="最低正样本数"><n-input-number v-model:value="aiLearningEditor.values.min_positive_samples" :min="1" :max="50" /></n-form-item>
+              <n-form-item label="最少不同举报人数"><n-input-number v-model:value="aiLearningEditor.values.min_reporters" :min="1" :max="50" /></n-form-item>
+              <n-form-item label="最少不同目标用户"><n-input-number v-model:value="aiLearningEditor.values.min_target_users" :min="1" :max="50" /></n-form-item>
+              <n-form-item label="AI 置信度阈值"><n-input-number v-model:value="aiLearningEditor.values.min_confidence" :min="0.5" :max="1" :step="0.05" /></n-form-item>
+              <n-form-item label="规则有效期（天）"><n-input-number v-model:value="aiLearningEditor.values.rule_expiry_days" :min="1" :max="365" /></n-form-item>
+              <n-form-item label="负反馈暂停阈值"><n-input-number v-model:value="aiLearningEditor.values.negative_pause_threshold" :min="1" :max="10" /></n-form-item>
+              <n-form-item label="历史分析窗口（天）"><n-input-number v-model:value="aiLearningEditor.values.analysis_window_days" :min="1" :max="90" /></n-form-item>
+              <n-form-item label="相似样本上限"><n-input-number v-model:value="aiLearningEditor.values.history_sample_limit" :min="1" :max="100" /></n-form-item>
+              <n-form-item label="样本留存（天）"><n-input-number v-model:value="aiLearningEditor.values.sample_retention_days" :min="7" :max="3650" /></n-form-item>
+            </div>
+          </n-form>
+          <div class="save-status">
+            <span role="status" aria-live="polite" class="hint-line">{{ autosaveStatus(aiLearningEditor) }}</span>
+            <span v-if="aiLearningIssues.length" class="warn-text">{{ aiLearningIssues[0].error }}</span>
+            <n-button v-if="aiLearningIssues.some(issue => issue.status === 'error')" size="small" @click="aiLearningEditor?.flush(true)">重试自动保存</n-button>
+            <span v-if="aiRuntime" class="hint-line">后台任务{{ aiRuntime.worker_running ? '运行中' : '未运行' }} · 缓存规则 {{ aiRuntime.cached_rules }} 条</span>
+          </div>
+        </template>
+        <div v-else class="skel"><n-skeleton text round :repeat="3" /></div>
+
+        <!-- 规则 / 样本 / 任务管理 -->
+        <div class="sub-block">
+          <div class="sub-head">
+            <div>
+              <span class="sub-title">动态规则与学习记录</span>
+              <span class="sub-hint">候选规则默认等待管理员确认；达到门槛自动激活需将策略切换为“达标自动激活”。管理员可随时暂停、恢复或删除。</span>
+            </div>
+          </div>
+          <n-tabs v-model:value="aiTab" type="line" size="small" @update:value="resetAiRecords">
+            <n-tab-pane name="rules" tab="动态规则">
+              <div class="page-toolbar">
+                <div class="toolbar-left">
+                  <n-select v-model:value="aiRuleStatus" class="sel-status" :options="aiRuleStatusOptions" clearable placeholder="规则状态" @update:value="resetAiRecords" />
+                  <n-select v-model:value="aiRuleType" class="sel-status" :options="aiRuleTypeOptions" clearable placeholder="规则类型" @update:value="resetAiRecords" />
+                  <n-input v-model:value="aiFilterChat" class="inp-filter" placeholder="群组 ID（可选）" clearable @keyup.enter="resetAiRecords" />
+                </div>
+                <n-button secondary :loading="aiRecordsLoading" @click="resetAiRecords">查询 / 刷新</n-button>
+              </div>
+              <n-data-table size="small" :columns="aiRuleColumns" :data="aiRules" :loading="aiRecordsLoading" :bordered="false" :scroll-x="1180" />
+              <div class="pager"><n-pagination v-model:page="aiRulePage" :page-size="20" :item-count="aiRuleTotal" @update:page="loadAiRules" /></div>
+            </n-tab-pane>
+            <n-tab-pane name="samples" tab="学习样本">
+              <div class="page-toolbar">
+                <div class="toolbar-left">
+                  <n-select v-model:value="aiSampleLabel" class="sel-status" :options="aiSampleLabelOptions" clearable placeholder="样本标签" @update:value="resetAiRecords" />
+                  <n-input v-model:value="aiFilterChat" class="inp-filter" placeholder="群组 ID（可选）" clearable @keyup.enter="resetAiRecords" />
+                </div>
+                <n-button secondary :loading="aiRecordsLoading" @click="resetAiRecords">查询 / 刷新</n-button>
+              </div>
+              <n-data-table size="small" :columns="aiSampleColumns" :data="aiSamples" :loading="aiRecordsLoading" :bordered="false" :scroll-x="1100" />
+              <div class="pager"><n-pagination v-model:page="aiSamplePage" :page-size="20" :item-count="aiSampleTotal" @update:page="loadAiSamples" /></div>
+            </n-tab-pane>
+            <n-tab-pane name="jobs" tab="学习任务">
+              <div class="page-toolbar">
+                <div class="toolbar-left">
+                  <n-select v-model:value="aiJobStatus" class="sel-status" :options="aiJobStatusOptions" clearable placeholder="任务状态" @update:value="resetAiRecords" />
+                  <n-input v-model:value="aiFilterChat" class="inp-filter" placeholder="群组 ID（可选）" clearable @keyup.enter="resetAiRecords" />
+                </div>
+                <n-button secondary :loading="aiRecordsLoading" @click="resetAiRecords">查询 / 刷新</n-button>
+              </div>
+              <p v-if="aiJobCounts" class="hint-line">
+                队列状态：{{ Object.entries(aiJobCounts).map(([status, count]) => `${aiJobStatusName(status)} ${count}`).join(' · ') || '暂无任务' }}
+              </p>
+              <n-data-table size="small" :columns="aiJobColumns" :data="aiJobs" :loading="aiRecordsLoading" :bordered="false" :scroll-x="980" />
+              <div class="pager"><n-pagination v-model:page="aiJobPage" :page-size="20" :item-count="aiJobTotal" @update:page="loadAiJobs" /></div>
+            </n-tab-pane>
+          </n-tabs>
+        </div>
       </n-card>
 
       <!-- ==================== 案件、名单与处罚日志 ==================== -->
@@ -414,6 +534,45 @@
         </div>
       </template>
     </n-modal>
+
+    <!-- ==================== AI 规则详情与命中记录 ==================== -->
+    <n-modal v-model:show="showAiRuleModal" preset="card" style="width: min(720px, calc(100vw - 32px))" title="AI 动态规则详情">
+      <n-descriptions v-if="aiRuleDetail" :column="1" bordered label-placement="left">
+        <n-descriptions-item label="规则 / 版本">{{ aiRuleDetail.id }} · v{{ aiRuleDetail.version }}</n-descriptions-item>
+        <n-descriptions-item label="群组 / 状态">{{ aiRuleDetail.chat_id }} · {{ aiRuleStatusName(aiRuleDetail.status) }}{{ aiRuleDetail.error ? ` · ${aiRuleDetail.error}` : '' }}</n-descriptions-item>
+        <n-descriptions-item label="类型 / 匹配">{{ aiRuleTypeName(aiRuleDetail.rule_type) }} · {{ aiRuleDetail.match_kind === 'keyword' ? '关键词' : aiRuleDetail.match_kind === 'regex' ? '正则' : '域名' }}</n-descriptions-item>
+        <n-descriptions-item label="内容"><span class="evidence">{{ aiRuleDetail.value }}</span></n-descriptions-item>
+        <n-descriptions-item label="命中动作">{{ actions.find(action => action.value === aiRuleDetail!.action)?.label || aiRuleDetail.action }}</n-descriptions-item>
+        <n-descriptions-item label="样本统计">正 {{ aiRuleDetail.positives }} / 负 {{ aiRuleDetail.negatives }} · 举报人 {{ aiRuleDetail.reporters }} · 目标用户 {{ aiRuleDetail.target_users }} · 误判纠正 {{ aiRuleDetail.corrections }}</n-descriptions-item>
+        <n-descriptions-item label="命中情况">共 {{ aiRuleDetail.hits }} 次<span v-if="aiRuleDetail.last_hit_at"> · 最近 {{ aiRuleDetail.last_hit_at }}</span></n-descriptions-item>
+        <n-descriptions-item label="AI 依据">{{ Math.round(aiRuleDetail.confidence * 100) }}% · {{ aiRuleDetail.model || '—' }} · {{ aiRuleDetail.explanation }}</n-descriptions-item>
+        <n-descriptions-item label="来源样本">{{ aiRuleDetail.sample_ids.join('、') || '—' }}</n-descriptions-item>
+        <n-descriptions-item label="跨群共享">
+          <template v-if="aiRuleSharingEnabled">
+            <div class="scope-row">
+              <n-dynamic-tags :value="aiRuleScopes.map(String)" @update:value="(values: string[]) => setAIRuleScopeValues(values)" />
+              <n-button size="small" secondary :loading="aiScopeSaving" :disabled="!aiRuleDetail" @click="saveAIRuleScopes">保存共享群组</n-button>
+            </div>
+            <span class="hint-line">仅列出的群组生效，且这些群仍需开启本群 AI 学习；来源群之外的规则不会自动传播。</span>
+          </template>
+          <span v-else>未开启：可在上方 AI 智能风控设置中显式启用跨群共享。</span>
+        </n-descriptions-item>
+        <n-descriptions-item v-if="aiRuleDetail.expires_at" label="到期时间">{{ aiRuleDetail.expires_at }} UTC</n-descriptions-item>
+        <n-descriptions-item label="最近命中">
+          <div v-if="aiRuleHits.length" class="evidence">
+            <div v-for="hit in aiRuleHits.slice(0, 10)" :key="hit.id">
+              {{ hit.created_at }} · {{ hit.action }} · 用户 {{ hit.user_id }}<span v-if="hit.case_id"> · 案例 {{ hit.case_id.slice(0, 12) }}</span>
+            </div>
+          </div>
+          <span v-else>暂无命中记录</span>
+        </n-descriptions-item>
+      </n-descriptions>
+      <template #footer>
+        <div class="modal-footer modal-footer--end">
+          <n-button quaternary @click="showAiRuleModal = false">关闭</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -423,16 +582,23 @@ import { onBeforeRouteLeave } from "vue-router";
 import {
   NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NDropdown,
   NDynamicTags, NEmpty, NForm, NFormItem, NIcon, NInput, NInputNumber, NModal,
-  NPagination, NPopconfirm, NResult, NSelect, NSkeleton, NSwitch, useDialog, useMessage,
+  NPagination, NPopconfirm, NResult, NSelect, NSkeleton, NSwitch, NTabPane, NTabs,
+  useDialog, useMessage,
   type DataTableColumns, type FormInst, type FormItemRule, type FormRules,
 } from "naive-ui";
 import {
-  addGuardGroup, getGuardJoinedGroups, getGuardConfig, getGuardRecords, removeGuardBlacklist, retryGuardCase,
-  reviewGuardCase, saveGuardSettings, saveGuardRetention, saveGuardNicknameKeywords, setGuardWhitelist,
+  addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleDetail, getAIRuleHits, getAIRules,
+  getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist,
+  retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
+  saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist,
+  type AILearningJob, type AILearningSettings, type AIRule, type AIRuleHit, type AISample,
   type GuardAction, type GuardChat, type GuardGroup, type GuardRecord, type GuardRule, type GuardTable,
 } from "@/api/guard";
 import { createAutosave, type Autosave, saveError } from "@/composables/autosave";
-import { guardLabels, guardSwitches, immediateGuardFields, integerError, validateGuardField, validateNicknameKeywords } from "@/composables/guard-form";
+import {
+  guardLabels, guardSwitches, immediateGuardFields, integerError, validateAILearningField,
+  validateGuardField, validateNicknameKeywords,
+} from "@/composables/guard-form";
 
 const message = useMessage();
 const dialog = useDialog();
@@ -463,6 +629,24 @@ const switchFields = guardSwitches.filter(key => key !== "enabled").map(key => (
 const editors = new Map<string, Autosave<GuardGroup>>();
 const retentionEditor = shallowRef<Autosave<{ retention_days: number }> | null>(null);
 const nicknameEditor = shallowRef<Autosave<{ nickname_keywords: string[] }> | null>(null);
+// ── AI 智能风控：全局设置自动保存 + 规则/样本/任务三视图 ──
+const aiLearningEditor = shallowRef<Autosave<AILearningSettings> | null>(null);
+const aiRuntime = ref<{ worker_running: boolean; cached_rules: number } | null>(null);
+const aiTab = ref<"rules" | "samples" | "jobs">("rules");
+const aiRules = ref<AIRule[]>([]), aiSamples = ref<AISample[]>([]), aiJobs = ref<AILearningJob[]>([]);
+const aiRuleTotal = ref(0), aiSampleTotal = ref(0), aiJobTotal = ref(0);
+const aiRulePage = ref(1), aiSamplePage = ref(1), aiJobPage = ref(1);
+const aiRuleStatus = ref<string | null>(null), aiRuleType = ref<string | null>(null);
+const aiSampleLabel = ref<string | null>(null), aiJobStatus = ref<string | null>(null);
+const aiJobCounts = ref<Record<string, number> | null>(null);
+const aiFilterChat = ref("");
+const aiRecordsLoading = ref(false);
+const aiRuleDetail = ref<AIRule | null>(null);
+const aiRuleHits = ref<AIRuleHit[]>([]);
+const showAiRuleModal = ref(false);
+const aiLearningIssues = computed(() => aiLearningEditor.value
+  ? (Object.entries(aiLearningEditor.value.states) as [keyof AILearningSettings, { status: string; error?: string }][]).filter(([, state]) => state.error).map(([field, state]) => ({ field, ...state }))
+  : []);
 let composingEditor: Autosave<GuardGroup> | undefined;
 const groups = ref<Record<string, GuardGroup>>({});
 const groupMetadata = ref<Record<string, GuardChat>>({}), joinedGroups = ref<GuardChat[]>([]);
@@ -514,6 +698,47 @@ Object.assign(statusNames, { deleting: "旧通知清理中", removed: "原通知
 Object.assign(statusNames, { kicked: "已仅踢出 · 可再次加入", reviewing_kick: "仅踢出恢复中", admin_kicked: "管理员已仅踢出", admin_kick_pending: "管理员仅踢出处理中" });
 const statuses = Object.entries(statusNames).map(([value, label]) => ({ label: value === "pending" ? "待审核（封禁 / 用户举报）" : value === "ignored" ? "已忽略（警告 / 举报）" : label, value }));
 const statusLabel = (value?: string) => value ? statusNames[value] || value : "—";
+
+// ── AI 智能风控：选项常量与文案 ──
+const aiSourceOptions = [
+  { label: "管理员 @admin 上报", value: "admin_report" },
+  { label: "普通成员举报", value: "member_report" },
+  { label: "管理员审核结果", value: "review_outcome" },
+  { label: "举报超时 AI 复核结果", value: "ai_review" },
+];
+const aiTargetOptions = [
+  { label: "昵称", value: "nickname" },
+  { label: "用户名", value: "username" },
+  { label: "消息正文", value: "message" },
+  { label: "媒体说明", value: "caption" },
+  { label: "链接 / 域名", value: "link" },
+];
+const aiActivationOptions = [
+  { label: "仅生成候选，等待管理员确认（默认）", value: "manual" },
+  { label: "达到样本与置信度门槛后自动激活", value: "auto" },
+];
+const aiRuleActions = actions;
+const aiRuleStatusNames: Record<string, string> = { candidate: "候选待审", active: "已生效", disabled: "已暂停", rejected: "已拒绝", expired: "已过期" };
+const aiRuleStatusName = (value?: string) => value ? aiRuleStatusNames[value] || value : "—";
+const aiRuleTypeName = (value?: string) => ({ nickname: "昵称", username: "用户名", message: "消息", link: "链接", pattern: "归一模式" } as Record<string, string>)[value || ""] || value || "—";
+const aiSampleLabelNames: Record<string, string> = { pending: "待验证", positive: "正样本", negative: "负样本", neutral: "中性" };
+const aiSampleSourceNames: Record<string, string> = { admin_report: "管理员上报", member_report: "成员举报", ai_review: "AI 复核" };
+const aiJobStatusNames: Record<string, string> = { queued: "排队中", running: "分析中", done: "已完成", manual: "转人工", skipped: "已跳过" };
+const aiJobStatusName = (value: string) => aiJobStatusNames[value] || value;
+const aiRuleStatusOptions = Object.entries(aiRuleStatusNames).map(([value, label]) => ({ label, value }));
+const aiRuleTypeOptions = [
+  { label: "昵称", value: "nickname" }, { label: "用户名", value: "username" }, { label: "消息", value: "message" },
+  { label: "链接", value: "link" }, { label: "归一模式", value: "pattern" },
+];
+const aiSampleLabelOptions = Object.entries(aiSampleLabelNames).map(([value, label]) => ({ label, value }));
+const aiJobStatusOptions = Object.entries(aiJobStatusNames).map(([value, label]) => ({ label, value }));
+const aiReviewCategoryOptions = [
+  { label: "现有规则命中", value: "rule_match" },
+  { label: "垃圾广告", value: "spam" },
+  { label: "诈骗引流", value: "scam" },
+  { label: "恶意软件", value: "malware" },
+  { label: "严重骚扰", value: "harassment" },
+];
 
 const pendingReport = (row: GuardRecord) => row.action === "report" && !row.payload?.review_ban_confirmed;
 function canKick(row: GuardRecord) {
@@ -586,9 +811,10 @@ async function flushAll() {
   const results = await Promise.all([...editors.values()].map(editor => editor.flush()));
   if (retentionEditor.value) results.push(await retentionEditor.value.flush());
   if (nicknameEditor.value) results.push(await nicknameEditor.value.flush());
+  if (aiLearningEditor.value) results.push(await aiLearningEditor.value.flush());
   return results.every(Boolean);
 }
-function hasUnsaved() { return composing.value || [...editors.values()].some(editor => editor.hasUnsaved()) || retentionEditor.value?.hasUnsaved() || nicknameEditor.value?.hasUnsaved(); }
+function hasUnsaved() { return composing.value || [...editors.values()].some(editor => editor.hasUnsaved()) || retentionEditor.value?.hasUnsaved() || nicknameEditor.value?.hasUnsaved() || aiLearningEditor.value?.hasUnsaved(); }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } }
 function flushHidden() { if (document.visibilityState === "hidden") void flushAll(); }
 watch(selectedId, (_, previous) => { if (previous) void editors.get(previous)?.flush(); });
@@ -738,6 +964,180 @@ const ruleColumns = computed<DataTableColumns<GuardRule>>(() => [
   },
 ]);
 
+// ── AI 智能风控：规则 / 样本 / 任务查询与管理 ──
+let aiRequest = 0;
+function aiChatId() {
+  const value = aiFilterChat.value.trim();
+  return value ? numeric(value, true) : undefined;
+}
+async function loadAiRules() {
+  const request = ++aiRequest;
+  aiRecordsLoading.value = true;
+  try {
+    const params: Record<string, unknown> = { limit: 20, offset: (aiRulePage.value - 1) * 20 };
+    const chat = aiChatId();
+    if (chat !== undefined) params.chat_id = chat;
+    if (aiRuleStatus.value) params.status = aiRuleStatus.value;
+    if (aiRuleType.value) params.rule_type = aiRuleType.value;
+    const result = await getAIRules(params);
+    if (request === aiRequest) { aiRules.value = result.rows; aiRuleTotal.value = result.total; }
+  } catch (error) { if (request === aiRequest) report(error); }
+  finally { if (request === aiRequest) aiRecordsLoading.value = false; }
+}
+async function loadAiSamples() {
+  const request = ++aiRequest;
+  aiRecordsLoading.value = true;
+  try {
+    const params: Record<string, unknown> = { limit: 20, offset: (aiSamplePage.value - 1) * 20 };
+    const chat = aiChatId();
+    if (chat !== undefined) params.chat_id = chat;
+    if (aiSampleLabel.value) params.label = aiSampleLabel.value;
+    const result = await getAISamples(params);
+    if (request === aiRequest) { aiSamples.value = result.rows; aiSampleTotal.value = result.total; }
+  } catch (error) { if (request === aiRequest) report(error); }
+  finally { if (request === aiRequest) aiRecordsLoading.value = false; }
+}
+async function loadAiJobs() {
+  const request = ++aiRequest;
+  aiRecordsLoading.value = true;
+  try {
+    const params: Record<string, unknown> = { limit: 20, offset: (aiJobPage.value - 1) * 20 };
+    const chat = aiChatId();
+    if (chat !== undefined) params.chat_id = chat;
+    if (aiJobStatus.value) params.status = aiJobStatus.value;
+    const result = await getAILearningJobs(params);
+    if (request === aiRequest) {
+      aiJobs.value = result.rows;
+      aiJobTotal.value = result.total;
+      aiJobCounts.value = result.counts;
+    }
+  } catch (error) { if (request === aiRequest) report(error); }
+  finally { if (request === aiRequest) aiRecordsLoading.value = false; }
+}
+function resetAiRecords() {
+  if (aiTab.value === "rules") { aiRulePage.value = 1; void loadAiRules(); }
+  else if (aiTab.value === "samples") { aiSamplePage.value = 1; void loadAiSamples(); }
+  else { aiJobPage.value = 1; void loadAiJobs(); }
+}
+async function openAiRule(rule: AIRule) {
+  aiRuleDetail.value = rule;
+  aiRuleHits.value = [];
+  aiRuleScopes.value = [];
+  aiRuleSharingEnabled.value = false;
+  showAiRuleModal.value = true;
+  try {
+    const [hits, detail] = await Promise.all([getAIRuleHits(rule.id), getAIRuleDetail(rule.id)]);
+    aiRuleHits.value = hits.rows;
+    aiRuleDetail.value = detail.rule;
+    aiRuleScopes.value = detail.shared_chats;
+    aiRuleSharingEnabled.value = detail.sharing_enabled;
+  } catch { /* 详情加载失败时仍展示列表快照 */ }
+}
+const aiRuleScopes = ref<number[]>([]);
+const aiRuleSharingEnabled = ref(false);
+const aiScopeSaving = ref(false);
+function setAIRuleScopeValues(values: string[]) {
+  try { aiRuleScopes.value = [...new Set(values.map(value => numeric(value.trim(), true)))]; }
+  catch (error) { report(error); }
+}
+async function saveAIRuleScopes() {
+  const rule = aiRuleDetail.value;
+  if (!rule) return;
+  aiScopeSaving.value = true;
+  try {
+    const result = await setAIRuleScopes(rule.id, aiRuleScopes.value);
+    aiRuleScopes.value = result.shared_chats;
+    message.success("共享群组已更新");
+    await loadAiRules();
+  } catch (error) { report(error); } finally { aiScopeSaving.value = false; }
+}
+function aiRuleRowActions(rule: AIRule): { key: "activate" | "reject" | "pause" | "resume" | "delete"; label: string; type: "primary" | "warning" | "error" }[] {
+  const list: { key: "activate" | "reject" | "pause" | "resume" | "delete"; label: string; type: "primary" | "warning" | "error" }[] = [];
+  if (rule.status === "candidate") list.push({ key: "activate", label: "激活", type: "primary" }, { key: "reject", label: "拒绝", type: "error" });
+  if (rule.status === "active") list.push({ key: "pause", label: "暂停", type: "warning" });
+  if (rule.status === "disabled" || rule.status === "expired") list.push({ key: "resume", label: "恢复", type: "primary" });
+  list.push({ key: "delete", label: "删除", type: "error" });
+  return list;
+}
+function actAiRule(rule: AIRule, action: "activate" | "reject" | "pause" | "resume" | "delete") {
+  const hints: Record<typeof action, string> = {
+    activate: "激活后该规则立即参与本群实时匹配，到期时间按当前配置重置。",
+    reject: "拒绝后该候选不再生效；相同特征的后续样本仍会合并到该规则供再次评估。",
+    pause: "暂停后规则立即退出实时匹配，可随时恢复。",
+    resume: "恢复后规则重新参与实时匹配。",
+    delete: "删除规则及其命中与反馈记录，不可恢复；如需拦截请重新等待学习生成。",
+  };
+  dialog.warning({
+    title: "确认 AI 规则操作",
+    content: hints[action],
+    positiveText: "确认",
+    negativeText: "取消",
+    onPositiveClick: async () => {
+      try {
+        await manageAIRule(rule.id, action);
+        message.success("操作已完成");
+        await loadAiRules();
+      } catch (error) { report(error); return false; }
+    },
+  });
+}
+const aiRuleColumns = computed<DataTableColumns<AIRule>>(() => [
+  {
+    title: "状态", key: "status", width: 96,
+    render: row => h("span", { class: `gpill ${row.status === "active" ? "success" : row.status === "candidate" ? "accent" : row.status === "disabled" ? "warning" : "neutral"}` }, [h("span", { class: "gpdot" }), aiRuleStatusName(row.status)]),
+  },
+  { title: "类型", key: "rule_type", width: 88, render: row => aiRuleTypeName(row.rule_type) },
+  { title: "内容", key: "value", minWidth: 200, ellipsis: { tooltip: true } },
+  { title: "群组", key: "chat_id", width: 150 },
+  { title: "样本 正/负", key: "samples", width: 104, render: row => `${row.positives} / ${row.negatives}` },
+  { title: "举报人", key: "reporters", width: 76 },
+  { title: "命中", key: "hits", width: 64 },
+  { title: "置信度", key: "confidence", width: 76, render: row => `${Math.round(row.confidence * 100)}%` },
+  { title: "更新（UTC）", key: "updated_at", width: 170 },
+  {
+    title: "操作", key: "actions", width: 170, align: "right",
+    render: row => {
+      const acts = aiRuleRowActions(row);
+      const buttons = [h(NButton, { size: "small", quaternary: true, type: "primary", onClick: () => openAiRule(row) }, () => "详情")];
+      for (const item of acts.slice(0, 2)) {
+        buttons.push(h(NButton, { size: "small", quaternary: true, type: item.type, onClick: () => actAiRule(row, item.key) }, () => item.label));
+      }
+      if (acts.length > 2) {
+        buttons.push(h(NDropdown, {
+          trigger: "click",
+          options: acts.slice(2).map(item => ({ key: item.key, label: item.label })),
+          onSelect: (key: string | number) => actAiRule(row, key as "delete"),
+        }, { default: () => h(NButton, { size: "small", quaternary: true }, () => "更多") }));
+      }
+      return buttons;
+    },
+  },
+]);
+const aiSampleColumns = computed<DataTableColumns<AISample>>(() => [
+  { title: "群组", key: "chat_id", width: 150 },
+  { title: "用户", key: "user_id", width: 110 },
+  { title: "来源", key: "source", width: 96, render: row => aiSampleSourceNames[row.source] || row.source },
+  {
+    title: "标签", key: "label", width: 86,
+    render: row => h("span", { class: `gpill ${row.label === "positive" ? "error" : row.label === "negative" ? "success" : "neutral"}` }, [h("span", { class: "gpdot" }), aiSampleLabelNames[row.label] || row.label]),
+  },
+  { title: "学习状态", key: "status", width: 92, render: row => aiJobStatusNames[row.status] || row.status },
+  { title: "上报人", key: "reporters", width: 90, render: row => String(row.payload?.reporters?.length ?? "—") },
+  { title: "证据摘要", key: "text", minWidth: 220, ellipsis: { tooltip: true }, render: row => row.payload?.message?.text || row.payload?.nickname || "—" },
+  { title: "错误", key: "error", width: 130, ellipsis: { tooltip: true } },
+  { title: "时间（UTC）", key: "created_at", width: 170 },
+]);
+const aiJobColumns = computed<DataTableColumns<AILearningJob>>(() => [
+  { title: "群组", key: "chat_id", width: 150 },
+  { title: "用户", key: "user_id", width: 110 },
+  { title: "样本", key: "sample_id", width: 130, render: row => h("span", { class: "g-rid" }, row.sample_id.slice(0, 12)) },
+  { title: "状态", key: "status", width: 90, render: row => aiJobStatusName(row.status) },
+  { title: "尝试", key: "attempts", width: 64 },
+  { title: "错误", key: "error", width: 150, ellipsis: { tooltip: true } },
+  { title: "重试时间（UTC）", key: "retry_at", width: 170 },
+  { title: "更新（UTC）", key: "updated_at", width: 170 },
+]);
+
 // ── 配置加载 / 刷新（保留冲刷未保存输入的保护逻辑） ──
 async function reload() {
   if (loading.value || adding.value) return;
@@ -760,6 +1160,14 @@ async function reload() {
       save: (changes, previous) => saveGuardRetention(changes.retention_days!, previous.retention_days!),
       validate: (_, value) => integerError(value, 7, 3650),
     });
+    aiLearningEditor.value?.stop();
+    aiLearningEditor.value = createAutosave(data.config.ai_learning, {
+      save: (changes, previous) => saveAILearningSettings(changes, previous),
+      validate: validateAILearningField,
+      immediate: ["enabled", "sources", "targets", "activation", "default_action"],
+    });
+    void getAILearningRuntime().then(result => { if (!disposed) aiRuntime.value = result.runtime; }).catch(() => { /* 运行态加载失败不影响配置 */ });
+    resetAiRecords();
     if (!selectedId.value || !groups.value[selectedId.value]) selectedId.value = Object.keys(groups.value)[0] || null;
     configLoaded.value = true;
     configError.value = false;
@@ -895,6 +1303,7 @@ onUnmounted(() => {
   for (const editor of editors.values()) editor.stop();
   retentionEditor.value?.stop();
   nicknameEditor.value?.stop();
+  aiLearningEditor.value?.stop();
   window.removeEventListener("beforeunload", beforeUnload);
   document.removeEventListener("visibilitychange", flushHidden);
 });
@@ -971,7 +1380,10 @@ onUnmounted(() => {
 /* 总开关条：surface-2 底突出第一操作 */
 .master-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--sb-border); border-radius: var(--sb-radius); background: var(--sb-surface-2); }
 .master-label { display: flex; align-items: center; gap: 10px; font-weight: 650; }
+.master-label--sm { font-size: 13px; font-weight: 600; }
+.master-secondary { display: flex; align-items: center; gap: 8px; }
 .master-hint { margin-top: 4px; font-size: 12.5px; color: var(--sb-text-2); }
+.scope-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 /* 开关网格与字段网格：自适应多列 */
 .switch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; }
@@ -980,6 +1392,7 @@ onUnmounted(() => {
 .field-grid :deep(.n-select) { width: 100%; }
 .span-all { grid-column: 1 / -1; }
 .block-gap-sm { margin-top: 10px; }
+.mt-block { margin-top: 12px; }
 
 /* 白名单快捷添加行 */
 .white-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }

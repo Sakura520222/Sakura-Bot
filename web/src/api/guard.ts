@@ -38,6 +38,11 @@ export interface GuardGroup {
   ai_report_review_enabled: boolean;
   ai_report_review_delay_minutes: number;
   ai_report_review_action: GuardAction;
+  ai_report_review_confidence: number;
+  ai_report_review_categories: string[];
+  ai_report_review_history_window_days: number;
+  ai_report_review_history_limit: number;
+  ai_learning_enabled: boolean;
   mute_seconds: number;
   rules: GuardRule[];
   ban_any_traditional: boolean;
@@ -117,7 +122,7 @@ export interface GuardRecord {
   };
 }
 export async function getGuardConfig() {
-  return (await api.get<{ config: { nickname_keywords: string[]; groups: Record<string, GuardGroup>; retention_days: number }; defaults: GuardGroup }>("/guard/config")).data;
+  return (await api.get<{ config: { nickname_keywords: string[]; ai_learning: AILearningSettings; groups: Record<string, GuardGroup>; retention_days: number }; defaults: GuardGroup }>("/guard/config")).data;
 }
 export async function saveGuardGroup(chat: string, group: GuardGroup) {
   return (await api.put(`/guard/groups/${chat}`, group)).data;
@@ -241,4 +246,131 @@ export async function removeGuardBlacklist(user_id: number) {
 }
 export async function setGuardRetention(retention_days: number) {
   return (await api.put("/guard/retention", { retention_days })).data;
+}
+
+// ── AI 智能风控（学习）──
+export type AILearningSource = "admin_report" | "member_report" | "review_outcome" | "ai_review";
+export type AILearningTarget = "nickname" | "username" | "message" | "caption" | "link";
+export type AIRuleStatus = "candidate" | "active" | "disabled" | "rejected" | "expired";
+export interface AILearningSettings {
+  enabled: boolean;
+  shared_rules_enabled: boolean;
+  sources: AILearningSource[];
+  targets: AILearningTarget[];
+  activation: "manual" | "auto";
+  min_positive_samples: number;
+  min_reporters: number;
+  min_target_users: number;
+  min_confidence: number;
+  default_action: GuardAction;
+  rule_expiry_days: number;
+  negative_pause_threshold: number;
+  analysis_window_days: number;
+  history_sample_limit: number;
+  sample_retention_days: number;
+}
+export interface AIRule {
+  id: string;
+  rule_key: string;
+  chat_id: number;
+  rule_type: "nickname" | "username" | "message" | "link" | "pattern";
+  match_kind: "keyword" | "regex" | "domain";
+  value: string;
+  action: string;
+  status: AIRuleStatus;
+  confidence: number;
+  model: string | null;
+  actor: string | null;
+  explanation: string;
+  sample_ids: string[];
+  positives: number;
+  negatives: number;
+  reporters: number;
+  target_users: number;
+  corrections: number;
+  hits: number;
+  last_hit_at: string | null;
+  version: number;
+  expires_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  shared_chats?: number[];
+}
+export interface AISample {
+  id: string;
+  chat_id: number;
+  user_id: number;
+  message_id: number | null;
+  source: string;
+  case_id: string | null;
+  label: "pending" | "positive" | "negative" | "neutral";
+  status: "new" | "queued" | "learned" | "skipped" | "invalid";
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  payload: {
+    nickname?: string;
+    usernames?: string[];
+    message?: { text?: string; links?: string[] };
+    reporters?: { user_id: number; name?: string; note?: string }[];
+  };
+}
+export interface AILearningJob {
+  id: string;
+  sample_id: string;
+  chat_id: number;
+  user_id: number;
+  status: "queued" | "running" | "done" | "manual" | "skipped";
+  attempts: number;
+  error: string | null;
+  retry_at: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface AIRuleHit {
+  id: number;
+  rule_id: string;
+  chat_id: number;
+  user_id: number;
+  case_id: string | null;
+  version: number;
+  action: string;
+  evidence: { target?: string; rule_id?: string; reason?: string };
+  created_at: string;
+}
+export async function saveAILearningSettings(changes: Partial<AILearningSettings>, previous: Partial<AILearningSettings>) {
+  return (await api.patch<{ success: boolean; settings: AILearningSettings }>("/guard/ai-learning", { changes, previous })).data.settings;
+}
+export async function getAILearningRuntime() {
+  return (await api.get<{ settings: AILearningSettings; defaults: AILearningSettings; runtime: { worker_running: boolean; cached_rules: number } }>("/guard/ai-learning")).data;
+}
+export interface AILearningQuery {
+  chat_id?: number;
+  status?: string;
+  label?: string;
+  rule_type?: string;
+  limit?: number;
+  offset?: number;
+}
+export async function getAIRules(params: AILearningQuery) {
+  return (await api.get<{ rows: AIRule[]; total: number }>("/guard/ai-learning/rules", { params })).data;
+}
+export async function manageAIRule(id: string, action: "activate" | "reject" | "pause" | "resume" | "delete") {
+  return (await api.post(`/guard/ai-learning/rules/${id}`, { action })).data;
+}
+export async function getAIRuleDetail(id: string) {
+  return (await api.get<{ rule: AIRule; shared_chats: number[]; sharing_enabled: boolean }>(`/guard/ai-learning/rules/${id}`)).data;
+}
+export async function setAIRuleScopes(id: string, chat_ids: number[]) {
+  return (await api.put<{ success: boolean; shared_chats: number[] }>(`/guard/ai-learning/rules/${id}/scopes`, { chat_ids })).data;
+}
+export async function getAIRuleHits(id: string) {
+  return (await api.get<{ rows: AIRuleHit[] }>(`/guard/ai-learning/rules/${id}/hits`)).data;
+}
+export async function getAISamples(params: AILearningQuery) {
+  return (await api.get<{ rows: AISample[]; total: number }>("/guard/ai-learning/samples", { params })).data;
+}
+export async function getAILearningJobs(params: AILearningQuery) {
+  return (await api.get<{ rows: AILearningJob[]; total: number; counts: Record<string, number> }>("/guard/ai-learning/jobs", { params })).data;
 }

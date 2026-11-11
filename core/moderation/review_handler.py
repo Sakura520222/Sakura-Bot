@@ -107,6 +107,9 @@ class ReviewHandler:
                 await self.request_message_deletion(store, case, reviewer_id, web=web)
                 result = await store.case(case_id)
                 await self.service.notifier.sync(store, result, self.service.group(case["chat_id"]))
+                await self.service.learning.record_review_outcome(
+                    store, case, result, action="delete"
+                )
                 if result["payload"]["report_message_deletion"]["status"] != "deleted":
                     raise GuardError("guard.report_delete_pending")
                 return result
@@ -385,6 +388,10 @@ class ReviewHandler:
                 raise GuardError("guard.invalid_callback")
             await store.finish_review(case, action)
             await self.service.guest_messages.prepare(store, await store.case(case["id"]))
+            # 无论按钮直按还是后台恢复完成，最终成功结果都写入学习反馈。
+            await self.service.learning.record_review_outcome(
+                store, case, await store.case(case["id"]), action=action
+            )
         except Exception as error:
             await store.update_case(
                 case["id"],

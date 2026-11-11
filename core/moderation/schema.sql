@@ -198,3 +198,115 @@ CREATE TABLE IF NOT EXISTS moderation_appeal_notifications (
     INDEX idx_appeal_delivery (retry_at),
     CONSTRAINT fk_appeal_notice FOREIGN KEY (appeal_id) REFERENCES moderation_appeals(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 自适应风控：样本与学习任务彼此独立于人工案件，AI 不可用时样本仍可持久化。
+CREATE TABLE IF NOT EXISTS moderation_ai_samples (
+    id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    idempotency_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    message_id BIGINT NULL,
+    source VARCHAR(24) NOT NULL,
+    case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    label VARCHAR(16) NOT NULL DEFAULT 'pending',
+    status VARCHAR(16) NOT NULL DEFAULT 'new',
+    payload JSON NOT NULL,
+    error VARCHAR(128) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_sample_chat (chat_id, created_at),
+    INDEX idx_ai_sample_user (user_id, created_at),
+    INDEX idx_ai_sample_case (case_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS moderation_ai_learning_jobs (
+    id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    sample_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    token CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    payload JSON NOT NULL,
+    error VARCHAR(128) NULL,
+    retry_at DATETIME(6) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_learning_work (status, retry_at),
+    CONSTRAINT fk_ai_learning_sample FOREIGN KEY (sample_id)
+        REFERENCES moderation_ai_samples(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 动态规则与人工关键词/正则、全局黑名单、白名单完全分离，仅在此表内管理。
+CREATE TABLE IF NOT EXISTS moderation_ai_rules (
+    id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    rule_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+    chat_id BIGINT NOT NULL,
+    rule_type VARCHAR(16) NOT NULL,
+    match_kind VARCHAR(16) NOT NULL,
+    value VARCHAR(512) NOT NULL,
+    normalized_value VARCHAR(512) NOT NULL,
+    action VARCHAR(16) NOT NULL DEFAULT 'delete',
+    status VARCHAR(16) NOT NULL DEFAULT 'candidate',
+    confidence FLOAT NOT NULL DEFAULT 0,
+    model VARCHAR(64) NULL,
+    actor VARCHAR(64) NULL,
+    explanation VARCHAR(1024) NOT NULL DEFAULT '',
+    sample_ids JSON NOT NULL,
+    positives INT NOT NULL DEFAULT 0,
+    negatives INT NOT NULL DEFAULT 0,
+    reporters INT NOT NULL DEFAULT 0,
+    target_users INT NOT NULL DEFAULT 0,
+    corrections INT NOT NULL DEFAULT 0,
+    hits INT NOT NULL DEFAULT 0,
+    last_hit_at DATETIME(6) NULL,
+    version INT NOT NULL DEFAULT 1,
+    expires_at DATETIME(6) NULL,
+    error VARCHAR(128) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_rule_status (status, chat_id, updated_at),
+    INDEX idx_ai_rule_expiry (status, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 命中审计与计数分离，避免高频消息检测直接写主规则表。
+CREATE TABLE IF NOT EXISTS moderation_ai_rule_hits (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    rule_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    version INT NOT NULL,
+    action VARCHAR(16) NOT NULL,
+    evidence JSON NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_rule_hit_rule (rule_id, id),
+    INDEX idx_ai_rule_hit_chat (chat_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS moderation_ai_rule_feedback (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    rule_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    sample_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    kind VARCHAR(32) NOT NULL,
+    polarity VARCHAR(16) NOT NULL,
+    actor VARCHAR(64) NOT NULL,
+    payload JSON NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    INDEX idx_ai_feedback_rule (rule_id, id),
+    INDEX idx_ai_feedback_case (case_id),
+    INDEX idx_ai_feedback_sample (sample_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 跨群共享作用域：管理员显式授权的群才生效，绝无默认共享。
+CREATE TABLE IF NOT EXISTS moderation_ai_rule_scopes (
+    rule_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    chat_id BIGINT NOT NULL,
+    actor VARCHAR(64) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (rule_id, chat_id),
+    INDEX idx_ai_rule_scope_chat (chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
