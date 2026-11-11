@@ -775,3 +775,34 @@ def test_actionable_honors_configured_threshold_and_categories():
     assert actionable(verdict, context, threshold=0.9)
     # 类别白名单收紧后即使置信度达标也不自动执行。
     assert not actionable(verdict, context, threshold=0.9, categories={"scam"})
+
+
+async def test_duplicate_member_reports_accumulate_reporters(guard, store, learning):
+    from .test_reports import report_event, send
+
+    await send(guard)
+    second = report_event(guard, reporter=REPORTER + 1)
+    with pytest.raises(events.StopPropagation):
+        await guard.reports.handle(second)
+    # 案件仍去重为一条，但两个举报人都累计进同一条学习样本。
+    sample = only_sample(learning)
+    assert [item["user_id"] for item in sample["payload"]["reporters"]] == [REPORTER, REPORTER + 1]
+    assert len(learning.jobs.rows) == 1
+
+
+async def test_outcome_recorded_when_review_completes_via_recovery(guard, store, learning):
+    from core.moderation.moderator import GuardError
+
+    from .test_reports import send
+
+    await send(guard)
+    case = next(row for row in store.cases.values() if row["action"] == "report")
+    guard.client.fail["ban"] = RuntimeError("temporary failure")
+    with pytest.raises(GuardError):
+        await guard.reviews.review(case["id"], "blacklist", ADMIN)
+    guard.client.fail.clear()
+    await guard.recover_once()
+    assert store.cases[case["id"]]["status"] == "blacklisted"
+    # 后台恢复完成的审核同样写入正样本反馈，且只记一次。
+    assert only_sample(learning)["label"] == "positive"
+    assert len([row for row in learning.feedback.rows if row["kind"] == "review_blacklist"]) == 1

@@ -320,8 +320,12 @@ class AILearning:
         }
 
     # ── 成员举报与审核结果接入 ──
-    async def record_member_report(self, store, case):
-        """普通成员举报仅作为待验证样本；与管理员确认样本权重不同。"""
+    async def record_member_report(self, store, case, reporter=None):
+        """普通成员举报仅作为待验证样本；与管理员确认样本权重不同。
+
+        同一原消息的重复举报不新建样本，但累计不同举报人，
+        避免案件去重丢失有效反馈。
+        """
         if not self.enabled(case["chat_id"]) or not self.source_allowed("member_report"):
             return
         try:
@@ -330,8 +334,26 @@ class AILearning:
                 return
             existing = await self.samples.by_key(store, sample_key(case["chat_id"], message_id))
             if existing:
-                if not existing.get("case_id"):
-                    await self.samples.save(store, {**existing, "case_id": case["id"]})
+                payload_changed = False
+                if reporter is not None:
+                    reporters = existing["payload"].setdefault("reporters", [])
+                    if not any(item.get("user_id") == reporter.id for item in reporters):
+                        reporters.append(
+                            {
+                                "user_id": reporter.id,
+                                "name": nickname_text(reporter)[:256],
+                                "username": getattr(reporter, "username", None),
+                                "at": utc_now_naive().isoformat(),
+                                "note": "",
+                            }
+                        )
+                        payload_changed = True
+                case_id = case["id"] if not existing.get("case_id") else None
+                if payload_changed or case_id is not None:
+                    await self.samples.save(
+                        store,
+                        {**existing, "case_id": case_id or existing.get("case_id")},
+                    )
                 return
             reporter = case["payload"].get("reporter") or {}
             payload = {

@@ -183,8 +183,6 @@ class ReviewHandler:
             await self.service.notifier.sync(store, result, self.service.group(case["chat_id"]))
             if result["status"].startswith("reviewing_"):
                 raise GuardError("guard.operation_failed")
-            # 最终成功操作结果写入学习反馈；内部自捕获异常，不影响审核流程。
-            await self.service.learning.record_review_outcome(store, case, result)
             return result
 
     async def save_message_deletion(self, store, case, deletion):
@@ -390,6 +388,10 @@ class ReviewHandler:
                 raise GuardError("guard.invalid_callback")
             await store.finish_review(case, action)
             await self.service.guest_messages.prepare(store, await store.case(case["id"]))
+            # 无论按钮直按还是后台恢复完成，最终成功结果都写入学习反馈。
+            await self.service.learning.record_review_outcome(
+                store, case, await store.case(case["id"]), action=action
+            )
         except Exception as error:
             await store.update_case(
                 case["id"],

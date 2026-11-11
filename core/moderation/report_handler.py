@@ -99,6 +99,8 @@ class ReportHandler:
             existing = await store.case_for_event(event_key)
             if existing:
                 await self.service.notifier.sync(store, existing, self.service.group(chat_id))
+                # 案件去重不丢反馈：重复举报人累计进同一条学习样本。
+                await self.service.learning.record_member_report(store, existing, reporter=reporter)
                 return existing, False
             user = await call(self.service.client.get_entity(original.sender_id))
             text = (getattr(original, "message", "") or "")[:2048]
