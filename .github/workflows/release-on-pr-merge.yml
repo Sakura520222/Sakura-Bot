@@ -128,6 +128,13 @@ jobs:
           VERSION: ${{ steps.read_version.outputs.current_version }}
         run: |
           RELEASE_SHA=$(git rev-parse HEAD)
+          TAG_NAME="v${VERSION}"
+          if TAG_SHA=$(git rev-parse --verify "refs/tags/${TAG_NAME}^{commit}" 2>/dev/null); then
+            if [ "$TAG_SHA" != "$RELEASE_SHA" ]; then
+              echo "::error::Existing tag ${TAG_NAME} points to ${TAG_SHA}, but release source is ${RELEASE_SHA}. Bump the version instead of overwriting the release."
+              exit 1
+            fi
+          fi
           COMMITS_FILE="${RUNNER_TEMP}/commits_list.txt"
           if [ "$EVENT_NAME" = "pull_request" ]; then
             if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
