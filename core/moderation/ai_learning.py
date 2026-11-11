@@ -30,6 +30,7 @@ from .ai_reports import message_snapshot
 from .ai_rule_extractor import extract, sanitize_candidates
 from .matcher import Match, compiled, evidence_window, extract_links, normalize
 from .moderator import GuardError
+from .repository import GuardStore
 from .telegram import call
 
 logger = logging.getLogger(__name__)
@@ -84,12 +85,12 @@ class AIRuleCache:
         self.entries: dict[int, list[dict]] = {}
         self.loaded_at = 0.0
         self.dirty = False
-        self.enabled = False
+        self.shared_enabled = False
 
     def invalidate(self):
         self.dirty = True
 
-    async def refresh(self, rules, *, force=False):
+    async def refresh(self, rules, *, force=False, shared_enabled=False):
         now = time.monotonic()
         if not force and not self.dirty and now - self.loaded_at < CACHE_TTL_SECONDS:
             return
@@ -111,11 +112,16 @@ class AIRuleCache:
                 except Exception:
                     logger.warning("Guard AI 规则正则编译失败，已跳过 rule=%s", row["id"])
                     continue
-            entries.setdefault(row["chat_id"], []).append(entry)
+            # 共享作用域仅在全局显式开启时生效；本群规则始终加载。
+            for chat_id in dict.fromkeys(
+                [row["chat_id"], *(row.get("shared_chats", []) if shared_enabled else [])]
+            ):
+                entries.setdefault(chat_id, []).append(entry)
         # 先构建完成再整体替换，并发消息不会看到半更新规则集。
         self.entries = entries
         self.loaded_at = now
         self.dirty = False
+        self.shared_enabled = shared_enabled
 
     def match(self, chat_id, user, message):
         entries = self.entries.get(chat_id) or ()
@@ -518,16 +524,147 @@ class AILearning:
         if rule["negatives"] >= settings.negative_pause_threshold or (
             rule["corrections"] >= settings.negative_pause_threshold
         ):
-            await self.rules.set_status(
+            await self.transition_rule(
                 store,
                 rule,
                 "disabled",
                 actor="system:negative_threshold",
                 error="negative_feedback_threshold",
-                bump_version=True,
-                expires_days=settings.rule_expiry_days,
+                note={
+                    "negatives": rule["negatives"],
+                    "corrections": rule["corrections"],
+                },
             )
-            self.cache.invalidate()
+
+    async def transition_rule(
+        self,
+        store,
+        rule,
+        status,
+        *,
+        actor,
+        error=None,
+        activate=False,
+        bump_version=True,
+        note=None,
+    ):
+        """唯一的规则状态流转入口：每次流转都留下可追溯审计。"""
+        await self.rules.set_status(
+            store,
+            rule,
+            status,
+            actor=actor,
+            error=error,
+            activate=activate,
+            bump_version=bump_version,
+            expires_days=self.settings().rule_expiry_days,
+        )
+        await self.feedback.record(
+            store,
+            rule_id=rule["id"],
+            sample_id=None,
+            case_id=None,
+            chat_id=rule["chat_id"],
+            user_id=0,
+            kind="lifecycle",
+            polarity="neutral",
+            actor=actor,
+            payload={"from": rule["status"], "to": status, "error": error, **(note or {})},
+        )
+        self.cache.invalidate()
+
+    async def set_rule_shares(self, store, rule, chat_ids, actor):
+        """显式授权的跨群共享作用域；全局关闭时拒绝设置。"""
+        settings = self.settings()
+        if not settings.shared_rules_enabled:
+            raise GuardError("guard.ai_learning_sharing_disabled")
+        wanted = sorted({int(chat_id) for chat_id in chat_ids if -(2**63) < int(chat_id) < 0})
+        if not all(str(chat_id).startswith("-") for chat_id in wanted):
+            raise GuardError("guard.invalid_group")
+        await self.rules.set_scopes(store, rule, wanted, actor)
+        await self.feedback.record(
+            store,
+            rule_id=rule["id"],
+            sample_id=None,
+            case_id=None,
+            chat_id=rule["chat_id"],
+            user_id=0,
+            kind="scope_change",
+            polarity="neutral",
+            actor=str(actor),
+            payload={"shared_chats": wanted},
+        )
+        self.cache.invalidate()
+        return wanted
+
+    async def record_appeal_allowed(self, store, case, actor):
+        """申诉成功是明确的误判信号：翻转正样本并纠正相关规则。"""
+        if not self.settings().enabled:
+            return
+        try:
+            await self.record_whitelist(store, case["chat_id"], case["user_id"], actor)
+            await self.feedback.record(
+                store,
+                rule_id=None,
+                sample_id=None,
+                case_id=case["id"],
+                chat_id=case["chat_id"],
+                user_id=case["user_id"],
+                kind="appeal_allowed",
+                polarity="negative",
+                actor=str(actor),
+                payload={},
+            )
+        except Exception:
+            logger.warning("Guard AI 申诉反馈写入失败 case=%s", case.get("id"), exc_info=True)
+
+    async def report_context(self, store, case, config):
+        """举报 AI 复核的相似证据：同群相似样本与该用户的重复命中行为。
+
+        以案件创建时间为上界，复核期间新到达的样本不会改变上下文指纹；
+        学习关闭时返回空段，不影响原有复核语义。
+        """
+        if not self.settings().enabled:
+            return {"similar_samples": [], "recent_rule_hits": []}
+        before = case["created_at"]
+        samples = await self.samples.similar(
+            store,
+            case["chat_id"],
+            before=before,
+            window_days=config.ai_report_review_history_window_days,
+            limit=config.ai_report_review_history_limit,
+        )
+        hits = [
+            hit
+            for hit in await self.rules.hits_for(
+                store, case["chat_id"], case["user_id"], limit=config.ai_report_review_history_limit
+            )
+            if hit["created_at"] <= before
+        ]
+        return {
+            "similar_samples": [
+                {
+                    "id": row["id"],
+                    "source": row["source"],
+                    "label": row["label"],
+                    "nickname": (row["payload"] or {}).get("nickname", ""),
+                    "usernames": (row["payload"] or {}).get("usernames", []),
+                    "message": (row["payload"] or {}).get("message") or {},
+                    "reporters": len((row["payload"] or {}).get("reporters", [])),
+                }
+                for row in samples
+                if row.get("case_id") != case["id"]
+            ][: max(1, config.ai_report_review_history_limit)],
+            "recent_rule_hits": [
+                {
+                    "rule_id": hit["rule_id"],
+                    "version": hit["version"],
+                    "action": hit["action"],
+                    "created_at": hit["created_at"].isoformat(),
+                }
+                for hit in hits
+            ][: max(1, config.ai_report_review_history_limit)],
+        }
 
     # ── 学习任务 worker ──
     async def run_once(self):
@@ -650,13 +787,19 @@ class AILearning:
             and rule["target_users"] >= settings.min_target_users
             and rule["confidence"] >= settings.min_confidence
         ):
-            await self.rules.set_status(
+            await self.transition_rule(
                 store,
                 rule,
                 "active",
                 actor="system:auto_threshold",
                 activate=True,
-                expires_days=settings.rule_expiry_days,
+                bump_version=False,
+                note={
+                    "positives": rule["positives"],
+                    "reporters": rule["reporters"],
+                    "target_users": rule["target_users"],
+                    "confidence": rule["confidence"],
+                },
             )
             return True
         return False
@@ -732,16 +875,28 @@ class AILearning:
             self.cache.loaded_at = time.monotonic()
             return
         try:
-            await self.cache.refresh(self.rules)
+            await self.cache.refresh(
+                self.rules, shared_enabled=self.settings().shared_rules_enabled
+            )
         except Exception as error:
             logger.warning("Guard AI 规则缓存刷新失败 error=%s", type(error).__name__)
         if utc_now_naive() >= self._maintenance_at:
             self._maintenance_at = utc_now_naive() + MAINTENANCE_INTERVAL
             try:
-                await self.rules.expire_rules()
-                self.cache.invalidate()
+                # 逐条过期并留审计；单条失败不影响其余规则。
+                pool = getattr(self.service.repository, "pool", None)
+                for rule in await self.rules.expiring():
+                    if pool is None:
+                        break
+                    try:
+                        async with pool.acquire() as connection:
+                            await self.transition_rule(
+                                GuardStore(connection), rule, "expired", actor="system:expiry"
+                            )
+                    except Exception:
+                        logger.warning("Guard AI 规则过期失败 rule=%s", rule["id"])
             except Exception as error:
-                logger.warning("Guard AI 规则过期失败 error=%s", type(error).__name__)
+                logger.warning("Guard AI 规则过期查询失败 error=%s", type(error).__name__)
             try:
                 await self.rules.cleanup_samples(days=self.settings().sample_retention_days)
                 await self.rules.cleanup_hits(days=self.settings().sample_retention_days)

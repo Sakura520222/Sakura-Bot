@@ -172,6 +172,7 @@ class MemoryAIRules:
     def __init__(self):
         self.rows = {}
         self.hits = []
+        self._scopes = {}
         self._hit_seq = 0
 
     async def upsert(self, store, rule):
@@ -296,10 +297,27 @@ class MemoryAIRules:
     async def active_rules(self):
         return deepcopy(
             [
-                row
+                {**row, "shared_chats": sorted(self._scopes.get(row["id"], []))}
                 for row in self.rows.values()
                 if row["status"] == "active"
                 and (row.get("expires_at") is None or row["expires_at"] > utc_now_naive())
+            ]
+        )
+
+    async def scopes(self, store, rule_id):
+        return sorted(self._scopes.get(rule_id, []))
+
+    async def set_scopes(self, store, rule, chat_ids, actor):
+        self._scopes[rule["id"]] = sorted(set(chat_ids))
+
+    async def expiring(self, *, now=None):
+        return deepcopy(
+            [
+                row
+                for row in self.rows.values()
+                if row["status"] == "active"
+                and row.get("expires_at") is not None
+                and row["expires_at"] <= (now or utc_now_naive())
             ]
         )
 

@@ -201,3 +201,94 @@ async def test_mysql_expired_rules_stop_matching_after_cache_refresh(stores, mys
     assert changed == 1
     await cache.refresh(stores.rules, force=True)
     assert not cache.entries
+
+
+async def test_mysql_shared_scopes_load_and_explicit_switch(stores, mysql_repository):
+    from core.moderation.ai_learning import AIRuleCache
+    from core.moderation.moderator import GuardError
+
+    other_chat = -1009999999999
+    sample, _ = await admin_submit(stores)
+    rule = {
+        "id": "a" * 32,
+        "rule_key": "b" * 64,
+        "chat_id": CHAT,
+        "rule_type": "message",
+        "match_kind": "keyword",
+        "value": "共享关键词",
+        "normalized_value": "共享关键词",
+        "action": "delete",
+        "status": "active",
+        "confidence": 0.9,
+        "explanation": "跨群重复广告",
+        "sample_ids": [sample["id"]],
+    }
+    async with mysql_repository.lock(USER) as store:
+        row = await stores.rules.upsert(store, rule)
+        # 全局关闭时拒绝共享设置。
+        with pytest.raises(GuardError):
+            await stores.set_rule_shares(store, row, [other_chat], "webui:admin")
+        stores.settings().shared_rules_enabled = True
+        shared = await stores.set_rule_shares(store, row, [other_chat, other_chat], "webui:admin")
+        assert shared == [other_chat]
+        assert await stores.rules.scopes(store, row["id"]) == [other_chat]
+        # 共享开关传入后缓存为两个群装配同一规则；未开启时不装配目标群。
+        cache = AIRuleCache()
+        await cache.refresh(stores.rules, force=True)
+        assert other_chat not in cache.entries
+        await cache.refresh(stores.rules, force=True, shared_enabled=True)
+        assert cache.entries[CHAT] and cache.entries[other_chat]
+        assert cache.entries[other_chat][0]["id"] == row["id"]
+        scopes = await stores.feedback.list(rule_id=row["id"])
+        assert any(item["kind"] == "scope_change" for item in scopes["rows"])
+
+
+async def test_mysql_expiry_transition_leaves_lifecycle_audit(stores, mysql_repository):
+    from datetime import timedelta
+
+    from core.moderation.ai_learning import AIRuleCache
+
+    sample, _ = await admin_submit(stores)
+    rule = {
+        "id": "a" * 32,
+        "rule_key": "b" * 64,
+        "chat_id": CHAT,
+        "rule_type": "message",
+        "match_kind": "keyword",
+        "value": "到期关键词",
+        "normalized_value": "到期关键词",
+        "action": "delete",
+        "status": "active",
+        "confidence": 0.9,
+        "explanation": "测试",
+        "sample_ids": [sample["id"]],
+    }
+    async with mysql_repository.lock(USER) as store:
+        row = await stores.rules.upsert(store, rule)
+        await stores.transition_rule(
+            store, row, "active", actor="webui:admin", activate=True, bump_version=False
+        )
+    expiring = await stores.rules.expiring()
+    assert not expiring
+    async with mysql_repository.lock(USER) as store:
+        await store.execute(
+            "UPDATE moderation_ai_rules SET expires_at=%s WHERE id=%s",
+            (utc_now_naive() - timedelta(days=1), row["id"]),
+        )
+    expiring = await stores.rules.expiring()
+    assert [item["id"] for item in expiring] == [row["id"]]
+    async with mysql_repository.pool.acquire() as connection:
+        from core.moderation.repository import GuardStore
+
+        await stores.transition_rule(
+            GuardStore(connection), expiring[0], "expired", actor="system:expiry"
+        )
+    async with mysql_repository.lock(USER) as store:
+        expired = await stores.rules.get(store, row["id"])
+        assert expired["status"] == "expired"
+        audit = await stores.feedback.list(rule_id=row["id"])
+        kinds = [item["kind"] for item in audit["rows"]]
+        assert "lifecycle" in kinds
+    cache = AIRuleCache()
+    await cache.refresh(stores.rules, force=True)
+    assert not cache.entries

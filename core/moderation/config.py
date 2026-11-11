@@ -44,6 +44,10 @@ def validate_words(values):
 NicknameKeywords = Annotated[list[str], Field(max_length=MAX_NICKNAME_KEYWORDS)]
 _legacy_keywords = TypeAdapter(Annotated[list[str], Field(max_length=100)])
 
+# 举报 AI 复核的可自动执行类别；缺省与旧版硬编码行为一致（仅排除 other）。
+AIVerdictCategory = Literal["rule_match", "spam", "scam", "malware", "harassment", "other"]
+DEFAULT_AI_REVIEW_CATEGORIES = ["rule_match", "spam", "scam", "malware", "harassment"]
+
 
 class GuardRule(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -96,6 +100,12 @@ class GuardGroup(BaseModel):
     ai_report_review_enabled: bool = False
     ai_report_review_delay_minutes: int = Field(default=10, ge=1, le=1440)
     ai_report_review_action: Action = "ban"
+    ai_report_review_confidence: float = Field(default=0.95, ge=0.5, le=1, allow_inf_nan=False)
+    ai_report_review_categories: list[AIVerdictCategory] = Field(
+        default_factory=lambda: DEFAULT_AI_REVIEW_CATEGORIES.copy(), max_length=6
+    )
+    ai_report_review_history_window_days: int = Field(default=14, ge=1, le=90)
+    ai_report_review_history_limit: int = Field(default=10, ge=1, le=50)
     ai_learning_enabled: bool = False
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
     rules: list[GuardRule] = Field(default_factory=list, max_length=100)
@@ -116,6 +126,11 @@ class GuardGroup(BaseModel):
     @classmethod
     def validate_words(cls, values):
         return validate_words(values)
+
+    @field_validator("ai_report_review_categories")
+    @classmethod
+    def unique_review_categories(cls, values):
+        return list(dict.fromkeys(values))
 
     @field_validator("trusted_bot_ids", "reviewer_ids", "notification_ids")
     @classmethod
@@ -165,6 +180,7 @@ class AILearningSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     enabled: bool = False
+    shared_rules_enabled: bool = False
     sources: list[AILearningSource] = Field(
         default_factory=lambda: DEFAULT_AI_LEARNING_SOURCES.copy(), max_length=4
     )
@@ -184,6 +200,23 @@ class AILearningSettings(BaseModel):
     sample_retention_days: int = Field(default=90, ge=7, le=3650)
 
     @field_validator("sources", "targets")
+    @classmethod
+    def unique_options(cls, values):
+        return list(dict.fromkeys(values))
+
+
+class AIReportReviewSettings(BaseModel):
+    """举报超时 AI 复核的可配置阈值与上下文窗口；缺省值与历史硬编码行为一致。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    confidence: float = Field(default=0.95, ge=0.5, le=1, allow_inf_nan=False)
+    categories: list[AIVerdictCategory] = Field(
+        default_factory=lambda: DEFAULT_AI_REVIEW_CATEGORIES.copy(), max_length=6
+    )
+    history_window_days: int = Field(default=14, ge=1, le=90)
+    history_limit: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("categories")
     @classmethod
     def unique_options(cls, values):
         return list(dict.fromkeys(values))

@@ -38,6 +38,10 @@ export interface GuardGroup {
   ai_report_review_enabled: boolean;
   ai_report_review_delay_minutes: number;
   ai_report_review_action: GuardAction;
+  ai_report_review_confidence: number;
+  ai_report_review_categories: string[];
+  ai_report_review_history_window_days: number;
+  ai_report_review_history_limit: number;
   ai_learning_enabled: boolean;
   mute_seconds: number;
   rules: GuardRule[];
@@ -250,6 +254,7 @@ export type AILearningTarget = "nickname" | "username" | "message" | "caption" |
 export type AIRuleStatus = "candidate" | "active" | "disabled" | "rejected" | "expired";
 export interface AILearningSettings {
   enabled: boolean;
+  shared_rules_enabled: boolean;
   sources: AILearningSource[];
   targets: AILearningTarget[];
   activation: "manual" | "auto";
@@ -290,6 +295,7 @@ export interface AIRule {
   error: string | null;
   created_at: string;
   updated_at: string;
+  shared_chats?: number[];
 }
 export interface AISample {
   id: string;
@@ -352,6 +358,12 @@ export async function getAIRules(params: AILearningQuery) {
 }
 export async function manageAIRule(id: string, action: "activate" | "reject" | "pause" | "resume" | "delete") {
   return (await api.post(`/guard/ai-learning/rules/${id}`, { action })).data;
+}
+export async function getAIRuleDetail(id: string) {
+  return (await api.get<{ rule: AIRule; shared_chats: number[]; sharing_enabled: boolean }>(`/guard/ai-learning/rules/${id}`)).data;
+}
+export async function setAIRuleScopes(id: string, chat_ids: number[]) {
+  return (await api.put<{ success: boolean; shared_chats: number[] }>(`/guard/ai-learning/rules/${id}/scopes`, { chat_ids })).data;
 }
 export async function getAIRuleHits(id: string) {
   return (await api.get<{ rows: AIRuleHit[] }>(`/guard/ai-learning/rules/${id}/hits`)).data;

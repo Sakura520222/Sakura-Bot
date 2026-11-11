@@ -342,6 +342,10 @@ class AppealWorkflow:
                 # 黑名单记录也代表已执行的封禁；复用 Guard 的跨记录冲突检查和解封操作。
                 await self.service.reviews.release(store.guard, {**case, "action": "ban"})
             await store.finish_approval(appeal, case)
+            # 申诉成功是明确的误判信号：写回 AI 学习负反馈并复核关联规则。
+            await self.service.learning.record_appeal_allowed(
+                store.guard, case, f"telegram:{actor}"
+            )
         except GuardError as error:
             # 撤权、来源变化和名单冲突必须重新由管理员决定，不能自动跨越。
             await store.transition(

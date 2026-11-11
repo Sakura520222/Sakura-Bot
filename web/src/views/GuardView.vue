@@ -230,9 +230,15 @@
               <div class="field-grid">
                 <n-form-item label="AI 审核等待时间（分钟）"><n-input-number v-model:value="form.ai_report_review_delay_minutes" :min="1" :max="1440" /></n-form-item>
                 <n-form-item label="AI 明确违规默认动作"><n-select v-model:value="form.ai_report_review_action" :options="actions" /></n-form-item>
+                <n-form-item label="自动处罚置信度门槛"><n-input-number v-model:value="form.ai_report_review_confidence" :min="0.5" :max="1" :step="0.05" /></n-form-item>
+                <n-form-item label="允许自动执行的风险类别">
+                  <n-select v-model:value="form.ai_report_review_categories" multiple clearable :options="aiReviewCategoryOptions" placeholder="清空后 AI 复核仅记录结论，不自动处罚" />
+                </n-form-item>
+                <n-form-item label="相似证据回看窗口（天）"><n-input-number v-model:value="form.ai_report_review_history_window_days" :min="1" :max="90" /></n-form-item>
+                <n-form-item label="相似证据数量上限"><n-input-number v-model:value="form.ai_report_review_history_limit" :min="1" :max="50" /></n-form-item>
               </div>
               <n-alert type="info" :bordered="false" class="block-gap-sm">
-                举报超时 AI 审核需同时启用本群群管与上方开关，仅处理启用后的新举报。默认等待 10 分钟；管理员先处理即停止 AI 审核。复用“AI 配置”中的模型，核对被举报消息、昵称、用户名、简介及现有规则和黑名单。命中现有规则时执行该规则动作；其他明确违规执行默认动作。不确定、证据变化或调用失败则继续等待管理员。AI 不修改全局黑名单或白名单，封禁后立即清理该用户在本群的全部消息。
+                举报超时 AI 审核需同时启用本群群管与上方开关，仅处理启用后的新举报。默认等待 10 分钟；管理员先处理即停止 AI 审核。复用“AI 配置”中的模型，核对被举报消息、昵称、用户名、简介及现有规则和黑名单，并可参考回看窗口内同群相似样本与该用户此前的规则命中记录识别重复广告与跨账号变体（相似证据不能单独作为违规依据）。命中现有规则时执行该规则动作；其他明确违规执行默认动作。不确定、证据变化或调用失败则继续等待管理员。AI 不修改全局黑名单或白名单，封禁后立即清理该用户在本群的全部消息；确认处罚成功后结果会写入 AI 学习正样本，人工驳回或申诉成功会反向修正。
               </n-alert>
             </div>
 
@@ -285,6 +291,12 @@
                 </span>
               </div>
               <div class="master-hint">全局默认关闭；关闭后不再收集样本，已生效规则继续由本地缓存执行。</div>
+            </div>
+            <div class="master-secondary">
+              <label class="master-label master-label--sm">
+                允许跨群共享规则
+                <n-switch v-model:value="aiLearningEditor.values.shared_rules_enabled" aria-label="允许跨群共享规则" size="small" :loading="aiLearningEditor.active.value === 'shared_rules_enabled'" />
+              </label>
             </div>
             <n-switch v-model:value="aiLearningEditor.values.enabled" aria-label="AI 学习总开关" :loading="aiLearningEditor.active.value === 'enabled'" />
           </div>
@@ -535,6 +547,16 @@
         <n-descriptions-item label="命中情况">共 {{ aiRuleDetail.hits }} 次<span v-if="aiRuleDetail.last_hit_at"> · 最近 {{ aiRuleDetail.last_hit_at }}</span></n-descriptions-item>
         <n-descriptions-item label="AI 依据">{{ Math.round(aiRuleDetail.confidence * 100) }}% · {{ aiRuleDetail.model || '—' }} · {{ aiRuleDetail.explanation }}</n-descriptions-item>
         <n-descriptions-item label="来源样本">{{ aiRuleDetail.sample_ids.join('、') || '—' }}</n-descriptions-item>
+        <n-descriptions-item label="跨群共享">
+          <template v-if="aiRuleSharingEnabled">
+            <div class="scope-row">
+              <n-dynamic-tags :value="aiRuleScopes.map(String)" @update:value="(values: string[]) => setAIRuleScopeValues(values)" />
+              <n-button size="small" secondary :loading="aiScopeSaving" :disabled="!aiRuleDetail" @click="saveAIRuleScopes">保存共享群组</n-button>
+            </div>
+            <span class="hint-line">仅列出的群组生效，且这些群仍需开启本群 AI 学习；来源群之外的规则不会自动传播。</span>
+          </template>
+          <span v-else>未开启：可在上方 AI 智能风控设置中显式启用跨群共享。</span>
+        </n-descriptions-item>
         <n-descriptions-item v-if="aiRuleDetail.expires_at" label="到期时间">{{ aiRuleDetail.expires_at }} UTC</n-descriptions-item>
         <n-descriptions-item label="最近命中">
           <div v-if="aiRuleHits.length" class="evidence">
@@ -565,10 +587,10 @@ import {
   type DataTableColumns, type FormInst, type FormItemRule, type FormRules,
 } from "naive-ui";
 import {
-  addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleHits, getAIRules, getAISamples,
-  getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist, retryGuardCase,
-  reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention, saveGuardNicknameKeywords,
-  setGuardWhitelist,
+  addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleDetail, getAIRuleHits, getAIRules,
+  getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist,
+  retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
+  saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist,
   type AILearningJob, type AILearningSettings, type AIRule, type AIRuleHit, type AISample,
   type GuardAction, type GuardChat, type GuardGroup, type GuardRecord, type GuardRule, type GuardTable,
 } from "@/api/guard";
@@ -710,6 +732,13 @@ const aiRuleTypeOptions = [
 ];
 const aiSampleLabelOptions = Object.entries(aiSampleLabelNames).map(([value, label]) => ({ label, value }));
 const aiJobStatusOptions = Object.entries(aiJobStatusNames).map(([value, label]) => ({ label, value }));
+const aiReviewCategoryOptions = [
+  { label: "现有规则命中", value: "rule_match" },
+  { label: "垃圾广告", value: "spam" },
+  { label: "诈骗引流", value: "scam" },
+  { label: "恶意软件", value: "malware" },
+  { label: "严重骚扰", value: "harassment" },
+];
 
 const pendingReport = (row: GuardRecord) => row.action === "report" && !row.payload?.review_ban_confirmed;
 function canKick(row: GuardRecord) {
@@ -993,8 +1022,34 @@ function resetAiRecords() {
 async function openAiRule(rule: AIRule) {
   aiRuleDetail.value = rule;
   aiRuleHits.value = [];
+  aiRuleScopes.value = [];
+  aiRuleSharingEnabled.value = false;
   showAiRuleModal.value = true;
-  try { aiRuleHits.value = (await getAIRuleHits(rule.id)).rows; } catch { /* 命中记录加载失败不阻塞详情 */ }
+  try {
+    const [hits, detail] = await Promise.all([getAIRuleHits(rule.id), getAIRuleDetail(rule.id)]);
+    aiRuleHits.value = hits.rows;
+    aiRuleDetail.value = detail.rule;
+    aiRuleScopes.value = detail.shared_chats;
+    aiRuleSharingEnabled.value = detail.sharing_enabled;
+  } catch { /* 详情加载失败时仍展示列表快照 */ }
+}
+const aiRuleScopes = ref<number[]>([]);
+const aiRuleSharingEnabled = ref(false);
+const aiScopeSaving = ref(false);
+function setAIRuleScopeValues(values: string[]) {
+  try { aiRuleScopes.value = [...new Set(values.map(value => numeric(value.trim(), true)))]; }
+  catch (error) { report(error); }
+}
+async function saveAIRuleScopes() {
+  const rule = aiRuleDetail.value;
+  if (!rule) return;
+  aiScopeSaving.value = true;
+  try {
+    const result = await setAIRuleScopes(rule.id, aiRuleScopes.value);
+    aiRuleScopes.value = result.shared_chats;
+    message.success("共享群组已更新");
+    await loadAiRules();
+  } catch (error) { report(error); } finally { aiScopeSaving.value = false; }
 }
 function aiRuleRowActions(rule: AIRule): { key: "activate" | "reject" | "pause" | "resume" | "delete"; label: string; type: "primary" | "warning" | "error" }[] {
   const list: { key: "activate" | "reject" | "pause" | "resume" | "delete"; label: string; type: "primary" | "warning" | "error" }[] = [];
@@ -1325,7 +1380,10 @@ onUnmounted(() => {
 /* 总开关条：surface-2 底突出第一操作 */
 .master-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--sb-border); border-radius: var(--sb-radius); background: var(--sb-surface-2); }
 .master-label { display: flex; align-items: center; gap: 10px; font-weight: 650; }
+.master-label--sm { font-size: 13px; font-weight: 600; }
+.master-secondary { display: flex; align-items: center; gap: 8px; }
 .master-hint { margin-top: 4px; font-size: 12.5px; color: var(--sb-text-2); }
+.scope-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 /* 开关网格与字段网格：自适应多列 */
 .switch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; }

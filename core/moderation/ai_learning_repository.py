@@ -419,11 +419,52 @@ class AIRules:
         )
 
     async def active_rules(self):
+        """已激活规则连同显式共享作用域；共享开关由调用方按配置过滤。"""
         async with self.repository.pool.acquire() as connection:
-            rows = await GuardStore(connection).all(
+            store = GuardStore(connection)
+            rows = await store.all(
                 """SELECT * FROM moderation_ai_rules WHERE status='active'
                 AND (expires_at IS NULL OR expires_at>%s) ORDER BY created_at""",
                 (utc_now_naive(),),
+            )
+            rules = [decode_rule(row) for row in rows]
+            scopes = await store.all("SELECT rule_id,chat_id FROM moderation_ai_rule_scopes")
+        shared: dict[str, list[int]] = {}
+        for row in scopes:
+            shared.setdefault(row["rule_id"], []).append(row["chat_id"])
+        for rule in rules:
+            rule["shared_chats"] = sorted(shared.get(rule["id"], []))
+        return rules
+
+    async def scopes(self, store, rule_id):
+        rows = await store.all(
+            "SELECT chat_id FROM moderation_ai_rule_scopes WHERE rule_id=%s ORDER BY chat_id",
+            (rule_id,),
+        )
+        return sorted(row["chat_id"] for row in rows)
+
+    async def set_scopes(self, store, rule, chat_ids, actor):
+        now = utc_now_naive()
+        wanted = sorted(set(chat_ids))
+        current = await self.scopes(store, rule["id"])
+        for chat_id in [cid for cid in current if cid not in wanted]:
+            await store.execute(
+                "DELETE FROM moderation_ai_rule_scopes WHERE rule_id=%s AND chat_id=%s",
+                (rule["id"], chat_id),
+            )
+        for chat_id in [cid for cid in wanted if cid not in current]:
+            await store.execute(
+                """INSERT INTO moderation_ai_rule_scopes (rule_id,chat_id,actor,created_at)
+                VALUES (%s,%s,%s,%s)""",
+                (rule["id"], chat_id, str(actor), now),
+            )
+
+    async def expiring(self, *, now=None):
+        async with self.repository.pool.acquire() as connection:
+            rows = await GuardStore(connection).all(
+                """SELECT * FROM moderation_ai_rules WHERE status='active'
+                AND expires_at IS NOT NULL AND expires_at<=%s""",
+                (now or utc_now_naive(),),
             )
             return [decode_rule(row) for row in rows]
 
@@ -460,6 +501,7 @@ class AIRules:
             return [decode_hit(row) for row in rows]
 
     async def expire_rules(self, *, now=None):
+        """兼容旧批量过期；新代码优先用 expiring() 逐条流转以保留审计。"""
         async with self.repository.pool.acquire() as connection:
             return await GuardStore(connection).execute(
                 """UPDATE moderation_ai_rules SET status='expired',updated_at=%s

@@ -225,6 +225,7 @@ class AIReportReview:
         hit = await self.service.match(
             store, config, case["chat_id"], user, match_message(snapshot)
         )
+        similar = await self.service.learning.report_context(store, case, config)
         return {
             "profile": profile,
             "message": snapshot,
@@ -234,6 +235,7 @@ class AIReportReview:
                 "source_case": black.get("case_id") if black else None,
             },
             "rule_match": hit.evidence() if hit else None,
+            **similar,
             "policy": {
                 "nickname_filter": config.nickname_filter,
                 "nickname_keywords": self.service.config.nickname_keywords[:200],
@@ -249,6 +251,8 @@ class AIReportReview:
                 "block_contact_messages": config.block_contact_messages,
                 "contact_message_action": config.contact_message_action,
                 "fallback_action": config.ai_report_review_action,
+                "auto_confidence": config.ai_report_review_confidence,
+                "auto_categories": list(config.ai_report_review_categories),
             },
         }
 
@@ -354,7 +358,12 @@ class AIReportReview:
                 if state == "manual":
                     await self.annotate(store, case, "manual", error=failure)
                 return
-            if not actionable(verdict, context):
+            if not actionable(
+                verdict,
+                context,
+                threshold=service.group(case["chat_id"]).ai_report_review_confidence,
+                categories=set(service.group(case["chat_id"]).ai_report_review_categories),
+            ):
                 await self.jobs.save(store, job, "manual", audit)
                 await self.annotate(store, case, "manual", input=context, **result)
                 return

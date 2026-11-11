@@ -526,3 +526,252 @@ async def test_rule_expiry_and_cache_refresh(guard, store, learning):
     assert learning.rules.rows[rule["id"]]["status"] == "active"  # 维护任务负责过期
     await learning.rules.expire_rules()
     assert learning.rules.rows[rule["id"]]["status"] == "expired"
+
+
+# ── P2：跨群共享作用域、流转审计、申诉联动与举报 AI 复核增强 ──
+
+OTHER_CHAT = -1009999999999
+
+
+async def _active_rule(learning, store, *, chat_id=CHAT):
+    return await learning.rules.upsert(
+        store,
+        {
+            "id": "r" * 32,
+            "rule_key": "a" * 64,
+            "chat_id": chat_id,
+            "rule_type": "message",
+            "match_kind": "keyword",
+            "value": "共享关键词",
+            "normalized_value": "共享关键词",
+            "action": "delete",
+            "status": "active",
+            "confidence": 0.9,
+            "explanation": "跨群重复广告",
+            "sample_ids": [],
+        },
+    )
+
+
+async def test_shared_scopes_apply_only_when_explicitly_enabled(guard, store, learning):
+    from types import SimpleNamespace
+
+    from core.moderation.config import GuardGroup
+
+    guard.config.groups[str(OTHER_CHAT)] = GuardGroup(enabled=True, ai_learning_enabled=False)
+    other_config = guard.config.groups[str(OTHER_CHAT)]
+    rule = await _active_rule(learning, store)
+    message = SimpleNamespace(message="快来共享关键词领取", id=88)
+    other_user = SimpleNamespace(id=USER + 1, first_name="别群成员", last_name=None, username=None)
+    # 未显式开启共享：规则只在来源群生效。
+    await learning.rules.set_scopes(store, rule, [OTHER_CHAT], "webui:admin")
+    await guard.learning.cache.refresh(learning.rules, force=True)
+    assert CHAT in guard.learning.cache.entries
+    assert OTHER_CHAT not in guard.learning.cache.entries
+    # 开启共享后目标群生效；目标群仍需单独开启本群 AI 学习。
+    guard.config.ai_learning.shared_rules_enabled = True
+    await guard.learning.cache.refresh(learning.rules, force=True, shared_enabled=True)
+    assert guard.learning.cache.match(OTHER_CHAT, other_user, message)
+    assert guard.learning.match_rule(other_config, OTHER_CHAT, other_user, message) is None
+    # 目标群开启本群学习后命中，来源群配置不受影响。
+    other_config.ai_learning_enabled = True
+    hit = guard.learning.match_rule(other_config, OTHER_CHAT, other_user, message)
+    assert hit and hit.ai_rule["id"] == rule["id"]
+
+
+async def test_set_rule_shares_validates_the_global_switch(guard, store, learning):
+    from core.moderation.moderator import GuardError
+
+    rule = await _active_rule(learning, store)
+    with pytest.raises(GuardError, match="guard.ai_learning_sharing_disabled"):
+        await guard.learning.set_rule_shares(store, rule, [OTHER_CHAT], "webui:admin")
+    guard.config.ai_learning.shared_rules_enabled = True
+    shared = await guard.learning.set_rule_shares(
+        store, rule, [OTHER_CHAT, OTHER_CHAT], "webui:admin"
+    )
+    assert shared == [OTHER_CHAT]
+    assert await learning.rules.scopes(store, rule["id"]) == [OTHER_CHAT]
+    assert any(
+        row["kind"] == "scope_change" and row["rule_id"] == rule["id"]
+        for row in learning.feedback.rows
+    )
+
+
+async def test_rule_transitions_leave_lifecycle_audit(guard, store, learning):
+    sample, _ = await learning.samples.create(
+        store,
+        {
+            "id": "s" * 32,
+            "idempotency_key": "k" * 64,
+            "chat_id": CHAT,
+            "user_id": USER,
+            "message_id": 42,
+            "source": "admin_report",
+            "case_id": None,
+            "label": "positive",
+            "payload": {"reporters": [{"user_id": ADMIN}, {"user_id": SECOND_ADMIN}]},
+        },
+    )
+    rule = await learning.rules.upsert(
+        store,
+        {
+            "id": "r" * 32,
+            "rule_key": "a" * 64,
+            "chat_id": CHAT,
+            "rule_type": "message",
+            "match_kind": "keyword",
+            "value": "审计关键词",
+            "normalized_value": "审计关键词",
+            "action": "delete",
+            "status": "candidate",
+            "confidence": 0.9,
+            "explanation": "重复广告",
+            "sample_ids": [sample["id"]],
+        },
+    )
+    settings = guard.config.ai_learning
+    settings.activation = "auto"
+    settings.min_positive_samples = 1
+    settings.min_reporters = 2
+    settings.min_target_users = 1
+    await learning.rules.refresh_stats(store, rule, [learning.samples.rows[sample["id"]]])
+    assert await guard.learning._maybe_activate(store, rule)
+    assert learning.rules.rows[rule["id"]]["status"] == "active"
+    lifecycle = [row for row in learning.feedback.rows if row["kind"] == "lifecycle"]
+    assert lifecycle[-1]["payload"]["from"] == "candidate"
+    assert lifecycle[-1]["payload"]["to"] == "active"
+    assert lifecycle[-1]["actor"] == "system:auto_threshold"
+    # 负反馈暂停同样留下审计并可追溯。
+    settings.negative_pause_threshold = 1
+    learning.samples.rows[sample["id"]]["label"] = "negative"
+    await learning.rules.refresh_stats(store, rule, [learning.samples.rows[sample["id"]]])
+    await guard.learning._apply_feedback_policy(store, await learning.rules.get(store, rule["id"]))
+    assert learning.rules.rows[rule["id"]]["status"] == "disabled"
+    transitions = [row["payload"] for row in learning.feedback.rows if row["kind"] == "lifecycle"]
+    assert transitions[-1]["to"] == "disabled" and transitions[-1]["negatives"] == 1
+
+
+async def test_appeal_success_flips_samples_and_corrects_rules(guard, store, learning):
+    sample, _ = await learning.samples.create(
+        store,
+        {
+            "id": "s" * 32,
+            "idempotency_key": "k" * 64,
+            "chat_id": CHAT,
+            "user_id": USER,
+            "message_id": 42,
+            "source": "member_report",
+            "case_id": "c" * 32,
+            "label": "positive",
+            "payload": {"reporters": [{"user_id": REPORTER}]},
+        },
+    )
+    rule = await _active_rule(learning, store)
+    await learning.rules.record_hit(
+        store, rule, CHAT, USER, "c" * 32, "delete", {"target": "ai_message"}
+    )
+    case = {"id": "c" * 32, "chat_id": CHAT, "user_id": USER}
+    await guard.learning.record_appeal_allowed(store, case, "telegram:10")
+    assert learning.samples.rows[sample["id"]]["label"] == "negative"
+    assert learning.rules.rows[rule["id"]]["corrections"] == 1
+    assert any(row["kind"] == "appeal_allowed" for row in learning.feedback.rows)
+
+
+async def test_report_context_is_bounded_and_stable(guard, store, learning):
+    from datetime import timedelta
+
+    from core.infrastructure.database.mysql import utc_now_naive
+
+    config = guard.group(CHAT)
+    case_created = utc_now_naive()
+    case = {
+        "id": "c" * 32,
+        "chat_id": CHAT,
+        "user_id": USER,
+        "action": "report",
+        "created_at": case_created,
+    }
+    # 学习关闭：空段且不影响原有复核语义。
+    guard.config.ai_learning.enabled = False
+    empty = await guard.learning.report_context(store, case, config)
+    assert empty == {"similar_samples": [], "recent_rule_hits": []}
+    guard.config.ai_learning.enabled = True
+    await learning.samples.create(
+        store,
+        {
+            "id": "s" * 32,
+            "idempotency_key": "k" * 64,
+            "chat_id": CHAT,
+            "user_id": USER,
+            "message_id": 42,
+            "source": "member_report",
+            "case_id": case["id"],
+            "payload": {"reporters": [{"user_id": REPORTER}], "message": {"text": "本案消息"}},
+        },
+    )
+    other, _ = await learning.samples.create(
+        store,
+        {
+            "id": "t" * 32,
+            "idempotency_key": "j" * 64,
+            "chat_id": CHAT,
+            "user_id": USER + 1,
+            "message_id": 43,
+            "source": "admin_report",
+            "case_id": None,
+            "label": "positive",
+            "payload": {"reporters": [{"user_id": ADMIN}], "message": {"text": "相似广告"}},
+        },
+    )
+    # 案件创建之后的样本不进入上下文，保证复核期间指纹稳定。
+    learning.samples.rows[other["id"]]["created_at"] = case_created - timedelta(minutes=1)
+    later, _ = await learning.samples.create(
+        store,
+        {
+            "id": "u" * 32,
+            "idempotency_key": "i" * 64,
+            "chat_id": CHAT,
+            "user_id": USER + 2,
+            "message_id": 44,
+            "source": "admin_report",
+            "case_id": None,
+            "payload": {"reporters": [{"user_id": ADMIN}], "message": {"text": "迟到样本"}},
+        },
+    )
+    learning.samples.rows[later["id"]]["created_at"] = case_created + timedelta(minutes=1)
+    context = await guard.learning.report_context(store, case, config)
+    assert [row["id"] for row in context["similar_samples"]] == [other["id"]]
+    assert context["similar_samples"][0]["reporters"] == 1
+    # 该用户此前的规则命中构成重复行为证据。
+    rule = await _active_rule(learning, store)
+    await learning.rules.record_hit(
+        store, rule, CHAT, USER, "b" * 32, "delete", {"target": "ai_message"}
+    )
+    learning.rules.hits[-1]["created_at"] = case_created - timedelta(minutes=5)
+    context = await guard.learning.report_context(store, case, config)
+    assert context["recent_rule_hits"][0]["rule_id"] == rule["id"]
+
+
+def test_actionable_honors_configured_threshold_and_categories():
+    from core.moderation.ai_report_classifier import Verdict, actionable
+
+    verdict = Verdict.model_validate(
+        {
+            "verdict": "violation",
+            "confidence": 0.9,
+            "category": "spam",
+            "reason": "广告",
+            "evidence": [{"source": "message", "quote": "广告"}],
+        }
+    )
+    context = {
+        "message": {"text": "广告"},
+        "profile": {"nickname": "", "usernames": []},
+        "blacklist": {"matched": False, "shared": False},
+        "rule_match": None,
+    }
+    # 缺省保持旧行为：0.95 门槛；阈值放宽后可执行。
+    assert not actionable(verdict, context)
+    assert actionable(verdict, context, threshold=0.9)
+    # 类别白名单收紧后即使置信度达标也不自动执行。
+    assert not actionable(verdict, context, threshold=0.9, categories={"scam"})

@@ -300,3 +300,13 @@ CREATE TABLE IF NOT EXISTS moderation_ai_rule_feedback (
     INDEX idx_ai_feedback_case (case_id),
     INDEX idx_ai_feedback_sample (sample_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 跨群共享作用域：管理员显式授权的群才生效，绝无默认共享。
+CREATE TABLE IF NOT EXISTS moderation_ai_rule_scopes (
+    rule_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    chat_id BIGINT NOT NULL,
+    actor VARCHAR(64) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (rule_id, chat_id),
+    INDEX idx_ai_rule_scope_chat (chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

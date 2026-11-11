@@ -734,6 +734,9 @@ async def manage_ai_learning_rule(rule_id: str, body: AIRuleActionRequest, conte
                     "DELETE FROM moderation_ai_rule_hits WHERE rule_id=%s", (rule_id,)
                 )
                 await store.execute(
+                    "DELETE FROM moderation_ai_rule_scopes WHERE rule_id=%s", (rule_id,)
+                )
+                await store.execute(
                     "DELETE FROM moderation_ai_rule_feedback WHERE rule_id=%s", (rule_id,)
                 )
                 await store.execute("DELETE FROM moderation_ai_rules WHERE id=%s", (rule_id,))
@@ -745,15 +748,13 @@ async def manage_ai_learning_rule(rule_id: str, body: AIRuleActionRequest, conte
             allowed, target = status_map[body.action]
             if rule["status"] not in allowed:
                 raise HTTPException(409, f"规则当前状态 {rule['status']} 不允许该操作")
-            await service.learning.rules.set_status(
+            await service.learning.transition_rule(
                 store,
                 rule,
                 target,
                 actor=f"webui:{actor}",
-                error=None,
                 activate=target == "active",
-                bump_version=True,
-                expires_days=service.config.ai_learning.rule_expiry_days,
+                note={"operation": body.action},
             )
     service.learning.wake()
     await record_system_audit(
@@ -764,6 +765,61 @@ async def manage_ai_learning_rule(rule_id: str, body: AIRuleActionRequest, conte
         message=f"AI 规则{body.action}操作已执行",
     )
     return {"success": True}
+
+
+@router.get("/ai-learning/rules/{rule_id}")
+async def ai_learning_rule_detail(rule_id: str, context=GUARD_ADMIN):
+    service, _ = context
+    if getattr(service.repository, "pool", None) is None:
+        raise HTTPException(503, t("guard.unavailable"))
+    async with service.repository.pool.acquire() as connection:
+        store = GuardStore(connection)
+        rule = await service.learning.rules.get(store, rule_id)
+        if not rule:
+            raise HTTPException(404, "规则不存在")
+        return {
+            "rule": rule,
+            "shared_chats": await service.learning.rules.scopes(store, rule_id),
+            "sharing_enabled": service.config.ai_learning.shared_rules_enabled,
+        }
+
+
+class AIRuleScopesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    chat_ids: list[int] = Field(default_factory=list, max_length=500)
+
+    @field_validator("chat_ids")
+    @classmethod
+    def valid_groups(cls, values):
+        if any(not -(2**63) < value < 0 for value in values):
+            raise ValueError("群组 ID 必须为负整数")
+        return sorted(set(values))
+
+
+@router.put("/ai-learning/rules/{rule_id}/scopes")
+async def set_ai_learning_rule_scopes(rule_id: str, body: AIRuleScopesRequest, context=GUARD_ADMIN):
+    service, actor = context
+    if getattr(service.repository, "pool", None) is None:
+        raise HTTPException(503, t("guard.unavailable"))
+    async with service.repository.pool.acquire() as connection:
+        store = GuardStore(connection)
+        rule = await service.learning.rules.get(store, rule_id)
+        if not rule:
+            raise HTTPException(404, "规则不存在")
+        try:
+            shared = await service.learning.set_rule_shares(
+                store, rule, body.chat_ids, f"webui:{actor}"
+            )
+        except GuardError as error:
+            raise business_error(error) from error
+    await record_system_audit(
+        action="guard.ai_learning.rule.scopes",
+        actor=str(actor),
+        target=rule_id,
+        success=True,
+        message=f"已更新 AI 规则共享群组（{len(shared)} 个）",
+    )
+    return {"success": True, "shared_chats": shared}
 
 
 @router.get("/ai-learning/rules/{rule_id}/hits")
