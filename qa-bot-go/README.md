@@ -1,9 +1,9 @@
 # sakura-qa（qa_bot.py 的 Go 移植）
 
-目标：以单静态二进制替代 Python 子进程 `qa_bot.py`，稳态 RSS ≤30MB，
-行为与 Python 版逐条对齐，`QA_BOT_RUNTIME=go|python` 一键回退。
+Go 助手以单静态二进制运行，自 v2.4.2 起独立维护新增助手能力。
+`QA_BOT_RUNTIME=python` 仅用于旧功能兼容回退，不包含新的积分、评论与活动回合能力。
 
-- 行为规格唯一事实来源：`qa_bot.py` 及其闭包（设计文档见会话记录）。
+- 当前助手行为见本文件及文档站 Go 助手指南；旧 Python 移植代码仅作兼容参考。
 - module：`github.com/Sakura520222/Sakura-Bot/qa-bot-go`，Go 1.27，`CGO_ENABLED=0` 全静态。
 - 依赖白名单：`go-telegram/bot`、`go-sql-driver/mysql`、`modernc.org/sqlite`，其余一律 stdlib。
 

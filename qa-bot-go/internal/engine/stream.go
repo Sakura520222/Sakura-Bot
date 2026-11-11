@@ -64,13 +64,23 @@ func (e *Engine) agenticStream(
 	messages = append(messages, llm.UserMessage(ctx, query))
 
 	schemas := e.tools.ToolSchemasJSON()
+	toolsEnabled := true
 
 	// 循环体只有 return 出口、无 break：跑满即等价 Python for...else 的 else
 	// 分支（R7），无需显式标志。
 	for iteration := 0; iteration < AgentMaxIterations; iteration++ {
 		e.log.Info(fmt.Sprintf("[agent] 迭代 %d/%d", iteration+1, AgentMaxIterations))
 
-		stream, err := e.llm.StreamChat(ctx, llm.AgenticChatRequest(messages, schemas))
+		request := llm.AgenticChatRequest(messages, schemas)
+		if !toolsEnabled {
+			request = llm.PlainChatRequest(messages)
+		}
+		stream, err := e.llm.StreamChat(ctx, request)
+		if err != nil && ctx.Err() == nil && toolsEnabled && Inbox(ctx) != nil {
+			toolsEnabled = false
+			e.log.Warn("[agent] 工具请求失败，保留现有消息序列尝试直接回答")
+			stream, err = e.llm.StreamChat(ctx, llm.PlainChatRequest(messages))
+		}
 		if err != nil {
 			return err
 		}

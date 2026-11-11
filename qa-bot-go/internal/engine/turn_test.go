@@ -80,3 +80,20 @@ func TestTurnPanicBecomesObservableFailure(t *testing.T) {
 	}
 	t.Fatal("panic did not produce refundable error")
 }
+func TestTurnFallbackKeepsCompletedToolResults(t *testing.T) {
+	const tool = `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"list_channels","arguments":"{}"}}]}}]}`
+	h := newHarness(t, []scriptEntry{{lines: []string{tool}}, {status: 500}, {lines: []string{contentLine("根据已有结果回答")}}})
+	chunks := collectChunks(t, h.engine.ProcessQueryStream(WithTurn(context.Background(), &stagedInbox{}), "原始", 1, ""))
+	for _, chunk := range chunks {
+		if chunk.Kind == ChunkErr {
+			t.Fatal(chunk)
+		}
+	}
+	req := h.llm.requestBody(t, 2)
+	if req.Tools != nil || len(req.Messages) != 5 || req.Messages[3].ToolCallID != "call_x" || req.Messages[4].text() != "  小妲，继续追问" {
+		t.Fatalf("fallback lost messages: %+v", req)
+	}
+	if len(h.tools.exec.recorded()) != 1 {
+		t.Fatal("fallback reexecuted completed tool")
+	}
+}
