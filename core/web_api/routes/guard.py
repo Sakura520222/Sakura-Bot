@@ -796,6 +796,37 @@ class AIRuleScopesRequest(BaseModel):
         return sorted(set(values))
 
 
+class AIRuleActionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["delete", "warn", "mute", "kick", "ban"]
+
+
+@router.patch("/ai-learning/rules/{rule_id}")
+async def update_ai_learning_rule_action(
+    rule_id: str, body: AIRuleActionUpdateRequest, context=GUARD_ADMIN
+):
+    service, actor = context
+    if getattr(service.repository, "pool", None) is None:
+        raise HTTPException(503, t("guard.unavailable"))
+    async with service.repository.pool.acquire() as connection:
+        store = GuardStore(connection)
+        rule = await service.learning.rules.get(store, rule_id)
+        if not rule:
+            raise HTTPException(404, "规则不存在")
+        if rule["action"] == body.action:
+            return {"success": True, "rule": rule}
+        updated = await service.learning.set_rule_action(store, rule, body.action, f"webui:{actor}")
+    service.learning.wake()
+    await record_system_audit(
+        action="guard.ai_learning.rule.action",
+        actor=str(actor),
+        target=rule_id,
+        success=True,
+        message=f"AI 规则命中动作调整为 {body.action}",
+    )
+    return {"success": True, "rule": updated}
+
+
 @router.put("/ai-learning/rules/{rule_id}/scopes")
 async def set_ai_learning_rule_scopes(rule_id: str, body: AIRuleScopesRequest, context=GUARD_ADMIN):
     service, actor = context

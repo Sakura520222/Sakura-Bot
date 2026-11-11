@@ -595,6 +595,26 @@ class AILearning:
         )
         self.cache.invalidate()
 
+    async def set_rule_action(self, store, rule, action, actor):
+        """管理员手动调整命中动作（封禁等高影响动作由此显式启用）。"""
+        if action not in {"delete", "warn", "mute", "kick", "ban"}:
+            raise GuardError("guard.invalid_callback")
+        updated = await self.rules.set_action(store, rule, action)
+        await self.feedback.record(
+            store,
+            rule_id=rule["id"],
+            sample_id=None,
+            case_id=None,
+            chat_id=rule["chat_id"],
+            user_id=0,
+            kind="action_change",
+            polarity="neutral",
+            actor=str(actor),
+            payload={"from": rule["action"], "to": action},
+        )
+        self.cache.invalidate()
+        return updated
+
     async def set_rule_shares(self, store, rule, chat_ids, actor):
         """显式授权的跨群共享作用域；全局关闭时拒绝设置。"""
         settings = self.settings()

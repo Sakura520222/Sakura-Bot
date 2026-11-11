@@ -806,3 +806,17 @@ async def test_outcome_recorded_when_review_completes_via_recovery(guard, store,
     # 后台恢复完成的审核同样写入正样本反馈，且只记一次。
     assert only_sample(learning)["label"] == "positive"
     assert len([row for row in learning.feedback.rows if row["kind"] == "review_blacklist"]) == 1
+
+
+async def test_set_rule_action_updates_bumps_version_and_audits(guard, store, learning):
+    from core.moderation.moderator import GuardError
+
+    rule = await _active_rule(learning, store)
+    assert rule["action"] == "delete" and rule["version"] == 1
+    with pytest.raises(GuardError):
+        await guard.learning.set_rule_action(store, rule, "explode", "webui:admin")
+    updated = await guard.learning.set_rule_action(store, rule, "ban", "webui:admin")
+    assert updated["action"] == "ban" and updated["version"] == 2
+    changes = [row for row in learning.feedback.rows if row["kind"] == "action_change"]
+    assert changes[-1]["payload"] == {"from": "delete", "to": "ban"}
+    assert guard.learning.cache.dirty  # 缓存失效，动作变化立即进入下一次刷新
