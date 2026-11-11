@@ -97,3 +97,9 @@ func (m *Manager) ReconcileComments(ctx context.Context, chat int64) error {
 	}
 	return nil
 }
+
+func (m *Manager) CommentChannel(ctx context.Context, chat int64, root int) string {
+	var channel string
+	_ = m.DB.QueryRowContext(ctx, `SELECT channel FROM qa_comments WHERE chat_id=? AND message_id=?`, chat, root).Scan(&channel)
+	return channel
+}

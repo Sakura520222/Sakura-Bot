@@ -146,6 +146,10 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 			MessageID int `json:"message_id"`
 		}
 		_ = json.Unmarshal(b, &origin)
+		info, err := c.chat(ctx, ch)
+		if err != nil || origin.Chat.ID != info.ID {
+			return 0
+		}
 		if origin.Chat.ID != 0 && origin.MessageID > 0 {
 			_ = c.DB.MapPost(ctx, origin.Chat.ID, origin.MessageID, msg.Chat.ID, root)
 		}
@@ -269,6 +273,9 @@ func (c *Commands) EarlyUpdate(ctx context.Context, upd *models.Update) bool {
 			}
 		}
 		root := community.capture(ctx, msg, rule.Channel)
+		if root > 0 && community.DB.CommentChannel(ctx, msg.Chat.ID, root) != rule.Channel {
+			return true
+		}
 		if edited || msg.From == nil || msg.From.IsBot || msg.IsAutomaticForward {
 			return true
 		}
