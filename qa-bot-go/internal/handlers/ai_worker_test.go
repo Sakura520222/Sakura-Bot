@@ -7,11 +7,15 @@ import (
 	"time"
 )
 
-func TestAIPoolRejectsCapacityOverflow(t *testing.T) {
+func TestAIPoolRejectsInvalidCapacity(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		workers, capacity int
 	}{
+		{"zero workers", 0, 1},
+		{"negative capacity", 1, -1},
+		{"worker limit", 33, 1},
+		{"queue limit", 1, 1025},
 		{"workers", math.MaxInt, 1},
 		{"queue", 1, math.MaxInt},
 		{"both", math.MaxInt, math.MaxInt},

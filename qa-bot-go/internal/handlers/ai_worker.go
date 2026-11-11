@@ -7,7 +7,6 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/engine"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 )
@@ -46,11 +45,9 @@ type AIJob struct {
 }
 
 func NewAIPool(ctx context.Context, workers, capacity int, timeout time.Duration) *AIPool {
-	if workers < 1 || capacity < 1 || timeout <= 0 {
-		panic("invalid AI pool configuration")
-	}
-	// Check before addition or allocation, including for callers bypassing config validation.
-	if workers > math.MaxInt-capacity {
+	// Enforce config.AIPoolConfig's documented resource limits at the allocation
+	// boundary too. This bounds the sum to 1056, even for direct callers.
+	if workers < 1 || workers > 32 || capacity < 1 || capacity > 1024 || timeout <= 0 {
 		panic("invalid AI pool configuration")
 	}
 	totalCapacity := workers + capacity
