@@ -64,6 +64,8 @@ class Match:
     original: str
     normalized: str
     action: str = "ban"
+    # AI 动态规则命中时携带规则 ID 与版本，供审计与命中记录定位。
+    ai_rule: dict | None = None
 
     def evidence(self):
         return asdict(self)

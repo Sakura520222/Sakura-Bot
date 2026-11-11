@@ -149,4 +149,6 @@ class ReportHandler:
                 await store.create_case(case)
             case = await store.case(case["id"])
             await self.service.notifier.sync(store, case, self.service.group(chat_id))
+            # 成员举报同时作为待验证学习样本；学习关闭时为无操作。
+            await self.service.learning.record_member_report(store, case)
             return case, True

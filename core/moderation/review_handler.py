@@ -107,6 +107,9 @@ class ReviewHandler:
                 await self.request_message_deletion(store, case, reviewer_id, web=web)
                 result = await store.case(case_id)
                 await self.service.notifier.sync(store, result, self.service.group(case["chat_id"]))
+                await self.service.learning.record_review_outcome(
+                    store, case, result, action="delete"
+                )
                 if result["payload"]["report_message_deletion"]["status"] != "deleted":
                     raise GuardError("guard.report_delete_pending")
                 return result
@@ -180,6 +183,8 @@ class ReviewHandler:
             await self.service.notifier.sync(store, result, self.service.group(case["chat_id"]))
             if result["status"].startswith("reviewing_"):
                 raise GuardError("guard.operation_failed")
+            # 最终成功操作结果写入学习反馈；内部自捕获异常，不影响审核流程。
+            await self.service.learning.record_review_outcome(store, case, result)
             return result
 
     async def save_message_deletion(self, store, case, deletion):

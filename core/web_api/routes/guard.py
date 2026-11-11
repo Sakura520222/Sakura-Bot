@@ -16,6 +16,7 @@ from core.i18n.i18n import t
 from core.moderation import get_guard
 from core.moderation.chat_cleanup import ChatCleanupError
 from core.moderation.config import (
+    AILearningSettings,
     DeletedUserCleanupSettings,
     GuardConfig,
     GuardGroup,
@@ -24,7 +25,7 @@ from core.moderation.config import (
     validate_words,
 )
 from core.moderation.moderator import GuardError
-from core.moderation.repository import ACTIVE_VERIFICATIONS
+from core.moderation.repository import ACTIVE_VERIFICATIONS, GuardStore
 from core.web_api.deps import record_system_audit
 
 
@@ -126,6 +127,25 @@ class DeletedCleanupSettingsRequest(BaseModel):
         return self
 
 
+class AILearningSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    changes: AILearningSettings
+    previous: AILearningSettings
+
+    @model_validator(mode="after")
+    def matching_fields(self):
+        if not self.changes.model_fields_set or (
+            self.changes.model_fields_set != self.previous.model_fields_set
+        ):
+            raise ValueError("changes and previous must contain the same nonempty fields")
+        return self
+
+
+class AIRuleActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["activate", "reject", "pause", "resume", "delete"]
+
+
 class GroupSwitchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -140,6 +160,7 @@ class GroupSwitchRequest(BaseModel):
         "block_forwarded_messages",
         "block_contact_messages",
         "ai_report_review_enabled",
+        "ai_learning_enabled",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",
@@ -611,3 +632,172 @@ async def remove_blacklist(user_id: int, context=GUARD_ADMIN):
                 await store.connection.rollback()
                 raise
     return {"success": True}
+
+
+# ==================== AI 智能风控（学习）====================
+
+
+def _ai_learning_conflict(current):
+    return settings_conflict(current, sorted(current))
+
+
+@router.get("/ai-learning")
+async def ai_learning_config(context=GUARD_ADMIN):
+    service, _ = context
+    worker = getattr(getattr(service, "learning", None), "worker", None)
+    cache = getattr(getattr(service, "learning", None), "cache", None)
+    return {
+        "settings": service.config.ai_learning.model_dump(),
+        "defaults": AILearningSettings().model_dump(),
+        "runtime": {
+            "worker_running": bool(worker and not worker.done()),
+            "cached_rules": sum(len(rows) for rows in (cache.entries.values() if cache else {})),
+        },
+    }
+
+
+@router.patch("/ai-learning")
+async def update_ai_learning_settings(body: AILearningSettingsRequest, context=GUARD_ADMIN):
+    service, actor = context
+    fields = body.changes.model_fields_set
+    changes = body.changes.model_dump(include=fields)
+    previous = body.previous.model_dump(include=fields)
+    try:
+        snapshot = read_config()
+        migrate_nickname_keywords(snapshot)
+        section = snapshot.setdefault("sakura_guard", {})
+        current = GuardConfig.model_validate(section).ai_learning.model_dump()
+        conflicts = [
+            key for key in fields if current[key] != previous[key] and current[key] != changes[key]
+        ]
+        if conflicts:
+            raise _ai_learning_conflict({key: current[key] for key in conflicts})
+        section.setdefault("ai_learning", {}).update(changes)
+        GuardConfig.model_validate(section)
+        save_config_changes(snapshot)
+        service.reload(read_config())
+    except ConfigConflictError as error:
+        current = GuardConfig.model_validate(
+            read_config().get("sakura_guard", {})
+        ).ai_learning.model_dump()
+        raise _ai_learning_conflict(current) from error
+    except ConfigPersistenceError as error:
+        raise HTTPException(503, str(error)) from error
+    except ValidationError as error:
+        raise HTTPException(
+            422, error.errors(include_context=False, include_input=False, include_url=False)
+        ) from error
+    await record_system_audit(
+        action="guard.ai_learning.settings",
+        actor=str(actor),
+        success=True,
+        message="已更新 AI 智能风控学习设置",
+    )
+    return {"success": True, "settings": service.config.ai_learning.model_dump()}
+
+
+@router.get("/ai-learning/rules")
+async def ai_learning_rules(
+    chat_id: int | None = None,
+    rule_type: str | None = Query(None, pattern=r"^(nickname|username|message|link|pattern)$"),
+    status: str | None = Query(None, pattern=r"^(candidate|active|disabled|rejected|expired)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    context=GUARD_ADMIN,
+):
+    service, _ = context
+    return await service.learning.rules.list(
+        chat_id=chat_id, rule_type=rule_type, status=status, limit=limit, offset=offset
+    )
+
+
+@router.post("/ai-learning/rules/{rule_id}")
+async def manage_ai_learning_rule(rule_id: str, body: AIRuleActionRequest, context=GUARD_ADMIN):
+    service, actor = context
+    if getattr(service.repository, "pool", None) is None:
+        raise HTTPException(503, t("guard.unavailable"))
+    async with service.repository.pool.acquire() as connection:
+        store = GuardStore(connection)
+        rule = await service.learning.rules.get(store, rule_id)
+        if not rule:
+            raise HTTPException(404, "规则不存在")
+        status_map = {
+            "activate": ({"candidate", "disabled", "expired"}, "active"),
+            "reject": ({"candidate"}, "rejected"),
+            "pause": ({"active"}, "disabled"),
+            "resume": ({"disabled"}, "active"),
+        }
+        if body.action == "delete":
+            await store.connection.begin()
+            try:
+                await store.execute(
+                    "DELETE FROM moderation_ai_rule_hits WHERE rule_id=%s", (rule_id,)
+                )
+                await store.execute(
+                    "DELETE FROM moderation_ai_rule_feedback WHERE rule_id=%s", (rule_id,)
+                )
+                await store.execute("DELETE FROM moderation_ai_rules WHERE id=%s", (rule_id,))
+                await store.connection.commit()
+            except BaseException:
+                await store.connection.rollback()
+                raise
+        else:
+            allowed, target = status_map[body.action]
+            if rule["status"] not in allowed:
+                raise HTTPException(409, f"规则当前状态 {rule['status']} 不允许该操作")
+            await service.learning.rules.set_status(
+                store,
+                rule,
+                target,
+                actor=f"webui:{actor}",
+                error=None,
+                activate=target == "active",
+                bump_version=True,
+                expires_days=service.config.ai_learning.rule_expiry_days,
+            )
+    service.learning.wake()
+    await record_system_audit(
+        action=f"guard.ai_learning.rule.{body.action}",
+        actor=str(actor),
+        target=rule_id,
+        success=True,
+        message=f"AI 规则{body.action}操作已执行",
+    )
+    return {"success": True}
+
+
+@router.get("/ai-learning/rules/{rule_id}/hits")
+async def ai_learning_rule_hits(
+    rule_id: str, limit: int = Query(50, ge=1, le=200), context=GUARD_ADMIN
+):
+    service, _ = context
+    return {"rows": await service.learning.rules.recent_hits(rule_id, limit=limit)}
+
+
+@router.get("/ai-learning/samples")
+async def ai_learning_samples(
+    chat_id: int | None = None,
+    label: str | None = Query(None, pattern=r"^(pending|positive|negative|neutral)$"),
+    status: str | None = Query(None, pattern=r"^(new|queued|learned|skipped|invalid)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    context=GUARD_ADMIN,
+):
+    service, _ = context
+    return await service.learning.samples.list(
+        chat_id=chat_id, label=label, status=status, limit=limit, offset=offset
+    )
+
+
+@router.get("/ai-learning/jobs")
+async def ai_learning_jobs(
+    chat_id: int | None = None,
+    status: str | None = Query(None, pattern=r"^(queued|running|done|manual|skipped)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    context=GUARD_ADMIN,
+):
+    service, _ = context
+    return await service.learning.jobs.list(
+        chat_id=chat_id, status=status, limit=limit, offset=offset
+    )

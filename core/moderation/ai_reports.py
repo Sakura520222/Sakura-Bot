@@ -455,6 +455,9 @@ class AIReportReview:
         )
         await self.jobs.save(store, job, state, job["payload"], error=case.get("error"))
         await self.annotate(store, case, state, error=case.get("error"))
+        if state == "applied":
+            # 仅最终确认且处罚成功的结果才记为正样本。
+            await self.service.learning.record_ai_review(store, case)
         await self.service.notifier.sync(
             store, await store.case(case["id"]), self.service.group(case["chat_id"])
         )

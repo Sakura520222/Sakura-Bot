@@ -70,6 +70,7 @@ class Moderator:
             self.directory, lambda actor: actor == "admin" or actor in self.default_admins()
         )
         self.deleted_cleanup = DeletedUserCleanup(self)
+        from .ai_learning import AILearning
         from .report_handler import ReportHandler
         from .review_handler import ReviewHandler
         from .verification import Verification
@@ -79,6 +80,7 @@ class Moderator:
         self.verification = Verification(self)
         self.ban_history = BanHistoryCleanup(self)
         self.ai_reports = AIReportReview(self)
+        self.learning = AILearning(self)
         self.bot_observer = BotMessageObserver(self)
         self.guest_messages = GuestMessages(self)
 
@@ -96,6 +98,7 @@ class Moderator:
         self.config = GuardConfig.model_validate(config.get("sakura_guard", {}))
         self.deleted_cleanup.wake()
         self.ai_reports.wake_event.set()
+        self.learning.wake()
         if self.appeals:
             self.appeals.routing_changed()
         self._wake.set()
@@ -108,6 +111,7 @@ class Moderator:
         for callback, builder in (
             (self.handle_message, events.NewMessage(incoming=True)),
             (self.reports.handle, events.NewMessage(incoming=True)),
+            (self.learning.handle_report, events.NewMessage(incoming=True)),
             (self.handle_message, events.MessageEdited(incoming=True)),
             (self.handle_join, events.ChatAction()),
             (self.handle_join_request, events.Raw(types=UpdateBotChatInviteRequester)),
@@ -128,9 +132,11 @@ class Moderator:
         self.directory.refresh(force=True)
         await self.deleted_cleanup.start_worker()
         await self.ai_reports.start()
+        await self.learning.start()
 
     async def stop(self):
         self.bot_observer.detach()
+        await self.learning.stop()
         await self.ai_reports.stop()
         if self.appeals:
             await self.appeals.stop()
@@ -244,7 +250,8 @@ class Moderator:
                 normalize(original)[:2048],
                 config.bot_message_action,
             )
-        return message_match
+        # 手工规则优先；未命中时才查询本地缓存的 AI 动态规则（不查库、不调用模型）。
+        return message_match or self.learning.match_rule(config, chat_id, user, message)
 
     async def snapshot(self, chat_id, user, evidence, message=None):
         chat = await call(self.client.get_entity(chat_id))
@@ -475,6 +482,7 @@ class Moderator:
                         matched.original,
                         matched.normalized,
                         config.join_request_match_action,
+                        matched.ai_rule,
                     )
                     await self.punish(store, chat_id, user, matched, token)
                 elif config.join_requests == "approve":
@@ -532,6 +540,11 @@ class Moderator:
                     "evidence": evidence.evidence(),
                 }
             payload["notification_event"] = category
+            if action == "whitelist_add":
+                # 白名单是对此前处罚/规则的误判纠正信号，写回 AI 学习负反馈。
+                await self.learning.record_whitelist(
+                    store, chat_id, user_id, actor_id if actor_id is not None else "system"
+                )
             case = {
                 "id": uuid.uuid4().hex,
                 "event_key": event_key,
@@ -638,6 +651,8 @@ class Moderator:
                 ).timestamp()
             )
         await store.create_case(case)
+        if match.ai_rule:
+            await self.learning.record_hit(store, chat_id, user.id, match, case["id"])
         await self.guest_messages.prepare(store, await store.case(case["id"]))
         await self.execute_case(store, await store.case(case["id"]))
         return await store.case(case["id"])
@@ -844,6 +859,7 @@ class Moderator:
         while True:
             try:
                 await self.recover_once()
+                await self.learning.tick()
                 if utc_now_naive() >= cleanup_at:
                     await self.repository.cleanup(self.config.retention_days)
                     cleanup_at = utc_now_naive() + timedelta(hours=24)
