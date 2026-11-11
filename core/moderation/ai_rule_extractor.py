@@ -58,8 +58,13 @@ SYSTEM_PROMPT = """你是 Telegram 群风险特征提取器，只分析给出的
 """
 
 
+class IncompleteAIResponse(ValueError):
+    """模型未正常结束（截断/过滤/空内容）；类型名直接进任务错误列便于诊断。"""
+
+
 async def extract(context: dict) -> dict:
     # 每次调用读取热更新后的模型，与举报 AI 复核一致。
+    # 不设 max_tokens：输出上限交由模型/代理默认值，避免长候选列表被截断。
     from core.ai.ai_client import get_async_ai_runtime
 
     client, model = get_async_ai_runtime()
@@ -72,11 +77,10 @@ async def extract(context: dict) -> dict:
             ],
             response_format={"type": "json_object"},
             temperature=0,
-            max_tokens=1600,
         )
     choice = result.choices[0]
     if choice.finish_reason != "stop" or not choice.message.content:
-        raise ValueError("IncompleteAIResponse")
+        raise IncompleteAIResponse(f"finish={choice.finish_reason}")
     parsed = ExtractionResult.model_validate_json(choice.message.content)
     return {"model": model, "candidates": [item.model_dump() for item in parsed.candidates]}
 

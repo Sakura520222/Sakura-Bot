@@ -160,6 +160,19 @@ class MemoryLearningJobs:
             error=error,
         )
 
+    async def requeue(self, store, sample_id):
+        current = self.rows.get(sample_id)
+        if not current or current["status"] != "manual":
+            return False
+        current.update(
+            status="queued",
+            token=uuid.uuid4().hex,
+            attempts=0,
+            error=None,
+            retry_at=utc_now_naive(),
+        )
+        return True
+
     async def list(self, **filters):
         rows = sorted(self.rows.values(), key=lambda row: row["updated_at"], reverse=True)
         counts = {}

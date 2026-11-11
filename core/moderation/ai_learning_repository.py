@@ -238,6 +238,16 @@ class AILearningJobs:
             (now + timedelta(seconds=delay), error, now, job["sample_id"], job["token"]),
         )
 
+    async def requeue(self, store, sample_id):
+        """转人工任务由管理员重新排队：轮换 token 作废旧租约，尝试次数清零。"""
+        now = utc_now_naive()
+        changed = await store.execute(
+            """UPDATE moderation_ai_learning_jobs SET status='queued',token=%s,attempts=0,
+            retry_at=%s,error=NULL,updated_at=%s WHERE sample_id=%s AND status='manual'""",
+            (uuid.uuid4().hex, now, now, sample_id),
+        )
+        return bool(changed)
+
     async def list(self, *, chat_id=None, status=None, limit=50, offset=0):
         async with self.repository.pool.acquire() as connection:
             store = GuardStore(connection)

@@ -820,3 +820,31 @@ async def test_set_rule_action_updates_bumps_version_and_audits(guard, store, le
     changes = [row for row in learning.feedback.rows if row["kind"] == "action_change"]
     assert changes[-1]["payload"] == {"from": "delete", "to": "ban"}
     assert guard.learning.cache.dirty  # 缓存失效，动作变化立即进入下一次刷新
+
+
+async def test_extractor_truncation_reports_precise_error_and_requeue_recovers(
+    guard, store, learning
+):
+    from core.infrastructure.database.mysql import utc_now_naive
+    from core.moderation.ai_rule_extractor import IncompleteAIResponse
+
+    await submit(guard)
+    sample = only_sample(learning)
+    learning.extractor.side_effect = IncompleteAIResponse("finish=length")
+    await guard.learning.process((await learning.jobs.due())[0])
+    # 错误列带具体 finish 原因，而不是笼统的 ValueError。
+    job = learning.jobs.rows[sample["id"]]
+    assert job["error"] == "IncompleteAIResponse:finish=length"
+    # 连续失败到上限转人工后，管理员重新排队可恢复（尝试次数清零）。
+    for _ in range(4):
+        learning.jobs.rows[sample["id"]]["retry_at"] = utc_now_naive()
+        await guard.learning.process((await learning.jobs.due())[0])
+    assert learning.jobs.rows[sample["id"]]["status"] == "manual"
+    assert await learning.jobs.requeue(store, sample["id"])
+    job = learning.jobs.rows[sample["id"]]
+    assert job["status"] == "queued" and job["attempts"] == 0 and job["error"] is None
+    learning.extractor.side_effect = None
+    await guard.learning.process((await learning.jobs.due())[0])
+    assert learning.jobs.rows[sample["id"]]["status"] == "done"
+    # 已完成/排队中的任务不可重复排队。
+    assert not await learning.jobs.requeue(store, sample["id"])

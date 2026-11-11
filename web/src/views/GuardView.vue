@@ -600,7 +600,7 @@ import {
 import {
   addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleDetail, getAIRuleHits, getAIRules,
   getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist,
-  retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
+  retryAILearningJob, retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
   saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist, updateAIRuleAction,
   type AILearningJob, type AILearningSettings, type AIRule, type AIRuleHit, type AISample,
   type GuardAction, type GuardChat, type GuardGroup, type GuardRecord, type GuardRule, type GuardTable,
@@ -1190,7 +1190,20 @@ const aiJobColumns = computed<DataTableColumns<AILearningJob>>(() => [
   { title: "错误", key: "error", width: 150, ellipsis: { tooltip: true } },
   { title: "重试时间（UTC）", key: "retry_at", width: 170 },
   { title: "更新（UTC）", key: "updated_at", width: 170 },
+  {
+    title: "操作", key: "actions", width: 96, align: "right",
+    render: row => row.status === "manual"
+      ? h(NButton, { size: "small", quaternary: true, type: "primary", onClick: () => retryAiJob(row) }, () => "重新排队")
+      : "—",
+  },
 ]);
+async function retryAiJob(job: AILearningJob) {
+  try {
+    await retryAILearningJob(job.sample_id);
+    message.success("任务已重新排队");
+    await loadAiJobs();
+  } catch (error) { report(error); }
+}
 
 // ── 配置加载 / 刷新（保留冲刷未保存输入的保护逻辑） ──
 async function reload() {

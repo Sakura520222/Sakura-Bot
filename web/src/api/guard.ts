@@ -377,3 +377,6 @@ export async function getAISamples(params: AILearningQuery) {
 export async function getAILearningJobs(params: AILearningQuery) {
   return (await api.get<{ rows: AILearningJob[]; total: number; counts: Record<string, number> }>("/guard/ai-learning/jobs", { params })).data;
 }
+export async function retryAILearningJob(sampleId: string) {
+  return (await api.post(`/guard/ai-learning/jobs/${sampleId}/retry`)).data;
+}

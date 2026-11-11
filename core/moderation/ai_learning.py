@@ -27,7 +27,7 @@ from .ai_learning_repository import (
     AISamples,
 )
 from .ai_reports import message_snapshot
-from .ai_rule_extractor import extract, sanitize_candidates
+from .ai_rule_extractor import IncompleteAIResponse, extract, sanitize_candidates
 from .matcher import Match, compiled, evidence_window, extract_links, normalize
 from .moderator import GuardError
 from .repository import GuardStore
@@ -753,6 +753,10 @@ class AILearning:
         try:
             result = await self.extractor(context)
             failure = None
+        except IncompleteAIResponse as error:
+            # 自有校验错误的消息是安全诊断信息（finish 原因），进任务错误列。
+            failure = f"{type(error).__name__}:{str(error)[:64]}"
+            result = {}
         except Exception as error:
             failure = type(error).__name__
             result = {}

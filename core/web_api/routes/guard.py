@@ -888,3 +888,23 @@ async def ai_learning_jobs(
     return await service.learning.jobs.list(
         chat_id=chat_id, status=status, limit=limit, offset=offset
     )
+
+
+@router.post("/ai-learning/jobs/{sample_id}/retry")
+async def retry_ai_learning_job(sample_id: str, context=GUARD_ADMIN):
+    service, actor = context
+    if getattr(service.repository, "pool", None) is None:
+        raise HTTPException(503, t("guard.unavailable"))
+    async with service.repository.pool.acquire() as connection:
+        store = GuardStore(connection)
+        if not await service.learning.jobs.requeue(store, sample_id):
+            raise HTTPException(409, "仅转人工的任务可重新排队")
+    service.learning.wake_event.set()
+    await record_system_audit(
+        action="guard.ai_learning.job.retry",
+        actor=str(actor),
+        target=sample_id,
+        success=True,
+        message="学习任务已重新排队",
+    )
+    return {"success": True}
