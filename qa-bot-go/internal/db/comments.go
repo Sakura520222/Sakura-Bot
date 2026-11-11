@@ -7,17 +7,19 @@ import (
 )
 
 type CommentRecord struct {
-	AuthorRole string `json:"author_role,omitempty"`
-	ChatID     int64  `json:"chat_id"`
-	MessageID  int    `json:"message_id"`
-	RootID     int    `json:"root_id"`
-	Channel    string `json:"channel"`
-	UserID     int64  `json:"user_id"`
-	Text       string `json:"text"`
-	Date       int    `json:"date"`
-	ReplyID    int    `json:"reply_id"`
-	Edited     bool   `json:"edited"`
-	Media      string `json:"media"`
+	SourceChannelID int64  `json:"source_channel_id,omitempty"`
+	SourceMessageID int    `json:"source_message_id,omitempty"`
+	AuthorRole      string `json:"author_role,omitempty"`
+	ChatID          int64  `json:"chat_id"`
+	MessageID       int    `json:"message_id"`
+	RootID          int    `json:"root_id"`
+	Channel         string `json:"channel"`
+	UserID          int64  `json:"user_id"`
+	Text            string `json:"text"`
+	Date            int    `json:"date"`
+	ReplyID         int    `json:"reply_id"`
+	Edited          bool   `json:"edited"`
+	Media           string `json:"media"`
 }
 
 func (m *Manager) InitComments(ctx context.Context) error {

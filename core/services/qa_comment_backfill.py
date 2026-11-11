@@ -10,12 +10,28 @@ async def backfill_post(client, pool, channel, post_id, limit=5000):
     discussion = await client(
         functions.messages.GetDiscussionMessageRequest(peer=entity, msg_id=post_id)
     )
-    candidates = [
-        m
-        for m in discussion.messages
-        if getattr(getattr(m, "fwd_from", None), "channel_post", None) == post_id
-        and utils.get_peer_id(m.peer_id) != utils.get_peer_id(entity)
-    ]
+    current_channel_id = utils.get_peer_id(entity)
+
+    def matches_post(message):
+        if utils.get_peer_id(message.peer_id) == current_channel_id:
+            return False
+        header = getattr(message, "fwd_from", None)
+        if header is None:
+            return False
+        saved_peer = getattr(header, "saved_from_peer", None)
+        if saved_peer is not None:
+            return (
+                utils.get_peer_id(saved_peer) == current_channel_id
+                and getattr(header, "saved_from_msg_id", None) == post_id
+            )
+        origin_peer = getattr(header, "from_id", None)
+        return (
+            origin_peer is not None
+            and utils.get_peer_id(origin_peer) == current_channel_id
+            and getattr(header, "channel_post", None) == post_id
+        )
+
+    candidates = [message for message in discussion.messages if matches_post(message)]
     if len(candidates) != 1:
         raise ValueError("无法唯一识别该帖子的讨论根消息")
     root = candidates[0]

@@ -57,7 +57,8 @@ async def test_disable_subscription_does_not_require_telegram(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_userbot_backfill_maps_post_and_does_not_overwrite_live_records():
+@pytest.mark.parametrize("forwarded", [False, True])
+async def test_userbot_backfill_maps_post_and_does_not_overwrite_live_records(forwarded):
     import json
     from datetime import UTC, datetime
     from types import SimpleNamespace
@@ -101,7 +102,16 @@ async def test_userbot_backfill_maps_post_and_does_not_overwrite_live_records():
         return SimpleNamespace(
             id=id,
             peer_id=PeerChannel(200),
-            fwd_from=SimpleNamespace(channel_post=7),
+            fwd_from=(
+                SimpleNamespace(
+                    channel_post=13009,
+                    from_id=PeerChannel(99),
+                    saved_from_peer=PeerChannel(100),
+                    saved_from_msg_id=7,
+                )
+                if forwarded
+                else SimpleNamespace(channel_post=7, from_id=PeerChannel(100))
+            ),
             sender_id=1,
             message="原文",
             date=datetime.now(UTC),
@@ -277,3 +287,34 @@ async def test_failed_diagnostic_still_blocks_save(monkeypatch):
     assert error.value.status_code == 422
     assert error.value.detail["diagnostics"][0]["stage"] == "discussion_membership"
     assert not writes
+
+
+@pytest.mark.asyncio
+async def test_backfill_does_not_confuse_original_source_with_current_channel():
+    from types import SimpleNamespace
+
+    from telethon.tl.types import PeerChannel
+
+    from core.services.qa_comment_backfill import backfill_post
+
+    class Client:
+        async def get_entity(self, channel):
+            return PeerChannel(100)
+
+        async def __call__(self, request):
+            return SimpleNamespace(
+                messages=[
+                    SimpleNamespace(
+                        peer_id=PeerChannel(200),
+                        fwd_from=SimpleNamespace(
+                            from_id=PeerChannel(100),
+                            channel_post=7,
+                            saved_from_peer=PeerChannel(300),
+                            saved_from_msg_id=7,
+                        ),
+                    )
+                ]
+            )
+
+    with pytest.raises(ValueError, match="无法唯一识别"):
+        await backfill_post(Client(), object(), "https://t.me/test", 7)

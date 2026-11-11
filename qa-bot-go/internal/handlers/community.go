@@ -130,28 +130,52 @@ func (c *Community) ScopeContext(ctx context.Context, msg *models.Message) conte
 	}
 	return ctx
 }
+
+// linkedAutomaticPost separates the current sending channel from the original
+// forward source. SenderChat identifies the linked channel for automatic posts.
+func linkedAutomaticPost(msg *models.Message, channel *models.ChatFullInfo) (int64, int, bool) {
+	if msg == nil || channel == nil || !msg.IsAutomaticForward || msg.ID <= 0 || msg.Chat.ID != channel.LinkedChatID {
+		return 0, 0, false
+	}
+	var origin struct {
+		Chat struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+		MessageID int `json:"message_id"`
+	}
+	b, _ := json.Marshal(msg.ForwardOrigin)
+	_ = json.Unmarshal(b, &origin)
+	if msg.SenderChat != nil {
+		return origin.Chat.ID, origin.MessageID, msg.SenderChat.ID == channel.ID
+	}
+	// Compatibility for older updates without sender_chat: only direct originals
+	// can be verified this way; never guess the forwarding channel from text.
+	return origin.Chat.ID, origin.MessageID, origin.Chat.ID == channel.ID
+}
+
 func (c *Community) capture(ctx context.Context, msg *models.Message, ch string) int {
 	if msg == nil {
 		return 0
 	}
 	root := c.DB.CommentRoot(ctx, msg.Chat.ID, msg.ID)
 	reply := 0
+	var sourceChannelID int64
+	var sourceMessageID int
 	if msg.IsAutomaticForward {
-		root = msg.ID
-		b, _ := json.Marshal(msg.ForwardOrigin)
-		var origin struct {
-			Chat struct {
-				ID int64 `json:"id"`
-			} `json:"chat"`
-			MessageID int `json:"message_id"`
-		}
-		_ = json.Unmarshal(b, &origin)
 		info, err := c.chat(ctx, ch)
-		if err != nil || origin.Chat.ID != info.ID {
+		if err != nil {
 			return 0
 		}
-		if origin.Chat.ID != 0 && origin.MessageID > 0 {
-			_ = c.DB.MapPost(ctx, origin.Chat.ID, origin.MessageID, msg.Chat.ID, root)
+		var valid bool
+		sourceChannelID, sourceMessageID, valid = linkedAutomaticPost(msg, info)
+		if !valid {
+			return 0
+		}
+		root = msg.ID
+		// A forwarded channel post retains the *original* source ID. Do not map it
+		// to this group's root or overwrite the original channel's own discussion.
+		if sourceChannelID == info.ID && sourceMessageID > 0 {
+			_ = c.DB.MapPost(ctx, info.ID, sourceMessageID, msg.Chat.ID, root)
 		}
 	} else if msg.ReplyToMessage != nil {
 		reply = msg.ReplyToMessage.ID
@@ -210,7 +234,7 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 	if text == "" && media == "" {
 		text = "[此消息无可见文字]"
 	}
-	if err := c.DB.SaveComment(ctx, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: msg.ID, RootID: root, Channel: ch, UserID: user, AuthorRole: authorRole, Text: text, Date: msg.Date, ReplyID: reply, Edited: msg.EditDate > 0, Media: media}); err != nil {
+	if err := c.DB.SaveComment(ctx, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: msg.ID, RootID: root, Channel: ch, SourceChannelID: sourceChannelID, SourceMessageID: sourceMessageID, UserID: user, AuthorRole: authorRole, Text: text, Date: msg.Date, ReplyID: reply, Edited: msg.EditDate > 0, Media: media}); err != nil {
 		slog.Error("评论持久化失败", "error", err)
 		return 0
 	}
@@ -293,16 +317,8 @@ func (c *Commands) EarlyUpdate(ctx context.Context, upd *models.Update) bool {
 		if e != nil || info.LinkedChatID != msg.Chat.ID {
 			continue
 		}
-		// Automatic forwards are mapped using Telegram's origin identity, never text guessing.
 		if msg.IsAutomaticForward {
-			b, _ := json.Marshal(msg.ForwardOrigin)
-			var origin struct {
-				Chat struct {
-					ID int64 `json:"id"`
-				} `json:"chat"`
-			}
-			_ = json.Unmarshal(b, &origin)
-			if origin.Chat.ID != info.ID {
+			if _, _, valid := linkedAutomaticPost(msg, info); !valid {
 				return true
 			}
 		}
