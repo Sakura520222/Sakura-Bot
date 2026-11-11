@@ -728,7 +728,8 @@ class AILearning:
             job = await self.jobs.get(store, candidate["sample_id"])
             if not job or job["token"] != candidate["token"]:
                 return
-            job = await self.jobs.claim(store, candidate)
+            # 租约需覆盖最长 180s 的模型调用，避免在途任务被误判失联而重复抢占。
+            job = await self.jobs.claim(store, candidate, lease_minutes=6)
             if not job:
                 return
             sample = await self.samples.get(store, candidate["sample_id"])

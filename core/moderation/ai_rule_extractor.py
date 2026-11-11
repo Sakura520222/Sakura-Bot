@@ -65,11 +65,12 @@ class IncompleteAIResponse(ValueError):
 async def extract(context: dict) -> dict:
     # 每次调用读取热更新后的模型，与举报 AI 复核一致。
     # 不设 max_tokens：输出上限交由模型/代理默认值，避免长候选列表被截断。
+    # 推理型模型生成长 JSON 较慢：外层 180s、内层 HTTP 170s，完全错开。
     from core.ai.ai_client import get_async_ai_runtime
 
     client, model = get_async_ai_runtime()
-    async with asyncio.timeout(55):
-        result = await client.with_options(max_retries=0, timeout=45).chat.completions.create(
+    async with asyncio.timeout(180):
+        result = await client.with_options(max_retries=0, timeout=170).chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
