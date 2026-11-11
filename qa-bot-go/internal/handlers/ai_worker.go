@@ -50,7 +50,8 @@ func NewAIPool(ctx context.Context, workers, capacity int, timeout time.Duration
 	if workers < 1 || workers > 32 || capacity < 1 || capacity > 1024 || timeout <= 0 {
 		panic("invalid AI pool configuration")
 	}
-	totalCapacity := workers + capacity
+	// Use an explicit wide type for allocation arithmetic on all Go targets.
+	totalCapacity := int64(workers) + int64(capacity)
 	ctx, cancel := context.WithCancel(ctx)
 	p := &AIPool{ctx: ctx, cancel: cancel, jobs: make(chan *AIJob, totalCapacity), slots: make(chan struct{}, totalCapacity), active: make(map[string]*AIJob), timeout: timeout, MaxMessages: 8, InboxCapacity: 8, PerUser: 4}
 	for i := 0; i < workers; i++ {
