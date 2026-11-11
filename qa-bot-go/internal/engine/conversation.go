@@ -46,6 +46,11 @@ type ConversationStore interface {
 }
 
 // sessionEntry 内存缓存的会话条目（conversation_manager.py:38）。
+type sessionKey struct {
+	User  int64
+	Scope string
+}
+
 type sessionEntry struct {
 	sessionID  string
 	lastActive time.Time
@@ -55,7 +60,7 @@ type sessionEntry struct {
 // 内存缓存非并发安全（Python 单协程事件循环），Go 侧以互斥锁保护。
 type Conversations struct {
 	mu    sync.Mutex
-	cache map[int64]*sessionEntry
+	cache map[sessionKey]*sessionEntry
 
 	store ConversationStore
 	log   *slog.Logger
@@ -71,7 +76,7 @@ func NewConversations(store ConversationStore) *Conversations {
 	log := slog.Default()
 	log.Info("会话管理器初始化完成")
 	return &Conversations{
-		cache: make(map[int64]*sessionEntry),
+		cache: make(map[sessionKey]*sessionEntry),
 		store: store,
 		log:   log,
 		now:   func() time.Time { return time.Now().UTC() },
@@ -84,7 +89,11 @@ func NewConversations(store ConversationStore) *Conversations {
 // 返回 (sessionID, isNew)。缓存命中且距上次活跃不足 30 分钟（UTC）→ 续用；
 // 超时或无缓存 → 创建新会话。任何异常降级为随机 uuid 当新会话
 // （对齐 Python except 分支）。
-func (c *Conversations) GetOrCreateSession(userID int64) (sessionID string, isNew bool) {
+func (c *Conversations) GetOrCreateSession(userID int64) (string, bool) {
+	return c.GetOrCreateScopedSession(userID, "private")
+}
+func (c *Conversations) GetOrCreateScopedSession(userID int64, scope string) (sessionID string, isNew bool) {
+	key := sessionKey{userID, scope}
 	// Python 整个方法体包在 try/except 中，异常时返回随机 uuid；
 	// Go 以 recover 复刻该兜底（注入的时钟/生成器可触发，便于测试）。
 	defer func() {
@@ -98,7 +107,7 @@ func (c *Conversations) GetOrCreateSession(userID int64) (sessionID string, isNe
 	now := c.now()
 
 	c.mu.Lock()
-	cached, ok := c.cache[userID]
+	cached, ok := c.cache[key]
 	if ok {
 		sessionID = cached.sessionID
 		lastActive := cached.lastActive
@@ -121,7 +130,7 @@ func (c *Conversations) GetOrCreateSession(userID int64) (sessionID string, isNe
 	// 创建新会话
 	newSessionID := c.newID()
 	c.mu.Lock()
-	c.cache[userID] = &sessionEntry{sessionID: newSessionID, lastActive: now}
+	c.cache[key] = &sessionEntry{sessionID: newSessionID, lastActive: now}
 	c.mu.Unlock()
 
 	c.log.Info(fmt.Sprintf("为用户 %d 创建新会话 %s", userID, newSessionID))
@@ -132,17 +141,28 @@ func (c *Conversations) GetOrCreateSession(userID int64) (sessionID string, isNe
 // 持久化失败仅记日志并返回 false，不向调用方传播异常（对齐 Python）。
 // metadata 为 nil 等价 Python 的 None。
 func (c *Conversations) SaveMessage(ctx context.Context, userID int64, sessionID, role, content string, metadata map[string]any) bool {
-	if err := c.store.SaveConversation(ctx, userID, sessionID, role, content, metadata); err != nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ctx.Err() != nil {
+		return false
+	}
+	if entry, ok := c.cache[sessionKey{userID, Scope(ctx)}]; !ok || entry.sessionID != sessionID {
+		return false
+	}
+	tagged := make(map[string]any, len(metadata)+1)
+	for key, value := range metadata {
+		tagged[key] = value
+	}
+	tagged["scope_key"] = Scope(ctx)
+	if err := c.store.SaveConversation(ctx, userID, sessionID, role, content, tagged); err != nil {
 		c.log.Error(fmt.Sprintf("保存消息失败: %T: %s", err, err))
 		return false
 	}
 
-	// 保存成功才更新缓存的活动时间（conversation_manager.py:108-111）
-	c.mu.Lock()
-	if entry, ok := c.cache[userID]; ok {
+	// The lock serializes persistence against /clear.
+	if entry, ok := c.cache[sessionKey{userID, Scope(ctx)}]; ok {
 		entry.lastActive = c.now()
 	}
-	c.mu.Unlock()
 	return true
 }
 
@@ -171,6 +191,27 @@ func (c *Conversations) ClearUserHistory(ctx context.Context, userID int64, sess
 		}
 	}()
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, scoped := ctx.Value(scopeContextKey{}).(string); scoped && sessionID == "" {
+		if store, ok := c.store.(interface {
+			ClearScopeConversations(context.Context, int64, string) (int64, error)
+		}); ok {
+			n, err := store.ClearScopeConversations(ctx, userID, Scope(ctx))
+			if err != nil {
+				c.log.Error("清除作用域历史失败", "error", err)
+				return 0
+			}
+			delete(c.cache, sessionKey{userID, Scope(ctx)})
+			return n
+		}
+
+		entry, ok := c.cache[sessionKey{userID, Scope(ctx)}]
+		if !ok {
+			return 0
+		}
+		sessionID = entry.sessionID
+	}
 	n, err := c.store.ClearUserConversations(ctx, userID, sessionID)
 	if err != nil {
 		c.log.Error(fmt.Sprintf("清除对话历史失败: %T: %s", err, err))
@@ -178,13 +219,11 @@ func (c *Conversations) ClearUserHistory(ctx context.Context, userID int64, sess
 	}
 	deleted = n
 
-	c.mu.Lock()
 	if sessionID == "" {
-		delete(c.cache, userID)
-	} else if entry, ok := c.cache[userID]; ok && entry.sessionID == sessionID {
-		delete(c.cache, userID)
+		delete(c.cache, sessionKey{userID, Scope(ctx)})
+	} else if entry, ok := c.cache[sessionKey{userID, Scope(ctx)}]; ok && entry.sessionID == sessionID {
+		delete(c.cache, sessionKey{userID, Scope(ctx)})
 	}
-	c.mu.Unlock()
 	return deleted
 }
 
@@ -213,7 +252,11 @@ func (c *Conversations) GetSessionInfo(ctx context.Context, userID int64) (info 
 	}()
 
 	c.mu.Lock()
-	entry, ok := c.cache[userID]
+	cached, ok := c.cache[sessionKey{userID, Scope(ctx)}]
+	var entry sessionEntry
+	if ok {
+		entry = *cached
+	}
 	c.mu.Unlock()
 	if !ok {
 		return nil

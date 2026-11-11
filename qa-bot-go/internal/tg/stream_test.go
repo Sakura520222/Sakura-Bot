@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -66,13 +67,16 @@ func (f *fakeEditor) ReplyText(_ context.Context, ref MessageRef, text string, m
 // ── 测试辅助：fake clock ─────────────────────────────────────────────────
 
 // fakeClock 注入的单调时钟，测试手动推进。
-type fakeClock struct{ now time.Time }
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
 
 func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(1700000000, 0)} }
 
-func (c *fakeClock) Now() time.Time { return c.now }
+func (c *fakeClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
 
-func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+func (c *fakeClock) Advance(d time.Duration) { c.mu.Lock(); defer c.mu.Unlock(); c.now = c.now.Add(d) }
 
 // chunksOf 构造已填充完毕的 chunk 通道。
 func chunksOf(items ...StreamChunk) <-chan StreamChunk {

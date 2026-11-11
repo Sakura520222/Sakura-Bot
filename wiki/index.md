@@ -47,3 +47,7 @@ features:
     link: /Developer-Guide
     linkText: 开发者文档
 ---
+
+## v2.4.2：小妲助手升级
+
+支持积分签到、必订阅频道、帖子评论区问答、回合内追问与 Telegram 原生富文本。[查看升级说明](Release-2.4.2.md) · [使用小妲助手](User-QA-Bot-Guide.md)

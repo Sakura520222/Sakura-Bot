@@ -116,6 +116,18 @@ async def delete_channel(request: ChannelDeleteRequest):
             del poll_settings[channel_url]
             config["channel_poll_settings"] = poll_settings
 
+        assistant = config.get("qa_assistant")
+        if isinstance(assistant, dict):
+            assistant["required_channels"] = [
+                ch for ch in assistant.get("required_channels", []) if ch != channel_url
+            ]
+            assistant["comments"] = [
+                rule for rule in assistant.get("comments", []) if rule.get("channel") != channel_url
+            ]
+            if not assistant["required_channels"]:
+                assistant["require_subscription"] = False
+            config["qa_assistant"] = assistant
+
         write_config(config)
 
         logger.info(f"已通过 WebUI 删除频道: {channel_url}")

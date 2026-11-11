@@ -129,6 +129,7 @@
       <!-- 分区四：助手 Bot 每日次数（独立卡片组件，能力原样保留） -->
       <div class="mt-md">
         <QAQuotaPanel />
+        <QAAssistantPanel class="mt-md" />
       </div>
     </template>
   </div>
@@ -141,6 +142,7 @@ import type { FormInst, FormItemRule, FormRules } from "naive-ui";
 import { getAIConfig, getPrompts, resetPrompt, updateAIConfig, updatePrompt } from "@/api/modules";
 import type { PromptInfo } from "@/api/modules";
 import QAQuotaPanel from "@/components/QAQuotaPanel.vue";
+import QAAssistantPanel from "@/components/QAAssistantPanel.vue";
 import AIProfilesPanel from "@/components/AIProfilesPanel.vue";
 import { saveError } from "@/composables/autosave";
 

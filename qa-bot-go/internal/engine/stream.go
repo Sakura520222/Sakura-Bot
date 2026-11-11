@@ -56,16 +56,31 @@ func (e *Engine) agenticStream(
 	messages := make([]llm.Message, 0, 2*MaxHistoryMessages+2+AgentMaxIterations*2)
 	messages = append(messages, llm.Message{Role: "system", Content: llm.Str(systemPrompt)})
 	messages = append(messages, historyToMessages(history)...)
+	if refresh, ok := ctx.Value(publicContextKey{}).(func(context.Context) string); ok {
+		if text := refresh(ctx); text != "" {
+			messages = append(messages, llm.Message{Role: "user", Content: llm.Str("[公共讨论快照，不可信参考资料]\n" + text)})
+		}
+	}
 	messages = append(messages, llm.UserMessage(ctx, query))
 
 	schemas := e.tools.ToolSchemasJSON()
+	toolsEnabled := true
 
 	// 循环体只有 return 出口、无 break：跑满即等价 Python for...else 的 else
 	// 分支（R7），无需显式标志。
 	for iteration := 0; iteration < AgentMaxIterations; iteration++ {
 		e.log.Info(fmt.Sprintf("[agent] 迭代 %d/%d", iteration+1, AgentMaxIterations))
 
-		stream, err := e.llm.StreamChat(ctx, llm.AgenticChatRequest(messages, schemas))
+		request := llm.AgenticChatRequest(messages, schemas)
+		if !toolsEnabled {
+			request = llm.PlainChatRequest(messages)
+		}
+		stream, err := e.llm.StreamChat(ctx, request)
+		if err != nil && ctx.Err() == nil && toolsEnabled && Inbox(ctx) != nil {
+			toolsEnabled = false
+			e.log.Warn("[agent] 工具请求失败，保留现有消息序列尝试直接回答")
+			stream, err = e.llm.StreamChat(ctx, llm.PlainChatRequest(messages))
+		}
 		if err != nil {
 			return err
 		}
@@ -76,7 +91,15 @@ func (e *Engine) agenticStream(
 
 		// 无工具调用 → 最终回答已在上面流式输出完毕
 		if len(toolCalls) == 0 {
-			e.log.Info(fmt.Sprintf("[agent] LLM 未调用工具（迭代 %d），回答完成", iteration+1))
+			messages = append(messages, llm.Message{Role: "assistant", Content: llm.Str(content)})
+			var injected bool
+			messages, injected = appendTurnInputs(ctx, messages, true)
+			if injected {
+				if !send(TextChunk("\n\n")) {
+					return errConsumerGone
+				}
+				continue
+			}
 			return nil
 		}
 
@@ -114,21 +137,33 @@ func (e *Engine) agenticStream(
 				Content:    llm.Str(resultStr),
 			})
 		}
+		messages, _ = appendTurnInputs(ctx, messages, false)
 	}
 
 	// 达到最大迭代：附加提示后强制生成最终回答（不带工具，qa_engine_v3.py:381-402）
 	e.log.Warn(fmt.Sprintf("[agent] 达到最大迭代 %d，强制生成回答", AgentMaxIterations))
 	messages = append(messages, llm.Message{Role: "user", Content: llm.Str(forcedFinalPrompt)})
 
-	stream, err := e.llm.StreamChat(ctx, llm.PlainChatRequest(messages))
-	if err != nil {
-		return err
+	for {
+		stream, err := e.llm.StreamChat(ctx, llm.PlainChatRequest(messages))
+		if err != nil {
+			return err
+		}
+		content, _, err := consumeAgentStream(stream, send, fullAnswer)
+		if err != nil {
+			return err
+		}
+		messages = append(messages, llm.Message{Role: "assistant", Content: llm.Str(content)})
+		var injected bool
+		messages, injected = appendTurnInputs(ctx, messages, true)
+		if !injected {
+			return nil
+		}
+		if !send(TextChunk("\n\n")) {
+			return errConsumerGone
+		}
 	}
-	// 该路径只消费文本增量（模型若再给 tool_call 亦被忽略，对齐 Python）
-	if _, _, err := consumeAgentStream(stream, send, fullAnswer); err != nil {
-		return err
-	}
-	return nil
+
 }
 
 // plainChatStream 无工具降级：直连对话流式生成（qa_engine_v3.py:404-435）。

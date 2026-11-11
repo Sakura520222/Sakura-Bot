@@ -15,7 +15,7 @@ func TestImageContextConsumptionIsolationExpiryAndClear(t *testing.T) {
 	s := NewStore(5 * time.Minute)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	a, b := Scope{1, 10}, Scope{2, 10}
+	a, b := Scope{UserID: 1, ChatID: 10}, Scope{UserID: 2, ChatID: 10}
 	for _, id := range []int{3, 1, 2} {
 		if _, _, err := s.Add(a, Ref{FileID: "file", MessageID: id}); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func TestImageContextConsumptionIsolationExpiryAndClear(t *testing.T) {
 	if l, _ := s.Begin(a, "session", "这是什么", true); l != nil {
 		t.Fatal("clear resurrected images")
 	}
-	if l, _ := s.Begin(Scope{2, 11}, "s", "image", true); l != nil {
+	if l, _ := s.Begin(Scope{UserID: 2, ChatID: 11}, "s", "image", true); l != nil {
 		t.Fatal("cross-chat image leak")
 	}
 	now = now.Add(301 * time.Second)
@@ -68,7 +68,7 @@ func TestImageContextConsumptionIsolationExpiryAndClear(t *testing.T) {
 
 func TestImageContextConcurrentConsumptionAndLimits(t *testing.T) {
 	s := NewStore(5 * time.Minute)
-	scope := Scope{1, 1}
+	scope := Scope{UserID: 1, ChatID: 1}
 	for i := 0; i < 4; i++ {
 		_, _, _ = s.Add(scope, Ref{FileID: "file", MessageID: i})
 	}

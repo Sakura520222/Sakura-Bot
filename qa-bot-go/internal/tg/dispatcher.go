@@ -118,6 +118,12 @@ func (d *Dispatcher) HandleUpdate(ctx context.Context, upd *models.Update) {
 		return
 	}
 
+	if early, ok := d.Commands.(interface {
+		EarlyUpdate(context.Context, *models.Update) bool
+	}); ok && early.EarlyUpdate(ctx, upd) {
+		return
+	}
+
 	// 1. 组 -1：申诉回调（^ap:）。守卫早退（无 query/消息/actor）返回 false：
 	// Python 侧该 return 位于 try/finally 之前、不触发 ApplicationHandlerStop，
 	// update 同样继续落组 0（最终无消费者，静默丢弃）。

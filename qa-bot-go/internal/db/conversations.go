@@ -165,3 +165,11 @@ func pyStrStr(s string) string {
 	}
 	return s
 }
+
+func (m *Manager) ClearScopeConversations(ctx context.Context, user int64, scope string) (int64, error) {
+	res, err := m.DB.ExecContext(ctx, `DELETE FROM conversation_history WHERE user_id=? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(metadata),metadata,'{}'),'$.scope_key')),'private')=?`, user, scope)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

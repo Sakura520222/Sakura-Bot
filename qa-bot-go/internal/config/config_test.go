@@ -424,7 +424,7 @@ func TestPersonaFourLevels(t *testing.T) {
 	})
 	t.Run("默认人格包含关键句", func(t *testing.T) {
 		p := DefaultQAPersona()
-		for _, frag := range []string{"你是一个友好、专业的通用智能助手。", "【角色特点】", "不要编造"} {
+		for _, frag := range []string{"你是小妲", "原创", "不要编造", "不要求固定格式或排版"} {
 			if !strings.Contains(p, frag) {
 				t.Fatalf("默认人格缺少片段: %q", frag)
 			}

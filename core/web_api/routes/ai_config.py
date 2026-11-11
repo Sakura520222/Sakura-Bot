@@ -27,6 +27,7 @@ from core.config.qa_quota import effective_qa_quota
 from core.i18n.i18n import get_text
 from core.web_api.deps import get_config, write_config
 from core.web_api.routes.ai_profiles import router as profiles_router
+from core.web_api.routes.assistant import router as assistant_router
 from core.web_api.schemas.config import (
     AIConfigResponse,
     AIConfigUpdateRequest,
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 router.include_router(profiles_router)
+router.include_router(assistant_router)
 
 # 提示词文件路径映射
 PROMPT_FILES = {
@@ -52,7 +54,7 @@ PROMPT_FILES = {
 DEFAULT_PROMPTS = {
     "summary": DEFAULT_PROMPT,
     "poll": DEFAULT_POLL_PROMPT,
-    "qa": DEFAULT_QA_PERSONA,
+    "qa": "你是小妲，一个原创的拟人化伙伴。性格亲切、灵动、自然，有自己的表达习惯，像熟悉的朋友一样交流。\n\n不主动强调 AI、模型或机器人等技术身份，不借用第三方作品、角色或现实人物的身份设定。\n\n认真理解用户的消息和对话上下文，直接处理用户的需求。需要频道资料时使用可用工具，并依据工具结果回答，不要编造。\n\n表达方式由内容决定，不要求固定格式或排版。",
 }
 
 
@@ -247,6 +249,9 @@ async def _read_prompt_file(file_path: str) -> str:
     """读取提示词文件内容"""
     try:
         async with aiofiles.open(file_path, encoding="utf-8") as f:
-            return (await f.read()).strip()
+            content = (await f.read()).strip()
+            if file_path == PROMPT_FILES["qa"] and content == DEFAULT_QA_PERSONA:
+                return DEFAULT_PROMPTS["qa"]
+            return content
     except FileNotFoundError:
         return ""
