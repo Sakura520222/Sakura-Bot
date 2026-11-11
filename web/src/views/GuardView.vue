@@ -1134,7 +1134,7 @@ const aiRuleColumns = computed<DataTableColumns<AIRule>>(() => [
   { title: "内容", key: "value", minWidth: 200, ellipsis: { tooltip: true } },
   { title: "群组", key: "chat_id", width: 150 },
   { title: "样本 正/负", key: "samples", width: 104, render: row => `${row.positives} / ${row.negatives}` },
-  { title: "举报人", key: "reporters", width: 76 },
+  { title: "举报人数", key: "reporters", width: 84, titleAlign: "right" },
   { title: "命中", key: "hits", width: 64 },
   { title: "置信度", key: "confidence", width: 76, render: row => `${Math.round(row.confidence * 100)}%` },
   { title: "更新（UTC）", key: "updated_at", width: 170 },
@@ -1166,7 +1166,17 @@ const aiSampleColumns = computed<DataTableColumns<AISample>>(() => [
     render: row => h("span", { class: `gpill ${row.label === "positive" ? "error" : row.label === "negative" ? "success" : "neutral"}` }, [h("span", { class: "gpdot" }), aiSampleLabelNames[row.label] || row.label]),
   },
   { title: "学习状态", key: "status", width: 92, render: row => aiJobStatusNames[row.status] || row.status },
-  { title: "上报人", key: "reporters", width: 90, render: row => String(row.payload?.reporters?.length ?? "—") },
+  {
+    // 展示上报人名字与 ID，多人用顿号连接；悬浮可见完整列表。
+    title: "上报人", key: "reporters", width: 150, ellipsis: { tooltip: true },
+    render: row => {
+      const reporters = row.payload?.reporters || [];
+      if (!reporters.length) return "—";
+      return reporters
+        .map(item => item.name?.trim() || String(item.user_id ?? "—"))
+        .join("、");
+    },
+  },
   { title: "证据摘要", key: "text", minWidth: 220, ellipsis: { tooltip: true }, render: row => row.payload?.message?.text || row.payload?.nickname || "—" },
   { title: "错误", key: "error", width: 130, ellipsis: { tooltip: true } },
   { title: "时间（UTC）", key: "created_at", width: 170 },
