@@ -6,7 +6,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from core.infrastructure.telegram_bot_api import BotAPIError, call_method
+from core.infrastructure.telegram_bot_api import (
+    BotAPIError,
+    NetworkAPIError,
+    RetryAfterError,
+    call_method,
+)
 from core.web_api.deps import get_config, write_config
 
 router = APIRouter()
@@ -72,6 +77,30 @@ def validate_channels(settings, channels):
         raise HTTPException(422, "请至少选择一个必订阅频道")
 
 
+def _telegram_diagnostic_error(exc: BotAPIError, token: str, target: str) -> str:
+    """Show the failed target and API reason without exposing the assistant token."""
+    description = (
+        str(exc.description).replace(token, "[REDACTED]") if token else str(exc.description)
+    )
+    lowered = description.lower()
+    if isinstance(exc, RetryAfterError):
+        reason = f"Telegram 请求限流，请在 {exc.retry_after:g} 秒后重试"
+    elif isinstance(exc, NetworkAPIError):
+        reason = "网络连接或请求超时，暂时无法确认权限，请稍后重试"
+    elif exc.error_code == 401:
+        reason = "助手 Bot Token 无效或已失效，请检查助手 Token 配置"
+    elif "kicked" in lowered:
+        reason = f"助手 Bot 已被移出或封禁，请先在{target}解除封禁，再重新添加"
+    elif "not a member" in lowered:
+        reason = f"助手 Bot 尚未加入{target}，请将助手添加到该聊天"
+    elif "chat not found" in lowered:
+        reason = f"{target}未找到或助手无法访问，请核对聊天信息及助手的加入状态"
+    else:
+        reason = "Telegram API 查询失败，请根据返回原因排查"
+    code = f" {exc.error_code}" if exc.error_code else ""
+    return f"{target}检查失败：{reason}（Telegram{code}：{description}）"
+
+
 async def diagnose(settings):
     token = os.getenv("QA_BOT_TOKEN", "")
     selected = set(settings.required_channels if settings.require_subscription else []) | {
@@ -81,52 +110,83 @@ async def diagnose(settings):
         return []
     if not token:
         return [
-            {"channel": ch, "ok": False, "message": "未配置助手 Bot Token"}
+            {"channel": ch, "ok": False, "stage": "identity", "message": "未配置助手 Bot Token"}
             for ch in sorted(selected)
         ]
     results = []
     try:
         me = await call_method(token, "getMe", timeout=5)
-    except BotAPIError:
+    except BotAPIError as exc:
+        message = _telegram_diagnostic_error(exc, token, "助手身份（getMe）")
         return [
-            {"channel": ch, "ok": False, "message": "助手 Bot 身份查询失败"}
+            {"channel": ch, "ok": False, "stage": "identity", "message": message}
             for ch in sorted(selected)
         ]
     for ch in sorted(selected):
+        confirmed = []
+        stage, target = "channel_info", "频道信息（getChat）"
         try:
             info = await call_method(
                 token, "getChat", {"chat_id": ch.replace("https://t.me/", "@")}, timeout=5
             )
+            confirmed.append("频道信息读取成功")
             if settings.require_subscription and ch in settings.required_channels:
+                stage, target = "channel_membership", "频道管理员权限"
                 membership = await call_method(
                     token, "getChatMember", {"chat_id": info["id"], "user_id": me["id"]}, timeout=5
                 )
-                if membership.get("status") not in ("administrator", "creator"):
-                    raise ValueError("助手 Bot 必须是必订阅频道管理员")
+                status = membership.get("status", "unknown")
+                if status not in ("administrator", "creator"):
+                    raise ValueError(
+                        f"频道权限不足：助手 Bot 当前身份为 {status}，必订阅频道要求助手为管理员；"
+                        "请在频道中授予助手管理员权限"
+                    )
+                confirmed.append("频道管理员权限已确认")
             if any(r.channel == ch and r.enabled for r in settings.comments):
+                stage = "discussion_link"
                 discussion = info.get("linked_chat_id")
                 if not discussion:
-                    raise ValueError("频道没有关联讨论群组")
+                    raise ValueError("频道未关联讨论群，请先在频道设置中关联讨论群")
+                stage, target = "discussion_membership", f"关联讨论群（ID：{discussion}）"
                 membership = await call_method(
                     token, "getChatMember", {"chat_id": discussion, "user_id": me["id"]}, timeout=5
                 )
-                if membership.get("status") not in ("member", "administrator", "creator"):
-                    raise ValueError("助手 Bot 尚未加入讨论群组")
-                if membership.get("status") == "member" and not me.get(
-                    "can_read_all_group_messages"
-                ):
+                status = membership.get("status", "unknown")
+                if status == "kicked":
                     raise ValueError(
-                        "请关闭助手 Bot 隐私模式或将其设为群管理员，以收集全部可见评论"
+                        f"{target}权限检查失败：助手 Bot 已被封禁，请解除封禁后重新添加"
                     )
-            results.append({"channel": ch, "ok": True, "message": "助手 Bot 权限检查通过"})
-        except ValueError as exc:
-            results.append({"channel": ch, "ok": False, "message": str(exc)})
-        except BotAPIError:
+                if status == "left":
+                    raise ValueError(
+                        f"{target}权限检查失败：助手 Bot 尚未加入，请将助手添加到讨论群"
+                    )
+                if status not in ("member", "administrator", "creator"):
+                    raise ValueError(
+                        f"{target}权限检查失败：助手当前成员状态为 {status}，"
+                        "请解除成员限制并确认助手为普通成员或管理员"
+                    )
+                stage = "discussion_visibility"
+                if status == "member" and not me.get("can_read_all_group_messages"):
+                    raise ValueError(
+                        f"{target}已加入，但群隐私模式限制评论读取；"
+                        "请关闭助手 Bot 隐私模式或将其设为讨论群管理员"
+                    )
+                confirmed.append(f"{target}成员身份及评论读取权限已确认")
+            results.append(
+                {"channel": ch, "ok": True, "stage": "complete", "message": "；".join(confirmed)}
+            )
+        except (ValueError, BotAPIError) as exc:
+            reason = (
+                _telegram_diagnostic_error(exc, token, target)
+                if isinstance(exc, BotAPIError)
+                else str(exc)
+            )
             results.append(
                 {
                     "channel": ch,
                     "ok": False,
-                    "message": "Telegram 查询失败，请检查助手 Bot 权限并重试",
+                    "stage": stage,
+                    "message": "；".join([*confirmed, reason]),
                 }
             )
     return results
