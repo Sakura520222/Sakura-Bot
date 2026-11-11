@@ -297,7 +297,7 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 	}
 
 	// 1. 获取或创建会话（内部异常自降级）
-	sessionID, isNew := e.conversations.GetOrCreateScopedSession(userID, Scope(ctx))
+	sessionID, isNew := e.conversations.GetOrCreateScopedSessionContext(ctx, userID, Scope(ctx))
 	imageSuccess := false
 	if request := media.RequestFrom(ctx); request != nil {
 		lease, err := request.Store.Begin(request.Scope, sessionID, query, request.Reply)
@@ -428,6 +428,7 @@ func (e *Engine) buildSystemPrompt(ctx context.Context, channelHint string, incl
 		"{current_time}", time.Now().UTC().Format("2006-01-02 15:04")+" (UTC)",
 	)
 	systemPrompt := r.Replace(baseSystemTemplate)
+	systemPrompt += commentInteractionPrompt(ctx)
 
 	if includeTools {
 		systemPrompt += strings.ReplaceAll(agentToolInstructions,

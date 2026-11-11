@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMessageReservationsConcurrentAndIdempotent(t *testing.T) {
@@ -190,5 +191,72 @@ func TestScopedHistoryClearPreservesOtherPosts(t *testing.T) {
 	history, e := m.GetConversationHistory(ctx, user, "post:b", 20)
 	if e != nil || len(history) != 1 {
 		t.Fatal("other post history lost", e)
+	}
+}
+
+func TestRecentHistoryAndScopeRecovery(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+	user := uniqueUserID()
+	t.Cleanup(func() { m.ClearUserConversations(ctx, user, "") })
+	for i := 0; i < 25; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		if err := m.SaveConversation(ctx, user, "same-session", role, fmt.Sprint(i), map[string]any{"scope_key": "post:10"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := m.GetConversationHistory(ctx, user, "same-session", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 20 || history[0].Content != "5" || history[19].Content != "24" {
+		t.Fatalf("not the latest history in stable order: %+v", history)
+	}
+	since := time.Now().UTC().Add(-30 * time.Minute)
+	id, _, err := m.GetRecentConversationSession(ctx, user, "post:10", since)
+	if err != nil || id != "same-session" {
+		t.Fatal(id, err)
+	}
+	for _, scope := range []string{"private", "post:11"} {
+		id, _, err = m.GetRecentConversationSession(ctx, user, scope, since)
+		if err != nil || id != "" {
+			t.Fatal("scope leak", id, err)
+		}
+	}
+	if _, err = m.ClearScopeConversations(ctx, user, "post:10"); err != nil {
+		t.Fatal(err)
+	}
+	id, _, err = m.GetRecentConversationSession(ctx, user, "post:10", since)
+	if err != nil || id != "" {
+		t.Fatal("cleared history restored", id, err)
+	}
+}
+func TestAssistantCommentIdentityPreservesLegacyText(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+	if err := m.InitComments(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat := -uniqueUserID()
+	t.Cleanup(func() { m.DB.Exec("DELETE FROM qa_comments WHERE chat_id=?", chat) })
+	for _, r := range []CommentRecord{{ChatID: chat, MessageID: 1, RootID: 1, UserID: 0, Text: "原来的助手回答"}, {ChatID: chat, MessageID: 2, RootID: 1, UserID: 123, AuthorRole: "assistant", Text: "新的助手回答"}} {
+		if err := m.SaveComment(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.MarkAssistantComment(ctx, chat, 1, 123); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := m.CommentContext(ctx, chat, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"原来的助手回答", "新的助手回答", `"author_role":"assistant"`, `"user_id":123`} {
+		if !strings.Contains(strings.ReplaceAll(snapshot, " ", ""), fragment) {
+			t.Fatal("missing identity or text", fragment, snapshot)
+		}
 	}
 }

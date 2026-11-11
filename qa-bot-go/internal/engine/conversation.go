@@ -92,10 +92,11 @@ func NewConversations(store ConversationStore) *Conversations {
 func (c *Conversations) GetOrCreateSession(userID int64) (string, bool) {
 	return c.GetOrCreateScopedSession(userID, "private")
 }
-func (c *Conversations) GetOrCreateScopedSession(userID int64, scope string) (sessionID string, isNew bool) {
-	key := sessionKey{userID, scope}
-	// Python 整个方法体包在 try/except 中，异常时返回随机 uuid；
-	// Go 以 recover 复刻该兜底（注入的时钟/生成器可触发，便于测试）。
+func (c *Conversations) GetOrCreateScopedSession(userID int64, scope string) (string, bool) {
+	return c.GetOrCreateScopedSessionContext(context.Background(), userID, scope)
+}
+
+func (c *Conversations) GetOrCreateScopedSessionContext(ctx context.Context, userID int64, scope string) (sessionID string, isNew bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.log.Error(fmt.Sprintf("获取/创建会话失败: %T: %v", r, r))
@@ -103,38 +104,41 @@ func (c *Conversations) GetOrCreateScopedSession(userID int64, scope string) (se
 			isNew = true
 		}
 	}()
-
-	now := c.now()
-
-	c.mu.Lock()
-	cached, ok := c.cache[key]
-	if ok {
-		sessionID = cached.sessionID
-		lastActive := cached.lastActive
-
-		// 检查是否超时
-		if now.Sub(lastActive) < SessionTimeoutMinutes*time.Minute {
-			// 会话仍然有效，更新活动时间
-			cached.lastActive = now
-			c.mu.Unlock()
-			c.log.Debug(fmt.Sprintf("用户 %d 继续使用会话 %s", userID, sessionID))
-			return sessionID, false
-		}
-		// 会话超时，创建新会话（落到下方创建分支）
-		c.mu.Unlock()
-		c.log.Info(fmt.Sprintf("用户 %d 的会话 %s 已超时", userID, sessionID))
-	} else {
-		c.mu.Unlock()
+	if ctx.Err() != nil {
+		return "", true
 	}
-
-	// 创建新会话
-	newSessionID := c.newID()
+	now := c.now()
+	key := sessionKey{userID, scope}
 	c.mu.Lock()
-	c.cache[key] = &sessionEntry{sessionID: newSessionID, lastActive: now}
-	c.mu.Unlock()
-
-	c.log.Info(fmt.Sprintf("为用户 %d 创建新会话 %s", userID, newSessionID))
-	return newSessionID, true
+	defer c.mu.Unlock()
+	if cached, ok := c.cache[key]; ok && now.Sub(cached.lastActive) < SessionTimeoutMinutes*time.Minute {
+		cached.lastActive = now
+		return cached.sessionID, false
+	}
+	// Recover the same user's unexpired scope after a worker/process restart.
+	// Holding the mutex prevents /clear from racing the restore into the cache.
+	if store, ok := c.store.(interface {
+		GetRecentConversationSession(context.Context, int64, string, time.Time) (string, time.Time, error)
+	}); ok {
+		cutoff := now.Add(-SessionTimeoutMinutes * time.Minute)
+		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		restored, active, err := store.GetRecentConversationSession(readCtx, userID, scope, cutoff)
+		cancel()
+		if ctx.Err() != nil {
+			return "", true
+		}
+		if err != nil {
+			c.log.Error("恢复会话失败", "error", err)
+		} else if restored != "" && active.After(cutoff) {
+			c.cache[key] = &sessionEntry{sessionID: restored, lastActive: now}
+			c.log.Info("恢复作用域会话", "user_id", userID, "scope", scope, "session_id", restored)
+			return restored, false
+		}
+	}
+	sessionID = c.newID()
+	c.cache[key] = &sessionEntry{sessionID: sessionID, lastActive: now}
+	c.log.Info(fmt.Sprintf("为用户 %d 创建新会话 %s", userID, sessionID))
+	return sessionID, true
 }
 
 // SaveMessage 保存对话消息并刷新缓存活跃时间（conversation_manager.py:82-117）。

@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 )
 
@@ -55,14 +56,15 @@ func (m *Manager) SaveConversation(ctx context.Context, userID int64, sessionID,
 }
 
 // GetConversationHistory 获取用户的对话历史（mysql.py:1305-1347）：
-// ORDER BY timestamp ASC LIMIT ?——引擎取历史在前、保存当前消息在后，
+// 先取最新 limit 条，再按时间顺序返回；同秒消息用 id 稳定排序。
+// 引擎取历史在前、保存当前消息在后，
 // 因此 LIMIT 20 不含当前消息。
 func (m *Manager) GetConversationHistory(ctx context.Context, userID int64, sessionID string, limit int) ([]HistoryItem, error) {
 	rows, err := m.DB.QueryContext(ctx, `
                         SELECT role, content, timestamp, metadata
                         FROM conversation_history
                         WHERE user_id = ? AND session_id = ?
-                        ORDER BY timestamp ASC
+                        ORDER BY timestamp DESC, id DESC
                         LIMIT ?
                     `, userID, sessionID, limit)
 	if err != nil {
@@ -94,6 +96,7 @@ func (m *Manager) GetConversationHistory(ctx context.Context, userID int64, sess
 		return nil, err
 	}
 
+	slices.Reverse(history)
 	slog.Debug(fmt.Sprintf("获取对话历史: user_id=%d, session=%s, 条数=%d", userID, sessionID, len(history)))
 	return history, nil
 }
@@ -172,4 +175,15 @@ func (m *Manager) ClearScopeConversations(ctx context.Context, user int64, scope
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// GetRecentConversationSession restores only an unexpired session in the exact user/scope.
+func (m *Manager) GetRecentConversationSession(ctx context.Context, user int64, scope string, since time.Time) (string, time.Time, error) {
+	var session string
+	var active time.Time
+	err := m.DB.QueryRowContext(ctx, `SELECT session_id,timestamp FROM conversation_history WHERE user_id=? AND timestamp>? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(metadata),metadata,'{}'),'$.scope_key')),'private')=? ORDER BY timestamp DESC,id DESC LIMIT 1`, user, MysqlDatetime(since), scope).Scan(&session, &active)
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, nil
+	}
+	return session, active, err
 }

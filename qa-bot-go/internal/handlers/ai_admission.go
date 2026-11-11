@@ -99,8 +99,10 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 		return
 	}
 	refresh, _ := ctx.Value(publicRefreshKey{}).(func(context.Context) string)
+	wakeWord := engine.CommentWakeWord(ctx)
 	job.Submit(func(work context.Context) {
 		work = engine.WithScope(work, scope)
+		work = engine.WithCommentWakeWord(work, wakeWord)
 		work = engine.WithTurn(work, job)
 		if refresh != nil {
 			work = engine.WithPublicContext(work, refresh)
@@ -109,7 +111,7 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 		if c.community != nil && msg.Chat.Type != models.ChatTypePrivate {
 			root := c.community.DB.CommentRoot(work, msg.Chat.ID, msg.ID)
 			work = tg.WithReplyObserver(work, func(reply *models.Message, text string) {
-				_ = c.community.DB.SaveComment(work, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: reply.ID, RootID: root, Text: text, Date: reply.Date, ReplyID: msg.ID, Edited: reply.EditDate > 0})
+				_ = c.community.DB.SaveComment(work, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: reply.ID, RootID: root, UserID: c.community.TG.Bot().ID(), AuthorRole: "assistant", Text: text, Date: reply.Date, ReplyID: msg.ID, Edited: reply.EditDate > 0})
 			})
 		}
 		c.runStream(work, msg, user, query, hint, placeholder, q, errPrefix)

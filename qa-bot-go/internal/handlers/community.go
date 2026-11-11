@@ -155,6 +155,11 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 		}
 	} else if msg.ReplyToMessage != nil {
 		reply = msg.ReplyToMessage.ID
+		if from := msg.ReplyToMessage.From; from != nil && from.IsBot && from.ID == c.TG.Bot().ID() && msg.ReplyToMessage.Chat.ID == msg.Chat.ID {
+			if err := c.DB.MarkAssistantComment(ctx, msg.Chat.ID, reply, from.ID); err != nil {
+				slog.Error("更新助手评论身份失败", "error", err)
+			}
+		}
 		root = c.DB.CommentRoot(ctx, msg.Chat.ID, reply)
 		if root == 0 {
 			root = c.capture(ctx, msg.ReplyToMessage, ch)
@@ -165,9 +170,20 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 	if text == "" {
 		text = msg.Caption
 	}
+	authorRole := "unknown"
 	user := int64(0)
 	if msg.From != nil {
 		user = msg.From.ID
+		authorRole = "user"
+		if msg.From.IsBot {
+			authorRole = "bot"
+			if user == c.TG.Bot().ID() {
+				authorRole = "assistant"
+			}
+		}
+	}
+	if msg.IsAutomaticForward {
+		authorRole = "channel_post"
 	}
 	media := ""
 	if len(msg.Photo) > 0 {
@@ -194,7 +210,7 @@ func (c *Community) capture(ctx context.Context, msg *models.Message, ch string)
 	if text == "" && media == "" {
 		text = "[此消息无可见文字]"
 	}
-	if err := c.DB.SaveComment(ctx, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: msg.ID, RootID: root, Channel: ch, UserID: user, Text: text, Date: msg.Date, ReplyID: reply, Edited: msg.EditDate > 0, Media: media}); err != nil {
+	if err := c.DB.SaveComment(ctx, db.CommentRecord{ChatID: msg.Chat.ID, MessageID: msg.ID, RootID: root, Channel: ch, UserID: user, AuthorRole: authorRole, Text: text, Date: msg.Date, ReplyID: reply, Edited: msg.EditDate > 0, Media: media}); err != nil {
 		slog.Error("评论持久化失败", "error", err)
 		return 0
 	}
@@ -338,6 +354,7 @@ func (c *Commands) EarlyUpdate(ctx context.Context, upd *models.Update) bool {
 			return s
 		}
 		ctx = context.WithValue(ctx, publicRefreshKey{}, refresh)
+		ctx = engine.WithCommentWakeWord(ctx, rule.WakeWord)
 		c.HandleMessage(ctx, upd)
 		return true
 	}

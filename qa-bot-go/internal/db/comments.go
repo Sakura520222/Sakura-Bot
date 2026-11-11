@@ -7,16 +7,17 @@ import (
 )
 
 type CommentRecord struct {
-	ChatID    int64  `json:"chat_id"`
-	MessageID int    `json:"message_id"`
-	RootID    int    `json:"root_id"`
-	Channel   string `json:"channel"`
-	UserID    int64  `json:"user_id"`
-	Text      string `json:"text"`
-	Date      int    `json:"date"`
-	ReplyID   int    `json:"reply_id"`
-	Edited    bool   `json:"edited"`
-	Media     string `json:"media"`
+	AuthorRole string `json:"author_role,omitempty"`
+	ChatID     int64  `json:"chat_id"`
+	MessageID  int    `json:"message_id"`
+	RootID     int    `json:"root_id"`
+	Channel    string `json:"channel"`
+	UserID     int64  `json:"user_id"`
+	Text       string `json:"text"`
+	Date       int    `json:"date"`
+	ReplyID    int    `json:"reply_id"`
+	Edited     bool   `json:"edited"`
+	Media      string `json:"media"`
 }
 
 func (m *Manager) InitComments(ctx context.Context) error {
@@ -102,4 +103,11 @@ func (m *Manager) CommentChannel(ctx context.Context, chat int64, root int) stri
 	var channel string
 	_ = m.DB.QueryRowContext(ctx, `SELECT channel FROM qa_comments WHERE chat_id=? AND message_id=?`, chat, root).Scan(&channel)
 	return channel
+}
+
+// MarkAssistantComment repairs legacy authorless records only after Telegram has
+// identified the sender of the replied-to message as this assistant.
+func (m *Manager) MarkAssistantComment(ctx context.Context, chat int64, id int, assistantID int64) error {
+	_, err := m.DB.ExecContext(ctx, `UPDATE qa_comments SET payload=JSON_SET(payload,'$.user_id',?,'$.author_role','assistant') WHERE chat_id=? AND message_id=?`, assistantID, chat, id)
+	return err
 }
