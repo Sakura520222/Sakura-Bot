@@ -2,9 +2,42 @@ package handlers
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 )
+
+func TestAIPoolRejectsCapacityOverflow(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		workers, capacity int
+	}{
+		{"workers", math.MaxInt, 1},
+		{"queue", 1, math.MaxInt},
+		{"both", math.MaxInt, math.MaxInt},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				// A runtime makechan panic is not validation: reject before allocation.
+				if got := recover(); got != "invalid AI pool configuration" {
+					t.Fatalf("expected constructor validation panic, got %v", got)
+				}
+			}()
+			p := NewAIPool(context.Background(), tc.workers, tc.capacity, time.Minute)
+			p.Close()
+		})
+	}
+}
+
+func TestAIPoolConfiguredCapacityBounds(t *testing.T) {
+	for _, tc := range []struct{ workers, capacity int }{{1, 1}, {4, 64}, {32, 1024}} {
+		p := NewAIPool(context.Background(), tc.workers, tc.capacity, time.Minute)
+		if cap(p.jobs) != tc.workers+tc.capacity || cap(p.slots) != cap(p.jobs) {
+			t.Errorf("incorrect pool capacity for %+v: jobs=%d slots=%d", tc, cap(p.jobs), cap(p.slots))
+		}
+		p.Close()
+	}
+}
 
 func waitSignal(t *testing.T, ch <-chan struct{}) {
 	t.Helper()

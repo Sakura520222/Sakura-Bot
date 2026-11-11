@@ -7,6 +7,7 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/engine"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 )
@@ -48,8 +49,13 @@ func NewAIPool(ctx context.Context, workers, capacity int, timeout time.Duration
 	if workers < 1 || capacity < 1 || timeout <= 0 {
 		panic("invalid AI pool configuration")
 	}
+	// Check before addition or allocation, including for callers bypassing config validation.
+	if workers > math.MaxInt-capacity {
+		panic("invalid AI pool configuration")
+	}
+	totalCapacity := workers + capacity
 	ctx, cancel := context.WithCancel(ctx)
-	p := &AIPool{ctx: ctx, cancel: cancel, jobs: make(chan *AIJob, workers+capacity), slots: make(chan struct{}, workers+capacity), active: make(map[string]*AIJob), timeout: timeout, MaxMessages: 8, InboxCapacity: 8, PerUser: 4}
+	p := &AIPool{ctx: ctx, cancel: cancel, jobs: make(chan *AIJob, totalCapacity), slots: make(chan struct{}, totalCapacity), active: make(map[string]*AIJob), timeout: timeout, MaxMessages: 8, InboxCapacity: 8, PerUser: 4}
 	for i := 0; i < workers; i++ {
 		p.wg.Add(1)
 		go p.worker()
