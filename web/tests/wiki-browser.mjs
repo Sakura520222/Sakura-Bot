@@ -173,7 +173,7 @@ try {
   const scroll = await page.evaluate(()=>scrollY);
   await target.click();
   await page.locator("article.wiki-article h1").waitFor();
-  await page.evaluate(() => { setTimeout(() => history.back(), 0); });
+  await page.getByRole("button", { name: "返回", exact: true }).click();
   await page.locator(".wiki-feed-end").waitFor();
   console.log("scroll before",scroll,"after",await page.evaluate(()=>({scrollY,height:document.documentElement.scrollHeight})));
   await page.waitForFunction((saved)=>Math.abs(scrollY-saved)<600,scroll,{timeout:5000});
@@ -183,7 +183,9 @@ try {
   await page.getByRole("button",{name:"搜索",exact:true}).click();
   await page.locator("mark").first().waitFor();
   await page.getByRole("navigation",{name:"站点导航"}).getByRole("link",{name:"频道",exact:true}).click();
-  await page.getByRole("link",{name:/Sakura 开发频道/}).first().click();
+  await page.getByRole("heading",{name:"频道目录",exact:true}).waitFor();
+  assert.equal(await page.getByRole("navigation",{name:"首页栏目"}).count(), 0);
+  await page.locator(".wiki-directory-row").first().click();
   await page.getByRole("heading",{name:channel.title,exact:true}).waitFor();
   assert.equal(await page.locator(".wiki-channel-cover").count(), 0);
   await page.getByRole("link",{name:"动态",exact:true}).first().click();
@@ -230,6 +232,8 @@ try {
   const desktop = await browser.newPage({viewport:{width:1440,height:900}});
   await desktop.goto(url + "/wiki");
   await desktop.locator(".wiki-feed-card").first().waitFor();
+  const tabs = desktop.getByRole("navigation", { name: "首页栏目" });
+  assert.deepEqual(await tabs.getByRole("link").allTextContents(), ["推荐", "最新"]);
   const brand = desktop.getByRole("link",{name:"Sakura Wiki",exact:true});
   assert.equal(await brand.textContent(), "Sakura Wiki");
   const desktopTools = desktop.getByRole("group",{name:"Wiki 工具"});
@@ -244,6 +248,18 @@ try {
   await settings.click();
   await desktop.waitForURL("**/login");
   await desktop.getByText("登录",{exact:true}).first().waitFor();
+  await desktop.goto(url + "/wiki/123/page/article-0#claim-12");
+  await desktop.locator("#claim-12").waitFor();
+  const back = desktop.getByRole("button", { name: "返回", exact: true });
+  const toolbar = desktop.locator(".wiki-article-toolbar");
+  await desktop.waitForFunction(() => {
+    const section = document.querySelector("#claim-12");
+    const toolbar = document.querySelector(".wiki-article-toolbar");
+    return !!section && !!toolbar && section.getBoundingClientRect().top >= toolbar.getBoundingClientRect().bottom;
+  });
+  assert.equal(await toolbar.locator("svg").count(), 1);
+  await back.click();
+  await desktop.waitForURL(url + "/wiki/123");
   await desktop.route("https://example.invalid/cover.png", (route) => route.fulfill({ contentType:"image/png", body:avatar }));
   coverUrl = "https://example.invalid/cover.png";
   await desktop.goto(url + "/wiki/123");

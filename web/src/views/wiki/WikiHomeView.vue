@@ -1,10 +1,10 @@
 <template>
   <div class="wiki-view">
     <header class="wiki-page-heading">
-      <h1>频道百科</h1>
+      <h1>{{ tab === "channels" ? "频道目录" : "频道百科" }}</h1>
       <button v-if="tab === 'recommended'" @click="refresh = Date.now()">换一批</button>
     </header>
-    <nav class="wiki-feed-tabs" aria-label="首页栏目">
+    <nav v-if="tab !== 'channels'" class="wiki-feed-tabs" aria-label="首页栏目">
       <RouterLink v-for="entry in tabs" :key="entry.id" :to="{ name: 'WikiHome', query: { tab: entry.id === 'recommended' ? undefined : entry.id } }"
         :aria-current="tab === entry.id ? 'page' : undefined">{{ entry.label }}</RouterLink>
     </nav>
@@ -46,7 +46,6 @@ const refresh = ref(0);
 const tabs = [
   { id: "recommended", label: "推荐" },
   { id: "latest", label: "最新" },
-  { id: "channels", label: "频道" },
 ];
 const tab = computed(() => route.query.tab === "latest" || route.query.tab === "channels" ? route.query.tab : "recommended");
 const feedUrl = computed(() => wikiUrl("/feed", { mode: tab.value, refresh: tab.value === "recommended" ? refresh.value || undefined : undefined }));

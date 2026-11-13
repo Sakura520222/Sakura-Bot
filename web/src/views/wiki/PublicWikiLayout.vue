@@ -31,7 +31,7 @@
           </svg>
         </RouterLink>
       </div>
-      <main id="wiki-main" class="wiki-main" tabindex="-1">
+      <main id="wiki-main" class="wiki-main" :class="{ 'wiki-reading': isArticle }" tabindex="-1">
         <div v-if="channel" class="wiki-context-nav">
           <RouterLink :to="channelBase">频道</RouterLink>
           <RouterLink :to="`${channelBase}/graph`">知识地图</RouterLink>
@@ -39,6 +39,14 @@
           <RouterLink :to="`${channelBase}/profile`">画像</RouterLink>
           <RouterLink :to="`${channelBase}/search`">搜索</RouterLink>
         </div>
+        <header v-if="isArticle" class="wiki-article-toolbar">
+          <button type="button" class="wiki-header-icon wiki-article-back" aria-label="返回" title="返回" @click="backFromArticle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m11 5-7 7 7 7M4 12h16" />
+            </svg>
+          </button>
+          <span>知识条目</span>
+        </header>
         <RouterView v-slot="{ Component, route: view }">
           <KeepAlive :include="WIKI_KEEP_ALIVE" :max="12">
             <component
@@ -61,7 +69,7 @@
           <RouterLink :to="`${channelBase}/search`">搜索本频道</RouterLink>
           <RouterLink :to="`${channelBase}/profile`">频道画像</RouterLink>
         </section>
-        <section v-else-if="channels?.length" class="wiki-context-card">
+        <section v-else-if="!isDirectory && channels?.length" class="wiki-context-card">
           <h2>公开频道</h2>
           <RouterLink v-for="entry in channels.slice(0, 4)" :key="entry.id" :to="`/wiki/${entry.id}`">
             {{ entry.title }}
@@ -89,18 +97,31 @@ function syncTheme() {
 }
 const channel = computed(() => String(route.params.channel || ""));
 const channelBase = computed(() => `/wiki/${channel.value}`);
+const isArticle = computed(() => route.name === "WikiArticle");
+const isDirectory = computed(() => route.name === "WikiHome" && route.query.tab === "channels");
 const navigation = computed(() => [
-  { label: "首页", to: "/wiki", active: route.name === "WikiHome" && route.query.tab !== "channels" },
+  { label: "首页", to: "/wiki", active: route.name === "WikiHome" && !isDirectory.value },
   { label: "探索", to: "/wiki/search", active: route.name === "WikiGlobalSearch" },
-  { label: "频道", to: "/wiki?tab=channels", active: route.name === "WikiHome" && route.query.tab === "channels" },
+  { label: "频道", to: "/wiki?tab=channels", active: isDirectory.value },
   ...(channel.value ? [
     { label: "知识地图", to: `${channelBase.value}/graph`, active: route.name === "WikiGraph" },
     { label: "动态", to: `${channelBase.value}/timeline`, active: route.name === "WikiTimeline" },
   ] : []),
 ]);
 const { data: channels } = useWikiResource<WikiChannel[]>(
-  () => channel.value ? null : wikiUrl("/channels"), publicWikiUrl, { ttlMs: 30_000 },
+  () => channel.value || isDirectory.value ? null : wikiUrl("/channels"), publicWikiUrl, { ttlMs: 30_000 },
 );
+function backFromArticle() {
+  const previous = router.options.history.state.back;
+  if (typeof previous === "string") {
+    const target = router.resolve(previous);
+    if (target.path !== route.path && target.matched.some((record) => record.name === "PublicWiki")) {
+      router.back();
+      return;
+    }
+  }
+  void router.replace(channelBase.value);
+}
 let previousVisibility: Record<string, string> | undefined;
 let visibilityTimer: ReturnType<typeof setInterval>;
 let visibilityRequest: AbortController | undefined;

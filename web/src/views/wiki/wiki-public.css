@@ -126,6 +126,23 @@
 .wiki-shell .wiki-feed-tabs [aria-current] { border-color: var(--sb-accent); color: var(--sb-text); }
 .wiki-shell .wiki-context-nav { padding-inline: 12px; }
 .wiki-shell .wiki-context-nav a { white-space: nowrap; }
+.wiki-shell .wiki-reading { --wiki-article-toolbar-height: 52px; }
+.wiki-shell .wiki-article-toolbar {
+  position: sticky;
+  top: var(--wiki-masthead);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--wiki-article-toolbar-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  font-size: 18px;
+  font-weight: 700;
+}
+.wiki-shell .wiki-article-back { color: inherit; }
 .wiki-shell .wiki-side-search, .wiki-shell .wiki-context-card {
   display: grid;
   gap: 8px;
@@ -195,7 +212,7 @@
 .wiki-shell .wiki-channel-hero { position: static; box-shadow: none; }
 .wiki-shell .wiki-channel-heading { flex-wrap: wrap; overflow-wrap: anywhere; }
 .wiki-shell .wiki-channel-hero .wiki-channel-stats { white-space: normal; }
-.wiki-shell .wiki-claim { scroll-margin-top: calc(var(--wiki-masthead) + 12px); }
+.wiki-shell .wiki-claim { scroll-margin-top: calc(var(--wiki-masthead) + var(--wiki-article-toolbar-height, 0px) + 12px); }
 .wiki-shell .wiki-article-layout { display: block; }
 .wiki-shell .wiki-article { max-width: none; border: 0; box-shadow: none; padding-inline: 0; }
 .wiki-shell .wiki-meta, .wiki-shell .wiki-muted { color: var(--sb-text-2); }
