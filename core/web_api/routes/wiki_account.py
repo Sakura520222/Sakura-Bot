@@ -15,6 +15,7 @@ from fastapi.responses import RedirectResponse
 from jwt import PyJWTError
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.settings import get_settings
 from core.wiki import telegram_login
 from core.wiki.accounts import ACCESS_SECONDS, FLOW_SECONDS, AccountDenied, token_hash
 
@@ -143,6 +144,7 @@ async def session_status(request: Request):
     user = await accounts.session(request.cookies.get(ACCESS))
     return {
         "enabled": True,
+        "assistant_enabled": get_settings().wiki_login.assistant_enabled,
         "user": profile(user) if user else None,
         "can_refresh": not user and token_hash(request.cookies.get(REFRESH)) is not None,
     }

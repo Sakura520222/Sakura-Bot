@@ -16,6 +16,13 @@ type TurnInbox interface{ Take(final bool) []TurnInput }
 type turnContextKey struct{}
 type scopeContextKey struct{}
 type publicContextKey struct{}
+type wikiContextKey struct{}
+
+const WikiWebScope = "web:wiki"
+
+func WithWikiContext(ctx context.Context, text string) context.Context {
+	return context.WithValue(ctx, wikiContextKey{}, text)
+}
 
 func WithTurn(ctx context.Context, inbox TurnInbox) context.Context {
 	return context.WithValue(ctx, turnContextKey{}, inbox)

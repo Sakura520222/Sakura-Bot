@@ -54,8 +54,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         from .routes.wiki import WIKI_AVATAR_ROUTE, is_public_wiki_request
         from .routes.wiki_account import METHODS
+        from .routes.wiki_assistant import is_assistant_request
 
-        if (request.method, path) in METHODS:
+        if (request.method, path) in METHODS or is_assistant_request(request.method, path):
             if path.endswith(("/start", "/callback")):
                 peer = request.client.host if request.client else "unknown"
                 window = int(time.monotonic() // 60)

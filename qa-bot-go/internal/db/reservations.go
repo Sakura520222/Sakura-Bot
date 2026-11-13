@@ -150,14 +150,30 @@ func (m *Manager) ReserveMessageOnDay(ctx context.Context, id string, user int64
 // FinishReservation can be retried after connection loss. Refunds use the original
 // billing date and source, independent of midnight or later admin-role changes.
 func (m *Manager) FinishReservation(ctx context.Context, id string, success bool) error {
+	return m.FinishReservations(ctx, []string{id}, success)
+}
+
+func (m *Manager) FinishReservations(ctx context.Context, ids []string, success bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	tx, err := billingTx(ctx, m.DB)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, id := range ids {
+		if err := finishReservation(ctx, tx, id, success); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func finishReservation(ctx context.Context, tx *sql.Tx, id string, success bool) error {
 	var user int64
 	var date, state, source string
-	err = tx.QueryRowContext(ctx, `SELECT user_id,CAST(query_date AS CHAR),source,state FROM qa_message_reservations WHERE id=?`, id).Scan(&user, &date, &source, &state)
+	err := tx.QueryRowContext(ctx, `SELECT user_id,CAST(query_date AS CHAR),source,state FROM qa_message_reservations WHERE id=?`, id).Scan(&user, &date, &source, &state)
 	if err != nil {
 		return err
 	}
@@ -189,7 +205,7 @@ func (m *Manager) FinishReservation(ctx context.Context, id string, success bool
 	if _, err = tx.ExecContext(ctx, `UPDATE qa_message_reservations SET state=? WHERE id=? AND state='reserved'`, next, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // RecoverReservations is used before polling in the single assistant process.
@@ -275,6 +291,35 @@ func (m *Manager) BillingUsage(ctx context.Context, user int64, day string) (int
 		e = nil
 	}
 	return used, total, e
+}
+
+type BillingSnapshot struct {
+	PointUnits int64 `json:"point_units"`
+	FreeUsed   int64 `json:"free_used"`
+	SiteUsed   int64 `json:"site_used"`
+	CheckedIn  bool  `json:"checked_in"`
+}
+
+// BillingSnapshot reads points and both quotas at the same instant as check-in state.
+func (m *Manager) BillingSnapshot(ctx context.Context, user int64, day string) (BillingSnapshot, error) {
+	var status BillingSnapshot
+	err := m.DB.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT units FROM qa_points WHERE user_id=?),0),
+		COALESCE((SELECT usage_count FROM usage_quota WHERE user_id=? AND query_date=?),0),
+		COALESCE((SELECT messages FROM qa_daily_total WHERE billing_day=?),
+		    (SELECT COALESCE(SUM(usage_count),0) FROM usage_quota WHERE query_date=?)),
+		EXISTS(SELECT 1 FROM qa_checkins WHERE user_id=? AND billing_day=?)`,
+		user, user, day, day, day, user, day).Scan(&status.PointUnits, &status.FreeUsed, &status.SiteUsed, &status.CheckedIn)
+	return status, err
+}
+
+func (m *Manager) ReservationState(ctx context.Context, id string, user int64) (string, error) {
+	var state string
+	err := m.DB.QueryRowContext(ctx, `SELECT state FROM qa_message_reservations WHERE id=? AND user_id=?`, id, user).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return state, err
 }
 
 // HoldAssistantLease prevents a second runtime from recovering a live process's reservations.

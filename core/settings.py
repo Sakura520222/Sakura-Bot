@@ -254,6 +254,9 @@ class WikiLoginSettings(BaseSettings):
     enabled: bool = Field(default=False, alias="WIKI_LOGIN_ENABLED")
     origin: str = Field(default="", alias="WIKI_LOGIN_ORIGIN")
     client_secret: SecretStr = Field(default=SecretStr(""), alias="WIKI_TELEGRAM_CLIENT_SECRET")
+    assistant_enabled: bool = Field(default=False, alias="WIKI_ASSISTANT_ENABLED")
+    assistant_checkin: bool = Field(default=True, alias="WIKI_ASSISTANT_CHECKIN_ENABLED")
+    assistant_port: int = Field(default=8091, ge=1, le=65535, alias="WIKI_ASSISTANT_PORT")
     model_config = {"extra": "ignore"}
 
 

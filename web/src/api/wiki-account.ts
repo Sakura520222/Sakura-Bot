@@ -14,12 +14,15 @@ export interface WikiUser {
 
 interface WikiSession {
   enabled: boolean;
+  assistant_enabled?: boolean;
   user: WikiUser | null;
   can_refresh: boolean;
 }
 
 const root = "/api/wiki/account";
 export const wikiAvatarUrl = `${root}/avatar`;
+export const wikiSessionChanged = "wiki-session-changed";
+let pendingSession: Promise<WikiSession> | undefined;
 
 async function accountRequest(path: string, method = "GET", body?: unknown) {
   return fetch(`${root}${path}`, {
@@ -34,7 +37,12 @@ async function accountRequest(path: string, method = "GET", body?: unknown) {
   });
 }
 
-export async function loadWikiSession(): Promise<WikiSession> {
+export function loadWikiSession(): Promise<WikiSession> {
+  pendingSession ??= readSession().finally(() => { pendingSession = undefined; });
+  return pendingSession;
+}
+
+async function readSession(): Promise<WikiSession> {
   const response = await accountRequest("/session");
   if (!response.ok) throw new Error("Wiki 登录暂时不可用");
   const session = await response.json() as WikiSession;

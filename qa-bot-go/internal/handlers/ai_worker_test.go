@@ -104,3 +104,30 @@ func TestAIPoolPanicDoesNotKillWorker(t *testing.T) {
 	j.Submit(func(context.Context) { close(done) })
 	waitSignal(t, done)
 }
+func TestAIPoolCountsQueuedSuccessorsAcrossScopes(t *testing.T) {
+	pool := NewAIPool(context.Background(), 1, 4, time.Second)
+	defer pool.Close()
+	pool.PerUser = 2
+	old, _, err := pool.AcquireScoped(42, "private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Release()
+	old.ReservationIDs() // Seal while the preceding turn still owns a slot.
+	next, existing, err := pool.AcquireScoped(42, "private")
+	if err != nil || existing {
+		t.Fatal(existing, err)
+	}
+	if _, _, err := pool.AcquireScoped(42, "web:wiki"); err == nil {
+		t.Fatal("a queued successor did not count toward the user limit")
+	}
+	next.Release()
+	if !pool.Active(42) {
+		t.Fatal("release lost the still-running predecessor")
+	}
+	web, _, err := pool.AcquireScoped(42, "web:wiki")
+	if err != nil {
+		t.Fatal(err)
+	}
+	web.Release()
+}

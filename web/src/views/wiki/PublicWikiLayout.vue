@@ -16,6 +16,7 @@
       </header>
       <div class="wiki-header-actions" role="group" aria-label="Wiki 工具">
         <WikiAccountMenu />
+        <WikiAssistant @enabled="assistantEnabled = $event" />
         <button type="button" class="wiki-header-icon" :aria-label="themeAction" :title="themeAction" @click="toggleTheme">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
             <template v-if="isDark">
@@ -82,18 +83,22 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { WIKI_FEED_ROUTES, WIKI_KEEP_ALIVE } from "../../router/wiki-routes";
 import { invalidateChannelWiki, refreshingCount, useWikiResource, wikiUrl } from "../../composables/wiki-store";
 import { publicWikiUrl, type WikiChannel } from "../../api/wiki";
 import { canManageWiki } from "../../api/wiki-account";
 import WikiAccountMenu from "./WikiAccountMenu.vue";
+import WikiAssistant from "./WikiAssistant.vue";
+import { wikiAssistantEnabled } from "../../api/wiki-assistant";
 import "./wiki.css";
 import "./wiki-public.css";
 const route = useRoute();
 const router = useRouter();
 const query = ref("");
+const assistantEnabled = ref(false);
+provide(wikiAssistantEnabled, assistantEnabled);
 const showAdmin = ref(false);
 async function checkAdmin() {
   showAdmin.value = await canManageWiki();

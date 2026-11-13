@@ -25,6 +25,10 @@
         </div>
         <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 核实于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
         <span class="wiki-sr-only" role="status">{{ copyStatus }}</span>
+        <div v-if="assistantEnabled" class="wiki-reader-links" aria-label="向小妲提问">
+          <button type="button" @click="askArticle()">询问当前词条</button>
+          <button v-if="selectedText" type="button" @pointerdown.prevent @click="askArticle(selectedText)">询问选中文字</button>
+        </div>
         <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
           {{ bookmarkError || copyStatus }}
         </p>
@@ -100,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, shallowRef, watch, watchEffect } from "vue";
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { formatDate, publicWikiUrl, statusLabels, type WikiArticle, type WikiNode, type WikiReferences } from "../../api/wiki";
 import { isUnavailable, loadWiki, useWikiResource, wikiUrl } from "../../composables/wiki-store";
@@ -110,6 +114,7 @@ import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiReaderToc from "./WikiReaderToc.vue";
 import WikiSkeleton from "./WikiSkeleton.vue";
 import WikiState from "./WikiState.vue";
+import { wikiAskArticle, wikiAssistantEnabled } from "../../api/wiki-assistant";
 
 const route = useRoute();
 const router = useRouter();
@@ -127,6 +132,22 @@ const headings = computed(() => (data.value?.claims ?? []).map((claim) =>
   claim.key.startsWith("md:") ? plainWikiText(claim.text.split("\n")[0]).slice(0, 60) || "正文" : claim.key,
 ));
 const activeClaim = ref("");
+const assistantEnabled = inject(wikiAssistantEnabled, ref(false));
+const selectedText = ref("");
+function readSelection() {
+  const selection = document.getSelection();
+  const text = selection?.toString().trim() || "";
+  const claim = selection?.anchorNode?.parentElement?.closest(".wiki-claim-section .wiki-markdown");
+  selectedText.value = claim && selection?.focusNode && claim.contains(selection.focusNode) && [...text].length <= 500 ? text : "";
+}
+function askArticle(selected = "") {
+  if (!data.value) return;
+  window.dispatchEvent(new CustomEvent(wikiAskArticle, { detail: {
+    channel: data.value.channel_id, page: data.value.id, revision: data.value.revision_id, selected,
+  } }));
+}
+onMounted(() => document.addEventListener("selectionchange", readSelection));
+onUnmounted(() => document.removeEventListener("selectionchange", readSelection));
 const references = shallowRef<WikiReferences>();
 const showRelated = ref(false);
 const { data: related, error: relatedError, loading: relatedLoading, reload: reloadRelated } =

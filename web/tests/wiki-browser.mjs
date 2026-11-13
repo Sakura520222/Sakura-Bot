@@ -31,6 +31,8 @@ let coverUrl;
 let uploadedCover;
 let accountEnabled = false;
 let accountUser = null;
+let assistantEnabled = false;
+let assistantCheckedIn = false;
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
@@ -43,7 +45,27 @@ const server = http.createServer(async (req,res) => {
       ...channel, enabled: true, access_verified: true, cover_digest: uploadedCover?.digest,
       config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
     };
-    if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false };
+    if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false, assistant_enabled: assistantEnabled };
+    else if (endpoint === "/api/wiki/assistant/status") out = { point_units: assistantCheckedIn ? 25 : 0, free_used: 0, free_limit: 3, site_used: 2, site_limit: 100,
+      checked_in: assistantCheckedIn, checkin_enabled: true, exempt: false, day: "2026-11-13", timezone: "Asia/Shanghai" };
+    else if (endpoint === "/api/wiki/assistant/checkin") {
+      assert.equal(req.headers["x-wiki-request"], "1");
+      assistantCheckedIn = true;
+      out = { units: 25, added: true };
+    }
+    else if (endpoint === "/api/wiki/assistant/chat") {
+      assert.equal(req.headers["x-wiki-request"], "1");
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks));
+      assert.match(body.id, /^[0-9a-f]{32}$/);
+      assert.equal(body.question, "这个词条讲了什么？");
+      assert.equal(body.article.channel, "123");
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("event: accepted\ndata: true\n\n");
+      setTimeout(() => res.end('event: text\ndata: "**小妲回答**"\n\nevent: done\ndata: {}\n\n'), 50);
+      return;
+    }
     else if (endpoint === "/api/wiki/account/start") {
       assert.equal(req.headers["x-wiki-request"], "1");
       out = { authorization_url: "https://oauth.telegram.org/auth?fixture=1" };
@@ -363,6 +385,20 @@ try {
   assert.deepEqual(accountUser.privacy, { show_avatar: false, show_username: true, anonymous_contributions: false });
   await accountPage.getByRole("button", { name: "退出登录" }).click();
   await accountPage.getByRole("button", { name: "Telegram 登录", exact: true }).waitFor();
+  accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: null, avatar: false,
+    privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
+  assistantEnabled = true;
+  await accountPage.goto(url + "/wiki/123/page/article-0");
+  await accountPage.getByRole("button", { name: "询问当前词条" }).click();
+  const assistant = accountPage.getByRole("dialog", { name: "小妲助手" });
+  await assistant.getByRole("button", { name: "签到", exact: true }).click();
+  await assistant.getByText("积分 2.5", { exact: true }).waitFor();
+  await assistant.getByRole("textbox", { name: "问题" }).fill("这个词条讲了什么？");
+  await assistant.getByRole("button", { name: "发送", exact: true }).click();
+  await assistant.locator("strong").getByText("小妲回答", { exact: true }).waitFor();
+  await assistant.getByRole("button", { name: "收起助手" }).click();
+  assistantEnabled = false;
+  accountUser = null;
   await accountPage.close();
   accountEnabled = false;
   await desktop.goto(url + "/wiki/123/page/article-0#claim-12");

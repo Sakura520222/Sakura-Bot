@@ -45,7 +45,8 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { beginWikiLogin, loadWikiSession, logoutWiki, updateWikiPrivacy, wikiAvatarUrl, type WikiPrivacy } from "../../api/wiki-account";
+import { beginWikiLogin, loadWikiSession, logoutWiki, updateWikiPrivacy, wikiAvatarUrl, wikiSessionChanged, type WikiPrivacy } from "../../api/wiki-account";
+import { wikiOpenAccount } from "../../api/wiki-assistant";
 
 const route = useRoute();
 const router = useRouter();
@@ -71,6 +72,7 @@ function onFocus() {
 }
 
 onMounted(async () => {
+  window.addEventListener(wikiOpenAccount, open);
   const loginError = route.query.login_error;
   const notices: Record<string, string> = {
     expired: "登录请求已过期，请重新发起。",
@@ -91,7 +93,10 @@ onMounted(async () => {
   }
   window.addEventListener("focus", onFocus);
 });
-onUnmounted(() => window.removeEventListener("focus", onFocus));
+onUnmounted(() => {
+  window.removeEventListener("focus", onFocus);
+  window.removeEventListener(wikiOpenAccount, open);
+});
 
 function open() {
   message.value = "";
@@ -137,6 +142,7 @@ function signOut() {
   return run(async () => {
     await logoutWiki();
     if (session.value) session.value.user = null;
+    window.dispatchEvent(new Event(wikiSessionChanged));
     privacy.value = undefined;
     avatarFailed.value = false;
     dialog.value?.close();

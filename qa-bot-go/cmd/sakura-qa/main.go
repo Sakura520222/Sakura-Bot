@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 
@@ -232,6 +233,16 @@ func run() int {
 	aiPool.InboxCapacity = assistantSettings.InboxCapacity
 	aiPool.PerUser = assistantSettings.PerUserConcurrency
 	community := &handlers.Community{Config: cfg, DB: dbMgr, TG: tgClient}
+	if enabled := cfg.Env.Get("WIKI_ASSISTANT_ENABLED"); strings.EqualFold(enabled, "true") || enabled == "1" {
+		address := "127.0.0.1:" + cfg.Env.GetDefault("WIKI_ASSISTANT_PORT", "8091")
+		closeWeb, err := startWikiWeb(ctx, address, token, &wikiWeb{quota: quota, pool: aiPool,
+			stream: qaEngine.ProcessQueryStream, subscription: community.WebSubscription, log: logger})
+		if err != nil {
+			logger.Error("Wiki 助手桥接未启动", "error", err)
+		} else {
+			defer closeWeb()
+		}
+	}
 	commands := handlers.NewCommands(handlers.CommandsDeps{
 		Pool: aiPool, Access: community.Access, Community: community,
 		TG:          tgClient,

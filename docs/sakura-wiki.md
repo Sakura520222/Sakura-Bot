@@ -72,6 +72,10 @@ Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放�
 
 ## Go 助手
 
+启用 Telegram 登录后，可设置 `WIKI_ASSISTANT_ENABLED=true` 并重启主服务与 Go 助手。`WIKI_ASSISTANT_PORT` 默认 `8091`，由 Go 助手监听 `127.0.0.1`，FastAPI 在同一主机或容器内转发，反向代理只需转发 `/api/wiki/assistant/`，对该路径关闭 SSE 缓冲。`WIKI_ASSISTANT_CHECKIN_ENABLED=false` 只关闭网页签到入口，助手全局签到开关也适用于网页。
+
+网页与 Telegram 使用同一 Telegram 数字 ID、业务日时区、积分账本、免费次数和全站上限。网页对话历史使用独立会话范围。网页检索使用受公开权限与来源撤回约束的 Wiki 工具。断线后可用原请求继续接收，回放保留至下一轮、最多五分钟，并受进程内缓存容量限制。停止生成会结算退款。重启由现有账本恢复流程退回未结算预留。
+
 `wiki_search`、`wiki_get_page`、`wiki_get_related`、`wiki_get_changes`、`wiki_get_channel_profile` 直接读 MySQL，同步检查频道权限、发布指针、来源哈希和撤销状态。没有管理员模式参数，也不读取未发布页面。每个请求使用独立工具执行器，无共享的回答上下文。
 
 长期与归纳问题优先使用 Wiki；近期动态、原始证据、覆盖不足和 Wiki 不可用时使用既有 `semantic_search`、`keyword_search` 和 `get_source_detail`。回答只引用服务端返回的非空链接，并保留截止日期与争议标记。

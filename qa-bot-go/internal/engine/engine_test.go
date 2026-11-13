@@ -416,6 +416,26 @@ func TestProcessQueryStreamControlMarkers(t *testing.T) {
 
 // TestProcessQueryStreamToolCallAggregation 对接假 LLM：tool_call 增量聚合、
 // 缺 id 兜底 call_{index}、参数解析失败兜底 {}、tool 消息回填。
+func TestWikiWebOnlyExecutesPublicWikiTools(t *testing.T) {
+	h := newHarness(t, []scriptEntry{
+		{lines: []string{
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"raw","type":"function","function":{"name":"semantic_search","arguments":"{}"}},{"index":1,"id":"published","type":"function","function":{"name":"wiki_search","arguments":"{}"}}]}}]}`,
+		}},
+		{lines: []string{contentLine("公开回答")}},
+	})
+	h.tools.schemas = json.RawMessage(`[{"type":"function","function":{"name":"semantic_search"}},{"type":"function","function":{"name":"wiki_search"}}]`)
+	ctx := WithScope(context.Background(), WikiWebScope)
+	chunks := collectChunks(t, h.engine.ProcessQueryStream(ctx, "问题", 7, ""))
+	assertChunks(t, chunks, []Chunk{CtrlChunk(contracts.CtrlNewSession), TextChunk("公开回答"), CtrlChunk(contracts.CtrlDone)})
+	calls := h.tools.exec.recorded()
+	if len(calls) != 1 || calls[0].name != "wiki_search" {
+		t.Fatalf("unexpected web tool calls: %+v", calls)
+	}
+	if got := string(wikiWebSchemas(h.tools.schemas)); strings.Contains(got, "semantic_search") || !strings.Contains(got, "wiki_search") {
+		t.Fatalf("unexpected web tools: %s", got)
+	}
+}
+
 func TestProcessQueryStreamToolCallAggregation(t *testing.T) {
 	h := newHarness(t, []scriptEntry{
 		{lines: []string{
