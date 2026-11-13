@@ -152,6 +152,7 @@ export interface WikiGraph {
   publication_id: string;
   limit: number;
   truncated: boolean;
+  next_cursor?: string | null;
 }
 export interface WikiProfile {
   title?: string;

@@ -664,6 +664,22 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     graph = await runtime.reader.graph(ch["id"], limit=3)
     assert len(graph["nodes"]) == 2 and graph["edges"]
     assert all(edge["evidence_count"] > 0 for edge in graph["edges"])
+    browse = await runtime.reader.browse_graph(ch["id"], limit=2)
+    assert len(browse["nodes"]) == 2 and browse["edges"]
+    assert browse["next_cursor"] is None and not browse["truncated"]
+    first_page = await runtime.reader.browse_graph(ch["id"], limit=1)
+    assert first_page["next_cursor"]
+    second_page = await runtime.reader.browse_graph(
+        ch["id"], limit=1, cursor=first_page["next_cursor"]
+    )
+    assert len(second_page["nodes"]) == 1 and second_page["next_cursor"] is None
+    root = first_page["nodes"][0]["id"]
+    neighbour = second_page["nodes"][0]["id"]
+    assert root != neighbour
+    neighbourhood = await runtime.reader.browse_graph(ch["id"], root, limit=1)
+    assert {node["id"] for node in neighbourhood["nodes"]} == {root, neighbour}
+    assert neighbourhood["edges"]
+    assert not (await runtime.reader.browse_graph(ch["id"], relation="unknown"))["nodes"]
     timeline = await runtime.reader.timeline(ch["id"], page_size=1)
     assert len(timeline["items"]) == 1 and timeline["total_pages"] >= 2
     charged = fake.calls
@@ -676,6 +692,8 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     # Current visibility is always checked even after a successful prior graph request.
     await store.revoke(ch["id"], message_ids=[1], deleted=True)
     assert not (await runtime.reader.graph(ch["id"]))["nodes"]
+    assert not (await runtime.reader.browse_graph(ch["id"]))["nodes"]
+    assert await runtime.reader.browse_graph(ch["id"], root) is None
 
 
 async def test_manual_mode_and_budget_pause_do_not_publish(store):

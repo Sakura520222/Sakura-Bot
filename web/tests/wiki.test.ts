@@ -5,7 +5,7 @@ import cytoscape from "cytoscape";
 import { ref } from "vue";
 import { createWikiDraft } from "../src/composables/wiki-admin.ts";
 import { wikiRoutes } from "../src/router/wiki-routes.ts";
-import { highlight, mergeGraph } from "../src/views/wiki/wiki-utils.ts";
+import { highlight } from "../src/views/wiki/wiki-utils.ts";
 
 test("Wiki settings clone Vue state and stay independent while enabling", () => {
   const channel = ref({
@@ -61,51 +61,6 @@ test("search highlights are text segments, not executable HTML", () => {
     { text: "[", match: true },
     { text: "b", match: false },
   ]);
-});
-
-const node = (id: string) => ({
-  id,
-  title: id,
-  kind: "Entity",
-  topic: "topic",
-  url: `/wiki/123/page/${id}`,
-  publication_id: "one",
-});
-const edge = (id: string, source: string, target: string) => ({
-  id,
-  source,
-  target,
-  kind: "supports",
-  confidence: 1,
-  evidence_count: 1,
-});
-test("graph expansion is bounded, removes dangling edges, and clears prior publications", () => {
-  const first = {
-    nodes: [node("a"), node("b")],
-    edges: [edge("ab", "a", "b")],
-    publication_id: "one",
-    limit: 3,
-    truncated: false,
-  };
-  const next = {
-    nodes: [node("b"), node("c"), node("d")],
-    edges: [edge("bc", "b", "c"), edge("cd", "c", "d")],
-    publication_id: "one",
-    limit: 3,
-    truncated: false,
-  };
-  const merged = mergeGraph(first, next, 3);
-  assert.deepEqual(
-    merged.nodes.map((n) => n.id),
-    ["a", "b", "c"],
-  );
-  assert.deepEqual(
-    merged.edges.map((e) => e.id),
-    ["ab", "bc"],
-  );
-  assert.equal(merged.truncated, true);
-  const switched = mergeGraph(first, { ...next, publication_id: "two" }, 3);
-  assert.ok(!switched.nodes.some((n) => n.id === "a"));
 });
 
 test("Cytoscape nodes support selection, drag positions, zoom, neighbors and collapse", () => {

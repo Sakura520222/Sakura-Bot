@@ -26,6 +26,10 @@ NODE_FIELDS = """p.id,p.slug,p.kind,p.topic,c.id channel_id,
     r.id revision_id,c.published_revision publication_id"""
 EVIDENCE_COUNT = """(SELECT COUNT(DISTINCT ev.source_id) FROM wiki_evidence ev
     WHERE ev.revision_id=r.id) evidence_count"""
+GRAPH_EDGE_JOIN = """FROM wiki_publication_edges pe JOIN wiki_edges e ON e.id=pe.edge_id
+    JOIN wiki_chunks chunk ON chunk.id=e.chunk_id JOIN wiki_sources s ON s.id=chunk.source_id"""
+GRAPH_EDGE_VISIBLE = """s.deleted=FALSE AND s.hidden=FALSE AND s.excluded=FALSE
+    AND s.verified=TRUE AND s.content_hash=e.source_hash"""
 LATEST_JOIN = """FROM wiki_page_revisions r FORCE INDEX (wiki_feed_latest)
     STRAIGHT_JOIN wiki_pages p ON p.id=r.page_id AND p.channel_id=r.channel_id
     STRAIGHT_JOIN wiki_channels c ON c.id=r.channel_id
@@ -565,6 +569,118 @@ class PublicReader:
             "page": page,
             "page_size": page_size,
             "total_pages": (total["n"] + page_size - 1) // page_size,
+        }
+
+    @consistent_read
+    async def browse_graph(
+        self,
+        channel,
+        node_id=None,
+        *,
+        cursor=None,
+        limit=40,
+        kind=None,
+        topic=None,
+        relation=None,
+        q="",
+        after=None,
+        before=None,
+    ):
+        ch = await self.store.channel(channel)
+        if not ch or not await self.visible_channel(ch["id"]):
+            return None
+        publication = ch["published_revision"]
+        limit = max(1, min(limit, 50))
+        after, before = utc(after) if after else None, utc(before) if before else None
+        scope = scope_key(
+            "graph", ch["id"], publication, node_id, limit, kind, topic, relation, q, after, before
+        )
+        start, _, position = read_cursor(cursor, scope)
+        edge_conditions, edge_params = (
+            ["pe.publication_id=%s", "e.channel_id=%s", GRAPH_EDGE_VISIBLE],
+            [publication, ch["id"]],
+        )
+        for clause, value in [
+            ("e.kind=%s", relation),
+            ("s.created_at>=%s", after),
+            ("s.created_at<=%s", before),
+        ]:
+            if value is not None:
+                edge_conditions.append(clause)
+                edge_params.append(value)
+        edge_where = " AND ".join(edge_conditions)
+        conditions, params, _, ranking, rank_params = self._page_filters(
+            q,
+            ch["id"],
+            kind,
+            topic,
+            after if not node_id else None,
+            before if not node_id else None,
+            has_channel=True,
+        )
+        root = None
+        if node_id:
+            root = await self.store.one(
+                f"SELECT {NODE_FIELDS} {PAGE_JOIN} WHERE c.id=%s AND p.id=%s AND {VISIBLE}",
+                (ch["id"], node_id),
+            )
+            if not root:
+                return None
+        if node_id or relation:
+            conditions.append(
+                f"""EXISTS (SELECT 1 {GRAPH_EDGE_JOIN}
+                WHERE {edge_where} AND ((e.source_page=p.id AND (%s IS NULL OR e.target_page=%s))
+                    OR (e.target_page=p.id AND (%s IS NULL OR e.source_page=%s))))"""
+            )
+            params.extend([*edge_params, node_id, node_id, node_id, node_id])
+        if node_id:
+            conditions.append("p.id<>%s")
+            params.append(node_id)
+        sort = f"CAST(({ranking}) AS SIGNED)" if ranking else "0"
+        continuation = ""
+        if position:
+            rank, date, identity = position
+            continuation = "HAVING sort_rank<%s OR (sort_rank=%s AND (created_at,id)<(%s,%s))"
+            params.extend([rank, rank, date, identity])
+        where = " AND ".join(conditions)
+        rows = await self.store.query(
+            f"""SELECT {NODE_FIELDS},r.created_at,{sort} sort_rank
+            {PAGE_JOIN} WHERE {where} {continuation}
+            ORDER BY sort_rank DESC,r.created_at DESC,p.id DESC LIMIT %s""",
+            [*rank_params, *params, limit + 1],
+            fetch=True,
+        )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = None
+        if has_more:
+            last = rows[-1]
+            next_cursor = write_cursor(
+                scope, start, "", (last["sort_rank"], last["created_at"], last["id"])
+            )
+        nodes = [graph_node(row) for row in ([root] if root else []) + rows]
+        edges = []
+        if nodes:
+            ids = [node["id"] for node in nodes]
+            marks = ",".join(["%s"] * len(ids))
+            # Combine parallel evidence for the same directed relation so it draws one edge.
+            edges = await self.store.query(
+                f"""SELECT MIN(e.id) id,e.source_page source,e.target_page target,e.kind,
+                MAX(JSON_EXTRACT(e.relation_json,'$.confidence')+0) confidence,
+                SUM(JSON_LENGTH(e.relation_json,'$.evidence')) evidence_count
+                {GRAPH_EDGE_JOIN} WHERE {edge_where}
+                AND e.source_page IN ({marks}) AND e.target_page IN ({marks})
+                GROUP BY e.source_page,e.target_page,e.kind ORDER BY id""",
+                [*edge_params, *ids, *ids],
+                fetch=True,
+            )
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "publication_id": publication,
+            "limit": limit,
+            "truncated": has_more,
+            "next_cursor": next_cursor,
         }
 
     @consistent_read

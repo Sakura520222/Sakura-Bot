@@ -68,7 +68,20 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === "search") out = {items:cards.slice(0,Number(q.get("page_size")||20)),total:cards.length,page:1,page_size:20};
     else if (endpoint.endsWith("/timeline")) out = {items:[{...claims[0],title:cards[0].title,url:cards[0].url,event_id:"event1"}],total_pages:1,has_more:false,next_cursor:null};
     else if (endpoint.endsWith("/profile")) out = profile;
-    else if (endpoint.endsWith("/graph")) out = graph;
+    else if (endpoint.endsWith("/graph")) {
+      if (q.get("node_id")) {
+        out = {...graph,next_cursor:null};
+      } else if (q.get("cursor")) {
+        out = {...graph,nodes:cards.slice(24,36),edges:[],next_cursor:null};
+      } else {
+        const count = Number(q.get("limit") || 24);
+        const nodes = cards.slice(0, count);
+        const edges = nodes.slice(1).map((node, index) => ({
+          ...graph.edges[0], id: `edge-${index}`, source: nodes[Math.floor(index / 4)].id, target: node.id,
+        }));
+        out = {...graph,nodes,edges,next_cursor:"graph-second-batch"};
+      }
+    }
     else if (endpoint.includes("/pages/") && q.get("part") === "related") out = {previous:cards[1],next:null};
     else if (endpoint.includes("/pages/")) {
       const card = cards.find(row => row.slug === endpoint.split("/").at(-1)) || cards[0];
@@ -195,10 +208,28 @@ try {
   await page.getByRole("heading",{name:"时间轴",exact:true}).waitFor();
   await page.locator(".wiki-timeline-entry").waitFor();
   await page.getByRole("link",{name:"画像",exact:true}).click();
+  await page.locator(".wiki-article-toolbar").getByRole("heading", { name:"频道画像" }).waitFor();
+  assert.equal(await page.locator(".wiki-breadcrumb").count(), 0);
+  await page.getByRole("button", { name:"返回", exact:true }).click();
+  await page.waitForURL("**/timeline");
+  await page.getByRole("link",{name:"画像",exact:true}).click();
   await page.getByRole("button",{name:"活跃时段",exact:true}).click();
   await page.getByRole("button",{name:"11:00 UTC，50 条消息"}).click();
   await page.getByText("11:00 UTC · 50 条消息",{exact:true}).waitFor();
   await page.getByRole("link",{name:"知识地图",exact:true}).first().click();
+  await page.locator(".wiki-article-toolbar").getByRole("heading", { name:"知识地图" }).waitFor();
+  assert.equal(await page.locator(".wiki-breadcrumb").count(), 0);
+  await page.getByRole("button", { name:"返回", exact:true }).click();
+  await page.waitForURL("**/profile");
+  await page.getByRole("link",{name:"知识地图",exact:true}).first().click();
+  const nodePage = page.getByRole("navigation", { name:"节点分页" });
+  await nodePage.getByRole("button", { name:"下一批" }).click();
+  await page.locator(".wiki-graph-list button").getByText(cards[24].title, { exact:true }).waitFor();
+  assert.equal(await nodePage.getByRole("button", { name:"下一批" }).isDisabled(), true);
+  await nodePage.getByRole("button", { name:"上一批" }).click();
+  await page.locator(".wiki-graph-list button").getByText(cards[0].title, { exact:true }).waitFor();
+  await page.locator(".wiki-graph-canvas canvas").first().waitFor();
+  if (output) await page.screenshot({path:path.join(output,"graph-mobile.png")});
   await page.locator(".wiki-graph-list button").first().click();
   const nodeDialog = page.getByRole("dialog");
   await nodeDialog.waitFor();
@@ -208,6 +239,12 @@ try {
       Math.abs(top + height / 2 - innerHeight / 2) < 2;
   });
   assert.ok(centered, "Node details open in the center of the viewport");
+  await nodeDialog.getByRole("button", { name:"查看邻居" }).click();
+  await page.getByRole("button", { name:"返回节点总览" }).waitFor();
+  await page.locator(".wiki-graph-list button").getByText(cards[1].title, { exact:true }).waitFor();
+  await page.getByRole("button", { name:"返回节点总览" }).click();
+  await page.getByRole("navigation", { name:"节点分页" }).waitFor();
+  await page.locator(".wiki-graph-list button").first().click();
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({state:"hidden"});
   await page.route("https://example.invalid/image.png", route => route.fulfill({ contentType: "image/png", body: avatar }));
@@ -312,6 +349,10 @@ try {
   await desktop.getByRole("button", { name: "移除本机封面" }).click();
   await desktop.getByText("本机封面已移除", { exact: true }).waitFor();
   assert.equal(uploadedCover, undefined);
+  await desktop.goto(url + "/wiki/123/graph");
+  await desktop.locator(".wiki-graph-list button").first().waitFor();
+  await desktop.locator(".wiki-graph-canvas canvas").first().waitFor();
+  if (output) await desktop.screenshot({path:path.join(output,"graph-desktop.png")});
   assert.deepEqual(errors,[]);
   if (output) fs.writeFileSync(path.join(output,"browser-results.json"),JSON.stringify({samples,bounded,feeds},null,2));
   console.log(JSON.stringify({samples,bounded,feeds}));
