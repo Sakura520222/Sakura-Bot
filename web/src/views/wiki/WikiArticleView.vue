@@ -1,6 +1,6 @@
 <template>
   <div ref="view" class="wiki-view" @contextmenu="contextMenu">
-    <WikiArticleAdmin v-if="canAdmin && managementReady" :key="apiPath" :channel="String(route.params.channel)"
+    <WikiArticleAdmin v-if="canAdmin && managementReady && !selectedRevision" :key="apiPath" :channel="String(route.params.channel)"
       ref="manager" :slug="String(route.params.slug)" :article="data || undefined" @visibility="visibilityChanged" @published="reload()" />
     <WikiArticleMenu v-if="menu" :items="menuItems" :anchor="menu.anchor" @choose="chooseAction" @dismiss="dismissMenu" />
     <WikiArticleMenu v-else-if="selection && selectionItems.length" toolbar :items="selectionItems" :anchor="selection.anchor"
@@ -8,7 +8,10 @@
     <WikiState v-if="stale && data && !hiddenByAdmin" variant="stale" @retry="reload()" />
     <p v-if="hiddenByAdmin" class="wiki-meta">此词条当前已隐藏。 <button v-if="canAdmin" type="button" @click="manager?.open()">管理本词条</button></p>
     <WikiSkeleton v-else-if="loading" variant="article" />
-    <div v-else-if="error" class="wiki-error" role="alert">{{ error }} <button @click="reload()">重试</button> <button v-if="canAdmin" @click="manager?.open()">管理本词条</button></div>
+    <div v-else-if="error" class="wiki-error" role="alert">{{ error }} <button @click="reload()">重试</button>
+      <button v-if="selectedRevision" type="button" @click="switchVersion()">查看最新版</button>
+      <button v-else-if="canAdmin" @click="manager?.open()">管理本词条</button>
+    </div>
     <article v-else-if="data" class="wiki-article">
       <header class="wiki-reader-header">
         <RouterLink class="wiki-tag" :to="topicLink">{{ data.topic }}</RouterLink>
@@ -28,6 +31,10 @@
           </div>
         </div>
         <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 修订于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
+        <div v-if="historical" class="wiki-version-notice" role="status">
+          <span>正在查看 {{ formatDate(data.updated_at) }} 的历史版本</span>
+          <button type="button" @click="switchVersion()">返回最新版</button>
+        </div>
         <span class="wiki-sr-only" role="status">{{ copyStatus }}</span>
         <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
           {{ bookmarkError || copyStatus }}
@@ -83,8 +90,9 @@
         </details>
       </section>
       <WikiRevisionHistory ref="historyPanel" :key="data.revision_id + data.publication_id"
-        :path="apiPath" :current="data.revision_id" :total="references?.history_total ?? data.history_total ?? 1"
-        :history="references?.history" :loading="loadingReferences" :error="referenceError" @load="readReferences" />
+        :path="apiPath" :current="data.current_revision_id ?? data.revision_id" :viewing="data.revision_id"
+        :total="references?.history_total ?? data.history_total ?? 1" :history="references?.history"
+        :loading="loadingReferences" :error="referenceError" @load="readReferences" @switch-version="switchVersion" />
       <nav class="wiki-reader-links" aria-label="继续探索">
         <RouterLink :to="topicLink">同主题条目</RouterLink>
         <RouterLink :to="{ path: channelBase + '/graph', query: { node: data.id } }">在知识地图中查看</RouterLink>
@@ -137,11 +145,21 @@ const factLabels: Record<string, string> = { verified: "外部证据已核实", 
 const router = useRouter();
 const channelBase = computed(() => `/wiki/${route.params.channel}`);
 const apiPath = computed(() => `/channels/${encodeURIComponent(String(route.params.channel))}/pages/${encodeURIComponent(String(route.params.slug))}`);
+const selectedRevision = computed(() => typeof route.query.revision === "string" ? route.query.revision : undefined);
 const { data, loading, error, stale, reload } = useWikiResource<WikiArticle>(
-  () => route.name === "WikiArticle" ? wikiUrl(apiPath.value, { part: "article" }) : null,
+  () => route.name === "WikiArticle" ? wikiUrl(apiPath.value, { part: "article", revision: selectedRevision.value }) : null,
   publicWikiUrl,
   { ttlMs: 30_000 },
 );
+const historical = computed(() => !!data.value && !!selectedRevision.value && data.value.current_revision_id !== data.value.revision_id);
+function switchVersion(revision?: string) {
+  const target = revision === data.value?.current_revision_id ? undefined : revision;
+  if (target === selectedRevision.value) return;
+  const query = { ...route.query };
+  if (target) query.revision = target;
+  else delete query.revision;
+  void router.push({ query, hash: route.hash === "#history" ? "" : route.hash });
+}
 watch(apiPath, () => { hiddenByAdmin.value = false; managementReady.value = false; }, { flush: "sync" });
 watch([data, error], ([article, failure]) => { if (article || failure) managementReady.value = true; }, { immediate: true });
 function visibilityChanged(hidden: boolean) {
@@ -167,13 +185,14 @@ type Action = { id: string; label: string; icon: "edit" | "note" | "ask" | "mana
 const selectionItems = computed(() => passageActions(true));
 const menuItems = computed<Action[]>(() => [
   ...passageActions(!!menu.value?.passage?.excerpt),
-  ...(canAdmin.value ? [{ id: "manage", label: "管理本词条", icon: "manage" } as const] : []),
+  ...(canAdmin.value && !selectedRevision.value ? [{ id: "manage", label: "管理本词条", icon: "manage" } as const] : []),
   { id: "history", label: "修订历史", icon: "history" },
   { id: "copy", label: "复制链接", icon: "copy" },
 ]);
 const popupActive = () => !!document.querySelector(".wiki-shell dialog[open]");
 function passageActions(selected: boolean): Action[] {
   const items: Action[] = [];
+  if (selectedRevision.value) return items;
   if (data.value?.proposals_enabled) {
     if (data.value.annotations_enabled) items.push({ id: "note", label: "添加注解", icon: "note" });
     items.push({ id: "suggest", label: "建议修订", icon: "edit" });
@@ -281,7 +300,7 @@ const saved = computed(() => !!data.value && bookmarkedIds.value.includes(data.v
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
 let observer: IntersectionObserver | undefined;
 
-watch([() => data.value?.revision_id, () => data.value?.publication_id], () => {
+watch([selectedRevision, () => data.value?.revision_id, () => data.value?.publication_id], () => {
   references.value = undefined;
   referenceError.value = "";
   loadingReferences.value = false;
@@ -327,19 +346,20 @@ async function readReferences() {
   if (!data.value || loadingReferences.value) return;
   const revision = data.value.revision_id;
   const path = apiPath.value;
+  const selected = selectedRevision.value;
   loadingReferences.value = true;
   referenceError.value = "";
   try {
-    const result = await loadWiki(wikiUrl(path, { part: "references" }), publicWikiUrl<WikiReferences>, 0);
-    if (path !== apiPath.value || revision !== data.value?.revision_id) return;
+    const result = await loadWiki(wikiUrl(path, { part: "references", revision: selected }), publicWikiUrl<WikiReferences>, 0);
+    if (path !== apiPath.value || selected !== selectedRevision.value || revision !== data.value?.revision_id) return;
     if (result.revision_id === revision && result.publication_id === data.value?.publication_id) references.value = result;
     else await reload();
   } catch (cause) {
-    if (path !== apiPath.value) return;
+    if (path !== apiPath.value || selected !== selectedRevision.value) return;
     if (isUnavailable(cause)) await reload();
     referenceError.value = cause instanceof Error ? cause.message : "来源加载失败";
   } finally {
-    if (path === apiPath.value) loadingReferences.value = false;
+    if (path === apiPath.value && selected === selectedRevision.value) loadingReferences.value = false;
   }
 }
 function openReferences(event: Event) {
@@ -351,7 +371,10 @@ async function share() {
   clearTimeout(copyTimer);
   copyStatus.value = "";
   try {
-    await navigator.clipboard.writeText(new URL(article.url + route.hash, location.origin).href);
+    const url = new URL(article.url, location.origin);
+    if (selectedRevision.value) url.searchParams.set("revision", selectedRevision.value);
+    url.hash = route.hash;
+    await navigator.clipboard.writeText(url.href);
     if (data.value?.id !== article.id) return;
     copyStatus.value = "已复制";
     copyTimer = setTimeout(() => { copyStatus.value = ""; }, 2000);
@@ -367,3 +390,6 @@ onUnmounted(() => {
   clearTimeout(copyTimer);
 });
 </script>
+<style scoped>
+.wiki-version-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--sb-border); border-radius: 8px; background: var(--sb-surface-2); font-size: .875rem; }
+</style>

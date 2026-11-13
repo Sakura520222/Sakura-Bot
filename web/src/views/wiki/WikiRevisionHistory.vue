@@ -10,7 +10,10 @@
       <p v-else-if="error">{{ error }}</p>
       <ol v-else-if="history?.length">
         <li v-for="version in history.slice(0, 5)" :key="version.revision_id">
-          {{ formatDate(version.created_at) }}<span v-if="version.revision_id === current"> · 当前版本</span>
+          <button type="button" class="version-link" :aria-current="version.revision_id === viewing ? 'true' : undefined"
+            @click="selectVersion(version.revision_id)">{{ formatDate(version.created_at) }}</button>
+          <span v-if="version.revision_id === current"> · 最新版</span>
+          <span v-else-if="version.revision_id === viewing"> · 正在查看</span>
         </li>
       </ol>
       <p v-else>暂无可查看的版本。</p>
@@ -43,8 +46,10 @@
           </template>
           <ol class="history-list">
             <li v-for="(version, index) in history" :key="version.revision_id">
-              <time>{{ formatDate(version.created_at) }}</time>
-              <span v-if="version.revision_id === current" class="wiki-meta">当前版本</span>
+              <button type="button" class="version-link" :aria-current="version.revision_id === viewing ? 'true' : undefined"
+                @click="selectVersion(version.revision_id)">{{ formatDate(version.created_at) }}</button>
+              <span v-if="version.revision_id === current" class="wiki-meta">最新版</span>
+              <span v-else-if="version.revision_id === viewing" class="wiki-meta">正在查看</span>
               <button v-if="history[index + 1]" type="button" :disabled="comparing"
                 @click="comparePrevious(version.revision_id, history[index + 1].revision_id)">与上一版本比较</button>
             </li>
@@ -62,9 +67,9 @@ import { formatDate, publicWiki, type WikiReferences, type WikiRevisionCompariso
 import WikiRevisionDiff from "./WikiRevisionDiff.vue";
 
 const props = defineProps<{
-  path: string; current: string; total: number; history?: WikiReferences["history"]; loading: boolean; error: string;
+  path: string; current: string; viewing: string; total: number; history?: WikiReferences["history"]; loading: boolean; error: string;
 }>();
-const emit = defineEmits<{ load: [] }>();
+const emit = defineEmits<{ load: []; switchVersion: [revision: string] }>();
 const badge = ref<HTMLButtonElement>();
 const dialog = ref<HTMLDialogElement>();
 const preview = ref(false);
@@ -85,6 +90,11 @@ function open() {
   if (!dialog.value?.open) dialog.value?.showModal();
   if (!props.history) emit("load");
 }
+function selectVersion(revision: string) {
+  preview.value = false;
+  dialog.value?.close();
+  emit("switchVersion", revision);
+}
 function closed() {
   request?.abort();
   badge.value?.focus({ preventScroll: true });
@@ -97,7 +107,7 @@ watch(() => props.history, (history) => {
 }, { immediate: true });
 watch([before, after], () => { comparison.value = undefined; comparisonError.value = ""; }, { flush: "sync" });
 function versionLabel(version: WikiReferences["history"][number]) {
-  return `${formatDate(version.created_at)} · ${version.revision_id === props.current ? "当前版本" : version.revision_id.slice(0, 8)}`;
+  return `${formatDate(version.created_at)} · ${version.revision_id === props.current ? "最新版" : version.revision_id.slice(0, 8)}`;
 }
 async function compare() {
   request?.abort();
@@ -130,6 +140,9 @@ function comparePrevious(newer: string, older: string) {
 .wiki-revisions .history-badge { min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 8px; background: var(--sb-surface); color: var(--sb-accent); font-variant-numeric: tabular-nums; box-shadow: 0 2px 8px rgb(0 0 0 / 12%); }
 .history-preview { position: absolute; inset-inline-end: 0; bottom: 100%; width: max-content; max-width: min(19rem, 85vw); padding: 12px 14px; border: 1px solid var(--sb-border); border-radius: 8px; background: var(--sb-surface); box-shadow: 0 4px 16px rgb(0 0 0 / 12%); font-size: .875rem; }
 .history-preview ol { padding-inline-start: 1.25em; margin: .4em 0 0; }
+.wiki-revisions .version-link { min-height: 0; padding: 2px 0; border: 0; border-radius: 3px; background: transparent; color: var(--sb-accent); font-size: inherit; font-weight: 500; text-align: start; }
+.wiki-revisions .version-link:hover { background: transparent; text-decoration: underline; }
+.wiki-revisions .version-link[aria-current] { font-weight: 700; }
 .wiki-revisions .history-dialog { width: min(46rem, calc(100vw - 24px)); max-width: none; }
 .history-body { padding: 12px 20px 20px; max-height: min(68dvh, 38rem); overflow: auto; }
 .history-picker { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 0 0 12px; padding: 10px; border: 1px solid var(--sb-border); border-radius: 6px; }
@@ -140,6 +153,7 @@ function comparePrevious(newer: string, older: string) {
 .history-list li > * + * { margin-inline-start: .65em; }
 @media (max-width: 720px) {
   .wiki-revisions { bottom: calc(66px + env(safe-area-inset-bottom)); inset-inline-end: max(12px, env(safe-area-inset-right)); }
+  .history-list .version-link { min-height: 44px; }
   .history-body { padding-inline: 12px; }
 }
 </style>

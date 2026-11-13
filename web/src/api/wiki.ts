@@ -122,6 +122,7 @@ export interface WikiAnnotation {
   contributor?: { id: string; display_name: string; username?: string | null; avatar: boolean };
 }
 export interface WikiArticle extends WikiCard {
+  current_revision_id?: string;
   verified_at: string;
   claims: Claim[];
   proposals_enabled?: boolean;
@@ -136,6 +137,7 @@ export interface WikiRevisionComparison {
 }
 export interface WikiReferences {
   revision_id: string;
+  current_revision_id?: string;
   publication_id: string;
   sources: { id: string; type: string; created_at: string; url?: string }[];
   history: { revision_id: string; created_at: string }[];

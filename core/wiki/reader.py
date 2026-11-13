@@ -42,6 +42,11 @@ PUBLICATION_FEED_JOIN = """FROM wiki_channels c
     STRAIGHT_JOIN wiki_publication_pages pp ON pp.publication_id=pub.id
     STRAIGHT_JOIN wiki_pages p ON p.id=pp.page_id AND p.channel_id=c.id
     STRAIGHT_JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.channel_id=c.id"""
+PUBLISHED_HISTORY = f"""FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+    WHERE p.id=%s AND r.channel_id=p.channel_id AND {REVISION_VISIBLE}
+    AND EXISTS (SELECT 1 FROM wiki_publication_pages pp
+        JOIN wiki_publications pub ON pub.id=pp.publication_id
+        WHERE pp.page_id=p.id AND pp.revision_id=r.id AND pub.channel_id=p.channel_id)"""
 
 
 def like(value):
@@ -326,7 +331,7 @@ class PublicReader:
         )
 
     @consistent_read
-    async def page(self, channel, slug, *, part="full", compare=None):
+    async def page(self, channel, slug, *, part="full", compare=None, revision=None):
         ch = await self.store.channel(channel)
         if not ch:
             return None
@@ -341,6 +346,16 @@ class PublicReader:
             return None
         if compare:
             return await self.compare_revisions(row["id"], *compare)
+        current_revision = row["revision_id"]
+        historical = bool(revision and revision != current_revision)
+        if historical:
+            version = await self.store.one(
+                f"SELECT r.id revision_id,r.created_at,r.document {PUBLISHED_HISTORY} AND r.id=%s",
+                (row["id"], revision),
+            )
+            if not version:
+                return None
+            row.update(version)
         config = decode(row["config"])
         evidence_rows = await self.store.query(
             """SELECT DISTINCT s.id,s.source_type,s.message_id,s.created_at,s.edited_at
@@ -353,13 +368,11 @@ class PublicReader:
         result = page_card(row)
         doc = decode(row["document"])
         result["verified_at"] = doc["verified_at"]
-        result["proposals_enabled"] = bool(config.get("proposals_enabled"))
-        result["annotations_enabled"] = bool(config.get("annotations_enabled"))
-        history_scope = f"""FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
-            WHERE p.id=%s AND {REVISION_VISIBLE}
-            AND EXISTS (SELECT 1 FROM wiki_publication_pages pp WHERE pp.revision_id=r.id)"""
+        result["current_revision_id"] = current_revision
+        result["proposals_enabled"] = not historical and bool(config.get("proposals_enabled"))
+        result["annotations_enabled"] = not historical and bool(config.get("annotations_enabled"))
         if part == "article":
-            total = await self.store.one(f"SELECT COUNT(*) total {history_scope}", (row["id"],))
+            total = await self.store.one(f"SELECT COUNT(*) total {PUBLISHED_HISTORY}", (row["id"],))
             result["history_total"] = total["total"]
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
@@ -394,14 +407,15 @@ class PublicReader:
         result["sources_total"] = sources_total
         # Historical metadata is restricted to revisions that were actually published.
         history = await self.store.query(
-            f"SELECT r.id,r.created_at {history_scope} ORDER BY r.created_at DESC,r.id DESC LIMIT 50",
-            (row["id"],),
+            f"""SELECT r.id,r.created_at {PUBLISHED_HISTORY}
+            ORDER BY r.id=%s DESC,r.created_at DESC,r.id DESC LIMIT 50""",
+            (row["id"], current_revision),
             fetch=True,
         )
         history_total = len(history)
         if len(history) == 50:
             total = await self.store.one(
-                f"SELECT COUNT(*) total {history_scope}",
+                f"SELECT COUNT(*) total {PUBLISHED_HISTORY}",
                 (row["id"],),
             )
             history_total = total["total"]
@@ -413,7 +427,7 @@ class PublicReader:
         valid = await self.store.one(
             f"""SELECT r.id {PAGE_JOIN} WHERE c.id=%s AND c.published_revision=%s
             AND r.id=%s AND {VISIBLE}""",
-            (ch["id"], row["published_revision"], row["revision_id"]),
+            (ch["id"], row["published_revision"], current_revision),
         )
         if not valid:
             return None
@@ -422,6 +436,7 @@ class PublicReader:
                 key: result[key]
                 for key in (
                     "revision_id",
+                    "current_revision_id",
                     "publication_id",
                     "sources",
                     "sources_total",
@@ -494,10 +509,7 @@ class PublicReader:
 
     async def compare_revisions(self, page_id, before, after):
         rows = await self.store.query(
-            f"""SELECT r.id,r.created_at,r.document FROM wiki_page_revisions r
-            JOIN wiki_pages p ON p.id=r.page_id WHERE p.id=%s AND r.id IN (%s,%s)
-            AND {REVISION_VISIBLE}
-            AND EXISTS (SELECT 1 FROM wiki_publication_pages pp WHERE pp.revision_id=r.id)""",
+            f"SELECT r.id,r.created_at,r.document {PUBLISHED_HISTORY} AND r.id IN (%s,%s)",
             (page_id, before, after),
             fetch=True,
         )

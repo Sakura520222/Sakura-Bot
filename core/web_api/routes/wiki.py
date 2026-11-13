@@ -129,11 +129,16 @@ async def channel_home(channel: str, summary: bool = False):
 
 @public.api_route("/channels/{channel}/pages/{slug}", methods=["GET", "HEAD"])
 async def page(
-    channel: str, slug: str, part: Literal["full", "article", "references", "related"] = "full"
+    channel: str,
+    slug: str,
+    part: Literal["full", "article", "references", "related"] = "full",
+    revision: str | None = Query(default=None, pattern=r"^[a-f0-9]{32}$"),
 ):
     reader = runtime().reader
     if part == "related":
         return found(await reader.related(channel, slug))
+    if revision:
+        return found(await reader.page(channel, slug, part=part, revision=revision))
     return found(
         await (
             reader.page(channel, slug) if part == "full" else reader.page(channel, slug, part=part)

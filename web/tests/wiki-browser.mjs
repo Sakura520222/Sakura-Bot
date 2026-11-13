@@ -190,7 +190,7 @@ const server = http.createServer(async (req,res) => {
     }
     else if (endpoint.includes("/pages/") && q.get("part") === "related") out = {previous:cards[1],next:null};
     else if (endpoint.endsWith("/article-1/compare")) {
-      assert.equal(q.get("before"), "old-r1");
+      assert.equal(q.get("before"), "d".repeat(32));
       assert.equal(q.get("after"), "r1");
       out = {before:{id:"old-r1",created_at:"2026-11-11T16:00:00Z"},after:{id:"r1",created_at:channel.updated_at},
         changes:[{before:"旧正文",after:"新正文"},{before:null,after:"第一处的注解。"}]};
@@ -199,9 +199,14 @@ const server = http.createServer(async (req,res) => {
       const card = cards.find(row => row.slug === endpoint.split("/").at(-1)) || cards[0];
       if (articleHidden && card === cards[0]) { res.writeHead(404); return res.end(); }
       const history = [{revision_id:card.revision_id,created_at:channel.updated_at}];
-      if (card === cards[1]) history.push({revision_id:"old-r1",created_at:"2026-11-11T16:00:00Z"});
+      if (card === cards[1]) history.push({revision_id:"d".repeat(32),created_at:"2026-11-11T16:00:00Z"});
+      const historical = card === cards[1] && q.get("revision") === history[1].revision_id;
+      const version = historical ? history[1] : history[0];
       const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history,sources_total:1,history_total:history.length};
-      out = {...card,verified_at:channel.updated_at,proposals_enabled:true,annotations_enabled:true,history_total:history.length,...(q.get("part") !== "references" ? {claims:card === cards[1] ? annotatedClaims : claims}:{}),...(q.get("part") !== "article" ? refs:{})};
+      out = {...card,revision_id:version.revision_id,current_revision_id:card.revision_id,updated_at:version.created_at,verified_at:version.created_at,
+        proposals_enabled:!historical,annotations_enabled:!historical,history_total:history.length,
+        ...(q.get("part") !== "references" ? {claims:historical ? [{...claims[0], text:"旧版词条正文"}] : card === cards[1] ? annotatedClaims : claims}:{}),
+        ...(q.get("part") !== "article" ? refs:{})};
     }
     else if (endpoint === "channels/123") out = {
       ...channel,
@@ -611,13 +616,25 @@ try {
   const historyBadge = desktop.getByRole("button", { name: "修订历史", exact: true });
   assert.equal(await historyBadge.textContent(), "[2]");
   await historyBadge.hover();
-  await desktop.locator(".history-preview").getByText(/当前版本/).waitFor();
+  const historyPreview = desktop.locator(".history-preview");
+  await historyPreview.getByText(/最新版/).waitFor();
+  await historyPreview.getByRole("button").nth(1).click();
+  await desktop.waitForURL(`**/wiki/123/page/article-1?revision=${"d".repeat(32)}`);
+  await desktop.getByText("旧版词条正文", { exact: true }).waitFor();
+  await desktop.reload();
+  await desktop.getByText("旧版词条正文", { exact: true }).waitFor();
+  await desktop.getByRole("button", { name: "返回最新版", exact: true }).click();
+  await desktop.waitForURL("**/wiki/123/page/article-1");
+  await annotated.locator("mark").first().waitFor();
   await historyBadge.click();
   const historyDialog = desktop.getByRole("dialog", { name: "修订历史" });
   await assertCentered(historyDialog);
   await historyDialog.getByRole("button", { name: "与上一版本比较" }).click();
   await historyDialog.locator("del").getByText("旧", { exact: true }).waitFor();
+  await historyDialog.locator("ins").getByText("新", { exact: true }).waitFor();
   await historyDialog.locator("ins").getByText("第一处的注解。").waitFor();
+  assert.equal(await historyDialog.locator("del").first().evaluate((node) => getComputedStyle(node).backgroundColor), "rgb(251, 218, 218)");
+  assert.equal(await historyDialog.locator("ins").first().evaluate((node) => getComputedStyle(node).backgroundColor), "rgb(214, 243, 223)");
   await historyDialog.getByRole("button", { name: "关闭修订历史" }).click();
   await historyDialog.waitFor({ state: "hidden" });
   await desktop.goto(url + "/wiki/123/page/article-0");
