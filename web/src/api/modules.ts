@@ -816,9 +816,24 @@ export async function deleteTableRow(table: string, pk: string | number) {
 }
 
 export interface AssistantConfig {
- assistant: {timezone:string;checkin_enabled:boolean;require_subscription:boolean;required_channels:string[];comments:{channel:string;enabled:boolean;wake_word:string}[];max_messages:number;inbox_capacity:number;per_user_concurrency:number};
- pool:{workers:number;queue_capacity:number;timeout_seconds:number};
- channels?:string[];
+  assistant: {
+    timezone: string;
+    checkin_enabled: boolean;
+    require_subscription: boolean;
+    required_channels: string[];
+    comments: {
+      channel: string;
+      enabled: boolean;
+      wake_word: string;
+      anonymous_enabled: boolean;
+      anonymous_daily_limit: number;
+    }[];
+    max_messages: number;
+    inbox_capacity: number;
+    per_user_concurrency: number;
+  };
+  pool: { workers: number; queue_capacity: number; timeout_seconds: number };
+  channels?: string[];
 }
 export async function getAssistantConfig(){return (await apiClient.get<{success:boolean;data:AssistantConfig}>("/ai/assistant")).data;}
 export async function updateAssistantConfig(data:AssistantConfig){return (await apiClient.put("/ai/assistant",{assistant:data.assistant,pool:data.pool}, {timeout:120000})).data;}

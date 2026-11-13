@@ -282,13 +282,36 @@ const statusResetLine = "\n\n📅 重置时间：每日 00:00 (UTC)"
 // 更新抽取与分发
 // ─────────────────────────────────────────────────────────────────────
 
-// effectiveUserMessage 抽取 update.effective_user / update.message
-// （本包所有命令仅消费 Message 更新；callback 走申诉层）。
-func effectiveUserMessage(upd *models.Update) (*models.User, *models.Message, bool) {
-	if upd == nil || upd.Message == nil || upd.Message.From == nil {
+// messageActor is an internal conversation identity, never a Telegram user record.
+// A group's anonymous administrators share that group's negative actor ID.
+type messageActor struct {
+	ID        int64
+	Username  string
+	FirstName string
+	Anonymous bool
+}
+
+func effectiveUserMessage(upd *models.Update) (*messageActor, *models.Message, bool) {
+	if upd == nil || upd.Message == nil {
 		return nil, nil, false
 	}
-	return upd.Message.From, upd.Message, true
+	msg := upd.Message
+	if msg.IsAutomaticForward || msg.EditDate > 0 ||
+		(msg.Text == "" && msg.Caption == "" && len(msg.Photo) == 0 && msg.Document == nil) {
+		return nil, nil, false
+	}
+	if msg.SenderChat != nil {
+		if msg.Chat.ID >= 0 || msg.SenderChat.ID != msg.Chat.ID ||
+			(msg.Chat.Type != models.ChatTypeGroup && msg.Chat.Type != models.ChatTypeSupergroup) ||
+			(msg.SenderChat.Type != models.ChatTypeGroup && msg.SenderChat.Type != models.ChatTypeSupergroup) {
+			return nil, nil, false
+		}
+		return &messageActor{ID: msg.Chat.ID, FirstName: "本群匿名管理员", Anonymous: true}, msg, true
+	}
+	if msg.From == nil || msg.From.IsBot || msg.From.ID <= 0 {
+		return nil, nil, false
+	}
+	return &messageActor{ID: msg.From.ID, Username: msg.From.Username, FirstName: msg.From.FirstName}, msg, true
 }
 
 // optStr 空串映射为 nil（SQL NULL，对齐 Python username=None）。
@@ -387,7 +410,10 @@ func (c *Commands) Route(ctx context.Context, upd *models.Update) {
 
 // register 自动注册用户（/start、/listchannels、/subscribe、/request_summary、
 // /ask、handle_message 共用；返回值 Python 未消费）。
-func (c *Commands) register(ctx context.Context, u *models.User) {
+func (c *Commands) register(ctx context.Context, u *messageActor) {
+	if u.Anonymous || u.ID <= 0 {
+		return
+	}
 	_ = c.users.RegisterUser(ctx, u.ID, optStr(u.Username), &u.FirstName)
 }
 
@@ -395,9 +421,11 @@ func (c *Commands) register(ctx context.Context, u *models.User) {
 // 原消息，故不设 ReplyParameters）。失败记日志（Python 异常交 PTB 错误通道）。
 func (c *Commands) reply(ctx context.Context, msg *models.Message, text string, parseMode models.ParseMode, keyboard *models.ReplyKeyboardMarkup) {
 	params := &bot.SendMessageParams{
-		ChatID:    msg.Chat.ID,
-		Text:      text,
-		ParseMode: parseMode,
+		ChatID:          msg.Chat.ID,
+		MessageThreadID: msg.MessageThreadID,
+		ReplyParameters: replyParameters(msg),
+		Text:            text,
+		ParseMode:       parseMode,
 	}
 	// Python reply_markup=None → 请求体省略该字段；nil 键盘同样省略
 	//（避免 *models.ReplyKeyboardMarkup 装入 interface 后的 typed-nil）。
@@ -456,6 +484,14 @@ func (c *Commands) Status(ctx context.Context, upd *models.Update) {
 	}
 	user, msg, ok := effectiveUserMessage(upd)
 	if !ok {
+		return
+	}
+	if user.Anonymous {
+		if c.community != nil {
+			if rule, _, allowed := c.community.matchedRule(ctx, msg); allowed && rule.AnonymousEnabled {
+				c.replyPlain(ctx, msg, fmt.Sprintf("本群匿名管理员共享群级额度，每日上限 %d 次。匿名身份无法验证个人订阅，由管理员显式授权准入；不使用个人积分。", rule.AnonymousDailyLimit))
+			}
+		}
 		return
 	}
 	statusInfo := c.quota.GetUsageStatus(ctx, user.ID)
@@ -808,8 +844,10 @@ func (c *Commands) runStream(ctx context.Context, msg *models.Message, userID in
 		}
 		// 发送初始占位消息（纯文本，无 parse_mode）。
 		placeholder, err := c.tg.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: msg.Chat.ID,
-			Text:   placeholderText,
+			ChatID:          msg.Chat.ID,
+			MessageThreadID: msg.MessageThreadID,
+			ReplyParameters: replyParameters(msg),
+			Text:            placeholderText,
 		})
 		if err != nil {
 			streamErr = err
@@ -871,4 +909,12 @@ func lastPathSegment(url string) string {
 		return url[i+1:]
 	}
 	return url
+}
+
+// Public fallback streaming replies remain attached to the triggering discussion.
+func replyParameters(msg *models.Message) *models.ReplyParameters {
+	if msg.Chat.Type == models.ChatTypeGroup || msg.Chat.Type == models.ChatTypeSupergroup {
+		return &models.ReplyParameters{MessageID: msg.ID}
+	}
+	return nil
 }

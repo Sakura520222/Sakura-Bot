@@ -472,6 +472,20 @@ def inline_button_payload():
     return payload
 
 
+@pytest.fixture
+def inline_button_url():
+    """兼容旧版 URL 按钮与新版 type.url 包装，校验真实字符串。"""
+
+    def url(button):
+        value = getattr(button, "url", None)
+        if value is None:
+            value = getattr(getattr(button, "type", None), "url", None)
+        assert isinstance(value, str)
+        return value
+
+    return url
+
+
 def create_mock_message(content: str, message_id: int = 1, sender_id: int = 123456):
     """创建 Mock 消息对象的辅助函数"""
     message = MagicMock()

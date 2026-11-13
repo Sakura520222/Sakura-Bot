@@ -12,6 +12,7 @@ from telethon import events
 
 from core.i18n.i18n import t
 
+from .actors import event_actor, message_actor, reporter_snapshot
 from .ai_report_repository import atomic
 from .ai_reports import message_snapshot
 from .matcher import Match, normalize
@@ -29,18 +30,16 @@ class ReportHandler:
     async def handle(self, event):
         text = getattr(getattr(event, "message", None), "message", "") or ""
         match = REPORT_PATTERN.fullmatch(text)
-        if (
-            not match
-            or not event.is_group
-            or not event.sender_id
-            or event.sender_id <= 0
-            or event.sender_id == self.service.bot_id
-            or getattr(event.message, "edit_date", None)
-        ):
+        if not match or not event.is_group:
+            return
+        actor = event_actor(event)
+        if actor is None or actor.user_id == self.service.bot_id:
             return
         try:
-            reporter = await call(self.service.client.get_entity(event.sender_id))
-            if getattr(reporter, "bot", False):
+            reporter = (
+                await call(self.service.client.get_entity(actor.user_id)) if actor.user_id else None
+            )
+            if reporter is not None and getattr(reporter, "bot", False):
                 return
             permissions = await self.service.actions.permissions(event.chat_id, self.service.bot_id)
             if not (permissions.is_admin or permissions.is_creator):
@@ -57,17 +56,25 @@ class ReportHandler:
                 raise GuardError("guard.report_usage")
             original = await call(event.get_reply_message())
             target_id = getattr(original, "sender_id", None)
+            target_actor = message_actor(original, event.chat_id, allow_edited=True)
             if (
                 original is None
                 or getattr(original, "chat_id", None) != event.chat_id
                 or not isinstance(target_id, int)
                 or target_id <= 0
-                or target_id in {reporter.id, self.service.bot_id}
+                or target_id in {actor.user_id, self.service.bot_id}
+                or target_actor is None
+                or target_actor.actor_type != "real_user"
                 or getattr(original, "action", None)
             ):
                 raise GuardError("guard.report_invalid_target")
             case, created = await self.submit(
-                event.chat_id, reporter, original, (match[1] or "").strip()[:256], event.id
+                event.chat_id,
+                reporter,
+                original,
+                (match[1] or "").strip()[:256],
+                event.id,
+                actor=actor,
             )
             notices = await self._notices(case)
             delivered = any(row.get("message_id") and not row.get("error") for row in notices)
@@ -92,7 +99,7 @@ class ReportHandler:
         async with self.service.repository.lock(case["user_id"]) as store:
             return await store.notices(case["id"])
 
-    async def submit(self, chat_id, reporter, original, reason, report_message_id):
+    async def submit(self, chat_id, reporter, original, reason, report_message_id, *, actor=None):
         # 对原消息去重，与目标用户的处罚及审核共用数据库锁，重启后仍有效。
         event_key = hashlib.sha256(f"report:{chat_id}:{original.id}".encode()).hexdigest()
         async with self.service.repository.lock(original.sender_id) as store:
@@ -100,9 +107,13 @@ class ReportHandler:
             if existing:
                 await self.service.notifier.sync(store, existing, self.service.group(chat_id))
                 # 案件去重不丢反馈：重复举报人累计进同一条学习样本。
-                await self.service.learning.record_member_report(store, existing, reporter=reporter)
+                await self.service.learning.record_member_report(
+                    store, existing, reporter=reporter, actor=actor
+                )
                 return existing, False
             user = await call(self.service.client.get_entity(original.sender_id))
+            if getattr(user, "bot", False):
+                raise GuardError("guard.report_invalid_target")
             text = (getattr(original, "message", "") or "")[:2048]
             evidence = Match(
                 "report",
@@ -115,18 +126,7 @@ class ReportHandler:
             payload = await self.service.snapshot(chat_id, user, evidence, original)
             payload.update(
                 reported_message=message_snapshot(original),
-                reporter={
-                    "user_id": reporter.id,
-                    "name": " ".join(
-                        value
-                        for value in (
-                            getattr(reporter, "first_name", None),
-                            getattr(reporter, "last_name", None),
-                        )
-                        if value
-                    )[:256],
-                    "username": getattr(reporter, "username", None),
-                },
+                reporter=reporter_snapshot(reporter, actor),
                 report_message_id=report_message_id,
                 report_link=f"{payload['chat_link']}/{report_message_id}"
                 if payload["chat_link"]

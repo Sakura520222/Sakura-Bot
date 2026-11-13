@@ -27,6 +27,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   ai_report_review_history_window_days: "相似证据回看窗口（天）",
   ai_report_review_history_limit: "相似证据数量上限",
   ai_learning_enabled: "AI 自适应风控学习（本群）",
+  allow_anonymous_admin_report: "允许本群匿名管理员上报学习样本（真实身份不可见）",
 };
 export const guardSwitches: GuardSwitch[] = [
   "enabled", "kick_button_enabled", "verify_join", "nickname_filter", "message_filter", "block_bot_messages",
@@ -34,6 +35,7 @@ export const guardSwitches: GuardSwitch[] = [
   "share_global_blacklist", "ban_any_traditional", "allow_group_admin_review",
   "notification_enabled", "verification_notice_cleanup",
   "ai_report_review_enabled", "ai_learning_enabled",
+  "allow_anonymous_admin_report",
 ];
 export const immediateGuardFields: (keyof GuardGroup)[] = [
   ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",

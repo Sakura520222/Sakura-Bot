@@ -46,7 +46,7 @@ export default defineConfig({
         text: '开始阅读',
         items: [
           { text: '全部文档', link: '/Home' },
-          { text: 'v2.4.2 更新与升级', link: '/Release-2.4.2' },
+          { text: 'v2.4.8 更新与升级', link: '/Release-2.4.8' },
           { text: '用户文档概览', link: '/User-Guide' },
           { text: '开发者文档概览', link: '/Developer-Guide' }
         ]
@@ -60,7 +60,7 @@ export default defineConfig({
           { text: 'WebUI 管理面板', link: '/User-WebUI-Guide' },
           { text: 'Sakura Wiki 使用与管理', link: '/User-Sakura-Wiki' },
           { text: 'Sakura Guard 智能群管', link: '/User-Sakura-Guard' },
-          { text: '小妲助手（v2.4.2）', link: '/User-QA-Bot-Guide' },
+          { text: '小妲助手', link: '/User-QA-Bot-Guide' },
           { text: 'RAG 快速启动', link: '/User-RAG-Quickstart' },
           { text: '多轮对话', link: '/User-Multi-Turn-Conversation' },
           { text: '频道投票', link: '/User-Poll-Feature' }

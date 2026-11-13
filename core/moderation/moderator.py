@@ -168,6 +168,15 @@ class Moderator:
         if config.join_requests == "approve" and not rights.invite_users:
             raise GuardError("guard.invite_permission_required")
 
+    def anonymous_report_authorized(self, actor, chat_id):
+        """仅授权本群匿名学习上报，不授予审核或全局管理员权限。"""
+        return bool(
+            actor is not None
+            and actor.actor_type == "anonymous_group_admin"
+            and actor.chat_id == chat_id
+            and self.group(chat_id).allow_anonymous_admin_report
+        )
+
     async def authorized(self, user_id, chat_id, *, web=False):
         if web and user_id == "admin":
             # 现有管理 Token 登录没有 Telegram 身份，审核时单独记录 webui:admin。

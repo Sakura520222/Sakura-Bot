@@ -43,6 +43,7 @@ export interface GuardGroup {
   ai_report_review_history_window_days: number;
   ai_report_review_history_limit: number;
   ai_learning_enabled: boolean;
+  allow_anonymous_admin_report: boolean;
   mute_seconds: number;
   rules: GuardRule[];
   ban_any_traditional: boolean;
@@ -59,6 +60,17 @@ export interface GuardGroup {
 export type GuardSwitch = {
   [K in keyof GuardGroup]: GuardGroup[K] extends boolean ? K : never;
 }[keyof GuardGroup];
+export interface GuardReporter {
+  user_id: number | null;
+  name?: string;
+  username?: string | null;
+  note?: string;
+  actor_type?: "real_user" | "anonymous_group_admin";
+  actor_key?: string;
+  chat_id?: number;
+  message_id?: number;
+  source?: string;
+}
 export type GuardTable = "cases" | "whitelist" | "blacklist" | "verifications" | "notifications";
 export interface GuardRecord {
   message_cleanup_pending?: boolean;
@@ -97,7 +109,7 @@ export interface GuardRecord {
     review_generation?: number;
     review_ban_confirmed?: boolean;
     verification_failure?: unknown;
-    reporter?: { user_id: number; name?: string; username?: string };
+    reporter?: GuardReporter;
     report_link?: string;
     message_date?: string;
     has_media?: boolean;
@@ -313,7 +325,7 @@ export interface AISample {
     nickname?: string;
     usernames?: string[];
     message?: { text?: string; links?: string[] };
-    reporters?: { user_id: number; name?: string; note?: string }[];
+    reporters?: GuardReporter[];
   };
 }
 export interface AILearningJob {

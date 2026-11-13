@@ -24,6 +24,95 @@ def test_defaults_and_strict_limits():
         )
 
 
+def test_comment_anonymous_defaults_and_legacy_round_trip():
+    settings = assistant.AssistantSettings.model_validate(
+        {"comments": [{"channel": "https://t.me/test", "enabled": True}]}
+    )
+    rule = settings.comments[0]
+    assert rule.anonymous_enabled is False
+    assert rule.anonymous_daily_limit == 20
+    assert assistant.AssistantSettings.model_validate(settings.model_dump()) == settings
+
+
+@pytest.mark.parametrize("limit", [1, 20, 1000])
+def test_comment_anonymous_policy_accepts_valid_limits(limit):
+    rule = assistant.CommentSettings(
+        channel="https://t.me/test", anonymous_enabled=True, anonymous_daily_limit=limit
+    )
+    assert rule.anonymous_enabled is True
+    assert rule.anonymous_daily_limit == limit
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"anonymous_daily_limit": 0},
+        {"anonymous_daily_limit": 1001},
+        {"anonymous_daily_limit": True},
+        {"anonymous_daily_limit": 1.5},
+        {"anonymous_daily_limit": None},
+        {"anonymous_enabled": None},
+        {"anonymous_enabled": "true"},
+    ],
+)
+def test_comment_anonymous_policy_rejects_invalid_fields(fields):
+    with pytest.raises(ValidationError):
+        assistant.CommentSettings(channel="https://t.me/test", **fields)
+
+
+@pytest.mark.asyncio
+async def test_get_assistant_returns_legacy_anonymous_defaults(monkeypatch):
+    monkeypatch.setattr(
+        assistant,
+        "get_config",
+        lambda: {
+            "channels": ["https://t.me/test"],
+            "qa_assistant": {"comments": [{"channel": "https://t.me/test", "enabled": True}]},
+        },
+    )
+    result = await assistant.get_assistant()
+    rule = result["data"]["assistant"]["comments"][0]
+    assert rule["anonymous_enabled"] is False
+    assert rule["anonymous_daily_limit"] == 20
+
+
+@pytest.mark.asyncio
+async def test_update_assistant_persists_explicit_anonymous_policy(monkeypatch):
+    monkeypatch.setenv("QA_BOT_TOKEN", "123:test")
+    monkeypatch.setattr(assistant, "get_config", lambda: {"channels": ["https://t.me/test"]})
+    writes = []
+    monkeypatch.setattr(assistant, "write_config", writes.append)
+
+    async def call(token, method, payload=None, **kwargs):
+        if method == "getMe":
+            return {"id": 123, "can_read_all_group_messages": True}
+        if method == "getChat":
+            return {"id": -1001, "linked_chat_id": -1002}
+        return {"status": "administrator"}
+
+    monkeypatch.setattr(assistant, "call_method", call)
+    request = assistant.AssistantRequest(
+        assistant=assistant.AssistantSettings(
+            require_subscription=True,
+            required_channels=["https://t.me/test"],
+            comments=[
+                assistant.CommentSettings(
+                    channel="https://t.me/test",
+                    enabled=True,
+                    anonymous_enabled=True,
+                    anonymous_daily_limit=37,
+                )
+            ],
+        ),
+        pool=assistant.PoolSettings(),
+    )
+    await assistant.update_assistant(request)
+    rule = writes[0]["qa_assistant"]["comments"][0]
+    assert rule["anonymous_enabled"] is True
+    assert rule["anonymous_daily_limit"] == 37
+    assert writes[0]["qa_assistant"]["require_subscription"] is True
+
+
 @pytest.mark.asyncio
 async def test_diagnostics_uses_assistant_token_and_fail_closed(monkeypatch):
     monkeypatch.setenv("QA_BOT_TOKEN", "123:test")
@@ -257,6 +346,43 @@ async def test_comment_only_diagnostics_does_not_require_channel_admin(monkeypat
     assert "频道信息读取成功" in result["message"]
     assert "频道管理员权限已确认" not in result["message"]
     assert "关联讨论群（ID：-1002）成员身份及评论读取权限已确认" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "privacy_disabled", "expected"),
+    [
+        ("member", True, "群隐私模式已关闭"),
+        ("administrator", False, "群隐私模式已开启"),
+        ("creator", False, "群隐私模式已开启"),
+    ],
+)
+async def test_diagnostics_explains_group_message_receipt(
+    monkeypatch, status, privacy_disabled, expected
+):
+    monkeypatch.setenv("QA_BOT_TOKEN", "123:test")
+
+    async def call(token, method, payload=None, **kwargs):
+        if method == "getMe":
+            return {"id": 123, "can_read_all_group_messages": privacy_disabled}
+        if method == "getChat":
+            return {"id": -1001, "linked_chat_id": -1002}
+        assert payload == {"chat_id": -1002, "user_id": 123}
+        return {"status": status}
+
+    monkeypatch.setattr(assistant, "call_method", call)
+    settings = assistant.AssistantSettings(
+        comments=[assistant.CommentSettings(channel="https://t.me/test", enabled=True)]
+    )
+    result = (await assistant.diagnose(settings))[0]
+    assert result["ok"]
+    assert "ID：-1002" in result["message"]
+    assert f"讨论群身份为 {status}" in result["message"]
+    assert expected in result["message"]
+    assert "普通群消息接收权限已具备" in result["message"]
+    assert "实际收消息请在关联讨论群发送唤醒词验证" in result["message"]
+    if status != "member":
+        assert "讨论群管理员权限已确认" in result["message"]
 
 
 @pytest.mark.asyncio

@@ -205,7 +205,7 @@ def notification_text(case, *, link_profile=False):
             original=(original[:1000] + ("…" if len(original) > 1000 else ""))
             or t("guard.report_media" if payload.get("has_media") else "guard.report_empty"),
             reporter_name=(reporter.get("name") or str(reporter.get("user_id", "—")))[:80],
-            reporter_id=reporter.get("user_id", "—"),
+            reporter_id=reporter.get("user_id") or "—",
             reporter_username="@" + reporter["username"] if reporter.get("username") else "—",
             report_link=payload.get("report_link", ""),
             message_date=payload.get("message_date") or "—",
@@ -214,7 +214,11 @@ def notification_text(case, *, link_profile=False):
         # 仅由程序生成链接，所有用户内容保持原样显示，不能注入 HTML。
         values = {key: escape(str(value)) for key, value in values.items()}
         values["name"] = f'<a href="tg://user?id={int(case["user_id"])}">{values["name"]}</a>'
-        if reported and payload.get("reporter", {}).get("user_id"):
+        if (
+            reported
+            and isinstance(payload.get("reporter", {}).get("user_id"), int)
+            and payload["reporter"]["user_id"] > 0
+        ):
             values["reporter_name"] = (
                 f'<a href="tg://user?id={int(payload["reporter"]["user_id"])}">{values["reporter_name"]}</a>'
             )
@@ -544,7 +548,7 @@ class Notifier:
         buttons = review_buttons(case, config)
         profile_ids = [case["user_id"]]
         reporter_id = case["payload"].get("reporter", {}).get("user_id")
-        if reporter_id:
+        if isinstance(reporter_id, int) and reporter_id > 0:
             profile_ids.append(reporter_id)
         for user_id in dict.fromkeys(profile_ids):
             profile_url = f"tg://user?id={int(user_id)}"

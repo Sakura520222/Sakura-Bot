@@ -132,6 +132,7 @@
                   <n-switch v-model:value="form[field.key]" :aria-label="field.label" :loading="currentEditor?.active.value === field.key" :disabled="loading || adding || currentEditor?.active.value === field.key" />
                 </n-form-item>
               </div>
+              <p class="sub-hint">本群匿名管理员的 @admin 上报需开启本群授权及 AI 学习，所有匿名管理员共用一个群组身份。@admin 举报和上报由主 Bot 接收，请确认主 Bot 已加入本群并拥有管理员权限；若未收到消息，请检查 BotFather 隐私模式和实际消息投递。</p>
             </div>
 
             <!-- 入群验证：阈值 + 流程动作集中在一处 -->
@@ -502,7 +503,7 @@
         <n-descriptions-item label="案件">{{ detail.id || detail.case_id }}</n-descriptions-item>
         <n-descriptions-item label="群组 / 用户">{{ detail.chat_id || detail.source_chat_id }} / {{ detail.user_id }}</n-descriptions-item>
         <n-descriptions-item label="用户快照">{{ detail.payload?.name }} · @{{ detail.payload?.username || '—' }}</n-descriptions-item>
-        <n-descriptions-item v-if="detail.payload?.reporter" label="举报人">{{ detail.payload.reporter.name || '—' }} · {{ detail.payload.reporter.user_id }} · @{{ detail.payload.reporter.username || '—' }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.reporter" label="举报人">{{ detail.payload.reporter.name || '—' }}<template v-if="detail.payload.reporter.user_id"> · {{ detail.payload.reporter.user_id }} · @{{ detail.payload.reporter.username || '—' }}</template><template v-else> · 群组 {{ detail.payload.reporter.chat_id }} · 消息 {{ detail.payload.reporter.message_id }}</template></n-descriptions-item>
         <n-descriptions-item label="规则 / 原因">{{ detail.payload?.evidence?.rule_id }} · {{ detail.payload?.evidence?.reason }}</n-descriptions-item>
         <n-descriptions-item label="命中原文"><span class="evidence">{{ detail.payload?.evidence?.original }}</span></n-descriptions-item>
         <n-descriptions-item label="归一化结果"><span class="evidence">{{ detail.payload?.evidence?.normalized }}</span></n-descriptions-item>

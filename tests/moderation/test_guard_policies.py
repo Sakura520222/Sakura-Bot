@@ -123,7 +123,9 @@ async def test_result_mode_preserves_result_with_no_active_buttons(guard, store)
     assert session["payload"]["cleanup_pending"] is False
 
 
-async def test_disabled_admin_action_is_hidden_and_rejected_even_with_forged_data(guard, store):
+async def test_disabled_admin_action_is_hidden_and_rejected_even_with_forged_data(
+    guard, store, inline_button_url
+):
     config = guard.config.groups[str(CHAT)]
     config.kick_button_enabled = False
     config.verification_admin_actions = ["skip"]
@@ -135,7 +137,7 @@ async def test_disabled_admin_action_is_hidden_and_rejected_even_with_forged_dat
     await guard.recover_once()
     buttons = guard.client.sent[(CHAT, session["message_id"])]["buttons"]
     assert len(buttons) == 2
-    assert buttons[-1][0].type.url == f"tg://user?id={USER}"
+    assert inline_button_url(buttons[-1][0]) == f"tg://user?id={USER}"
     assert not any(case["payload"].get("verification_admin") for case in store.cases.values())
 
 

@@ -58,6 +58,92 @@ func TestMessageReservationsConcurrentAndIdempotent(t *testing.T) {
 		t.Fatalf("refund changed wrong amount: %d %v", used, e)
 	}
 }
+
+func TestAnonymousGroupReservationsHaveHardCapAndRefund(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+	if err := m.InitReservations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	group := -uniqueUserID()
+	day := "2099-12-20"
+	t.Cleanup(func() {
+		for _, table := range []string{"qa_message_reservations", "usage_quota", "qa_points", "qa_points_ledger"} {
+			m.DB.Exec("DELETE FROM "+table+" WHERE user_id=?", group)
+		}
+		m.DB.Exec("DELETE FROM qa_daily_total WHERE billing_day=?", day)
+	})
+	if _, err := m.DB.Exec("INSERT INTO qa_points(user_id,units) VALUES(?,100)", group); err != nil {
+		t.Fatal(err)
+	}
+	limits := contracts.QuotaLimits{UserDaily: 2, TotalDaily: 3}
+	for i := 0; i < 2; i++ {
+		result, err := m.ReserveMessageOnDay(ctx, fmt.Sprintf("group:%d:%d", group, i), group, limits, true, day)
+		if err != nil || !result.Allowed || result.IsAdmin || result.Remaining != int64(1-i) {
+			t.Fatalf("group reservation %d: %+v %v", i, result, err)
+		}
+	}
+	result, err := m.ReserveMessageOnDay(ctx, fmt.Sprintf("group:%d:cap", group), group, limits, true, day)
+	if err != nil || result.Allowed || !strings.Contains(result.Message, "匿名") {
+		t.Fatalf("group cap bypassed: %+v %v", result, err)
+	}
+	points, err := m.Points(ctx, group)
+	if err != nil || points != 100 {
+		t.Fatalf("personal points changed: %d %v", points, err)
+	}
+	id := fmt.Sprintf("group:%d:0", group)
+	for i := 0; i < 2; i++ {
+		if err := m.FinishReservation(ctx, id, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used, total, err := m.BillingUsage(ctx, group, day)
+	if err != nil || used != 1 || total != 1 {
+		t.Fatalf("group refund: used=%d total=%d err=%v", used, total, err)
+	}
+	result, err = m.ReserveMessageOnDay(ctx, id, group, limits, false, day)
+	if err != nil || result.Allowed {
+		t.Fatalf("duplicate refunded message re-admitted: %+v %v", result, err)
+	}
+	limits.TotalDaily = 1
+	result, err = m.ReserveMessageOnDay(ctx, fmt.Sprintf("group:%d:global", group), group, limits, true, day)
+	if err != nil || result.Allowed || !strings.Contains(result.Message, "全站") {
+		t.Fatalf("global cap bypassed: %+v %v", result, err)
+	}
+}
+
+func TestAnonymousGroupConcurrentReservationsShareLimit(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+	if err := m.InitReservations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	group := -uniqueUserID()
+	day := "2099-12-19"
+	t.Cleanup(func() {
+		m.DB.Exec("DELETE FROM qa_message_reservations WHERE user_id=?", group)
+		m.DB.Exec("DELETE FROM usage_quota WHERE user_id=?", group)
+		m.DB.Exec("DELETE FROM qa_daily_total WHERE billing_day=?", day)
+	})
+	limits := contracts.QuotaLimits{UserDaily: 3, TotalDaily: 10}
+	var wg sync.WaitGroup
+	var accepted atomic.Int32
+	for i := 0; i < 20; i++ {
+		wg.Go(func() {
+			result, err := m.ReserveMessageOnDay(ctx, fmt.Sprintf("group:%d:message:%d", group, i), group, limits, false, day)
+			if err != nil {
+				t.Error(err)
+			}
+			if result.Allowed {
+				accepted.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if accepted.Load() != 3 {
+		t.Fatalf("concurrent shared group cap admitted %d messages", accepted.Load())
+	}
+}
 func TestPointsCheckinGlobalCapAndRecovery(t *testing.T) {
 	m := testManager(t)
 	ctx := context.Background()

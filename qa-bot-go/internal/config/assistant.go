@@ -10,9 +10,11 @@ import (
 )
 
 type CommentAssistant struct {
-	Channel  string `json:"channel"`
-	Enabled  bool   `json:"enabled"`
-	WakeWord string `json:"wake_word"`
+	Channel             string `json:"channel"`
+	Enabled             bool   `json:"enabled"`
+	WakeWord            string `json:"wake_word"`
+	AnonymousEnabled    bool   `json:"anonymous_enabled"`
+	AnonymousDailyLimit int    `json:"anonymous_daily_limit"`
 }
 type AssistantSettings struct {
 	Timezone            string             `json:"timezone"`
@@ -70,6 +72,9 @@ func (c *Config) AssistantSettings() (AssistantSettings, error) {
 			return v, fmt.Errorf("invalid comment channel")
 		}
 		seen[ch.Channel] = true
+		if ch.AnonymousDailyLimit < 1 || ch.AnonymousDailyLimit > 1000 {
+			return v, fmt.Errorf("anonymous_daily_limit must be between 1 and 1000")
+		}
 
 		if strings.TrimSpace(v.Comments[i].WakeWord) == "" || len([]rune(v.Comments[i].WakeWord)) > 32 {
 			return v, fmt.Errorf("wake word too long")
@@ -84,11 +89,20 @@ func (s AssistantSettings) BillingDay(now time.Time) string {
 
 func (c *CommentAssistant) UnmarshalJSON(data []byte) error {
 	type alias CommentAssistant
-	v := alias{WakeWord: "小妲"}
+	v := alias{WakeWord: "小妲", AnonymousDailyLimit: 20}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if e := d.Decode(&v); e != nil {
 		return e
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"anonymous_enabled", "anonymous_daily_limit"} {
+		if bytes.Equal(bytes.TrimSpace(fields[key]), []byte("null")) {
+			return fmt.Errorf("%s cannot be null", key)
+		}
 	}
 	if strings.TrimSpace(v.WakeWord) == "" {
 		return fmt.Errorf("wake_word cannot be empty")

@@ -20,12 +20,14 @@ from telethon import events
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
+from .actors import event_actor, message_actor, reporter_key, reporter_snapshot
 from .ai_learning_repository import AILearningJobs as LearningJobStore
 from .ai_learning_repository import (
     AIRuleFeedback,
     AIRules,
     AISamples,
 )
+from .ai_report_repository import atomic
 from .ai_reports import message_snapshot
 from .ai_rule_extractor import IncompleteAIResponse, extract, sanitize_candidates
 from .matcher import Match, compiled, evidence_window, extract_links, normalize
@@ -209,21 +211,27 @@ class AILearning:
     async def handle_report(self, event):
         text = getattr(getattr(event, "message", None), "message", "") or ""
         match = ADMIN_REPORT_PATTERN.fullmatch(text)
-        if (
-            not match
-            or not event.is_group
-            or not event.sender_id
-            or event.sender_id <= 0
-            or event.sender_id == self.service.bot_id
-            or getattr(event.message, "edit_date", None)
-        ):
+        if not match or not event.is_group:
+            return
+        actor = event_actor(event)
+        if actor is None or actor.user_id == self.service.bot_id:
             return
         try:
-            reporter = await call(self.service.client.get_entity(event.sender_id))
-            if getattr(reporter, "bot", False):
+            reporter = (
+                await call(self.service.client.get_entity(actor.user_id)) if actor.user_id else None
+            )
+            if reporter is not None and getattr(reporter, "bot", False):
                 return
             # 仅认系统管理员、本群审核员或显式授权的群管理员；与 Bot 自身权限无关。
-            if not await self.service.authorized(event.sender_id, event.chat_id):
+            if actor.actor_type == "anonymous_group_admin":
+                if not self.service.anonymous_report_authorized(actor, event.chat_id):
+                    raise GuardError("error.permission_denied")
+                permissions = await self.service.actions.permissions(
+                    event.chat_id, self.service.bot_id
+                )
+                if not (permissions.is_admin or permissions.is_creator):
+                    raise GuardError("guard.report_not_managed")
+            elif not await self.service.authorized(actor.user_id, event.chat_id):
                 raise GuardError("error.permission_denied")
             if not self.enabled(event.chat_id):
                 raise GuardError("guard.ai_learning_disabled")
@@ -231,18 +239,23 @@ class AILearning:
                 raise GuardError("guard.ai_report_usage")
             original = await call(event.get_reply_message())
             target_id = getattr(original, "sender_id", None)
+            target_actor = message_actor(original, event.chat_id, allow_edited=True)
             if (
                 original is None
                 or getattr(original, "chat_id", None) != event.chat_id
                 or not isinstance(target_id, int)
                 or target_id <= 0
-                or target_id in {reporter.id, self.service.bot_id}
+                or target_id in {actor.user_id, self.service.bot_id}
+                or target_actor is None
+                or target_actor.actor_type != "real_user"
                 or getattr(original, "action", None)
             ):
                 raise GuardError("guard.ai_report_invalid_target")
             user = await call(self.service.client.get_entity(target_id))
+            if getattr(user, "bot", False):
+                raise GuardError("guard.ai_report_invalid_target")
             sample, created = await self.submit_admin_report(
-                event.chat_id, reporter, original, user, (match[1] or "").strip()[:256]
+                event.chat_id, reporter, original, user, (match[1] or "").strip()[:256], actor=actor
             )
             key = "guard.ai_report_submitted" if created else "guard.ai_report_duplicate"
             await event.reply(t(key, sample_id=sample["id"][:12]), parse_mode=None)
@@ -255,28 +268,38 @@ class AILearning:
             await event.reply(t("guard.ai_report_failed"), parse_mode=None)
         raise events.StopPropagation
 
-    async def submit_admin_report(self, chat_id, reporter, original, user, note):
+    def _check_anonymous_report_policy(self, chat_id, actor):
+        if actor is not None and actor.actor_type == "anonymous_group_admin":
+            if not self.service.anonymous_report_authorized(actor, chat_id):
+                raise GuardError("error.permission_denied")
+            if not self.enabled(chat_id) or not self.source_allowed("admin_report"):
+                raise GuardError("guard.ai_learning_disabled")
+
+    async def submit_admin_report(self, chat_id, reporter, original, user, note, *, actor=None):
         """上报只创建样本与异步任务；不处罚目标、不直接生成生效规则。"""
         if not self.source_allowed("admin_report"):
             raise GuardError("guard.ai_learning_disabled")
         entry = {
-            "user_id": reporter.id,
-            "name": nickname_text(reporter)[:256],
-            "username": getattr(reporter, "username", None),
+            **reporter_snapshot(reporter, actor),
             "at": utc_now_naive().isoformat(),
             "note": note,
         }
-        async with self.service.repository.lock(user.id) as store:
+        async with self.service.repository.lock(user.id) as store, atomic(store):
+            # 获取目标锁期间可能热重载撤权；写入前读取当前群策略。
+            self._check_anonymous_report_policy(chat_id, actor)
             existing = await self.samples.by_key(store, sample_key(chat_id, original.id))
+            self._check_anonymous_report_policy(chat_id, actor)
             if existing:
                 reporters = existing["payload"].setdefault("reporters", [])
-                if not any(item.get("user_id") == reporter.id for item in reporters):
+                if not any(reporter_key(item) == reporter_key(entry) for item in reporters):
                     reporters.append(entry)
                     await self.samples.save(store, existing)
+                self._check_anonymous_report_policy(chat_id, actor)
                 return existing, False
             case = await store.case_for_event(
                 hashlib.sha256(f"report:{chat_id}:{original.id}".encode()).hexdigest()
             )
+            self._check_anonymous_report_policy(chat_id, actor)
             payload = self._evidence_payload(chat_id, user, original)
             payload["reporters"] = [entry]
             sample = {
@@ -302,11 +325,12 @@ class AILearning:
                     user_id=user.id,
                     kind="admin_report",
                     polarity="neutral",
-                    actor=f"telegram:{reporter.id}",
-                    payload={"note": note},
+                    actor=reporter_key(entry),
+                    payload={"note": note, "reporter": entry},
                 )
                 await self.samples.save(store, row, status="queued")
                 await self.jobs.enqueue(store, row)
+                self._check_anonymous_report_policy(chat_id, actor)
                 self.wake_event.set()
             return row, created
 
@@ -320,7 +344,7 @@ class AILearning:
         }
 
     # ── 成员举报与审核结果接入 ──
-    async def record_member_report(self, store, case, reporter=None):
+    async def record_member_report(self, store, case, reporter=None, *, actor=None):
         """普通成员举报仅作为待验证样本；与管理员确认样本权重不同。
 
         同一原消息的重复举报不新建样本，但累计不同举报人，
@@ -335,14 +359,13 @@ class AILearning:
             existing = await self.samples.by_key(store, sample_key(case["chat_id"], message_id))
             if existing:
                 payload_changed = False
-                if reporter is not None:
+                if reporter is not None or actor is not None:
                     reporters = existing["payload"].setdefault("reporters", [])
-                    if not any(item.get("user_id") == reporter.id for item in reporters):
+                    entry = reporter_snapshot(reporter, actor)
+                    if not any(reporter_key(item) == reporter_key(entry) for item in reporters):
                         reporters.append(
                             {
-                                "user_id": reporter.id,
-                                "name": nickname_text(reporter)[:256],
-                                "username": getattr(reporter, "username", None),
+                                **entry,
                                 "at": utc_now_naive().isoformat(),
                                 "note": "",
                             }
@@ -363,9 +386,7 @@ class AILearning:
                 "message": case["payload"].get("reported_message") or {},
                 "reporters": [
                     {
-                        "user_id": reporter.get("user_id"),
-                        "name": reporter.get("name", ""),
-                        "username": reporter.get("username"),
+                        **reporter,
                         "at": case["created_at"].isoformat() if case.get("created_at") else "",
                         "note": case["payload"].get("evidence", {}).get("reason", ""),
                     }

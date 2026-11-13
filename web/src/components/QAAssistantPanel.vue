@@ -75,7 +75,7 @@
       <section class="settings-section">
         <h3>评论区助手</h3>
         <n-text depth="3"
-          >选择小妲参与的频道，用户可在评论开头使用唤醒词，或直接回复助手消息提问。</n-text
+          >选择小妲参与的频道。用户可在频道实际关联的讨论群直接使用开头唤醒词、@助手 Bot 或回复助手消息提问。帖子评论沿用帖子上下文，群内直接提问按群组或话题保持会话。</n-text
         >
         <n-empty
           v-if="!form.assistant.comments.length"
@@ -101,6 +101,33 @@
               :maxlength="32"
             />
           </n-form-item>
+          <template v-if="rule.enabled">
+            <div class="setting-row gap">
+              <div>
+                <div class="setting-title">允许本群匿名管理员使用助手</div>
+                <n-text depth="3">仅接受当前关联讨论群的匿名管理员群组身份。</n-text>
+              </div>
+              <n-switch
+                v-model:value="rule.anonymous_enabled"
+                :aria-label="'允许 ' + rule.channel + ' 关联讨论群匿名管理员使用助手'"
+              />
+            </div>
+            <div class="helper-note">
+              匿名管理员的真实账号被隐藏，无法验证个人订阅。开启即授权本群身份在已设置必订阅频道时使用助手。同一讨论群的匿名管理员共享每日额度，按上方业务时区重置，仍受全站每日上限约束。匿名群组身份使用独立会话与群组额度。个人积分与签到适用于真实用户账号。
+            </div>
+            <n-form-item
+              v-if="rule.anonymous_enabled"
+              label="匿名管理员群组每日共享额度"
+              class="wake-input"
+            >
+              <n-input-number
+                v-model:value="rule.anonymous_daily_limit"
+                :min="1"
+                :max="1000"
+                :precision="0"
+              />
+            </n-form-item>
+          </template>
         </div>
         <div class="helper-note">
           收集接入后可见的帖子与评论，并同步可见编辑。请关闭助手的群隐私模式或将其设为讨论群管理员。
@@ -238,12 +265,14 @@ async function load() {
     form.value = (await getAssistantConfig()).data;
     const existing = form.value.assistant.comments;
     form.value.assistant.comments = (form.value.channels ?? []).map(
-      (ch) =>
-        existing.find((r) => r.channel === ch) ?? {
-          channel: ch,
-          enabled: false,
-          wake_word: "小妲",
-        },
+      (ch) => ({
+        channel: ch,
+        enabled: false,
+        wake_word: "小妲",
+        anonymous_enabled: false,
+        anonymous_daily_limit: 20,
+        ...existing.find((r) => r.channel === ch),
+      }),
     );
     saved.value = draftJSON();
   } catch (e) {

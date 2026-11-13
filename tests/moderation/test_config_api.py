@@ -129,6 +129,7 @@ def test_api_config_validates_types_and_preserves_existing_fields(api, config_st
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",
+        "allow_anonymous_admin_report",
         "verification_notice_cleanup",
     ],
 )
