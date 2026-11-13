@@ -424,7 +424,7 @@ class Knowledge:
                 policy = manifest.get("review_policy")
                 if not policy:
                     raise ValueError("Job predates independent review; rebuild before publishing")
-                if job["kind"] in {"update", "reconcile"}:
+                if job["kind"] in {"update", "reconcile", "proposal"}:
                     # 增量任务只携带增量修订：与基线快照合并得到完整发布清单
                     revisions = await self.expand_revisions(cur, ch, manifest)
                 else:
@@ -534,6 +534,13 @@ class Knowledge:
                 "UPDATE wiki_channels SET published_revision=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
                 (publication_id, channel),
             )
+            await cur.execute(
+                """INSERT IGNORE INTO wiki_contributions
+                SELECT e.id,e.revision_id,%s,UTC_TIMESTAMP(6) FROM wiki_edit_proposals e
+                JOIN wiki_publication_pages pp ON pp.revision_id=e.revision_id AND pp.publication_id=%s
+                WHERE e.channel_id=%s AND e.status='approved'""",
+                (publication_id, publication_id, channel),
+            )
             if (
                 not rollback
                 and ch["source_generation"] == progress.get("source_generation")
@@ -570,67 +577,93 @@ class Knowledge:
         It may change an assertion, but cannot invent sources or restore revoked evidence.
         Publication still requires the normal background manifest and explicit publish step.
         """
-        new_id = uuid.uuid4().hex
         async with self.store.transaction() as cur:
             await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
-            await cur.execute(
-                f"""SELECT r.* FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
-                WHERE r.id=%s AND r.channel_id=%s AND {REVISION_EVIDENCE}""",
-                (revision_id, channel),
-            )
-            old = await cur.fetchone()
-            if not old:
-                raise ValueError("Correction requires current valid evidence")
-            document = decode(old["document"])
-            if not 0 <= ordinal < len(document["claims"]):
-                raise ValueError("Unknown claim")
+            return await self.create_correction(cur, channel, revision_id, ordinal, text, actor)
+
+    async def create_correction(
+        self,
+        cur,
+        channel,
+        revision_id,
+        ordinal,
+        text,
+        actor,
+        *,
+        annotation=None,
+        proposal_id=None,
+        replace_text=True,
+    ):
+        new_id = uuid.uuid4().hex
+        await cur.execute(
+            f"""SELECT r.* FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+            WHERE r.id=%s AND r.channel_id=%s AND {REVISION_EVIDENCE}""",
+            (revision_id, channel),
+        )
+        old = await cur.fetchone()
+        if not old:
+            raise ValueError("Correction requires current valid evidence")
+        document = decode(old["document"])
+        if proposal_id:
+            document["community_contributions"] = [
+                *document.get("community_contributions", []),
+                proposal_id,
+            ]
+        if not 0 <= ordinal < len(document["claims"]):
+            raise ValueError("Unknown claim")
+        if annotation:
+            claim = document["claims"][ordinal]
+            claim["community_notes"] = [*claim.get("community_notes", []), annotation]
+            if annotation["kind"] in {"dispute", "outdated"}:
+                claim["status"] = "disputed" if annotation["kind"] == "dispute" else "superseded"
+        if replace_text:
             document["claims"][ordinal]["text"] = text
-            document["verified_at"] = utc().isoformat()
+        document["verified_at"] = utc().isoformat()
+        await cur.execute(
+            """INSERT INTO wiki_page_revisions
+            (id,channel_id,page_id,document,content_hash,search_text,approved,created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,FALSE,UTC_TIMESTAMP(6))""",
+            (
+                new_id,
+                channel,
+                old["page_id"],
+                encode(document),
+                digest(document),
+                "\n".join(
+                    [
+                        document["title"],
+                        document["topic"],
+                        *[f["text"] for f in document["claims"]],
+                    ]
+                ),
+            ),
+        )
+        await cur.execute(
+            "INSERT INTO wiki_evidence SELECT %s,source_id,source_hash,chunk_id,start_offset,end_offset FROM wiki_evidence WHERE revision_id=%s",
+            (new_id, revision_id),
+        )
+        for index, fact in enumerate(document["claims"]):
             await cur.execute(
-                """INSERT INTO wiki_page_revisions
-                (id,channel_id,page_id,document,content_hash,search_text,approved,created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,FALSE,UTC_TIMESTAMP(6))""",
+                "INSERT INTO wiki_revision_claims VALUES (%s,%s,%s,%s,%s)",
                 (
                     new_id,
-                    channel,
-                    old["page_id"],
-                    encode(document),
-                    digest(document),
-                    "\n".join(
-                        [
-                            document["title"],
-                            document["topic"],
-                            *[f["text"] for f in document["claims"]],
-                        ]
-                    ),
+                    index,
+                    utc(fact["occurred_at"]) if fact.get("occurred_at") else None,
+                    utc(fact["source_created_at"]),
+                    encode(fact),
                 ),
             )
-            await cur.execute(
-                "INSERT INTO wiki_evidence SELECT %s,source_id,source_hash,chunk_id,start_offset,end_offset FROM wiki_evidence WHERE revision_id=%s",
-                (new_id, revision_id),
-            )
-            for index, fact in enumerate(document["claims"]):
-                await cur.execute(
-                    "INSERT INTO wiki_revision_claims VALUES (%s,%s,%s,%s,%s)",
-                    (
-                        new_id,
-                        index,
-                        utc(fact["occurred_at"]) if fact.get("occurred_at") else None,
-                        utc(fact["source_created_at"]),
-                        encode(fact),
-                    ),
-                )
-            await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (old["page_id"],))
-            await cur.execute(
-                "INSERT IGNORE INTO wiki_dirty_pages VALUES (%s,%s)", (channel, old["page_id"])
-            )
-            await cur.execute(
-                "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
-                (channel,),
-            )
-            await self.store.audit(
-                cur, channel, "correct", new_id, actor, {"previous": revision_id, "claim": ordinal}
-            )
+        await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (old["page_id"],))
+        await cur.execute(
+            "INSERT IGNORE INTO wiki_dirty_pages VALUES (%s,%s)", (channel, old["page_id"])
+        )
+        await cur.execute(
+            "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
+            (channel,),
+        )
+        await self.store.audit(
+            cur, channel, "correct", new_id, actor, {"previous": revision_id, "claim": ordinal}
+        )
         return new_id
 
     async def manage_page(self, channel, page_id, action, actor, **options):

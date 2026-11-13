@@ -233,10 +233,11 @@ func run() int {
 	aiPool.InboxCapacity = assistantSettings.InboxCapacity
 	aiPool.PerUser = assistantSettings.PerUserConcurrency
 	community := &handlers.Community{Config: cfg, DB: dbMgr, TG: tgClient}
+	queryStream := withResearch(token, cfg.Env.GetDefault("WEBUI_PORT", "8080"), qaEngine.ProcessQueryStream)
 	if enabled := cfg.Env.Get("WIKI_ASSISTANT_ENABLED"); strings.EqualFold(enabled, "true") || enabled == "1" {
 		address := "127.0.0.1:" + cfg.Env.GetDefault("WIKI_ASSISTANT_PORT", "8091")
 		closeWeb, err := startWikiWeb(ctx, address, token, &wikiWeb{quota: quota, pool: aiPool,
-			stream: qaEngine.ProcessQueryStream, subscription: community.WebSubscription, log: logger})
+			stream: queryStream, subscription: community.WebSubscription, log: logger})
 		if err != nil {
 			logger.Error("Wiki 助手桥接未启动", "error", err)
 		} else {
@@ -249,7 +250,7 @@ func run() int {
 		Users:       users,
 		Quota:       quota,
 		Sessions:    conversations,
-		Engine:      qaEngine,
+		Engine:      researchEngine{stream: queryStream},
 		Persona:     cfg,
 		Submissions: submissionHandler,
 		Log:         slogBridge{logger},

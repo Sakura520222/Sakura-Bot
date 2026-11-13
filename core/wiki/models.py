@@ -70,6 +70,11 @@ class WikiConfig(Strict):
     public: bool = False
     paused: bool = False
     publication_mode: Literal["review", "auto"] = "review"
+    fact_check: bool = False
+    fact_check_required: bool = False
+    proposals_enabled: bool = False
+    annotations_enabled: bool = False
+    proposal_notifications: bool = False
     frequency: Literal["manual", "daily", "weekly", "cron"] = "manual"
     cron: str = "0 3 * * *"
     timezone: str = "Asia/Shanghai"
@@ -206,6 +211,10 @@ class ClaimReview(Strict):
     index: int = Field(ge=0, strict=True)
     status: Literal["supported", "unsupported", "sensitive"]
     reason: str = Field(min_length=1, max_length=500)
+    fact_status: Literal[
+        "verified", "partial", "disputed", "unverified", "outdated", "rejected"
+    ] = "unverified"
+    citations: list[int] = Field(default_factory=list, max_length=10)
 
 
 class Review(Strict):

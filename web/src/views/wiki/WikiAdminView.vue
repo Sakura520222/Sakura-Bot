@@ -99,6 +99,11 @@
             @compositionend="autosave?.setComposing(false)"
           >
             <div class="settings-grid">
+              <n-form-item label="自动联网核查"><n-switch :value="!!draft.fact_check" @update:value="draft.fact_check = $event" /></n-form-item>
+              <n-form-item label="仅发布已获外部证据核实的修订"><n-switch :value="!!draft.fact_check_required" @update:value="draft.fact_check_required = $event" /></n-form-item>
+              <n-form-item label="开放登录用户投稿"><n-switch :value="!!draft.proposals_enabled" @update:value="draft.proposals_enabled = $event" /></n-form-item>
+              <n-form-item label="开放社区注解"><n-switch :value="!!draft.annotations_enabled" @update:value="draft.annotations_enabled = $event" /></n-form-item>
+              <n-form-item label="通过主 Bot 通知管理员"><n-switch :value="!!draft.proposal_notifications" @update:value="draft.proposal_notifications = $event" /></n-form-item>
               <n-form-item label="启用 Wiki"
                 ><n-switch v-model:value="draft.enabled"
               /></n-form-item>
@@ -305,6 +310,7 @@
           </n-form>
         </n-card>
       </template>
+      <WikiCommunityAdmin v-else-if="tab === 'community'" />
       <template v-else-if="tab === 'jobs'">
         <n-card title="历史消息采集" size="small"
           ><n-space
@@ -587,12 +593,18 @@ import {
 import WikiJobProgress from "./WikiJobProgress.vue";
 import WikiExclusions from "./WikiExclusions.vue";
 import WikiMarkdown from "./WikiMarkdown.vue";
+import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;
   public: boolean;
   paused: boolean;
   publication_mode: string;
+  fact_check?: boolean;
+  fact_check_required?: boolean;
+  proposals_enabled?: boolean;
+  annotations_enabled?: boolean;
+  proposal_notifications?: boolean;
   frequency: string;
   cron: string;
   timezone: string;
@@ -864,6 +876,7 @@ async function switchChannel(value: string) {
 
 let timer: ReturnType<typeof setInterval> | undefined;
 const tabs = [
+  { key: "community", label: "社区与联网" },
   { key: "config", label: "设置" },
   { key: "jobs", label: "任务" },
   { key: "review", label: "草稿" },
@@ -871,6 +884,7 @@ const tabs = [
   { key: "purge", label: "数据维护" },
 ];
 const jobLabels: Record<string, string> = {
+  proposal: "投稿审校",
   backfill: "全量历史回溯",
   update: "增量更新",
   reconcile: "历史核对",

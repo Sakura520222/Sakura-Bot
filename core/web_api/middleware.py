@@ -55,8 +55,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from .routes.wiki import WIKI_AVATAR_ROUTE, is_public_wiki_request
         from .routes.wiki_account import METHODS
         from .routes.wiki_assistant import is_assistant_request
+        from .routes.wiki_community import is_community_request
+        from .routes.wiki_research import PATH as research_path
 
-        if (request.method, path) in METHODS or is_assistant_request(request.method, path):
+        if path == research_path and request.method == "POST":
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        if (
+            (request.method, path) in METHODS
+            or is_assistant_request(request.method, path)
+            or is_community_request(request.method, path)
+        ):
             if path.endswith(("/start", "/callback")):
                 peer = request.client.host if request.client else "unknown"
                 window = int(time.monotonic() // 60)

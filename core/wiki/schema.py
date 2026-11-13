@@ -5,6 +5,30 @@
 """Additive, idempotent MySQL migration. Wiki owns all wiki_* tables."""
 
 SCHEMA_VERSION = 1
+WIKI_COMMUNITY_TABLES = (
+    """CREATE TABLE IF NOT EXISTS wiki_search_cache (
+        cache_key CHAR(64) PRIMARY KEY, result JSON NOT NULL, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_search_expiry(expires_at)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_search_usage (
+        day DATE NOT NULL, provider VARCHAR(16) NOT NULL, calls INT NOT NULL DEFAULT 0,
+        cost_units BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(day,provider)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_fact_checks (
+        cache_key CHAR(64) PRIMARY KEY, result JSON NOT NULL, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_fact_expiry(expires_at)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_edit_proposals (
+        id CHAR(32) PRIMARY KEY, user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        channel_id VARCHAR(32) NOT NULL, page_id CHAR(32) NOT NULL, base_revision CHAR(32) NOT NULL,
+        revision_id CHAR(32), kind VARCHAR(24) NOT NULL, payload JSON NOT NULL, status VARCHAR(16) NOT NULL,
+        actor VARCHAR(128), note VARCHAR(1000), created_at DATETIME(6) NOT NULL, updated_at DATETIME(6) NOT NULL,
+        INDEX wiki_proposal_queue(status,created_at), INDEX wiki_proposal_user(user_id,created_at),
+        UNIQUE KEY wiki_proposal_revision(revision_id),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE,
+        FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_contributions (
+        proposal_id CHAR(32) PRIMARY KEY, revision_id CHAR(32) NOT NULL, publication_id CHAR(32) NOT NULL,
+        created_at DATETIME(6) NOT NULL, INDEX wiki_contribution_revision(revision_id),
+        FOREIGN KEY(proposal_id) REFERENCES wiki_edit_proposals(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+)
 WIKI_ACCOUNT_TABLES = (
     """CREATE TABLE IF NOT EXISTS wiki_users (
         id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -219,6 +243,7 @@ SCHEMA = (
     # 增量装配只重建这些页面而不是遍历全部历史页面。
     DIRTY_PAGES_TABLE,
     *WIKI_ACCOUNT_TABLES,
+    *WIKI_COMMUNITY_TABLES,
 )
 
 # Shared with Go (contract-tested). No snapshot, rollback or index bypasses this gate.

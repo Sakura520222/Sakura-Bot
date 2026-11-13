@@ -10,11 +10,13 @@ from datetime import UTC, datetime, timedelta
 
 from .accounts import WikiAccounts
 from .collector import SourceCollector
+from .community import Community
 from .engine import BudgetExceeded, WikiEngine, WikiResponseError
 from .models import WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
 from .store import LeaseLost, WikiSchemaError, WikiStore, decode
+from .web_research import WebResearch
 
 logger = logging.getLogger(__name__)
 _runtime = None
@@ -53,6 +55,9 @@ class WikiRuntime:
         self.accounts = WikiAccounts(store)
         self.collector = SourceCollector(store, client)
         self.engine = WikiEngine(store)
+        self.community = Community(store, self.engine.knowledge)
+        self.research = WebResearch(store)
+        self.engine.research = self.research
         self.reader = PublicReader(store)
         self.avatar = None
         self.tasks = set()
@@ -180,6 +185,7 @@ class WikiRuntime:
                 hours=1
             ):
                 await self.accounts.cleanup()
+                await self.research.prune()
                 self._last_account_cleanup = utc()
             for row in await self.store.query(
                 "SELECT * FROM wiki_channels WHERE enabled=TRUE", fetch=True

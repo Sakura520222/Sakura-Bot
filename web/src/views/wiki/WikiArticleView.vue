@@ -43,6 +43,16 @@
         <span v-if="claim.status !== 'current'" class="wiki-tag">{{ statusLabels[claim.status] }}</span>
         <span v-if="claim.occurred_at" class="wiki-meta">发生于 {{ formatDay(claim.occurred_at) }}</span>
         <WikiMarkdown :text="claim.text" :channel="data.channel_id" image-preview />
+        <details v-if="claim.fact_check" class="wiki-evidence-card">
+          <summary>{{ factLabels[claim.fact_check.status] || "待核实" }}</summary>
+          <p>{{ claim.fact_check.reason }}<span v-if="claim.fact_check.checked_at"> · {{ claim.fact_check.model }} · {{ formatDay(claim.fact_check.checked_at) }}</span></p>
+          <ul><li v-for="source in claim.fact_check.sources" :key="source.url"><a :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.title || source.url }}</a></li></ul>
+        </details>
+        <span v-else class="wiki-meta">待核实</span>
+        <details v-for="(note, i) in claim.community_notes || []" :key="i" class="wiki-evidence-card">
+          <summary>社区补充</summary><WikiMarkdown :text="note.text" :channel="data.channel_id" />
+          <ul><li v-for="source in note.sources" :key="source"><a :href="source" target="_blank" rel="noopener noreferrer">{{ source }}</a></li></ul>
+        </details>
         <span v-if="claim.valid_until" class="wiki-meta">有效至 {{ formatDay(claim.valid_until) }}</span>
         <details v-if="claim.evidence.length" class="wiki-evidence-card">
           <summary>{{ claim.evidence.length }} 条引用证据</summary>
@@ -54,6 +64,29 @@
         </details>
       </section>
       <button v-if="visibleCount < data.claims.length" @click="visibleCount += 8">继续阅读</button>
+      <WikiCommunity :article="data" />
+      <details v-if="canAdmin" class="wiki-claim" @toggle="adminOpen = ($event.target as HTMLDetailsElement).open">
+        <summary>管理本词条</summary>
+        <template v-if="adminOpen">
+          <button @click="moderatePage('lock')">锁定</button> <button @click="moderatePage('unlock')">解锁</button>
+          <button @click="moderatePage('hide')">隐藏</button>
+          <button @click="loadPublications">发布或回滚</button>
+          <a href="#history">查看版本</a>
+          <form @submit.prevent="correctClaim">
+            <label>段落 <input v-model.number="adminClaim" type="number" min="1" :max="data.claims.length" /></label>
+            <label>修订正文 <textarea v-model="adminText" required maxlength="14000" /></label>
+            <button type="submit">保存修订</button>
+          </form>
+          <ul v-if="publicationChoices.length">
+            <li v-for="entry in publicationChoices" :key="entry.id">
+              {{ entry.id.slice(0, 12) }} · {{ formatDate(entry.created_at) }}
+              <button @click="publishChoice(entry)">{{ entry.kind === 'publish' ? '发布' : '回滚' }}</button>
+            </li>
+          </ul>
+          <p v-if="adminNotice" role="status">{{ adminNotice }}</p>
+          <WikiCommunityAdmin :page="data.id" />
+        </template>
+      </details>
       <section id="sources" class="wiki-claim">
         <h2>参考来源</h2>
         <details @toggle="openReferences">
@@ -111,12 +144,55 @@ import { isUnavailable, loadWiki, useWikiResource, wikiUrl } from "../../composa
 import { useWikiBookmarks } from "../../composables/wiki-bookmarks";
 import { formatDay, plainWikiText } from "./wiki-utils";
 import WikiMarkdown from "./WikiMarkdown.vue";
+import WikiCommunity from "./WikiCommunity.vue";
+import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
+import { canManageWiki } from "../../api/wiki-account";
+import { wikiAdmin } from "../../api/wiki";
 import WikiReaderToc from "./WikiReaderToc.vue";
 import WikiSkeleton from "./WikiSkeleton.vue";
 import WikiState from "./WikiState.vue";
 import { wikiAskArticle, wikiAssistantEnabled } from "../../api/wiki-assistant";
 
 const route = useRoute();
+const canAdmin = ref(false);
+const adminOpen = ref(false);
+const adminNotice = ref("");
+const adminClaim = ref(1);
+const adminText = ref("");
+const publicationChoices = ref<{ id: string; created_at: string; kind: string }[]>([]);
+onMounted(async () => { canAdmin.value = await canManageWiki(); });
+async function moderatePage(action: string) {
+  if (!data.value) return;
+  try { await wikiAdmin(`/channels/${data.value.channel_id}/pages/${data.value.id}`, "POST", { action }); adminNotice.value = "已保存。"; }
+  catch { adminNotice.value = "操作失败。"; }
+}
+async function correctClaim() {
+  if (!data.value) return;
+  try { await wikiAdmin(`/channels/${data.value.channel_id}/revisions/${data.value.revision_id}/correct`, "POST", { claim: adminClaim.value - 1, text: adminText.value }); adminNotice.value = "修订已提交审校。"; }
+  catch { adminNotice.value = "修订提交失败。"; }
+}
+async function loadPublications() {
+  if (!data.value) return;
+  const root = `/channels/${data.value.channel_id}`;
+  try {
+    const [jobs, revisions] = await Promise.all([
+      wikiAdmin<{ id: string; status: string; created_at: string; progress: { review_complete?: boolean; review_version?: string } }[]>(root + "/jobs"),
+      wikiAdmin<{ id: string; created_at: string }[]>(root + "/publications"),
+    ]);
+    publicationChoices.value = [...jobs.filter((job) => job.status === "completed" && job.progress.review_complete && job.progress.review_version).map((job) => ({ ...job, kind: "publish" })),
+      ...revisions.map((revision) => ({ ...revision, kind: "rollback" }))];
+    if (!publicationChoices.value.length) adminNotice.value = "暂无可用版本。";
+  } catch { adminNotice.value = "读取版本失败。"; }
+}
+async function publishChoice(entry: { id: string; kind: string }) {
+  if (!data.value) return;
+  try {
+    await wikiAdmin(`/channels/${data.value.channel_id}/${entry.kind}`, "POST", entry.kind === "publish" ? { job_id: entry.id } : { publication_id: entry.id });
+    adminNotice.value = "已更新公开快照。";
+    await reload();
+  } catch { adminNotice.value = "操作失败，请确认版本及来源仍有效。"; }
+}
+const factLabels: Record<string, string> = { verified: "外部证据已核实", partial: "外部证据部分支持", disputed: "存在争议", unverified: "待核实", outdated: "已过期", rejected: "已驳回" };
 const router = useRouter();
 const channelBase = computed(() => `/wiki/${route.params.channel}`);
 const apiPath = computed(() => `/channels/${encodeURIComponent(String(route.params.channel))}/pages/${encodeURIComponent(String(route.params.slug))}`);

@@ -71,6 +71,7 @@
           <RouterLink :to="channelBase">频道知识</RouterLink>
           <RouterLink :to="`${channelBase}/search`">搜索本频道</RouterLink>
           <RouterLink :to="`${channelBase}/profile`">频道画像</RouterLink>
+          <RouterLink :to="{ path: '/wiki/contributors', query: { channel } }">频道贡献者</RouterLink>
         </section>
         <section v-else-if="!isDirectory && channels?.length" class="wiki-context-card">
           <h2>公开频道</h2>
@@ -123,6 +124,7 @@ const navigation = computed(() => [
   { label: "探索", to: "/wiki/search", active: route.name === "WikiGlobalSearch" },
   { label: "频道", to: "/wiki?tab=channels", active: isDirectory.value },
   { label: "收藏", to: "/wiki/bookmarks", active: route.name === "WikiBookmarks" },
+  { label: "贡献", to: "/wiki/contributors", active: route.name === "WikiContributors" },
   ...(channel.value ? [
     { label: "知识地图", to: `${channelBase.value}/graph`, active: route.name === "WikiGraph" },
     { label: "动态", to: `${channelBase.value}/timeline`, active: route.name === "WikiTimeline" },

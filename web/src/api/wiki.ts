@@ -108,12 +108,16 @@ export interface Claim {
   valid_until?: string;
   source_created_at: string;
   evidence: Evidence[];
+  fact_check?: { status: string; reason: string; checked_at?: string; model?: string; sources: { title: string; url: string; provider: string }[] };
+  community_notes?: { kind: string; text: string; sources: string[] }[];
   title?: string;
   url?: string;
 }
 export interface WikiArticle extends WikiCard {
   verified_at: string;
   claims: Claim[];
+  proposals_enabled?: boolean;
+  annotations_enabled?: boolean;
 }
 export interface WikiReferences {
   revision_id: string;

@@ -349,9 +349,20 @@ class PublicReader:
         result = page_card(row)
         doc = decode(row["document"])
         result["verified_at"] = doc["verified_at"]
+        result["proposals_enabled"] = bool(config.get("proposals_enabled"))
+        result["annotations_enabled"] = bool(config.get("annotations_enabled"))
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
+        review = await self.store.one(
+            """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
+            ORDER BY created_at DESC LIMIT 1""",
+            (row["revision_id"],),
+        )
+        if review:
+            for check in decode(review["result"]).get("fact_checks", []):
+                if 0 <= check["index"] < len(result["claims"]):
+                    result["claims"][check["index"]]["fact_check"] = check
         if part == "article":
             return result
         sources_total = len(evidence_rows)
@@ -851,6 +862,7 @@ def source_card(source, username, config):
 
 def public_claim(fact, sources, username, config):
     return {
+        "community_notes": fact.get("community_notes", []),
         **{
             key: fact.get(key)
             for key in (

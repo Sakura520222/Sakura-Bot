@@ -22,6 +22,7 @@ from .schema import (
     SCHEMA,
     SCHEMA_VERSION,
     WIKI_ACCOUNT_TABLES,
+    WIKI_COMMUNITY_TABLES,
 )
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
@@ -137,7 +138,7 @@ class WikiStore:
                         raise
             await self.query(DIRTY_PAGES_TABLE)
             await self.query(CHANNEL_COVERS_TABLE)
-            for statement in WIKI_ACCOUNT_TABLES:
+            for statement in (*WIKI_ACCOUNT_TABLES, *WIKI_COMMUNITY_TABLES):
                 await self.query(statement)
             await self.query(REVISION_REVIEWS_TABLE)
             return
@@ -438,45 +439,45 @@ class WikiStore:
                 {"messages": message_ids or []},
             )
 
-    async def enqueue(self, channel, kind="update", actor="scheduler", page_id=None):
-        if kind not in {"backfill", "update", "reconcile", "reindex", "page"}:
+    async def enqueue(self, channel, kind="update", actor="scheduler", page_id=None, *, cur=None):
+        if kind not in {"backfill", "update", "reconcile", "reindex", "page", "proposal"}:
             raise ValueError("Unknown Wiki job kind")
-        async with self.transaction() as cur:
-            await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
-            record = await cur.fetchone()
-            if not record or not record["enabled"]:
-                raise ValueError("Wiki is disabled")
-            if kind == "page":
-                await cur.execute(
-                    "SELECT id FROM wiki_pages WHERE id=%s AND channel_id=%s", (page_id, channel)
-                )
-                if not await cur.fetchone():
-                    raise ValueError("A page in this channel is required")
-            if record["active_job"]:
-                return record["active_job"]
-            job_id = uuid.uuid4().hex
-            progress = {
-                "enumerated": 0,
-                "processed": 0,
-                "excluded": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_hits": 0,
-                "generation_complete": False,
-                "review_complete": False,
-                "published": False,
-            }
+        if cur is None:
+            async with self.transaction() as transaction:
+                return await self.enqueue(channel, kind, actor, page_id, cur=transaction)
+        await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+        record = await cur.fetchone()
+        if not record or not record["enabled"]:
+            raise ValueError("Wiki is disabled")
+        if kind == "page":
             await cur.execute(
-                """INSERT INTO wiki_jobs
-                (id,channel_id,kind,`cursor`,progress,next_attempt,created_at,updated_at)
-                VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
-                (job_id, channel, kind, encode({"page_id": page_id}), encode(progress)),
+                "SELECT id FROM wiki_pages WHERE id=%s AND channel_id=%s", (page_id, channel)
             )
-            await cur.execute(
-                "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
-            )
-            await self.audit(cur, channel, "enqueue", job_id, actor, {"kind": kind})
-            return job_id
+            if not await cur.fetchone():
+                raise ValueError("A page in this channel is required")
+        if record["active_job"]:
+            return record["active_job"]
+        job_id = uuid.uuid4().hex
+        progress = {
+            "enumerated": 0,
+            "processed": 0,
+            "excluded": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hits": 0,
+            "generation_complete": False,
+            "review_complete": False,
+            "published": False,
+        }
+        await cur.execute(
+            """INSERT INTO wiki_jobs
+            (id,channel_id,kind,`cursor`,progress,next_attempt,created_at,updated_at)
+            VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
+            (job_id, channel, kind, encode({"page_id": page_id}), encode(progress)),
+        )
+        await cur.execute("UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel))
+        await self.audit(cur, channel, "enqueue", job_id, actor, {"kind": kind})
+        return job_id
 
     async def claim_job(self):
         async with self.transaction() as cur:

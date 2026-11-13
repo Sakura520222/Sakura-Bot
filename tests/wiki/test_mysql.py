@@ -27,6 +27,7 @@ from core.web_api.auth import WebUIUser, generate_token
 from core.web_api.middleware import AuthMiddleware, _wiki_buckets
 from core.web_api.routes import auth, wiki, wiki_account
 from core.wiki.collector import SourceCollector
+from core.wiki.community import Community, Proposal
 from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import Knowledge
 from core.wiki.models import WikiConfig, chunks, digest, name_key
@@ -420,6 +421,118 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     with pytest.raises(ValueError, match="revoked"):
         await Knowledge(store).publish(ch["id"], None, "test", rollback=publication)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+
+
+async def test_community_contributions_follow_publication_and_privacy(store):
+    ch, source, page, revision, original = await published(store)
+    await store.configure(
+        ch["id"],
+        ch["config"].model_copy(update={"proposals_enabled": True, "annotations_enabled": True}),
+        "test",
+    )
+    service = WikiRuntime(store, None, None)
+    fake = FakeAI()
+    service.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    service.community = Community(store, service.engine.knowledge)
+    await service.accounts.login(
+        (987654321, b"test-subject", "测试贡献者", "hidden_name", None), (None, None), None, None
+    )
+    user = (await store.one("SELECT id FROM wiki_users"))["id"]
+    proposal = Proposal(
+        revision=revision,
+        kind="annotation",
+        claim=0,
+        text="社区补充说明",
+        sources=["https://example.org/reference"],
+    )
+    identifier, notify = await service.community.submit(user, ch["id"], page["id"], proposal)
+    assert not notify and not await service.community.contributions()
+    competing, _ = await service.community.submit(user, ch["id"], page["id"], proposal)
+    approved = await service.community.decide(identifier, "approved", "test")
+    assert not await service.community.contributions()
+    await service.run_job(await store.claim_job())
+    await service.engine.knowledge.publish(ch["id"], approved["job_id"], "test")
+    assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
+    assert not await service.community.contributions()  # Anonymous by default.
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
+    contributors = await service.community.contributions(channel=ch["id"])
+    assert contributors[0]["total"] == 1 and contributors[0]["username"] is None
+    article = await service.reader.page(ch["id"], page["slug"])
+    assert article["claims"][0]["community_notes"][0]["text"] == "社区补充说明"
+    with pytest.raises(ValueError, match="基线"):
+        await service.community.decide(competing, "approved", "test")
+    await service.engine.knowledge.publish(ch["id"], None, "test", rollback=original)
+    assert not await service.community.contributions()
+    assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
+
+
+async def test_fact_check_requires_real_evidence_and_reuses_cached_claims(store, monkeypatch):
+    from core.wiki import web_research
+
+    ch = await channel(store)
+    await store.configure(
+        ch["id"],
+        ch["config"].model_copy(update={"fact_check": True, "fact_check_required": True}),
+        "test",
+    )
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "Sakura 支持中文检索。",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    settings = web_research.SearchSettings(enabled=True)
+    monkeypatch.setattr(web_research, "search_settings", lambda: settings)
+    results = web_research.normalized_results(
+        "deepseek",
+        {
+            "results": [
+                {
+                    "url": "https://example.org/project",
+                    "title": "Project docs",
+                    "content": "Supports Chinese",
+                },
+                {
+                    "url": "https://example.net/release",
+                    "title": "Release notes",
+                    "content": "Supports Chinese",
+                },
+            ]
+        },
+        3,
+    )
+    service = WikiRuntime(store, None, None)
+    research = AsyncMock(return_value={"results": results})
+
+    class Reviewer(FakeAI):
+        async def create(self, **request):
+            response = await super().create(**request)
+            payload = json.loads(request["messages"][1]["content"])
+            if "external_evidence" in payload:
+                message = response.choices[0].message
+                verdict = json.loads(message.content)
+                for fact in verdict["claims"]:
+                    fact.update(fact_status="verified", citations=[0, 1, 999])
+                message.content = json.dumps(verdict)
+            return response
+
+    fake = Reviewer()
+    service.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    service.engine.research = SimpleNamespace(search=research)
+    job = await store.enqueue(ch["id"], "reindex")
+    await service.run_job(await store.claim_job())
+    await service.engine.knowledge.publish(ch["id"], job, "test")
+    page = await store.one("SELECT id FROM wiki_pages WHERE title='Sakura'")
+    article = await service.reader.page(ch["id"], page["id"])
+    assert article["claims"][0]["fact_check"]["status"] == "verified"
+    assert len(article["claims"][0]["fact_check"]["sources"]) == 2
+    charged = research.await_count
+    await store.enqueue(ch["id"], "reindex")
+    await service.run_job(await store.claim_job())
+    assert research.await_count == charged
 
 
 async def test_page_additive_counts_match_true_totals(store):

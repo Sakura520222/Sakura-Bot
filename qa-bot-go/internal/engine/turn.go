@@ -20,6 +20,12 @@ type wikiContextKey struct{}
 
 const WikiWebScope = "web:wiki"
 
+type researchContextKey struct{}
+
+func WithWebResearch(ctx context.Context, run func(context.Context, string, string) string) context.Context {
+	return context.WithValue(ctx, researchContextKey{}, run)
+}
+
 func WithWikiContext(ctx context.Context, text string) context.Context {
 	return context.WithValue(ctx, wikiContextKey{}, text)
 }

@@ -4,10 +4,65 @@
 
 """Main Bot Wiki commands; assistant tools belong exclusively to Go."""
 
-from telethon import events
+import asyncio
+import logging
+
+from telethon import Button, events
+
+logger = logging.getLogger(__name__)
+
+
+async def notify_proposal(runtime, identifier, channel, kind):
+    from core.settings import get_settings
+
+    if not runtime.bot_client:
+        return
+    base = get_settings().wiki_login.origin.rstrip("/")
+    buttons = [
+        Button.inline("批准", f"wpr:a:{identifier}"),
+        Button.inline("拒绝", f"wpr:r:{identifier}"),
+    ]
+    if base.startswith("https://"):
+        buttons.append(Button.url("查看详情", base + "/wiki/admin"))
+    from core.config import ADMIN_LIST
+
+    for admin in (value for value in ADMIN_LIST if isinstance(value, int) and value > 0):
+        try:
+            await asyncio.wait_for(
+                runtime.bot_client.send_message(
+                    admin,
+                    f"Wiki 待审投稿\n频道 {channel} · {kind}\n{identifier}",
+                    buttons=buttons,
+                    parse_mode=None,
+                ),
+                timeout=4,
+            )
+        except Exception as error:
+            logger.info("Wiki 投稿通知发送失败: %s", type(error).__name__)
 
 
 def register_wiki_commands(client, runtime):
+    @client.on(events.CallbackQuery(pattern=rb"^wpr:([ar]):([a-f0-9]{32})$"))
+    async def review_proposal(event):
+        from core.infrastructure.utils.auth import is_admin
+
+        if not is_admin(event.sender_id):
+            await event.answer("仅管理员可审核", alert=True)
+            return
+        action, identifier = (part.decode("ascii") for part in event.pattern_match.groups())
+        try:
+            await runtime.community.decide(
+                identifier,
+                "approved" if action == "a" else "rejected",
+                event.sender_id,
+                telegram=True,
+            )
+        except ValueError as error:
+            await event.answer(str(error), alert=True)
+            return
+        runtime.wake()
+        await event.answer("投稿已处理")
+
     @client.on(events.NewMessage(pattern=r"^/wiki_(status|build|pause)(?:@\w+)?(?:\s+(\S+))?\s*$"))
     async def handle(event):
         import core.config as config_module
