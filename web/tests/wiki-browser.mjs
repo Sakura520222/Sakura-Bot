@@ -433,27 +433,37 @@ try {
   accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: "fixture", avatar: false,
     privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
   await accountPage.goto(url + "/wiki");
-  await accountPage.getByRole("button", { name: "Wiki 测试用户" }).click();
+  const accountTrigger = accountPage.getByRole("button", { name: "Wiki 测试用户" });
+  await accountTrigger.locator(".wiki-user-avatar").getByText("W测", { exact: true }).waitFor();
+  await accountTrigger.click();
+  await assertCentered(accountPage.getByRole("dialog", { name: "Wiki 账户" }));
   assert.equal(await accountPage.getByRole("link", { name: "管理 Wiki" }).count(), 0);
-  await accountPage.getByRole("checkbox", { name: "匿名署名" }).uncheck();
-  await accountPage.getByRole("checkbox", { name: "公开 @用户名" }).check();
+  await accountPage.getByRole("switch", { name: "匿名署名" }).uncheck();
+  await accountPage.getByRole("switch", { name: "公开 @用户名" }).check();
   await accountPage.getByRole("button", { name: "保存隐私设置" }).click();
   await accountPage.getByText("隐私设置已保存。", { exact: true }).waitFor();
   assert.deepEqual(accountUser.privacy, { show_avatar: false, show_username: true, anonymous_contributions: false });
   await accountPage.getByRole("button", { name: "退出登录" }).click();
   await accountPage.getByRole("button", { name: "Telegram 登录", exact: true }).waitFor();
-  accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: null, avatar: false,
+  accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: null, avatar: true,
     privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
   assistantEnabled = true;
   await accountPage.goto(url + "/wiki/123/page/article-0");
+  await accountTrigger.locator("img").waitFor();
+  assert.equal(await accountTrigger.locator("img").getAttribute("src"), "/api/wiki/account/avatar");
   await accountPage.getByRole("button", { name: "更多词条操作" }).click();
   await accountPage.getByRole("menuitem", { name: "询问当前词条" }).click();
   const assistant = accountPage.getByRole("dialog", { name: "小妲助手" });
   await assistant.getByRole("button", { name: "签到", exact: true }).click();
   await assertCentered(assistant);
   await assistant.getByText("积分 2.5", { exact: true }).waitFor();
-  await assistant.getByRole("textbox", { name: "问题" }).fill("这个词条讲了什么？");
-  await assistant.getByRole("button", { name: "发送", exact: true }).click();
+  const composer = assistant.getByRole("textbox", { name: "问题" });
+  await composer.fill("这个词条讲了什么？");
+  await composer.press("Enter");
+  assert.equal(await composer.inputValue(), "这个词条讲了什么？\n");
+  await composer.dispatchEvent("keydown", { key: "Enter", ctrlKey: true, isComposing: true });
+  assert.equal(await composer.inputValue(), "这个词条讲了什么？\n");
+  await composer.press("Control+Enter");
   await assistant.locator("strong").getByText("小妲回答", { exact: true }).waitFor();
   await assistant.getByRole("button", { name: "收起助手" }).click();
   await accountPage.locator(".wiki-markdown[data-claim='0'] strong").first().evaluate((element) => {

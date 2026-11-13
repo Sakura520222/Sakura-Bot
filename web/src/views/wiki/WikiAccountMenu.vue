@@ -1,53 +1,58 @@
 <template>
-  <button v-if="session?.enabled" type="button" class="wiki-account-trigger" @click="open">
+  <button v-if="session?.enabled" type="button" class="wiki-account-trigger" :class="{ 'has-account': session.user }"
+    :aria-label="session.user?.display_name" aria-haspopup="dialog" @click="open">
     <template v-if="session.user">
-      <img v-if="session.user.avatar && !avatarFailed" :src="wikiAvatarUrl" alt="" @error="avatarFailed = true" />
+      <WikiUserAvatar :name="session.user.display_name" :src="session.user.avatar ? wikiAvatarUrl : undefined" :user-id="session.user.id" />
       <span class="wiki-account-name">{{ session.user.display_name }}</span>
     </template>
     <template v-else>Telegram 登录</template>
   </button>
   <button v-else-if="loginNotice" type="button" class="wiki-account-trigger" @click="open">登录状态</button>
 
-  <dialog ref="dialog" class="wiki-account-dialog" aria-labelledby="wiki-account-title">
-    <header>
+  <dialog ref="dialog" class="wiki-modal wiki-account-dialog" aria-labelledby="wiki-account-title">
+    <header class="wiki-modal-header">
       <h2 id="wiki-account-title">{{ session?.user ? "Wiki 账户" : "使用 Telegram 登录" }}</h2>
-      <button type="button" aria-label="关闭" @click="dialog?.close()">×</button>
+      <button type="button" class="wiki-header-icon" aria-label="关闭" @click="dialog?.close()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
     </header>
-    <p v-if="message || loginNotice" role="status">{{ message || loginNotice }}</p>
+    <p v-if="message || loginNotice" role="status" class="account-feedback">{{ message || loginNotice }}</p>
     <template v-if="session?.user && privacy">
-      <p class="wiki-account-identity">
-        <img v-if="session.user.avatar && !avatarFailed" :src="wikiAvatarUrl" alt="" @error="avatarFailed = true" />
-        <strong>{{ session.user.display_name }}</strong>
-        <span v-if="session.user.username">@{{ session.user.username }}</span>
-      </p>
+      <div class="wiki-account-identity">
+        <WikiUserAvatar :name="session.user.display_name" :src="session.user.avatar ? wikiAvatarUrl : undefined" :user-id="session.user.id" />
+        <div><strong>{{ session.user.display_name }}</strong><p v-if="session.user.username">@{{ session.user.username }}</p></div>
+      </div>
       <form @submit.prevent="save">
         <fieldset :disabled="busy">
           <legend>公开贡献署名</legend>
-          <label><input v-model="privacy.anonymous_contributions" type="checkbox" /> 匿名署名</label>
-          <label><input v-model="privacy.show_avatar" type="checkbox" :disabled="privacy.anonymous_contributions" /> 公开头像</label>
-          <label><input v-model="privacy.show_username" type="checkbox" :disabled="privacy.anonymous_contributions" /> 公开 @用户名</label>
+          <label><span>匿名署名</span><input v-model="privacy.anonymous_contributions" type="checkbox" role="switch" /></label>
+          <label><span>公开头像</span><input v-model="privacy.show_avatar" type="checkbox" role="switch" :disabled="privacy.anonymous_contributions" /></label>
+          <label><span>公开 @用户名</span><input v-model="privacy.show_username" type="checkbox" role="switch" :disabled="privacy.anonymous_contributions" /></label>
         </fieldset>
-        <p>关闭匿名署名后，公开贡献会显示昵称。Telegram 数字 ID 仅供账户关联及管理审核使用。</p>
-        <div class="wiki-account-buttons">
-          <button type="submit" :disabled="busy">保存隐私设置</button>
-          <button type="button" :disabled="busy" @click="login(true)">刷新 Telegram 资料</button>
-          <button type="button" @click="openContributions">我的投稿与贡献</button>
-          <button type="button" :disabled="busy" @click="signOut">退出登录</button>
+        <p class="privacy-help">关闭匿名署名后，公开贡献会显示昵称。头像和用户名可分别公开。</p>
+        <div class="privacy-footer">
+          <button type="submit" class="wiki-modal-primary" :disabled="busy || !privacyChanged">保存隐私设置</button>
         </div>
       </form>
+      <div class="account-links">
+        <button type="button" :disabled="busy" @click="login(true)">刷新 Telegram 资料 <span aria-hidden="true">↗</span></button>
+        <button type="button" @click="openContributions">我的投稿与贡献 <span aria-hidden="true">›</span></button>
+        <button type="button" class="sign-out" :disabled="busy" @click="signOut">退出登录</button>
+      </div>
     </template>
     <template v-else-if="session?.enabled">
-      <p>Wiki 会使用你的 Telegram 数字 ID 绑定账户，并读取昵称、可选用户名和头像。贡献默认匿名署名。你可以在账户设置中调整公开资料。</p>
-      <button type="button" :disabled="busy" @click="login(false)">前往 Telegram 授权</button>
+      <div class="account-login">
+        <p>Wiki 会使用你的 Telegram 数字 ID 绑定账户，并读取昵称、可选用户名和头像。贡献默认匿名署名。</p>
+        <button type="button" class="wiki-modal-primary" :disabled="busy" @click="login(false)">前往 Telegram 授权</button>
+      </div>
     </template>
   </dialog>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { beginWikiLogin, loadWikiSession, logoutWiki, updateWikiPrivacy, wikiAvatarUrl, wikiSessionChanged, type WikiPrivacy } from "../../api/wiki-account";
 import { wikiOpenAccount } from "../../api/wiki-assistant";
+import WikiUserAvatar from "./WikiUserAvatar.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -55,7 +60,11 @@ const session = ref<Awaited<ReturnType<typeof loadWikiSession>>>();
 const privacy = ref<WikiPrivacy>();
 const dialog = ref<HTMLDialogElement>();
 const busy = ref(false);
-const avatarFailed = ref(false);
+const privacyChanged = computed(() => {
+  const saved = session.value?.user?.privacy;
+  const draft = privacy.value;
+  return !!saved && !!draft && (Object.keys(saved) as (keyof WikiPrivacy)[]).some((key) => saved[key] !== draft[key]);
+});
 const message = ref("");
 const loginNotice = ref("");
 let updating: Promise<void> | undefined;
@@ -150,7 +159,6 @@ function signOut() {
     if (session.value) session.value.user = null;
     window.dispatchEvent(new Event(wikiSessionChanged));
     privacy.value = undefined;
-    avatarFailed.value = false;
     dialog.value?.close();
   });
 }
@@ -158,24 +166,29 @@ function signOut() {
 
 <style scoped>
 .wiki-account-trigger { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.wiki-account-trigger.has-account { height: 38px; padding-inline: 4px 11px; }
 .wiki-account-name { overflow: hidden; text-overflow: ellipsis; max-width: 10ch; }
-img { width: 28px; height: 28px; object-fit: cover; border-radius: 50%; }
-.wiki-account-dialog {
-  box-sizing: border-box;
-  width: min(440px, calc(100% - 24px));
-  max-height: calc(100dvh - 36px);
-  border: 1px solid var(--sb-border);
-  border-radius: 14px;
-  padding: 16px;
-  color: var(--sb-text);
-  background: var(--sb-surface);
-}
-.wiki-account-dialog::backdrop { background: rgb(0 0 0 / 40%); }
-header, .wiki-account-buttons, .wiki-account-identity { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-header { justify-content: space-between; }
-h2 { margin: 0; font-size: 1.2rem; }
-fieldset { display: grid; gap: 8px; border: 1px solid var(--sb-border); border-radius: 8px; }
-label { display: flex; gap: 8px; align-items: center; }
-.wiki-account-dialog input { min-height: 0; }
-.wiki-account-dialog p { line-height: 1.55; overflow-wrap: anywhere; }
+.wiki-account-dialog { width: min(460px, calc(100% - 24px)); }
+.wiki-account-identity { --wiki-avatar-size: 52px; --wiki-avatar-text: 18px; display: flex; align-items: center; gap: 12px; padding: 18px 20px; overflow-wrap: anywhere; }
+.wiki-account-identity strong { font-size: 17px; }
+.wiki-account-identity p, .privacy-help { color: var(--sb-text-2); }
+form { padding: 0 20px 16px; }
+fieldset { min-width: 0; border: 0; }
+legend { margin-bottom: 4px; font-weight: 700; }
+label { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--sb-border); }
+label:has(input:disabled) { color: var(--sb-text-3); }
+.wiki-account-dialog input { appearance: none; display: grid; align-items: center; width: 38px; height: 22px; min-height: 0; flex: none; padding: 2px; border-radius: 20px; background: var(--sb-surface-2); cursor: pointer; }
+.wiki-account-dialog input::before { content: ''; width: 16px; height: 16px; border-radius: 50%; background: var(--sb-text-3); }
+.wiki-account-dialog input:checked { border-color: var(--sb-accent); background: var(--sb-accent); }
+.wiki-account-dialog input:checked::before { justify-self: end; background: var(--sb-on-accent); }
+.wiki-account-dialog input:disabled { opacity: .5; cursor: default; }
+.privacy-help { margin-block: 8px 14px; font-size: 13px; }
+.privacy-footer { display: flex; justify-content: flex-end; }
+.account-links { display: grid; padding: 6px 10px 10px; border-top: 1px solid var(--sb-border); }
+.account-links button { display: flex; align-items: center; justify-content: space-between; min-height: 40px; border: 0; border-radius: 9px; text-align: left; }
+.account-links .sign-out { color: var(--sb-error); }
+.account-login { display: grid; gap: 14px; padding: 18px 20px; }
+.account-login button { justify-self: start; }
+.account-feedback { margin: 12px 20px 0; padding: 8px 12px; border-radius: 8px; background: var(--sb-surface-2); }
+@media (max-width: 520px) { .wiki-account-trigger.has-account { width: 44px; justify-content: center; padding: 0; } .wiki-account-name { display: none; } }
 </style>

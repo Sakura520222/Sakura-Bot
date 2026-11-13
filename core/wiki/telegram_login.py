@@ -295,11 +295,20 @@ def verify_identity(token, key, audience, nonce):
     )
 
 
+def is_telegram_avatar_url(url):
+    return (
+        isinstance(url, str)
+        and re.fullmatch(
+            r"https://cdn[0-9]{1,2}\.telesco\.pe/file/[A-Za-z0-9_-]{1,1600}(?:\.(?:jpe?g|png))?",
+            url,
+        )
+        is not None
+    )
+
+
 async def download_avatar(url):
     # Only the official photo CDN, without redirects or ambient proxies.
-    if not isinstance(url, str) or not re.fullmatch(
-        r"https://cdn[0-9]{1,2}\.telesco\.pe/file/[A-Za-z0-9_/-]{1,1600}", url
-    ):
+    if not is_telegram_avatar_url(url):
         return None, None
     try:
         resolver = PublicAvatarResolver()

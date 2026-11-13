@@ -1,13 +1,13 @@
 <template>
   <button v-if="session?.assistant_enabled" type="button" class="assistant-open" @click="open()">小妲助手</button>
-  <dialog ref="dialog" class="assistant-panel" aria-labelledby="wiki-assistant-title">
-    <header>
+  <dialog ref="dialog" class="wiki-modal assistant-panel" :class="{ 'assistant-chat': session?.user }" aria-labelledby="wiki-assistant-title">
+    <header class="wiki-modal-header">
       <h2 id="wiki-assistant-title">小妲助手</h2>
-      <button type="button" aria-label="收起助手" @click="dialog?.close()">×</button>
+      <button type="button" class="wiki-header-icon" aria-label="收起助手" @click="dialog?.close()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
     </header>
-    <div v-if="!session?.user" class="assistant-body">
+    <div v-if="!session?.user" class="assistant-login">
       <p>登录 Wiki 后可提问。签到、积分与额度和 Telegram 助手共用。</p>
-      <button type="button" @click="login">登录 Wiki</button>
+      <button type="button" class="wiki-modal-primary" @click="login">登录 Wiki</button>
     </div>
     <template v-else>
       <section v-if="quota" class="assistant-quota" aria-label="积分与额度">
@@ -21,13 +21,16 @@
       <div ref="history" class="assistant-body assistant-history" aria-label="问答记录">
         <article v-for="item in entries" :key="item.id" class="assistant-entry">
           <p v-for="(question, index) in item.questions" :key="index" class="assistant-question">{{ question }}</p>
-          <WikiMarkdown v-if="item.answer" :text="item.answer" :channel="item.channel || ''" />
-          <p v-else-if="item.running" role="status">正在等候回答…</p>
+          <div v-if="item.answer || item.running" class="assistant-answer">
+            <span class="assistant-author">小妲</span>
+            <WikiMarkdown v-if="item.answer" :text="item.answer" :channel="item.channel || ''" />
+            <p v-else role="status" class="assistant-waiting">正在等候回答…</p>
+          </div>
           <p v-if="item.error" role="status" class="assistant-error">{{ item.error }}</p>
           <button v-if="item.retry && !item.running" type="button" :disabled="!!(current?.running && current.id !== item.id)" @click="retry(item)">{{ item.accepted ? "继续接收" : "重试" }}</button>
           <button v-if="item.refunded && !item.running" type="button" @click="prepareRetry(item)">重新提问</button>
         </article>
-        <p v-if="!entries.length">可以询问 Wiki 词条、频道资料或相关问题。</p>
+        <p v-if="!entries.length" class="assistant-empty">想了解哪个词条或频道？</p>
       </div>
       <p v-if="notice" class="assistant-notice" role="status">{{ notice }}</p>
       <form class="assistant-compose" @submit.prevent="send">
@@ -36,10 +39,11 @@
           <button type="button" aria-label="移除词条上下文" @click="article = undefined">×</button>
         </p>
         <label for="wiki-assistant-question" class="wiki-sr-only">问题</label>
-        <textarea id="wiki-assistant-question" v-model="draft" rows="2" maxlength="4000" placeholder="向小妲提问" />
+        <textarea id="wiki-assistant-question" v-model="draft" rows="2" maxlength="4000" placeholder="向小妲提问" @keydown="composerKeydown" />
         <div class="assistant-actions">
+          <kbd class="assistant-shortcut">Ctrl + Enter</kbd>
           <button v-if="current?.running || current?.accepted && current.retry" type="button" @click="stop">停止生成</button>
-          <button type="submit" :disabled="!draft.trim() || sending || !!(article && current?.running)">{{ current?.running ? "追加追问" : "发送" }}</button>
+          <button type="submit" class="wiki-modal-primary" aria-keyshortcuts="Control+Enter" :disabled="!draft.trim() || sending || !!(article && current?.running)">{{ current?.running ? "追加追问" : "发送" }}</button>
         </div>
       </form>
     </template>
@@ -207,9 +211,14 @@ async function follow(entry: Entry, request: AssistantQuestion, resume = false, 
   }
 }
 
+function composerKeydown(event: KeyboardEvent) {
+  if (event.key !== "Enter" || !event.ctrlKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (!event.repeat) send();
+}
 function send() {
   const question = draft.value.trim();
-  if (!question || sending.value) return;
+  if (!question || sending.value || (article.value && current.value?.running)) return;
   const followup = !!current.value?.running && current.value.accepted;
   const input = { id: crypto.randomUUID().replace(/-/g, ""), question, article: article.value,
     parent: followup ? current.value?.id : undefined };
@@ -247,21 +256,27 @@ async function checkin() {
 
 <style scoped>
 .assistant-open { white-space: nowrap; }
-.assistant-panel { width: min(430px, calc(100% - 24px)); border: 1px solid var(--sb-border); border-radius: 14px; padding: 0; color: var(--sb-text); background: var(--sb-surface); }
+.assistant-panel { width: min(600px, calc(100% - 24px)); }
+.assistant-chat { height: min(660px, 84dvh); }
 .assistant-panel[open] { display: flex; flex-direction: column; }
-.assistant-panel::backdrop { background: rgb(0 0 0 / 25%); }
-header, .assistant-quota, .assistant-actions, .assistant-article { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-header { justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--sb-border); }
-h2 { margin: 0; font-size: 1.1rem; }
-.assistant-quota { padding: 8px 14px; font-size: 0.85rem; }
-.assistant-body { overflow-y: auto; padding: 0 14px; min-height: 90px; }
-.assistant-history { min-height: min(160px, 24dvh); overscroll-behavior: contain; }
-.assistant-entry { margin: 14px 0; overflow-wrap: anywhere; }
-.assistant-question { padding: 8px 12px; background: var(--sb-surface-2); border-radius: 10px; white-space: pre-wrap; }
+.assistant-quota, .assistant-actions, .assistant-article { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; }
+.assistant-quota { padding: 8px 20px; font-size: 13px; color: var(--sb-text-2); border-bottom: 1px solid var(--sb-border); }
+.assistant-quota button { margin-inline-start: auto; }
+.assistant-login { display: grid; gap: 14px; justify-items: start; padding: 18px 20px; }
+.assistant-history { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 16px; overscroll-behavior: contain; }
+.assistant-entry { display: grid; gap: 10px; margin: 16px 0; overflow-wrap: anywhere; }
+.assistant-entry button { justify-self: start; }
+.assistant-question { justify-self: end; max-width: 86%; padding: 8px 13px; background: var(--sb-accent-soft); border-radius: 16px 16px 4px 16px; white-space: pre-wrap; }
+.assistant-answer { min-width: 0; }
+.assistant-author { display: block; margin-bottom: 4px; color: var(--sb-text-2); font-size: 12px; font-weight: 700; }
+.assistant-waiting, .assistant-empty { color: var(--sb-text-2); }
+.assistant-empty { margin: 22px 0; }
 .assistant-error, .assistant-notice { white-space: pre-wrap; overflow-wrap: anywhere; }
 .assistant-notice { margin: 8px 14px; }
-.assistant-compose { padding: 10px 14px; border-top: 1px solid var(--sb-border); }
-.assistant-compose textarea { box-sizing: border-box; display: block; width: 100%; resize: vertical; color: inherit; background: var(--sb-surface); border: 1px solid var(--sb-border); border-radius: 8px; padding: 8px; }
+.assistant-compose { flex: none; padding: 12px 20px; border-top: 1px solid var(--sb-border); }
+.assistant-compose textarea { box-sizing: border-box; display: block; width: 100%; max-height: 24dvh; resize: vertical; font: inherit; color: inherit; background: var(--sb-surface-2); border: 1px solid var(--sb-border); border-radius: 12px; padding: 9px 12px; }
 .assistant-actions { justify-content: flex-end; margin-top: 6px; }
+.assistant-shortcut { margin-inline-end: auto; color: var(--sb-text-2); font-size: 12px; }
+@media (pointer: coarse) { .assistant-shortcut { display: none; } }
 .assistant-article { margin: 0 0 6px; }
 </style>

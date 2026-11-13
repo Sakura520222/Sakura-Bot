@@ -217,3 +217,11 @@ def test_return_path_preserves_article_query_and_anchor():
 )
 async def test_avatar_rejects_urls_outside_fixed_cdn(url):
     assert await download_avatar(url) == (None, None)
+
+
+@pytest.mark.parametrize("suffix", ["", ".jpg", ".jpeg", ".png"])
+def test_avatar_accepts_telegram_cdn_image_paths(suffix):
+    assert telegram_login.is_telegram_avatar_url(
+        f"https://cdn4.telesco.pe/file/Example_123-abc{suffix}"
+    )
+    assert not telegram_login.is_telegram_avatar_url("https://cdn4.telesco.pe/file/../avatar.jpg")

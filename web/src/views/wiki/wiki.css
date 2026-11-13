@@ -24,6 +24,21 @@
   overflow: auto;
 }
 
+.wiki-shell .wiki-modal {
+  padding: 0;
+  color: var(--sb-text);
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  border-radius: 20px;
+  box-shadow: 0 20px 72px rgb(0 0 0 / 24%);
+}
+.wiki-shell .wiki-modal::backdrop { background: rgb(0 0 0 / 36%); }
+.wiki-shell .wiki-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 60px; padding: 8px 20px; border-bottom: 1px solid var(--sb-border); }
+.wiki-shell .wiki-modal-header h2 { margin: 0; font-size: 18px; font-weight: 730; }
+.wiki-shell .wiki-modal-header .wiki-header-icon { flex: none; }
+.wiki-shell .wiki-modal-primary { border-color: transparent; background: var(--sb-accent); color: var(--sb-on-accent); }
+.wiki-shell .wiki-modal-primary:hover:not(:disabled) { background: var(--sb-accent); filter: brightness(.94); }
+
 /* 元素基线：控件统一 32px 高，按钮药丸、输入 8px 圆角，focus 用 accent 外圈 */
 .wiki-shell a {
   color: var(--sb-accent);
