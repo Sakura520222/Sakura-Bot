@@ -2,6 +2,7 @@ import base64
 import hashlib
 import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import jwt
@@ -225,3 +226,36 @@ def test_avatar_accepts_telegram_cdn_image_paths(suffix):
         f"https://cdn4.telesco.pe/file/Example_123-abc{suffix}"
     )
     assert not telegram_login.is_telegram_avatar_url("https://cdn4.telesco.pe/file/../avatar.jpg")
+
+
+@pytest.mark.parametrize("oidc_avatar", [(b"oidc", "image/jpeg"), (None, None)])
+async def test_profile_avatar_falls_back_to_bot_for_signed_user_id(monkeypatch, oidc_avatar):
+    cdn = AsyncMock(return_value=oidc_avatar)
+    bot = AsyncMock(return_value=(b"bot", "image/png"))
+    monkeypatch.setattr(telegram_login, "download_avatar", cdn)
+    monkeypatch.setattr(telegram_login, "download_bot_avatar", bot)
+    assert await telegram_login.load_profile_avatar(123456, "avatar-url") == (
+        oidc_avatar if oidc_avatar[0] else bot.return_value
+    )
+    cdn.assert_awaited_once_with("avatar-url")
+    if oidc_avatar[0]:
+        bot.assert_not_awaited()
+    else:
+        bot.assert_awaited_once_with(123456)
+
+
+async def test_bot_avatar_rejects_an_unexpected_file_path(monkeypatch):
+    monkeypatch.setattr(
+        telegram_login,
+        "get_settings",
+        lambda: SimpleNamespace(telegram=SimpleNamespace(qa_bot_token=SecretStr("123:fixture"))),
+    )
+    call = AsyncMock(
+        side_effect=[
+            {"photos": [[{"file_id": "photo", "width": 160}]]},
+            {"file_path": "photos/../secret.jpg"},
+        ]
+    )
+    monkeypatch.setattr(telegram_login, "call_method", call)
+    assert await telegram_login.download_bot_avatar(987654321) == (None, None)
+    assert [entry.args[1] for entry in call.await_args_list] == ["getUserProfilePhotos", "getFile"]

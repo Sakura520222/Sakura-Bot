@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ import aiohttp
 import jwt
 
 from core.config.runtime import runtime_config
+from core.infrastructure.telegram_bot_api import BotAPIError, call_method
 from core.media.image_validation import validate_image
 from core.settings import get_settings
 
@@ -30,6 +32,7 @@ KEY_ALGORITHMS = {"RS256": "RSA", "ES256": "EC"}
 _keys = []
 _keys_at = 0.0
 _keys_lock = asyncio.Lock()
+logger = logging.getLogger(__name__)
 
 
 class TelegramLoginError(ValueError):
@@ -327,3 +330,68 @@ async def download_avatar(url):
         return data, media_type
     except (aiohttp.ClientError, TimeoutError, ValueError):
         return None, None
+
+
+async def download_bot_avatar(user_id):
+    token = get_settings().telegram.qa_bot_token
+    if not token:
+        return None, None
+    secret = token.get_secret_value()
+    if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", secret):
+        return None, None
+    try:
+        async with asyncio.timeout(5):
+            profile = await call_method(
+                secret, "getUserProfilePhotos", {"user_id": user_id, "limit": 1}
+            )
+            photos = profile.get("photos")
+            if not photos or not photos[0]:
+                logger.info("Telegram Bot returned no Wiki profile photo")
+                return None, None
+            variants = [
+                photo
+                for photo in photos[0]
+                if isinstance(photo.get("file_id"), str)
+                and type(photo.get("width")) is int
+                and 0 < photo["width"] <= 512
+                and photo.get("file_size", 0) <= MAX_AVATAR_BYTES
+            ]
+            if not variants:
+                return None, None
+            photo = min(variants, key=lambda item: abs(item["width"] - 160))
+            file = await call_method(secret, "getFile", {"file_id": photo["file_id"]})
+            path = file.get("file_path")
+            if not isinstance(path, str) or not re.fullmatch(
+                r"photos/[A-Za-z0-9_-]+\.(?:jpe?g|png)", path
+            ):
+                return None, None
+            async with (
+                aiohttp.ClientSession() as client,
+                client.get(
+                    f"https://api.telegram.org/file/bot{secret}/{path}", allow_redirects=False
+                ) as response,
+            ):
+                if response.status != 200:
+                    return None, None
+                data = await bounded_body(response, MAX_AVATAR_BYTES)
+            return data, await asyncio.to_thread(validate_image, data)
+    except (
+        BotAPIError,
+        aiohttp.ClientError,
+        TimeoutError,
+        AttributeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        logger.info("Telegram Bot Wiki avatar unavailable: %s", type(error).__name__)
+        return None, None
+
+
+async def load_profile_avatar(user_id, url):
+    avatar = await download_avatar(url)
+    if avatar[0]:
+        return avatar
+    logger.info(
+        "Using Telegram Bot for Wiki avatar: %s", "picture_unusable" if url else "picture_missing"
+    )
+    return await download_bot_avatar(user_id)

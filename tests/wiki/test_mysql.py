@@ -133,7 +133,7 @@ async def test_oidc_cookie_flow_isolated_from_webui_and_replay(store, monkeypatc
     monkeypatch.setattr(wiki_account.telegram_login, "exchange_code", exchange)
     monkeypatch.setattr(
         wiki_account.telegram_login,
-        "download_avatar",
+        "load_profile_avatar",
         AsyncMock(return_value=(b"avatar", "image/png")),
     )
     monkeypatch.setattr("core.web_api.auth._is_dev_mode_enabled", lambda: True)

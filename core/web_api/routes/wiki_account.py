@@ -257,7 +257,7 @@ async def callback(request: Request):
                 identity = await telegram_login.exchange_code(
                     config, params["code"], flow["verifier"], flow["nonce"]
                 )
-                avatar = await telegram_login.download_avatar(identity[4])
+                avatar = await telegram_login.load_profile_avatar(identity[0], identity[4])
                 tokens = await accounts.login(
                     identity, avatar, flow["refresh_session"], request.cookies.get(LOGOUT)
                 )
