@@ -5,6 +5,38 @@
 """Additive, idempotent MySQL migration. Wiki owns all wiki_* tables."""
 
 SCHEMA_VERSION = 1
+WIKI_ACCOUNT_TABLES = (
+    """CREATE TABLE IF NOT EXISTS wiki_users (
+        id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+        telegram_id BIGINT UNSIGNED NOT NULL UNIQUE,
+        telegram_subject VARBINARY(255) NOT NULL UNIQUE,
+        display_name VARCHAR(160) NOT NULL, username VARCHAR(64),
+        avatar MEDIUMBLOB, avatar_type VARCHAR(16),
+        show_avatar BOOLEAN NOT NULL DEFAULT FALSE, show_username BOOLEAN NOT NULL DEFAULT FALSE,
+        anonymous_contributions BOOLEAN NOT NULL DEFAULT TRUE, blocked BOOLEAN NOT NULL DEFAULT FALSE,
+        profile_at DATETIME(6) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_login_flows (
+        state_hash BINARY(32) PRIMARY KEY, browser_hash BINARY(32) NOT NULL,
+        nonce CHAR(43) NOT NULL, verifier CHAR(43) NOT NULL,
+        redirect_path VARCHAR(2048) NOT NULL, refresh_session CHAR(32) CHARACTER SET ascii COLLATE ascii_bin,
+        client_id VARCHAR(19) NOT NULL, origin VARCHAR(255) NOT NULL,
+        expires_at DATETIME(6) NOT NULL, INDEX wiki_flow_expiry(expires_at), INDEX wiki_flow_browser(browser_hash)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_sessions (
+        id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+        user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        access_hash BINARY(32) NOT NULL UNIQUE, refresh_hash BINARY(32) NOT NULL UNIQUE,
+        logout_hash BINARY(32) NOT NULL UNIQUE,
+        access_until DATETIME(6) NOT NULL, refresh_until DATETIME(6) NOT NULL,
+        INDEX wiki_session_expiry(refresh_until),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_legacy_login_replays (
+        signature BINARY(32) PRIMARY KEY, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_legacy_login_expiry(expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+)
 # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
 # 增量装配只重建这些页面而不是遍历全部历史页面。
 DIRTY_PAGES_TABLE = """CREATE TABLE IF NOT EXISTS wiki_dirty_pages (
@@ -179,6 +211,7 @@ SCHEMA = (
     # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
     # 增量装配只重建这些页面而不是遍历全部历史页面。
     DIRTY_PAGES_TABLE,
+    *WIKI_ACCOUNT_TABLES,
 )
 
 # Shared with Go (contract-tested). No snapshot, rollback or index bypasses this gate.

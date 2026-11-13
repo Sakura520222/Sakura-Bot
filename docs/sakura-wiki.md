@@ -62,6 +62,14 @@ Wiki 需要 MySQL 8.0 或更新版本（集成测试使用 8.4），首次启用
 
 主 Bot 命令：`/wiki_status 频道` 查看公开状态；管理员可用 `/wiki_build 频道` 启动回溯、`/wiki_pause 频道` 暂停。在 WebUI 中取消频道暂停并恢复任务即可继续。
 
+## Telegram 登录
+
+默认关闭。在 BotFather 的助手 Bot（`QA_BOT_TOKEN` 对应的 Bot）打开 Login Widget 设置，登记本站 HTTPS origin 和完整回调 `https://wiki.example.com/api/wiki/account/callback`。在 `data/.env` 设置 `WIKI_LOGIN_ENABLED=true`、`WIKI_LOGIN_ORIGIN=https://wiki.example.com` 及 `WIKI_TELEGRAM_CLIENT_SECRET`，重启服务。Client ID 取自助手 Bot 数字 ID，Secret 取自 BotFather 的登录设置。反向代理须保留公开 `Host`，回调路径的访问日志只记录路径，省略查询参数。使用 Telegram 默认的 RS256 或 ES256 签名。 [Telegram 官方配置](https://core.telegram.org/bots/telegram-login)
+
+Wiki 在用户同意后读取 `openid profile`，保存 Telegram 数字 ID 和 OIDC subject 以绑定账户，保存昵称、可选用户名和经验证的头像快照。账户菜单可重新授权以刷新资料。公开署名默认匿名，头像与用户名默认隐藏。管理接口保持现有 WebUI 认证，管理员可通过 `/api/wiki/admin/accounts` 查询账户，并向 `/api/wiki/admin/accounts/{id}/blocked` 发送 `PUT` 和 JSON `{"blocked":true}` 撤销该用户的全部 Wiki 会话。
+
+Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放表。访问 Cookie 有效期为 15 分钟，刷新凭据每次使用后轮换，单次登录最长保留 7 天。回退时先关闭 `WIKI_LOGIN_ENABLED`，保留新增表与备份。
+
 ## Go 助手
 
 `wiki_search`、`wiki_get_page`、`wiki_get_related`、`wiki_get_changes`、`wiki_get_channel_profile` 直接读 MySQL，同步检查频道权限、发布指针、来源哈希和撤销状态。没有管理员模式参数，也不读取未发布页面。每个请求使用独立工具执行器，无共享的回答上下文。

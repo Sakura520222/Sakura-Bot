@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import aiomysql
 import pytest
@@ -21,9 +23,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
-from core.web_api.auth import WebUIUser
+from core.web_api.auth import WebUIUser, generate_token
 from core.web_api.middleware import AuthMiddleware, _wiki_buckets
-from core.web_api.routes import wiki
+from core.web_api.routes import auth, wiki, wiki_account
 from core.wiki.collector import SourceCollector
 from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import Knowledge
@@ -31,6 +33,7 @@ from core.wiki.models import WikiConfig, chunks, digest, name_key
 from core.wiki.reader import PublicReader
 from core.wiki.runtime import WikiRuntime
 from core.wiki.store import LeaseLost, WikiStore, decode
+from core.wiki.telegram_login import LoginConfig
 from tests.wiki.test_contracts import extraction
 
 TEST_PORT = int(os.environ.get("WIKI_TEST_PORT", "0"))
@@ -111,6 +114,243 @@ async def channel(store, channel_id=12345, public=True):
         "test",
     )
     return await store.channel(ch["id"])
+
+
+async def test_oidc_cookie_flow_isolated_from_webui_and_replay(store, monkeypatch):
+    origin = "https://wiki.example.test"
+    headers = {"Origin": origin, "X-Wiki-Request": "1"}
+    account = wiki_account.ACCOUNT_PATH
+    service = WikiRuntime(store, None, None)
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    monkeypatch.setattr(
+        wiki_account.telegram_login, "login_config", lambda: LoginConfig(origin, "123456", "secret")
+    )
+    exchange = AsyncMock(
+        return_value=(987654321, b"opaque-subject", "第一位用户", "private_name", None)
+    )
+    monkeypatch.setattr(wiki_account.telegram_login, "exchange_code", exchange)
+    monkeypatch.setattr(
+        wiki_account.telegram_login,
+        "download_avatar",
+        AsyncMock(return_value=(b"avatar", "image/png")),
+    )
+    monkeypatch.setattr("core.web_api.auth._is_dev_mode_enabled", lambda: True)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(wiki.public, prefix="/api/public/wiki")
+    app.include_router(wiki_account.router, prefix=account)
+    app.include_router(wiki_account.admin, prefix="/api/wiki/admin")
+    transport = ASGITransport(app=app)
+
+    async with (
+        AsyncClient(transport=transport, base_url=origin) as client,
+        AsyncClient(transport=transport, base_url=origin) as other,
+    ):
+        assert (await client.get("/api/public/wiki/channels")).status_code == 200
+        assert (await client.get(f"{account}/session")).json()["user"] is None
+        assert (
+            await client.post(
+                f"{account}/start", json={}, headers={**headers, "Origin": "https://evil.test"}
+            )
+        ).status_code == 403
+        assert (
+            await client.post(f"{account}/start", json={}, headers={**headers, "Host": "evil.test"})
+        ).status_code == 404
+        start = await client.post(
+            f"{account}/start", headers=headers, json={"return_to": "/wiki/123#claim-1"}
+        )
+        assert start.status_code == 200, start.text
+        params = parse_qs(urlsplit(start.json()["authorization_url"]).query)
+        assert "HttpOnly" in start.headers["set-cookie"] and "Secure" in start.headers["set-cookie"]
+        callback_url = f"{account}/callback"
+        expired = await client.post(f"{account}/start", headers=headers, json={})
+        expired_state = parse_qs(urlsplit(expired.json()["authorization_url"]).query)["state"][0]
+        await store.query(
+            "UPDATE wiki_login_flows SET expires_at=UTC_TIMESTAMP(6) WHERE state_hash=UNHEX(%s)",
+            (wiki_account.token_hash(expired_state),),
+        )
+        expired_result = await client.get(
+            callback_url, params={"state": expired_state, "code": "expired-code"}
+        )
+        assert expired_result.headers["location"].endswith("login_error=expired")
+        callback_params = {"state": params["state"][0], "code": "single-use-code"}
+        rejected = await other.get(callback_url, params=callback_params)
+        assert (
+            rejected.headers["location"].endswith("login_error=expired")
+            and not exchange.await_count
+        )
+        accepted = await client.get(callback_url, params=callback_params)
+        assert (
+            accepted.status_code == 303
+            and accepted.headers["location"] == origin + "/wiki/123#claim-1"
+        )
+        assert (
+            accepted.headers["cache-control"] == "no-store"
+            and accepted.headers["referrer-policy"] == "no-referrer"
+        )
+        assert all(
+            "HttpOnly" in cookie and "SameSite=lax" in cookie
+            for cookie in accepted.headers.get_list("set-cookie")
+        )
+        replay = await client.get(callback_url, params=callback_params)
+        assert (
+            replay.headers["location"].endswith("login_error=expired") and exchange.await_count == 1
+        )
+        assert exchange.await_args.args[3] == params["nonce"][0]
+        assert exchange.await_args.args[2] != params["code_challenge"][0]
+
+        state = await client.get(f"{account}/session")
+        user = state.json()["user"]
+        assert user["display_name"] == "第一位用户" and user["username"] == "private_name"
+        assert "987654321" not in state.text and "opaque-subject" not in state.text
+        assert user["privacy"] == {
+            "show_avatar": False,
+            "show_username": False,
+            "anonymous_contributions": True,
+        }
+        assert (await client.get(f"{account}/avatar")).content == b"avatar"
+        assert (await other.get(f"{account}/avatar", params={"id": user["id"]})).status_code == 401
+        admin_url = "/api/wiki/admin/status"
+        assert (await client.get(admin_url)).status_code == 401
+        assert (
+            await client.get(
+                admin_url,
+                headers={"Authorization": f"Bearer {client.cookies.get(wiki_account.ACCESS)}"},
+            )
+        ).status_code == 401
+        assert (
+            await client.get(
+                admin_url, headers={"Authorization": f"Bearer {generate_token('999999')}"}
+            )
+        ).status_code == 403
+        assert (
+            await client.get(
+                admin_url, headers={"Authorization": f"Bearer {generate_token('admin')}"}
+            )
+        ).json() == {"admin": True}
+        assert (
+            await other.get(f"{account}/avatar", headers={"Authorization": "Bearer dev"})
+        ).status_code == 401
+
+        preferences = {
+            "show_avatar": True,
+            "show_username": False,
+            "anonymous_contributions": False,
+        }
+        assert (await client.put(f"{account}/privacy", json=preferences)).status_code == 403
+        assert (
+            await client.put(
+                f"{account}/privacy", headers=headers, json={**preferences, "user_id": "someone"}
+            )
+        ).status_code == 422
+        assert (
+            await client.put(f"{account}/privacy", headers=headers, json=preferences)
+        ).json() == preferences
+        old_refresh = client.cookies.get(wiki_account.REFRESH)
+        old_access = client.cookies.get(wiki_account.ACCESS)
+        session = await service.accounts.session(old_access)
+        await store.query(
+            "UPDATE wiki_sessions SET access_until=UTC_TIMESTAMP(6) WHERE id=%s",
+            (session["session_id"],),
+        )
+        assert (await client.get(f"{account}/session")).json()["can_refresh"] is True
+        assert (await client.post(f"{account}/refresh", headers=headers)).status_code == 204
+        assert client.cookies.get(wiki_account.REFRESH) != old_refresh
+        assert await service.accounts.rotate(old_refresh) is None
+        assert (await client.get(f"{account}/session")).json()["user"]["privacy"] == preferences
+        new_refresh = client.cookies.get(wiki_account.REFRESH)
+        rotations = await asyncio.gather(
+            service.accounts.rotate(new_refresh), service.accounts.rotate(new_refresh)
+        )
+        rotated = [result for result in rotations if result]
+        assert len(rotated) == 1
+        client.cookies.set(wiki_account.ACCESS, rotated[0][0], domain="wiki.example.test", path="/")
+        client.cookies.set(
+            wiki_account.REFRESH, rotated[0][1], domain="wiki.example.test", path="/"
+        )
+
+        profile = await client.post(
+            f"{account}/start", headers=headers, json={"refresh_profile": True}
+        )
+        state = parse_qs(urlsplit(profile.json()["authorization_url"]).query)["state"][0]
+        exchange.return_value = (999999, b"different-account", "其他用户", None, None)
+        wrong_account = await client.get(
+            callback_url, params={"state": state, "code": "wrong-account"}
+        )
+        assert wrong_account.headers["location"].endswith("login_error=unavailable")
+        assert (await client.get(f"{account}/session")).json()["user"]["id"] == user["id"]
+        profile = await client.post(
+            f"{account}/start", headers=headers, json={"refresh_profile": True}
+        )
+        state = parse_qs(urlsplit(profile.json()["authorization_url"]).query)["state"][0]
+        exchange.return_value = (987654321, b"opaque-subject", "新昵称", None, None)
+        await client.get(callback_url, params={"state": state, "code": "profile"})
+        updated = (await client.get(f"{account}/session")).json()["user"]
+        assert (
+            updated["id"] == user["id"]
+            and updated["display_name"] == "新昵称"
+            and updated["privacy"] == preferences
+        )
+
+        admin_headers = {"Authorization": f"Bearer {generate_token('admin')}"}
+        block = f"/api/wiki/admin/accounts/{user['id']}/blocked"
+        assert (await client.put(block, json={"blocked": True})).status_code == 401
+        assert (
+            await client.put(block, headers=admin_headers, json={"blocked": True})
+        ).status_code == 200
+        assert (await client.post(f"{account}/refresh", headers=headers)).status_code == 401
+        assert (await client.get(f"{account}/session")).json()["user"] is None
+        assert not await store.one("SELECT id FROM wiki_sessions")
+        assert (
+            await client.put(block, headers=admin_headers, json={"blocked": False})
+        ).status_code == 200
+        start = await client.post(f"{account}/start", headers=headers, json={})
+        state = parse_qs(urlsplit(start.json()["authorization_url"]).query)["state"][0]
+        assert (
+            await client.get(callback_url, params={"state": state, "code": "login-again"})
+        ).status_code == 303
+        refresh = client.cookies.get(wiki_account.REFRESH)
+        assert refresh
+        assert (await client.post(f"{account}/logout", headers=headers)).status_code == 204
+        assert not client.cookies.get(wiki_account.REFRESH) and not await service.accounts.rotate(
+            refresh
+        )
+
+
+async def test_legacy_admin_widget_preserves_login_with_expiry_and_replay_checks(
+    store, monkeypatch
+):
+    import hashlib
+    import hmac
+    import time
+
+    from core.settings import get_settings
+    from core.web_api import deps
+
+    service = WikiRuntime(store, None, None)
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    monkeypatch.setattr(deps, "check_admin_permission", lambda user_id: user_id == "123456")
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(auth.router, prefix="/api/auth")
+    key = hashlib.sha256(get_settings().telegram.bot_token.encode()).digest()
+
+    def signed(when):
+        data = {"id": 123456, "first_name": "Admin", "auth_date": when}
+        message = "\n".join(f"{name}={value}" for name, value in sorted(data.items()))
+        return {**data, "hash": hmac.new(key, message.encode(), hashlib.sha256).hexdigest()}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://wiki.example.test"
+    ) as client:
+        endpoint = "/api/auth/telegram-callback"
+        now = int(time.time())
+        assert not (await client.post(endpoint, json=signed(now - 301))).json()["success"]
+        response = await client.post(endpoint, json=signed(now))
+        assert response.json()["success"]
+        assert not (await client.post(endpoint, json=signed(now))).json()["success"]
 
 
 async def published(store, *, image=False, channel_id=12345):

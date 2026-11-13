@@ -29,6 +29,8 @@ const mime = {".html":"text/html",".js":"application/javascript",".css":"text/cs
 const avatar = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCXYAAAAASUVORK5CYII=","base64");
 let coverUrl;
 let uploadedCover;
+let accountEnabled = false;
+let accountUser = null;
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
@@ -41,7 +43,31 @@ const server = http.createServer(async (req,res) => {
       ...channel, enabled: true, access_verified: true, cover_digest: uploadedCover?.digest,
       config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
     };
-    if (endpoint === "channels") out = [channel];
+    if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false };
+    else if (endpoint === "/api/wiki/account/start") {
+      assert.equal(req.headers["x-wiki-request"], "1");
+      out = { authorization_url: "https://oauth.telegram.org/auth?fixture=1" };
+    }
+    else if (endpoint === "/api/wiki/account/privacy" && req.method === "PUT") {
+      assert.equal(req.headers["x-wiki-request"], "1");
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      accountUser.privacy = JSON.parse(Buffer.concat(chunks));
+      out = accountUser.privacy;
+    }
+    else if (endpoint === "/api/wiki/account/logout" && req.method === "POST") {
+      accountUser = null;
+      res.writeHead(204);
+      return res.end();
+    }
+    else if (endpoint === "/api/wiki/admin/status") {
+      if (req.headers.authorization !== "Bearer wiki-test-token") {
+        res.writeHead(401, { "content-type": "application/json" });
+        return res.end('{}');
+      }
+      out = { admin: true };
+    }
+    else if (endpoint === "channels") out = [channel];
     else if (endpoint === "/api/wiki/admin/channels") out = [adminChannel];
     else if (endpoint === "/api/wiki/admin/channels/123/config") out = adminChannel;
     else if (endpoint === "/api/wiki/admin/channels/123/cover" && req.method === "PUT") {
@@ -302,6 +328,10 @@ try {
   assert.equal(await brand.textContent(), "Sakura Wiki");
   const desktopTools = desktop.getByRole("group",{name:"Wiki 工具"});
   const settings = desktopTools.getByRole("link",{name:"管理 Wiki"});
+  assert.equal(await settings.count(), 0);
+  await desktop.evaluate(() => localStorage.setItem("sakura_bot_token", "wiki-test-token"));
+  await desktop.reload();
+  await settings.waitFor();
   assert.equal(await settings.locator("svg").count(), 1);
   const settingsPosition = await settings.boundingBox();
   const contextPosition = await desktop.getByRole("complementary",{name:"相关导航"}).boundingBox();
@@ -309,9 +339,32 @@ try {
   const columnWidths = await desktop.locator(".wiki-columns").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns);
   assert.equal(columnWidths, "200px 820px 285px");
   if (output) await desktop.screenshot({path:path.join(output,"desktop.png")});
+  await desktop.evaluate(() => localStorage.removeItem("sakura_bot_token"));
   await settings.click();
   await desktop.waitForURL("**/login");
   await desktop.getByText("登录",{exact:true}).first().waitFor();
+  accountEnabled = true;
+  const accountPage = await browser.newPage({ ...devices["iPhone 13"] });
+  await accountPage.route("https://oauth.telegram.org/auth?fixture=1", (route) => route.fulfill({ body: "Telegram fixture" }));
+  await accountPage.goto(url + "/wiki");
+  await accountPage.getByRole("button", { name: "Telegram 登录", exact: true }).click();
+  await accountPage.getByText("Wiki 会使用你的 Telegram 数字 ID", { exact: false }).waitFor();
+  await accountPage.getByRole("button", { name: "前往 Telegram 授权" }).click();
+  await accountPage.waitForURL("https://oauth.telegram.org/auth?fixture=1");
+  accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: "fixture", avatar: false,
+    privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
+  await accountPage.goto(url + "/wiki");
+  await accountPage.getByRole("button", { name: "Wiki 测试用户" }).click();
+  assert.equal(await accountPage.getByRole("link", { name: "管理 Wiki" }).count(), 0);
+  await accountPage.getByRole("checkbox", { name: "匿名署名" }).uncheck();
+  await accountPage.getByRole("checkbox", { name: "公开 @用户名" }).check();
+  await accountPage.getByRole("button", { name: "保存隐私设置" }).click();
+  await accountPage.getByText("隐私设置已保存。", { exact: true }).waitFor();
+  assert.deepEqual(accountUser.privacy, { show_avatar: false, show_username: true, anonymous_contributions: false });
+  await accountPage.getByRole("button", { name: "退出登录" }).click();
+  await accountPage.getByRole("button", { name: "Telegram 登录", exact: true }).waitFor();
+  await accountPage.close();
+  accountEnabled = false;
   await desktop.goto(url + "/wiki/123/page/article-0#claim-12");
   await desktop.locator("#claim-12").waitFor();
   const back = desktop.getByRole("button", { name: "返回", exact: true });

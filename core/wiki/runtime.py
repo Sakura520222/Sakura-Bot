@@ -8,6 +8,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
+from .accounts import WikiAccounts
 from .collector import SourceCollector
 from .engine import BudgetExceeded, WikiEngine, WikiResponseError
 from .models import WikiConfig, alias_key, canonical_id, utc
@@ -49,6 +50,7 @@ async def start_wiki(db, client, scheduler, bot_client=None):
 class WikiRuntime:
     def __init__(self, store, client, scheduler):
         self.store, self.client, self.scheduler = store, client, scheduler
+        self.accounts = WikiAccounts(store)
         self.collector = SourceCollector(store, client)
         self.engine = WikiEngine(store)
         self.reader = PublicReader(store)
@@ -58,6 +60,7 @@ class WikiRuntime:
         self.ready = False
         self.startup_error = ""
         self._last_refresh = None
+        self._last_account_cleanup = None
         self.bot_client = None
         self.outbox = EventOutbox()
         self.recovery_keys = set()
@@ -173,6 +176,11 @@ class WikiRuntime:
                 return
             if not self._last_refresh or utc() - self._last_refresh >= timedelta(minutes=1):
                 await self.refresh_channels()
+            if not self._last_account_cleanup or utc() - self._last_account_cleanup >= timedelta(
+                hours=1
+            ):
+                await self.accounts.cleanup()
+                self._last_account_cleanup = utc()
             for row in await self.store.query(
                 "SELECT * FROM wiki_channels WHERE enabled=TRUE", fetch=True
             ):

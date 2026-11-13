@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 from core.infrastructure.utils.constants import (
@@ -42,6 +42,7 @@ class TelegramSettings(BaseSettings):
     api_id: int | None = Field(default=None, alias="TELEGRAM_API_ID")
     api_hash: str | None = Field(default=None, alias="TELEGRAM_API_HASH")
     bot_token: str | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
+    qa_bot_token: SecretStr | None = Field(default=None, alias="QA_BOT_TOKEN")
 
     @field_validator("api_id")
     @classmethod
@@ -249,6 +250,13 @@ class WebUISettings(BaseSettings):
     model_config = {"extra": "ignore"}
 
 
+class WikiLoginSettings(BaseSettings):
+    enabled: bool = Field(default=False, alias="WIKI_LOGIN_ENABLED")
+    origin: str = Field(default="", alias="WIKI_LOGIN_ORIGIN")
+    client_secret: SecretStr = Field(default=SecretStr(""), alias="WIKI_TELEGRAM_CLIENT_SECRET")
+    model_config = {"extra": "ignore"}
+
+
 class Settings:
     """主配置类，聚合所有子配置"""
 
@@ -263,6 +271,7 @@ class Settings:
         self.database = DatabaseSettings()
         self.userbot = UserBotSettings()
         self.webui = WebUISettings()
+        self.wiki_login = WikiLoginSettings()
 
         # 其他配置
         self.send_report_to_source = True
