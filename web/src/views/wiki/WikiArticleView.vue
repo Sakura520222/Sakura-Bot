@@ -83,7 +83,6 @@
           <p v-else>暂无其他同主题条目</p>
         </template>
       </details>
-      <button class="wiki-top-button" @click="scrollTop">返回顶部</button>
     </article>
   </div>
 </template>
@@ -128,7 +127,6 @@ const sourceLimit = ref(20);
 const copyStatus = ref("");
 const saved = ref(false);
 const savedKey = () => `sakura-wiki-saved:${data.value?.id}`;
-const motion = matchMedia("(prefers-reduced-motion: reduce)");
 let observer: IntersectionObserver | undefined;
 
 watch([() => data.value?.revision_id, () => data.value?.publication_id], () => {
@@ -204,9 +202,6 @@ function toggleSaved() {
   if (saved.value) localStorage.removeItem(savedKey());
   else localStorage.setItem(savedKey(), "1");
   saved.value = !saved.value;
-}
-function scrollTop() {
-  window.scrollTo({ top: 0, behavior: motion.matches ? "auto" : "smooth" });
 }
 onUnmounted(() => observer?.disconnect());
 </script>

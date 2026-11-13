@@ -751,9 +751,6 @@
   width: 64px;
   height: 28px;
 }
-.wiki-shell .wiki-top-button {
-  margin-top: 16px;
-}
 .wiki-shell .wiki-toc a.wiki-toc-active {
   background: var(--sb-accent-soft);
   color: var(--sb-accent);

@@ -1,7 +1,7 @@
 <template>
   <header class="wiki-channel-hero">
-    <div class="wiki-channel-cover" aria-hidden="true">
-      <img v-if="channel?.cover_url && !coverFailed" :src="channel.cover_url" alt="" loading="lazy"
+    <div v-if="channel?.cover_url && !coverFailed" class="wiki-channel-cover" aria-hidden="true">
+      <img :key="channel.cover_url" :src="channel.cover_url" alt="" loading="lazy"
         decoding="async" referrerpolicy="no-referrer" @error="coverFailed = true" />
     </div>
     <div class="wiki-channel-id">
