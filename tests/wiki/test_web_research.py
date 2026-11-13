@@ -73,3 +73,47 @@ def test_legacy_search_settings_keep_keys_without_custom_endpoints_or_limits():
     )
     assert result.providers["tavily"].model_dump() == {"enabled": True, "api_key": "fixture-key"}
     assert "daily_calls" not in result.model_dump()
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "expected"),
+    [
+        (
+            "wikipedia",
+            {
+                "pages": [
+                    {
+                        "key": "崩壞：星穹鐵道",
+                        "title": "星穹铁道",
+                        "excerpt": "<span>星穹铁道</span>",
+                    }
+                ]
+            },
+            "https://zh.wikipedia.org/wiki/",
+        ),
+        (
+            "crossref",
+            {"message": {"items": [{"URL": "https://doi.org/10.1/abc", "title": ["Paper"]}]}},
+            "https://doi.org/",
+        ),
+        (
+            "github",
+            {
+                "items": [
+                    {
+                        "html_url": "https://github.com/example/project",
+                        "full_name": "example/project",
+                        "description": "Project",
+                    }
+                ]
+            },
+            "https://github.com/",
+        ),
+    ],
+)
+def test_free_provider_uses_official_endpoint_without_key(name, body, expected):
+    method, url, options = provider_request(name, "", "星穹铁道", 3)
+    assert method == "GET" and "Authorization" not in options["headers"]
+    [result] = normalized_results(name, body, 3, endpoint=url)
+    assert result["url"].startswith(expected)
+    assert "<span>" not in result["snippet"]

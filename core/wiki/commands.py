@@ -9,21 +9,66 @@ import logging
 
 from telethon import Button, events
 
+from .community import PROPOSAL_LABELS
+
 logger = logging.getLogger(__name__)
 
 
-async def notify_proposal(runtime, identifier, channel, kind):
+def proposal_summary(proposal):
+    payload = proposal["payload"]
+    kind = proposal["kind"]
+
+    def excerpt(value, limit=500):
+        return value[:limit] + ("…" if len(value) > limit else "")
+
+    lines = [
+        f"Wiki 待审 · {PROPOSAL_LABELS[kind]}",
+        f"{excerpt(proposal['channel_title'], 100)} / {excerpt(proposal['title'], 160)} · 第 {payload['claim'] + 1} 段",
+    ]
+    if kind in {"edit", "correction"}:
+        changes = [
+            line for line in payload.get("diff", "").splitlines()[2:] if line.startswith(("-", "+"))
+        ]
+        for marker, label, fallback in (
+            ("-", "修改前", proposal.get("original")),
+            ("+", "修改后", payload["text"]),
+        ):
+            text = "\n".join(line[1:] for line in changes if line.startswith(marker))
+            lines.append(
+                f"{label}\n{excerpt(text or ('（未改动）' if changes else fallback or '（原版本不可用）'))}"
+            )
+    else:
+        original = payload.get("excerpt") or proposal.get("original")
+        if original:
+            lines.append(
+                f"{('所选原文' if payload.get('excerpt') else '原文段落')}\n{excerpt(original)}"
+            )
+        lines.append(f"{PROPOSAL_LABELS[kind]}\n{excerpt(payload['text'])}")
+    if payload.get("sources"):
+        lines.append(f"附 {len(payload['sources'])} 个来源，完整链接见详情。")
+    return "\n\n".join(lines)
+
+
+async def notify_proposal(runtime, identifier):
     from .telegram_login import wiki_login_settings
 
     if not runtime.bot_client:
         return
+    try:
+        rows = await runtime.community.proposals(identifier=identifier, review=True)
+    except Exception as error:
+        logger.info("Wiki 投稿通知读取失败: %s", type(error).__name__)
+        return
+    if not rows:
+        return
+    summary = proposal_summary(rows[0])
     base = wiki_login_settings().origin.rstrip("/")
     buttons = [
         Button.inline("批准", f"wpr:a:{identifier}"),
         Button.inline("拒绝", f"wpr:r:{identifier}"),
     ]
     if base.startswith("https://"):
-        buttons.append(Button.url("查看详情", base + "/wiki/admin"))
+        buttons.append(Button.url("查看详情", base + f"/wiki/admin?proposal={identifier}"))
     from core.config import ADMIN_LIST
 
     for admin in (value for value in ADMIN_LIST if isinstance(value, int) and value > 0):
@@ -31,9 +76,10 @@ async def notify_proposal(runtime, identifier, channel, kind):
             await asyncio.wait_for(
                 runtime.bot_client.send_message(
                     admin,
-                    f"Wiki 待审投稿\n频道 {channel} · {kind}\n{identifier}",
+                    summary,
                     buttons=buttons,
                     parse_mode=None,
+                    link_preview=False,
                 ),
                 timeout=4,
             )
@@ -51,7 +97,7 @@ def register_wiki_commands(client, runtime):
             return
         action, identifier = (part.decode("ascii") for part in event.pattern_match.groups())
         try:
-            await runtime.community.decide(
+            result = await runtime.community.decide(
                 identifier,
                 "approved" if action == "a" else "rejected",
                 event.sender_id,
@@ -61,7 +107,7 @@ def register_wiki_commands(client, runtime):
             await event.answer(str(error), alert=True)
             return
         runtime.wake()
-        await event.answer("投稿已处理")
+        await event.answer("已批准，等待频道空闲后处理" if result["queued"] else "投稿已处理")
 
     @client.on(events.NewMessage(pattern=r"^/wiki_(status|build|pause)(?:@\w+)?(?:\s+(\S+))?\s*$"))
     async def handle(event):

@@ -108,7 +108,9 @@ router.beforeEach((to, _from, next) => {
   }
   // 没有 token 直接跳转登录
   if (!token) {
-    next("/login");
+    const proposal = to.query.proposal;
+    next(to.name === "WikiAdmin" && typeof proposal === "string" && /^[a-f0-9]{32}$/.test(proposal)
+      ? { name: "Login", query: { wiki_proposal: proposal } } : "/login");
     return;
   }
   // token 存在则放行，401 由 API 拦截器处理

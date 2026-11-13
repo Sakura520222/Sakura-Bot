@@ -36,6 +36,8 @@ let assistantCheckedIn = false;
 let articleHidden = false;
 let researchSaved;
 let submittedProposal;
+const reviewProposalId = "d".repeat(32);
+let reviewProposalStatus = "pending";
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
@@ -66,15 +68,23 @@ const server = http.createServer(async (req,res) => {
     }
     else if (endpoint === "/api/wiki/community/contributors") out = [];
     else if (endpoint === "/api/wiki/admin/proposals" || /^\/api\/wiki\/admin\/pages\/[^/]+\/proposals$/.test(endpoint)) out = [];
+    else if (endpoint === `/api/wiki/admin/proposals/${reviewProposalId}`) {
+      if (req.method === "POST") {
+        reviewProposalStatus = "approved";
+        out = { status: "approved", queued: true };
+      } else out = { id: reviewProposalId, channel_id: "123", channel_title: channel.title, status: reviewProposalStatus,
+        title: "审核样例", kind: "annotation", job_status: "paused", active_job: "a".repeat(32), created_at: channel.updated_at,
+        original: "完整原文", payload: { claim: 0, excerpt: "所选测试片段", text: "新的说明", diff: "", sources: [] } };
+    }
     else if (endpoint === "/api/wiki/admin/research") {
-      const providers = { deepseek: "https://api.deepseek.com", tavily: "https://api.tavily.com", serpapi: "https://serpapi.com" };
+      const providers = { deepseek: "https://api.deepseek.com", tavily: "https://api.tavily.com", serpapi: "https://serpapi.com", wikipedia: "https://www.wikipedia.org", crossref: "https://api.crossref.org", github: "https://api.github.com" };
       if (req.method === "PUT") {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         researchSaved = JSON.parse(Buffer.concat(chunks));
       }
       out = { enabled: researchSaved?.enabled ?? false, order: Object.keys(providers), result_limit: 5, timeout: 10, concurrency: 3, ttl_hours: 24,
-        providers: Object.fromEntries(Object.entries(providers).map(([name, official_url]) => [name, { enabled: false, has_key: false, official_url }])) };
+        providers: Object.fromEntries(Object.entries(providers).map(([name, official_url]) => [name, { enabled: false, has_key: false, official_url, requires_key: !["wikipedia", "crossref", "github"].includes(name) }])) };
     }
     else if (/^\/api\/wiki\/admin\/channels\/123\/pages\/[^/]+$/.test(endpoint)) {
       assert.equal(req.headers.authorization, "Bearer wiki-test-token");
@@ -524,6 +534,7 @@ try {
   await desktop.goto(url + "/wiki/admin");
   await desktop.getByText("社区与联网", { exact: true }).click();
   await desktop.getByText("https://api.deepseek.com", { exact: true }).waitFor();
+  await desktop.getByText("百科条目 · 无需密钥", { exact: true }).waitFor();
   await desktop.getByText("没有待审修订建议", { exact: true }).waitFor();
   assert.equal(await desktop.getByText("每日成本上限", { exact: true }).count(), 0);
   await desktop.getByRole("button", { name: "保存联网设置" }).click();
@@ -574,6 +585,12 @@ try {
   await desktop.getByRole("button", { name: "恢复公开", exact: true }).click();
   await desktop.getByText("已取消隐藏。", { exact: true }).waitFor();
   await desktop.getByRole("heading", { name: cards[0].title, exact: true }).waitFor();
+  await desktop.goto(url + `/wiki/admin?proposal=${reviewProposalId}`);
+  await desktop.getByText("所选测试片段", { exact: true }).waitFor();
+  await desktop.getByText("新的说明", { exact: true }).waitFor();
+  await desktop.getByRole("link", { name: "查看任务" }).waitFor();
+  await desktop.getByRole("button", { name: "批准", exact: true }).click();
+  await desktop.getByText("已批准并排队，频道空闲后自动生成修订。", { exact: true }).waitFor();
   await desktop.goto(url + "/wiki/123/graph");
   await desktop.locator(".wiki-graph-list button").first().waitFor();
   await desktop.locator(".wiki-graph-canvas canvas").first().waitFor();

@@ -53,7 +53,7 @@ async def submit(body: Submission, user: WikiUser):
     if notify:
         from core.wiki.commands import notify_proposal
 
-        await notify_proposal(service, identifier, body.channel, body.kind)
+        await notify_proposal(service, identifier)
     return {"id": identifier, "status": "pending"}
 
 
@@ -110,17 +110,36 @@ async def contributor_avatar(identifier: str):
 
 @admin.get("/proposals")
 async def queue(
-    status: Literal["pending", "approved", "rejected", "returned", "withdrawn"] = "pending",
+    status: Literal[
+        "pending", "approved", "rejected", "returned", "withdrawn", "queued"
+    ] = "pending",
     offset: int = Query(0, ge=0, le=100000),
 ):
-    return await runtime(admin=True).community.proposals(status=status, offset=offset)
+    return await runtime(admin=True).community.proposals(
+        status=None if status == "queued" else status,
+        offset=offset,
+        review=True,
+        queued=status == "queued",
+    )
+
+
+@admin.get("/proposals/{identifier}")
+async def proposal_detail(identifier: str):
+    if not IDENTIFIER.fullmatch(identifier):
+        raise HTTPException(404)
+    rows = await runtime(admin=True).community.proposals(identifier=identifier, review=True)
+    if not rows:
+        raise HTTPException(404, "修订建议不存在")
+    return rows[0]
 
 
 @admin.get("/pages/{page}/proposals")
 async def page_queue(page: str, offset: int = Query(0, ge=0, le=100000)):
     if not IDENTIFIER.fullmatch(page):
         raise HTTPException(404)
-    return await runtime(admin=True).community.proposals(status="pending", page=page, offset=offset)
+    return await runtime(admin=True).community.proposals(
+        status="pending", page=page, offset=offset, review=True
+    )
 
 
 @admin.post("/proposals/{identifier}")

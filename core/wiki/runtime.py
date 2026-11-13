@@ -193,6 +193,8 @@ class WikiRuntime:
                 config = WikiConfig.model_validate(decode(row["config"]))
                 if config.paused or row["active_job"]:
                     continue
+                if await self.community.dispatch_approved(row["id"]):
+                    continue
                 due = schedule_due(config, row.get("scheduled_at"))
                 dirty = row["dirty_at"] and utc() - row["dirty_at"] >= timedelta(
                     seconds=config.debounce_seconds

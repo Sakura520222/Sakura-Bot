@@ -8,12 +8,13 @@
       <n-form-item label="启用联网检索"><n-switch v-model:value="settings.enabled" /></n-form-item>
       <n-divider title-placement="left">搜索服务</n-divider>
       <div class="settings-grid">
-        <n-card v-for="name in names" :key="name" :title="providerNames[name]" size="small">
+        <n-card v-for="name in names.filter((provider) => settings?.providers[provider])" :key="name" :title="providerNames[name]" size="small">
           <template #header-extra><n-switch v-model:value="settings.providers[name].enabled" :aria-label="`启用 ${providerNames[name]}`" /></template>
           <n-text depth="3">{{ settings.providers[name].official_url }}</n-text>
-          <n-form-item label="API Key" class="key-field">
+          <n-form-item v-if="settings.providers[name].requires_key !== false" label="API Key" class="key-field">
             <n-input v-model:value="keys[name]" type="password" autocomplete="new-password" :placeholder="settings.providers[name].has_key ? '已保存，留空保留' : '输入 API Key'" />
           </n-form-item>
+          <p v-else class="key-field"><n-text depth="3">{{ freeDescriptions[name] }} · 无需密钥</n-text></p>
         </n-card>
       </div>
       <n-divider title-placement="left">请求设置</n-divider>
@@ -33,13 +34,14 @@ import { onMounted, ref } from "vue";
 import { wikiAdmin } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 
-const names = ["deepseek", "tavily", "serpapi"] as const;
+const names = ["deepseek", "tavily", "serpapi", "wikipedia", "crossref", "github"] as const;
 type Provider = typeof names[number];
-const providerNames = { deepseek: "DeepSeek", tavily: "Tavily", serpapi: "SerpAPI" };
+const providerNames = { deepseek: "DeepSeek", tavily: "Tavily", serpapi: "SerpAPI", wikipedia: "维基百科", crossref: "Crossref", github: "GitHub" };
+const freeDescriptions: Partial<Record<Provider, string>> = { wikipedia: "百科条目", crossref: "论文与出版物", github: "开源项目" };
 const providerOptions = names.map((name) => ({ label: providerNames[name], value: name }));
 type Search = {
   enabled: boolean; order: Provider[]; result_limit: number | null; timeout: number | null; concurrency: number | null; ttl_hours: number | null;
-  providers: Record<Provider, { enabled: boolean; official_url: string; has_key: boolean }>;
+  providers: Record<Provider, { enabled: boolean; official_url: string; has_key: boolean; requires_key?: boolean }>;
 };
 const settings = ref<Search>();
 const keys = ref<Partial<Record<Provider, string>>>({});
@@ -65,7 +67,7 @@ async function save() {
   }
   saving.value = true;
   try {
-    const providers = Object.fromEntries(names.map((name) => {
+    const providers = Object.fromEntries(names.filter((name) => current.providers[name]).map((name) => {
       const { enabled } = current.providers[name];
       const key = keys.value[name]?.trim();
       return [name, { enabled, ...(key ? { api_key: key } : {}) }];

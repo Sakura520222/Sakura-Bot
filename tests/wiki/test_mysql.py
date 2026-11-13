@@ -448,10 +448,21 @@ async def test_community_contributions_follow_publication_and_privacy(store):
     identifier, notify = await service.community.submit(user, ch["id"], page["id"], proposal)
     assert not notify and not await service.community.contributions()
     competing, _ = await service.community.submit(user, ch["id"], page["id"], proposal)
+    current_job = await store.enqueue(ch["id"], "update")
+    await store.control_job(ch["id"], current_job, "pause", "test")
     approved = await service.community.decide(identifier, "approved", "test")
+    assert approved["queued"] and not approved["job_id"]
+    assert not await service.community.dispatch_approved(ch["id"])
+    assert (await store.channel(ch["id"]))["active_job"] == current_job
+    [detail] = await service.community.proposals(identifier=identifier, review=True)
+    assert detail["original"] and detail["job_status"] == "paused"
+    await store.control_job(ch["id"], current_job, "resume", "test")
+    await store.finish(await store.claim_job(), "failed")
+    assert await service.community.dispatch_approved(ch["id"])
     assert not await service.community.contributions()
-    await service.run_job(await store.claim_job())
-    await service.engine.knowledge.publish(ch["id"], approved["job_id"], "test")
+    job = await store.claim_job()
+    await service.run_job(job)
+    await service.engine.knowledge.publish(ch["id"], job["id"], "test")
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
     assert not await service.community.contributions()  # Anonymous by default.
     await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))

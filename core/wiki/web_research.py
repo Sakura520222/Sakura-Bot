@@ -1,12 +1,13 @@
 """Bounded, shared search for the assistant and Wiki review."""
 
 import asyncio
+import html
 import ipaddress
 import json
 import re
 import socket
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 import aiohttp
 from pydantic import Field, field_validator
@@ -21,7 +22,12 @@ DEFAULTS = {
     "deepseek": "https://api.deepseek.com",
     "tavily": "https://api.tavily.com",
     "serpapi": "https://serpapi.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "crossref": "https://api.crossref.org",
+    "github": "https://api.github.com",
 }
+FREE_PROVIDERS = {"wikipedia": 1, "crossref": 1, "github": 6}
+USER_AGENT = "Sakura-Bot/2.5 (https://github.com/Sakura520222/Sakura-Bot)"
 
 
 class SearchUnavailable(ValueError):
@@ -65,7 +71,7 @@ class Provider(Strict):
 
 class SearchSettings(Strict):
     enabled: bool = False
-    order: list[str] = Field(default_factory=lambda: list(DEFAULTS), max_length=3)
+    order: list[str] = Field(default_factory=lambda: list(DEFAULTS), max_length=len(DEFAULTS))
     providers: dict[str, Provider] = Field(default_factory=dict)
     result_limit: int = Field(default=5, ge=1, le=10)
     timeout: int = Field(default=10, ge=2, le=30)
@@ -136,6 +142,33 @@ class PageText(HTMLParser):
 
 def provider_request(name, key, query, limit):
     base = DEFAULTS[name]
+    headers = {"User-Agent": USER_AGENT}
+    if name == "wikipedia":
+        wiki = "zh" if re.search(r"[\u3400-\u9fff]", query) else "en"
+        return (
+            "GET",
+            f"https://{wiki}.wikipedia.org/w/rest.php/v1/search/page",
+            {"headers": headers, "params": {"q": query, "limit": limit}},
+        )
+    if name == "crossref":
+        return (
+            "GET",
+            base + "/works",
+            {
+                "headers": headers,
+                "params": {
+                    "query.bibliographic": query,
+                    "rows": limit,
+                    "select": "title,URL,published,abstract",
+                },
+            },
+        )
+    if name == "github":
+        return (
+            "GET",
+            base + "/search/repositories",
+            {"headers": headers, "params": {"q": query, "per_page": limit}},
+        )
     if name == "deepseek":
         return (
             "POST",
@@ -167,10 +200,42 @@ def provider_request(name, key, query, limit):
     )
 
 
-def normalized_results(name, payload, limit):
+def normalized_results(name, payload, limit, *, endpoint=""):
     if not isinstance(payload, dict) or payload.get("error"):
         raise SearchUnavailable("provider_error")
-    rows = payload.get("organic_results", []) if name == "serpapi" else payload.get("results")
+    if name == "wikipedia":
+        rows = [
+            {
+                "url": f"https://{urlsplit(endpoint).hostname}/wiki/{quote(row['key'], safe='')}",
+                "title": row.get("title"),
+                "snippet": plain_snippet(row.get("excerpt")),
+            }
+            for row in payload.get("pages", [])
+            if isinstance(row, dict) and isinstance(row.get("key"), str)
+        ]
+    elif name == "crossref":
+        rows = [
+            {
+                "url": row.get("URL"),
+                "title": (row.get("title") or [""])[0],
+                "snippet": plain_snippet(row.get("abstract") or (row.get("title") or [""])[0]),
+                "date": "-".join(map(str, (row.get("published", {}).get("date-parts") or [[]])[0])),
+            }
+            for row in payload.get("message", {}).get("items", [])
+            if isinstance(row, dict)
+        ]
+    elif name == "github":
+        rows = [
+            {
+                "url": row.get("html_url"),
+                "title": row.get("full_name"),
+                "snippet": row.get("description"),
+            }
+            for row in payload.get("items", [])
+            if isinstance(row, dict)
+        ]
+    else:
+        rows = payload.get("organic_results", []) if name == "serpapi" else payload.get("results")
     if not isinstance(rows, list):
         raise SearchUnavailable("provider_format")
     results = {}
@@ -200,12 +265,18 @@ def normalized_results(name, payload, limit):
     return list(results.values())
 
 
+def plain_snippet(value):
+    return html.unescape(re.sub(r"<[^>]*>", "", str(value or "")))
+
+
 class WebResearch:
     def __init__(self, store):
         self.store = store
         self.limit = asyncio.Condition()
         self.active = 0
         self.locks = [asyncio.Lock() for _ in range(32)]
+        self.provider_locks = {name: asyncio.Lock() for name in FREE_PROVIDERS}
+        self.next_provider_call = dict.fromkeys(FREE_PROVIDERS, 0.0)
 
     async def record_attempt(self, provider):
         await self.store.query(
@@ -248,9 +319,12 @@ class WebResearch:
         async def perform():
             for name in settings.order:
                 provider = settings.providers.get(name)
-                if not provider or not provider.enabled or not provider.api_key:
+                if (
+                    not provider
+                    or not provider.enabled
+                    or (name not in FREE_PROVIDERS and not provider.api_key)
+                ):
                     continue
-                await self.record_attempt(name)
                 method, url, options = provider_request(
                     name,
                     provider.api_key,
@@ -258,32 +332,61 @@ class WebResearch:
                     settings.result_limit,
                 )
                 try:
-                    async with (
-                        self.client(settings.timeout) as client,
-                        client.request(method, url, allow_redirects=False, **options) as response,
-                    ):
-                        if response.status != 200:
-                            continue
-                        results = normalized_results(
-                            name,
-                            json.loads(await bounded_body(response, 1024 * 1024)),
-                            settings.result_limit,
-                        )
-                        reachable = await asyncio.gather(
-                            *(self.reachable(result["url"]) for result in results)
-                        )
-                        results = [
-                            result
-                            for result, available in zip(results, reachable, strict=True)
-                            if available
-                        ]
-                        if results:
-                            return {"results": results, "provider": name}
-                except (aiohttp.ClientError, TimeoutError, ValueError):
+                    payload = await self.request_provider(
+                        name, method, url, options, settings.timeout
+                    )
+                    results = normalized_results(name, payload, settings.result_limit, endpoint=url)
+                    reachable = await asyncio.gather(
+                        *(self.reachable(result["url"]) for result in results)
+                    )
+                    results = [
+                        result
+                        for result, available in zip(results, reachable, strict=True)
+                        if available
+                    ]
+                    if results:
+                        return {"results": results, "provider": name}
+                except (
+                    aiohttp.ClientError,
+                    TimeoutError,
+                    ValueError,
+                    TypeError,
+                    AttributeError,
+                    IndexError,
+                ):
                     continue
             raise SearchUnavailable("no_search_evidence")
 
         return await self.cached(key, settings, perform)
+
+    async def request_provider(self, name, method, url, options, timeout):
+        async def request():
+            await self.record_attempt(name)
+            async with (
+                self.client(timeout) as client,
+                client.request(method, url, allow_redirects=False, **options) as response,
+            ):
+                if response.status != 200:
+                    if response.status in {403, 429} and name in FREE_PROVIDERS:
+                        retry = response.headers.get("Retry-After", "")
+                        delay = min(3600, int(retry)) if re.fullmatch(r"[0-9]{1,6}", retry) else 60
+                        self.next_provider_call[name] = asyncio.get_running_loop().time() + max(
+                            60, delay
+                        )
+                    raise SearchUnavailable("provider_unavailable")
+                return json.loads(await bounded_body(response, 1024 * 1024))
+
+        if name not in FREE_PROVIDERS:
+            return await request()
+        async with self.provider_locks[name]:
+            clock = asyncio.get_running_loop()
+            delay = self.next_provider_call[name] - clock.time()
+            if delay > FREE_PROVIDERS[name] + 0.1:
+                raise SearchUnavailable("provider_rate_limited")
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self.next_provider_call[name] = clock.time() + FREE_PROVIDERS[name]
+            return await request()
 
     @staticmethod
     def client(timeout):

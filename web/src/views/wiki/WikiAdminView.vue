@@ -326,7 +326,7 @@
           </n-form>
         </n-card>
       </template>
-      <WikiCommunityAdmin v-else-if="tab === 'community'" />
+      <WikiCommunityAdmin v-else-if="tab === 'community'" :key="proposalId || 'queue'" :identifier="proposalId" @back="clearProposal" />
       <template v-else-if="tab === 'jobs'">
         <n-card title="历史消息采集" size="small"
           ><n-space
@@ -363,6 +363,7 @@
         <n-empty v-if="!jobs.length" description="暂无任务" />
         <n-card
           v-for="job in jobs"
+          :id="`job-${job.id}`"
           :key="job.id"
           :title="jobLabels[job.kind] || job.kind"
           size="small"
@@ -591,7 +592,8 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   wikiAdmin,
   formatDate,
@@ -670,13 +672,21 @@ interface Revision {
   hidden: boolean;
   created_at: string;
 }
+const route = useRoute();
+const router = useRouter();
+const proposalId = computed(() => typeof route.query.proposal === "string" && /^[a-f0-9]{32}$/.test(route.query.proposal) ? route.query.proposal : undefined);
+function clearProposal() {
+  const query = { ...route.query };
+  delete query.proposal;
+  void router.replace({ query });
+}
 const channels = ref<Channel[]>([]),
   selected = ref(localStorage.getItem("sakura_wiki_channel") || ""),
   channel = ref<Channel>(),
   busy = ref(false),
   error = ref(""),
   notice = ref(""),
-  tab = ref("config"),
+  tab = ref(proposalId.value ? "community" : route.query.tab === "jobs" ? "jobs" : "config"),
   purgeConfirm = ref("");
 const adminPage = ref(1);
 const jobs = ref<Job[]>([]),
@@ -944,15 +954,32 @@ async function loadChannels() {
   error.value = "";
   try {
     channels.value = await wikiAdmin<Channel[]>("/channels");
+    if (typeof route.query.channel === "string" && channels.value.some((ch) => ch.id === route.query.channel)) selected.value = route.query.channel;
     if (!channels.value.some((ch) => ch.id === selected.value))
       selected.value = channels.value[0]?.id || "";
     if (selected.value) await loadChannel();
+    await scrollToJob();
   } catch (err) {
     error.value = problem(err);
   } finally {
     busy.value = false;
   }
 }
+async function scrollToJob() {
+  if (tab.value !== "jobs" || !/^#job-[a-f0-9]{32}$/.test(route.hash)) return;
+  await nextTick();
+  document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: "center" });
+}
+watch(proposalId, (id) => { if (id) tab.value = "community"; });
+watch(() => [route.query.tab, route.query.channel, route.hash], async () => {
+  if (route.query.tab !== "jobs") return;
+  try {
+    tab.value = "jobs";
+    if (typeof route.query.channel === "string" && channels.value.some((ch) => ch.id === route.query.channel) && selected.value !== route.query.channel) await switchChannel(route.query.channel);
+    else await refreshData();
+    await scrollToJob();
+  } catch (cause) { error.value = problem(cause); }
+});
 async function loadChannel() {
   if (!selected.value) return;
   const owner = selected.value;
