@@ -19,6 +19,12 @@ CHANNEL_COVERS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_channel_covers (
     image MEDIUMBLOB NOT NULL,
     FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+REVISION_REVIEWS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_revision_reviews (
+    revision_id CHAR(32) NOT NULL, policy_key CHAR(64) NOT NULL, subject_hash CHAR(64) NOT NULL,
+    approved BOOLEAN NOT NULL, result JSON NOT NULL, created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY(revision_id,policy_key,subject_hash),
+    FOREIGN KEY(revision_id) REFERENCES wiki_page_revisions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_schema (
         version INT PRIMARY KEY, applied_at DATETIME(6) NOT NULL
@@ -109,6 +115,7 @@ SCHEMA = (
         INDEX wiki_revision_page(page_id,created_at), INDEX wiki_revision_job(job_id),
         INDEX wiki_feed_latest(created_at DESC,page_id DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    REVISION_REVIEWS_TABLE,
     """CREATE TABLE IF NOT EXISTS wiki_evidence (
         revision_id CHAR(32) NOT NULL, source_id CHAR(64) NOT NULL,
         source_hash CHAR(64) NOT NULL, chunk_id CHAR(64) NOT NULL,
@@ -185,7 +192,7 @@ SCHEMA = (
 CHANNEL_VISIBLE = """c.enabled=TRUE AND c.public=TRUE AND c.access_verified=TRUE
     AND c.username IS NOT NULL AND c.verified_until>UTC_TIMESTAMP(6)
     AND c.published_revision IS NOT NULL"""
-REVISION_VISIBLE = """r.approved=TRUE AND r.rejected=FALSE AND p.hidden=FALSE
+REVISION_EVIDENCE = """r.rejected=FALSE AND p.hidden=FALSE
     AND EXISTS (SELECT 1 FROM wiki_evidence ev WHERE ev.revision_id=r.id)
     AND NOT EXISTS (SELECT 1 FROM wiki_evidence ev JOIN wiki_sources s ON s.id=ev.source_id
         WHERE ev.revision_id=r.id AND (s.channel_id<>r.channel_id OR s.deleted=TRUE
@@ -194,3 +201,4 @@ REVISION_VISIBLE = """r.approved=TRUE AND r.rejected=FALSE AND p.hidden=FALSE
             WHERE parent.channel_id=s.channel_id AND parent.source_type='message'
             AND parent.message_id=s.message_id AND parent.media_key=s.media_key
             AND parent.deleted=FALSE AND parent.hidden=FALSE AND parent.excluded=FALSE AND parent.verified=TRUE))))"""
+REVISION_VISIBLE = f"r.approved=TRUE AND {REVISION_EVIDENCE}"

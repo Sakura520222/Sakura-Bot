@@ -15,7 +15,13 @@ from datetime import timedelta
 import aiomysql
 
 from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
-from .schema import CHANNEL_COVERS_TABLE, DIRTY_PAGES_TABLE, SCHEMA, SCHEMA_VERSION
+from .schema import (
+    CHANNEL_COVERS_TABLE,
+    DIRTY_PAGES_TABLE,
+    REVISION_REVIEWS_TABLE,
+    SCHEMA,
+    SCHEMA_VERSION,
+)
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
 
@@ -130,6 +136,7 @@ class WikiStore:
                         raise
             await self.query(DIRTY_PAGES_TABLE)
             await self.query(CHANNEL_COVERS_TABLE)
+            await self.query(REVISION_REVIEWS_TABLE)
             return
         for statement in SCHEMA:
             try:
@@ -548,6 +555,7 @@ class WikiStore:
         "dropped_pages",
         "profile_narrative",
         "profile_generation",
+        "review_policy",
         "summary_topics",
     )
 

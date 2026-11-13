@@ -589,7 +589,20 @@ async def revision_detail(channel: str, revision_id: str):
         (revision_id,),
         fetch=True,
     )
-    return {"id": revision_id, "document": document, "diff": diff, "evidence": evidence}
+    review = await service.store.one(
+        """SELECT approved,result,created_at FROM wiki_revision_reviews WHERE revision_id=%s
+        ORDER BY created_at DESC LIMIT 1""",
+        (revision_id,),
+    )
+    if review:
+        review["result"] = decode(review["result"])
+    return {
+        "id": revision_id,
+        "document": document,
+        "diff": diff,
+        "evidence": evidence,
+        "review": review,
+    }
 
 
 @admin.post("/channels/{channel}/revisions/{revision_id}/reject")
@@ -625,6 +638,41 @@ async def correct(channel: str, revision_id: str, body: CorrectionRequest, actor
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
     return {"revision_id": new_id, "job_id": job_id}
+
+
+@admin.post("/channels/{channel}/revisions/{revision_id}/review/retry", status_code=202)
+async def retry_revision_review(channel: str, revision_id: str, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    async with service.store.transaction() as cur:
+        await cur.execute(
+            "SELECT active_job FROM wiki_channels WHERE id=%s FOR UPDATE", (ch["id"],)
+        )
+        if (await cur.fetchone())["active_job"]:
+            raise HTTPException(409, "请等待当前 Wiki 任务结束")
+        await cur.execute(
+            """SELECT rv.policy_key,rv.subject_hash,rv.result,rv.created_at FROM wiki_revision_reviews rv
+            JOIN wiki_page_revisions r ON r.id=rv.revision_id
+            WHERE r.id=%s AND r.channel_id=%s AND r.rejected=FALSE AND rv.approved=FALSE""",
+            (revision_id, ch["id"]),
+        )
+        previous = await cur.fetchall()
+        if not previous:
+            raise HTTPException(404, "没有可重试的审校结果")
+        await cur.execute(
+            "DELETE FROM wiki_revision_reviews WHERE revision_id=%s AND approved=FALSE",
+            (revision_id,),
+        )
+        await service.store.audit(
+            cur,
+            ch["id"],
+            "retry_revision_review",
+            revision_id,
+            actor,
+            {"previous_reviews": [{**row, "result": decode(row["result"])} for row in previous]},
+        )
+    job_id = await service.store.enqueue(ch["id"], "reindex", actor)
+    service.wake()
+    return {"job_id": job_id}
 
 
 @admin.post("/channels/{channel}/publish")
@@ -666,6 +714,7 @@ async def quarantined_extractions(channel: str, page: int = Query(1, ge=1, le=10
         """SELECT e.cache_key,e.review,e.result,e.created_at,s.source_type
         FROM wiki_extractions e JOIN wiki_chunks chunk ON chunk.id=e.chunk_id
         JOIN wiki_sources s ON s.id=chunk.source_id WHERE e.channel_id=%s AND e.approved=FALSE
+        AND NOT (JSON_EXTRACT(e.review,'$.mode') <=> 'draft')
         AND s.content_hash=chunk.content_hash AND s.hidden=FALSE AND s.deleted=FALSE
         ORDER BY e.created_at DESC LIMIT 50 OFFSET %s""",
         (ch["id"], (page - 1) * 50),

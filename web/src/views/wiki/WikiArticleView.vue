@@ -23,7 +23,7 @@
             </button>
           </div>
         </div>
-        <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 核实于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
+        <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 修订于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
         <span class="wiki-sr-only" role="status">{{ copyStatus }}</span>
         <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
           {{ bookmarkError || copyStatus }}

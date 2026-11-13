@@ -202,11 +202,16 @@ class Extraction(Strict):
     relations: list[Relation] = Field(default_factory=list, max_length=80)
 
 
+class ClaimReview(Strict):
+    index: int = Field(ge=0, strict=True)
+    status: Literal["supported", "unsupported", "sensitive"]
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class Review(Strict):
     approved: bool = Field(strict=True)
-    unsupported: list[int] = Field(default_factory=list)
-    sensitive: bool = False
-    reason: str = Field(default="", max_length=1000)
+    reason: str = Field(min_length=1, max_length=500)
+    claims: list[ClaimReview]
 
 
 class ProfileNarrative(Strict):
