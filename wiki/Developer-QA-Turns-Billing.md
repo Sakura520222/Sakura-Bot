@@ -2,7 +2,7 @@
 
 Go 助手保留串行 Update/FSM 分发，AI 执行使用独立有界 Worker Pool。
 WebUI → AI 配置 → 小妲助手可管理积分签到、必订阅频道、评论助手和执行限制。
-频道、订阅开关、签到和时区热生效；Worker 和回合容量在重启助手后生效。
+频道、订阅开关、签到、时区、匿名授权与群级额度热生效。Worker 和回合容量在重启助手后生效。
 所有助手运行时新功能仅在 Go 实现；Python 负责管理配置及显式 UserBot 历史回溯。
 
 ## 配置与迁移
@@ -20,7 +20,17 @@ WebUI → AI 配置 → 小妲助手可管理积分签到、必订阅频道、�
 }
 ```
 
-每个评论配置形如 `{"channel":"https://t.me/example","enabled":true,"wake_word":"小妲"}`。
+每个频道配置使用以下结构。`anonymous_enabled` 缺省为 `false`，`anonymous_daily_limit` 缺省为 `20`，有效范围为 1–1000。
+
+```json
+{
+  "channel": "https://t.me/example",
+  "enabled": true,
+  "wake_word": "小妲",
+  "anonymous_enabled": false,
+  "anonymous_daily_limit": 20
+}
+```
 默认 UTC 保持旧日期语义；切换业务时区后，签到与新消息计费均在该时区午夜切日。
 已建立的 reservation 仍绑定原计费日，跨日/改时区退款不会影响新一天的计数。
 历史 DATETIME 继续使用 UTC，业务日是单独的 DATE 标签。建议在业务日切换边界调整时区，
@@ -28,13 +38,15 @@ WebUI → AI 配置 → 小妲助手可管理积分签到、必订阅频道、�
 
 DDL 只增加 InnoDB 表/列，不删除旧 usage_quota 或会话数据。
 qa_daily_total 首次建立日期行时从旧免费用量初始化，之后统计免费和积分消息；
-usage_quota 只承担个人免费次数。管理员继续豁免个人及全站额度。
+usage_quota 承担真实用户免费次数及匿名群组共享额度。真实账号管理员继续沿用个人及全站额度豁免。
 积分用整数单位存储（10 units = 1.0 积分），每条消息永久保留 Telegram 幂等键、
 计费来源、units、turn_id 和结算状态。没有转账接口。
 
 ## 回合、取消和故障恢复
 
-会话按用户和作用域隔离：私聊，以及每个讨论群的每个帖子。
+会话按 actor 和作用域隔离。真实用户使用正数 Telegram 用户 ID，本群匿名管理员使用当前群的负数 ID 作为内部共享 actor，个人注册会跳过该 actor。
+
+私聊作用域为 `private`。映射到频道帖子的评论使用 `chat:<chat_id>:post:<root_id>`。其余合格讨论群消息使用 `chat:<chat_id>:thread:<message_thread_id>`，普通群聊的 thread 为 0。普通回复目标消息 ID 不参与群聊作用域计算。
 进程重启后按同一用户和 scope_key 恢复 30 分钟内活跃的会话；历史取最近 20 条后按时间及 ID 稳定排序。
 评论快照保存助手真实 user_id 和 author_role=assistant，避免将助手先前回答误归为外部 Bot。
 同一作用域的活动回合接纳后续消息，每条独立预留；容量/权限检查失败不扣费。
@@ -55,8 +67,11 @@ FINALIZING 与接纳使用同一把锁，关闭后消息进入下一回合，下
 
 ## 评论可见性与回溯
 
-只处理已启用频道的关联讨论群。自动转发的频道来源、原帖 ID 和讨论根消息 ID 建立映射；
-嵌套回复通过数据库映射归入帖子。原文（包括唤醒词和空白）保持不变。
+`Community.matchedRule` 通过助手身份查询频道当前关联讨论群，只处理 `qa_assistant.comments` 中启用的实际关联群。自动转发的频道来源、原帖 ID 和讨论根消息 ID 建立映射。嵌套回复与话题根通过数据库映射归入帖子，其他群消息使用群组或话题作用域。原文包含完整唤醒词和空白。
+
+多频道共用讨论群时优先匹配帖子的配置归属。无帖子映射时优先匹配显式唤醒词，普通回退按配置顺序选择。未指明频道的匿名消息优先选择允许匿名身份的关联频道。每个 Update 只进入一次助手处理。
+
+`effectiveUserMessage` 归一化真实用户和本群匿名 actor。Go 使用 `SenderChat.ID == Chat.ID` 与群组类型核实匿名来源，自动转发、其他频道身份、机器人、系统消息和编辑消息会被过滤。@提及依据 Telegram mention/text_mention 实体与实际助手身份验证。回复助手及同 actor、同作用域的活动回合消息也可触发。
 跨频道转发使用 sender_chat 与关联讨论群确认当前归属，forward_origin 单独记录原始来源。不能将原始来源的帖子 ID 当成当前频道的帖子 ID；Bot API 未提供当前帖子 ID 时保留群内根消息映射，不猜测编号。UserBot 回溯优先使用 saved_from_peer / saved_from_msg_id 精确匹配转发后的帖子。
 原帖及已收集评论按时间/消息 ID 排序作为不可信参考资料注入，公共评论不冒充个人追问。
 可见编辑会更新快照；媒体保存说明，不声称获得不可见的媒体内容。
@@ -68,6 +83,16 @@ WebUI 的“回溯历史评论”使用现有已登录 UserBot，调用
 后台依据 Telegram 讨论映射读取该帖可见评论，幂等插入，不覆盖实时采集记录。
 达到本次上限明确返回 truncated；超时可幂等重试。回溯结果不包括账号不可见或已删除内容。
 该功能不启动第二个 UserBot、不新增 Python 助手运行时。
+
+## 匿名身份准入与计费
+
+匿名访问由匹配频道的 `anonymous_enabled` 显式授权。隐藏账号的订阅状态无法核实，此开关授权群组身份按独立策略准入。WebUI 和助手回执说明该策略，个人订阅验证用于真实用户。
+
+`Community.admissionContext` 在接纳消息、预留额度及开始执行前重新核实当前关联和授权。`contracts.WithAnonymousQuota` 携带群 ID、频道与额度，计费层再次读取频道当前授权，额度取当前配置与准入上下文的较小值。
+
+匿名 actor 的每日用量按群共享，计入全站上限。达到群额度后拒绝接纳，个人积分与管理员计费豁免仅用于真实账号。消息预留、并发锁、失败退款和重启恢复复用现有账本。会话仍按群、帖子或话题隔离。
+
+主 Bot 的 Guard 使用 Telethon 原始 peer 归一化身份。匿名学习上报由 `allow_anonymous_admin_report` 按群授权，默认关闭。学习样本、反馈和任务在同一事务内保存，写入期间撤权会回滚。审计保存匿名 actor 类型、群 ID、消息 ID 和来源，真实用户 ID 留空。参见 [Sakura Guard](User-Sakura-Guard.md)。
 
 ## Telegram 输出
 

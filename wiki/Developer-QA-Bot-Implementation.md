@@ -1,6 +1,6 @@
 # AI能力增强 - 实施总结
 
-> 本页保留 v2.0.0 的早期实施记录。v2.4.2 当前架构请阅读 [Go 助手：回合、计费与评论架构](Developer-QA-Turns-Billing.md)。
+> 本页保留 v2.0.0 的早期实施记录。v2.4.8 的 Go 助手架构见 [回合、计费与评论架构](Developer-QA-Turns-Billing.md)，使用与升级说明见 [v2.4.8 更新与升级](Release-2.4.8.md)。
 
 ## 📋 实施概述
 

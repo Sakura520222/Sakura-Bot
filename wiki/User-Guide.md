@@ -20,9 +20,9 @@
 
 | 文档 | 说明 | 难度 |
 |------|------|------|
-| **[问答 Bot 指南](User-QA-Bot-Guide.md)** | 智能问答功能完整指南 | ⭐⭐ |
+| **[问答 Bot 指南](User-QA-Bot-Guide.md)** | 私聊、关联讨论群、匿名准入与积分 | ⭐⭐ |
 | **[多轮对话功能](User-Multi-Turn-Conversation.md)** | 上下文感知对话说明 | ⭐⭐ |
-| **[Sakura Wiki 使用与管理](User-Sakura-Wiki.md)** | 频道百科：增量索引、发布快照与回滚 | ⭐⭐ |
+| **[Sakura Wiki 使用与管理](User-Sakura-Wiki.md)** | 频道百科、收藏、图谱分页、索引与发布 | ⭐⭐ |
 
 ### ⚙️ 功能配置
 

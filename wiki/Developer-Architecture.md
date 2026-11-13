@@ -5,7 +5,7 @@
 > **分类**: 开发者文档  
 > **类型**: 参考资料  
 > **难度**: ⭐⭐  
-> **更新时间**: 2026-10-31
+> **更新时间**: 2026-11-13
 
 [← 返回开发者文档](Developer-Guide.md) | [Wiki 首页](Home.md)
 
@@ -15,7 +15,9 @@
 
 ### 系统概览
 
-Sakura-Bot 采用**模块化微服务架构**，将功能拆分为多个独立模块，提高可维护性和可扩展性。
+Sakura-Bot 由 Python 主服务托管独立的 Go 助手进程，WebUI 与 API 集成在现有主服务中，各模块共享 MySQL 和配置文件。
+
+v2.4.8 的 Go 助手采用有界 AI Worker Pool，按真实用户或匿名群组 actor，以及私聊、帖子、群组或话题作用域隔离会话。消息计费采用持久预留、幂等结算与失败退款。当前运行时实现见 [Go 助手回合与计费](Developer-QA-Turns-Billing.md)。下文 `core/ai/` 中的 Python 会话与问答引擎模块用于 Python 兼容运行时。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -138,6 +140,8 @@ AI 客户端支持热重载：`get_ai_runtime()` / `get_async_ai_runtime()` 在�
 | `summaries` | 存储频道总结记录 |
 | `users` / `subscriptions` | 用户与订阅 |
 | `usage_quota` | 问答Bot配额管理 |
+| `qa_message_reservations` / `qa_daily_total` | 助手消息级计费预留与全站每日计数 |
+| `qa_points` / `qa_checkins` / `qa_points_ledger` | 个人积分、签到与积分流水 |
 | `channel_profiles` | 频道画像数据 |
 | `conversation_history` | 多轮对话历史 |
 | `poll_regenerations` | 投票重新生成记录 |
@@ -332,7 +336,7 @@ Reranker 模型计算相关性得分
 
 **前端能力**:
 - Vue 3 + Vite + TypeScript + Naive UI
-- v2.2.1 起全页面（14 个路由页 + 登录页 + 布局）按平面设计系统重建（`--sb-*` 令牌：浅色对齐 Google 控制台、深色对齐 X），侧栏菜单按信息架构分组，统一「页头 + 工具栏 + 数据区」骨架
+- 管理侧栏提供 15 个入口，Sakura Wiki 的公开浏览由独立路由布局承载。界面沿用 `--sb-*` 令牌与浅色、深色主题
 - 异步三态（骨架屏 / 空态引导 / 错误重试）与危险操作三层确认
 - 深色/浅色主题持久化
 - 转发规则可视化编辑和底栏占位符插入

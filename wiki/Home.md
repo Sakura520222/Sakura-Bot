@@ -1,6 +1,6 @@
 # 🌸 Sakura-Bot Wiki
 
-- [v2.4.2 更新与升级](Release-2.4.2.md)
+- [v2.4.8 更新与升级](Release-2.4.8.md)
 - [Go 小妲助手：回合、计费与评论架构](Developer-QA-Turns-Billing.md)
 
 欢迎来到 Sakura-Bot 项目文档中心！这里汇集了所有面向用户和开发者的详细文档。
@@ -21,7 +21,7 @@
 - **[多轮对话功能](User-Multi-Turn-Conversation.md)** - 上下文感知对话说明
 - **[投票功能](User-Poll-Feature.md)** - 频道投票配置指南
 - **[WebUI 管理面板](User-WebUI-Guide.md)** - Web 管理界面使用指南
-- **[Sakura Wiki 使用与管理](User-Sakura-Wiki.md)** - 频道百科：增量索引、发布快照与回滚
+- **[Sakura Wiki 使用与管理](User-Sakura-Wiki.md)** - 频道百科、收藏、图谱分页、增量索引与发布
 - **[Sakura Guard 智能群管](User-Sakura-Guard.md)** - 群聊规则与入群验证
 - **[行为准则](Code-of-Conduct.md)** - 社区贡献行为准则
 

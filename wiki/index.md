@@ -48,6 +48,6 @@ features:
     linkText: 开发者文档
 ---
 
-## v2.4.2：小妲助手升级
+## v2.4.8 关联讨论群与匿名管理员
 
-支持积分签到、必订阅频道、帖子评论区问答、回合内追问与 Telegram 原生富文本。[查看升级说明](Release-2.4.2.md) · [使用小妲助手](User-QA-Bot-Guide.md)
+已启用频道的关联讨论群支持直接唤醒、@提及助手和连续追问。本群匿名管理员可按显式授权使用群级额度，并向主 Bot 举报或提交学习样本。Wiki 浏览支持本地收藏与图谱分页。[查看升级说明](Release-2.4.8.md) · [使用小妲助手](User-QA-Bot-Guide.md) · [浏览 Sakura Wiki](User-Sakura-Wiki.md)
