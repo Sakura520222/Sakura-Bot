@@ -1,11 +1,12 @@
 {
   "name": "sakura-bot-webui",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --test tests/guard-autosave.test.ts tests/ai-profiles-form.test.ts tests/ai-providers-form.test.ts tests/wiki.test.ts tests/wiki-store.test.ts",
     "test:guard": "node --experimental-strip-types --test tests/guard-autosave.test.ts",
+    "test:wiki:browser": "node tests/wiki-browser.mjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview"
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@types/cytoscape": "^3.21.9",
     "@vitejs/plugin-vue": "^5.1.0",
+    "playwright-core": "1.65.0",
     "typescript": "~5.6.0",
     "vite": "^6.0.0",
     "vue-tsc": "^3.3.14"

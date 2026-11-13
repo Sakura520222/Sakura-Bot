@@ -192,11 +192,15 @@ def api(monkeypatch):
     return TestClient(app)
 
 
-def test_public_reads_without_token_and_no_cache(api):
+def test_public_reads_without_token_revalidate_cached_responses(api):
     for method in ("GET", "HEAD"):
         response = api.request(method, "/api/public/wiki/channels")
         assert response.status_code == 200
-        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["cache-control"] == "private, no-cache, must-revalidate"
+        again = api.request(
+            method, "/api/public/wiki/channels", headers={"If-None-Match": response.headers["etag"]}
+        )
+        assert again.status_code == 304 and not again.content
     assert api.get("/api/public/wiki/channels/private/pages/hidden").status_code == 404
 
 
@@ -259,7 +263,7 @@ def test_avatar_conditional_request_returns_304(api, monkeypatch):
         headers={"If-None-Match": '"av-42"'},
     )
     assert second.status_code == 304
-    assert second.headers["cache-control"] == "public, max-age=3600"
+    assert second.headers["cache-control"] == "private, no-cache, must-revalidate"
     assert second.headers["etag"] == '"av-42"'
     assert second.content == b""
     # 304 免去响应体传输；get() 仍按请求执行（磁盘缓存读取，代价可忽略）
@@ -281,12 +285,28 @@ def test_avatar_response_carries_public_cache_headers(api, monkeypatch):
     monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
     response = api.get("/api/public/wiki/channels/123/avatar")
     assert response.status_code == 200
-    assert response.headers["cache-control"] == "public, max-age=3600"
+    assert response.headers["cache-control"] == "private, no-cache, must-revalidate"
     assert response.headers["etag"] == '"av-42"'
     assert response.headers["content-type"] == "image/jpeg"
     assert response.content == payload
     service.avatar.get.assert_awaited_once_with("123")
-    assert api.get("/api/public/wiki/channels").headers["cache-control"] == "no-store"
+    assert "no-cache" in api.get("/api/public/wiki/channels").headers["cache-control"]
+
+
+def test_public_article_rechecks_visibility_before_returning_304(api, monkeypatch):
+    reader = SimpleNamespace(page=AsyncMock(return_value={"title": "公开文章"}))
+    monkeypatch.setattr(
+        wiki, "get_wiki_runtime", lambda: SimpleNamespace(ready=True, reader=reader)
+    )
+    path = "/api/public/wiki/channels/123/pages/article"
+    first = api.get(path)
+    validators = {"If-None-Match": first.headers["etag"]}
+    assert api.get(path, headers=validators).status_code == 304
+    reader.page.return_value = None
+    denied = api.get(path, headers=validators)
+    assert denied.status_code == 404
+    assert denied.headers["cache-control"] == "no-store"
+    assert "etag" not in denied.headers
 
 
 def test_avatar_failure_keeps_no_store(api, monkeypatch):

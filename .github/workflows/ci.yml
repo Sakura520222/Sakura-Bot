@@ -210,6 +210,13 @@ jobs:
         run: |
           npm --prefix web ci
           npm --prefix web test
+
+      - name: 验证公开 Wiki 的移动端浏览流程
+        working-directory: web
+        run: |
+          npx playwright-core install --with-deps chromium
+          npm run build
+          npm run test:wiki:browser
       
       - name: 验证 coverage 数据文件
         if: always()

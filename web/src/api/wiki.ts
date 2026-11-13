@@ -78,6 +78,9 @@ export interface WikiChannel {
   page_count: number;
   pages?: WikiCard[];
   columns?: string[];
+  cover_url?: string;
+  description?: string;
+  topics?: string[];
 }
 
 /** 频道头像地址（后端按 CHANNEL_VISIBLE 把关，非公开/无照片返回 404，前端回退首字块） */
@@ -106,17 +109,26 @@ export interface Claim {
 export interface WikiArticle extends WikiCard {
   verified_at: string;
   claims: Claim[];
+}
+export interface WikiReferences {
+  revision_id: string;
+  publication_id: string;
   sources: { id: string; type: string; created_at: string; url?: string }[];
   history: { revision_id: string; created_at: string }[];
   /** 来源/修订在服务端封顶后的真实总数（来源上限 500、修订上限 50） */
   sources_total?: number;
   history_total?: number;
 }
-export interface WikiSearch {
-  items: WikiCard[];
-  total: number;
-  page: number;
-  page_size: number;
+export interface WikiBatch<T> {
+  items: T[];
+  has_more: boolean;
+  next_cursor: string | null;
+  terms?: string[];
+}
+export interface WikiEvent extends Claim {
+  event_id: string;
+  url: string;
+  title: string;
 }
 export interface WikiNode {
   id: string;
@@ -142,6 +154,7 @@ export interface WikiGraph {
   truncated: boolean;
 }
 export interface WikiProfile {
+  title?: string;
   narrative?: { description?: string; style?: string; limitations?: string };
   topic_trends?: { topic: string; month: string; message_count: number }[];
   statistics: {
@@ -159,17 +172,19 @@ export interface WikiProfile {
 }
 
 async function requestWiki<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal, credentials: "omit", cache: "no-store" });
+  const response = await fetch(url, { signal, credentials: "omit", cache: "no-cache" });
   if (!response.ok)
-    throw new Error(
+    throw Object.assign(new Error(
       response.status === 404
         ? "内容不存在、已撤回或尚未公开。"
         : response.status === 429
           ? "访问较频繁，请稍后再试。"
           : response.status === 503
             ? "Wiki 服务未就绪。"
-            : `Wiki 请求失败（HTTP ${response.status}）。`,
-    );
+            : response.status === 400
+              ? "列表已更新，请从头加载。"
+              : `Wiki 请求失败（HTTP ${response.status}）。`,
+    ), { status: response.status });
   return response.json() as Promise<T>;
 }
 

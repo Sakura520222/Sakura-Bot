@@ -7,12 +7,15 @@
 import difflib
 import re
 from datetime import datetime
+from hashlib import sha256
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
+from fastapi.routing import APIRoute
 from pydantic import Field
 
+from core.wiki.cursor import InvalidCursor
 from core.wiki.models import Strict, WikiConfig
 from core.wiki.runtime import get_wiki_runtime
 from core.wiki.schema import CHANNEL_VISIBLE
@@ -20,7 +23,7 @@ from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|pages/[A-Za-z0-9_-]{{1,180}}))?)"
 )
 # avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
 WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
@@ -56,7 +59,33 @@ def administrator(request: Request):
     return user.user_id
 
 
-public = APIRouter()
+class PublicReadRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def conditional(request):
+            try:
+                response = await handler(request)
+            except InvalidCursor as error:
+                raise HTTPException(400, str(error)) from error
+            if response.status_code != 200 or not response.headers.get(
+                "Content-Type", ""
+            ).startswith("application/json"):
+                return response
+            # Compute the validator only after the current read passed visibility checks.
+            # A browser can save bytes on revalidation, including after policy changes.
+            tag = f'W/"{sha256(response.body).hexdigest()}"'
+            headers = {"Cache-Control": "private, no-cache, must-revalidate", "ETag": tag}
+            validators = request.headers.get("If-None-Match", "").split(",")
+            if any(value.strip().removeprefix("W/") in {"*", tag[2:]} for value in validators):
+                return Response(status_code=304, headers=headers)
+            response.headers.update(headers)
+            return response
+
+        return conditional
+
+
+public = APIRouter(route_class=PublicReadRoute)
 ADMIN_AUTH = Depends(administrator)
 admin = APIRouter(dependencies=[ADMIN_AUTH])
 
@@ -72,14 +101,31 @@ async def channels():
     return await runtime().reader.channels()
 
 
+@public.api_route("/visibility", methods=["GET", "HEAD"])
+async def visibility():
+    return await runtime().reader.visibility()
+
+
 @public.api_route("/channels/{channel}", methods=["GET", "HEAD"])
-async def channel_home(channel: str):
-    return found(await runtime().reader.channel(channel))
+async def channel_home(channel: str, summary: bool = False):
+    reader = runtime().reader
+    return found(
+        await (reader.channel(channel, summary=True) if summary else reader.channel(channel))
+    )
 
 
 @public.api_route("/channels/{channel}/pages/{slug}", methods=["GET", "HEAD"])
-async def page(channel: str, slug: str):
-    return found(await runtime().reader.page(channel, slug))
+async def page(
+    channel: str, slug: str, part: Literal["full", "article", "references", "related"] = "full"
+):
+    reader = runtime().reader
+    if part == "related":
+        return found(await reader.related(channel, slug))
+    return found(
+        await (
+            reader.page(channel, slug) if part == "full" else reader.page(channel, slug, part=part)
+        )
+    )
 
 
 @public.api_route("/channels/{channel}/avatar", methods=["GET", "HEAD"])
@@ -106,6 +152,33 @@ async def avatar(channel: str, request: Request):
         return Response(status_code=304, headers={"ETag": etag})
     # Cache-Control 由中间件统一改写（单一写者）；路由只负责内容与 ETag。
     return Response(content=data, media_type=media_type, headers={"ETag": etag})
+
+
+@public.api_route("/feed", methods=["GET", "HEAD"])
+async def feed(
+    mode: Literal["latest", "recommended", "search"] = "latest",
+    q: str = Query("", max_length=200),
+    channel: str | None = Query(None, max_length=64),
+    kind: str | None = Query(None, max_length=16),
+    topic: str | None = Query(None, max_length=160),
+    after: datetime | None = None,
+    before: datetime | None = None,
+    cursor: str | None = Query(None, max_length=512),
+    limit: int = Query(20, ge=1, le=50),
+):
+    return found(
+        await runtime().reader.feed(
+            mode=mode,
+            q=q,
+            channel=channel,
+            kind=kind,
+            topic=topic,
+            after=after,
+            before=before,
+            cursor=cursor,
+            limit=limit,
+        )
+    )
 
 
 @public.api_route("/search", methods=["GET", "HEAD"])
@@ -144,10 +217,22 @@ async def graph(
 
 @public.api_route("/channels/{channel}/timeline", methods=["GET", "HEAD"])
 async def timeline(
-    channel: str, page: int = Query(1, ge=1, le=10000), page_size: int = Query(20, ge=1, le=50)
+    channel: str,
+    page: int = Query(1, ge=1, le=10000),
+    page_size: int = Query(20, ge=1, le=50),
+    pagination: Literal["page", "cursor"] = "page",
+    cursor: str | None = Query(None, max_length=512),
+    before: datetime | None = None,
 ):
-    found(await runtime().reader.channel(channel))
-    return await runtime().reader.timeline(channel, page, page_size)
+    reader = runtime().reader
+    if pagination == "cursor":
+        return found(
+            await reader.timeline(
+                channel, page, page_size, cursor_mode=True, cursor=cursor, before=before
+            )
+        )
+    found(await reader.channel(channel))
+    return await reader.timeline(channel, page, page_size)
 
 
 @public.api_route("/channels/{channel}/profile", methods=["GET", "HEAD"])
@@ -443,6 +528,10 @@ async def reject(channel: str, revision_id: str, actor=ADMIN_AUTH):
             """UPDATE wiki_pages p JOIN wiki_page_revisions r ON r.page_id=p.id
             SET p.locked=TRUE WHERE r.id=%s AND r.channel_id=%s""",
             (revision_id, ch["id"]),
+        )
+        await cur.execute(
+            "UPDATE wiki_channels SET source_generation=source_generation+1 WHERE id=%s",
+            (ch["id"],),
         )
         await service.store.audit(cur, ch["id"], "reject", revision_id, actor)
     return {"success": True}

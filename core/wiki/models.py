@@ -86,6 +86,8 @@ class WikiConfig(Strict):
     show_quotes: bool = False
     show_telegram_links: bool = True
     public_base_url: str = Field(default="", max_length=2048)
+    description: str = Field(default="", max_length=280)
+    cover_url: str = Field(default="", max_length=2048)
     hidden_topics: list[str] = Field(default_factory=list, max_length=100)
     temperature: float = Field(default=0.2, ge=0, le=1)
     timeout_seconds: int = Field(default=180, ge=10, le=1800)
@@ -124,6 +126,22 @@ class WikiConfig(Strict):
         ):
             raise ValueError("Use the public WebUI origin without a path or credentials")
         return value.rstrip("/")
+
+    @field_validator("cover_url")
+    @classmethod
+    def valid_cover_url(cls, value):
+        from urllib.parse import urlsplit
+
+        if value:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise ValueError("Use an HTTPS image URL without credentials")
+        return value
 
     @field_validator("cron")
     @classmethod

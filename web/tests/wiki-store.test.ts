@@ -74,6 +74,37 @@ test("concurrent consumers share one in-flight promise", async () => {
   assert.equal(b.error.value, "");
 });
 
+test("a revoked resource is removed when its revalidation returns 404", async () => {
+  const url = wikiUrl("/channels/123/pages/revoked", { part: "article" });
+  seedWiki(url, { publication_id: "v1", title: "Previously public" });
+  const resource = useWikiResource(() => url, async () => {
+    throw Object.assign(new Error("内容已撤回"), { status: 404 });
+  });
+  assert.ok(resource.data.value);
+  await resource.reload();
+  assert.equal(resource.data.value, undefined);
+  assert.equal(resource.stale.value, false);
+  assert.equal(resource.error.value, "内容已撤回");
+  assert.equal(cachePeek(url), null);
+});
+
+test("changing keys clears prior content while an old request is in flight", async () => {
+  const first = wikiUrl("/channels/123/pages/first");
+  const second = wikiUrl("/channels/123/pages/second");
+  seedWiki(first, { title: "First" });
+  const key = ref(first);
+  let finishFirst!: (value: { title: string }) => void;
+  const resource = useWikiResource(() => key.value, (url) => url === first
+    ? new Promise((resolve) => { finishFirst = resolve; })
+    : Promise.resolve({ title: "Second" }));
+  const old = resource.reload();
+  key.value = second;
+  await sleep(0);
+  finishFirst({ title: "Late first" });
+  await old;
+  assert.deepEqual(resource.data.value, { title: "Second" });
+});
+
 test("mount adopts a live prefetch without a second request", async () => {
   // 悬停预取在途时点击进入：资源应采纳在途 promise，秒开且零额外请求
   const url = wikiUrl("/test-adopt-prefetch", {});
