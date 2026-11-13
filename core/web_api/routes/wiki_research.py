@@ -13,6 +13,7 @@ from core.wiki.web_research import (
     SearchSettings,
     SearchUnavailable,
     search_settings,
+    stored_search_settings,
 )
 
 from .wiki import ADMIN_AUTH, runtime
@@ -59,7 +60,11 @@ def masked(settings):
     return {
         **settings.model_dump(exclude={"providers"}),
         "providers": {
-            name: {**provider.model_dump(exclude={"api_key"}), "has_key": bool(provider.api_key)}
+            name: {
+                **provider.model_dump(exclude={"api_key"}),
+                "has_key": bool(provider.api_key),
+                "official_url": DEFAULTS[name],
+            }
             for name in DEFAULTS
             if (provider := settings.providers.get(name, Provider())) is not None
         },
@@ -78,7 +83,7 @@ async def put_research(request: Request):
     except ValueError:
         raise HTTPException(422, "搜索设置无效") from None
     config = get_config()
-    previous = SearchSettings.model_validate(config.get("wiki_search", {}))
+    previous = stored_search_settings(config.get("wiki_search", {}))
     for name, provider in body.providers.items():
         if "api_key" not in provider.model_fields_set and name in previous.providers:
             provider.api_key = previous.providers[name].api_key

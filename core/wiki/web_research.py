@@ -60,27 +60,13 @@ def public_url(value):
 
 class Provider(Strict):
     enabled: bool = False
-    base_url: str = ""
     api_key: str = Field(default="", max_length=1024)
-    cost_units: int = Field(default=1, ge=1, le=1000000)
-
-    @field_validator("base_url")
-    @classmethod
-    def validate_base(cls, value):
-        if not value:
-            return value
-        url = urlsplit(public_url(value))
-        if url.scheme != "https" or url.query or url.fragment or "#" in value:
-            raise ValueError("Search provider requires an HTTPS base URL")
-        return url.geturl().rstrip("/")
 
 
 class SearchSettings(Strict):
     enabled: bool = False
     order: list[str] = Field(default_factory=lambda: list(DEFAULTS), max_length=3)
     providers: dict[str, Provider] = Field(default_factory=dict)
-    daily_calls: int = Field(default=100, ge=1, le=10000)
-    daily_cost_units: int = Field(default=100, ge=1, le=100000000)
     result_limit: int = Field(default=5, ge=1, le=10)
     timeout: int = Field(default=10, ge=2, le=30)
     concurrency: int = Field(default=3, ge=1, le=12)
@@ -94,8 +80,28 @@ class SearchSettings(Strict):
         return value
 
 
+def stored_search_settings(raw):
+    if not isinstance(raw, dict):
+        return SearchSettings.model_validate(raw)
+    data = {
+        key: value for key, value in raw.items() if key not in {"daily_calls", "daily_cost_units"}
+    }
+    if isinstance(data.get("providers"), dict):
+        data["providers"] = {
+            name: {
+                key: value
+                for key, value in provider.items()
+                if key not in {"base_url", "cost_units"}
+            }
+            if isinstance(provider, dict)
+            else provider
+            for name, provider in data["providers"].items()
+        }
+    return SearchSettings.model_validate(data)
+
+
 def search_settings():
-    return SearchSettings.model_validate(runtime_config.read().get("wiki_search", {}))
+    return stored_search_settings(runtime_config.read().get("wiki_search", {}))
 
 
 class PublicResolver(aiohttp.ThreadedResolver):
@@ -128,7 +134,8 @@ class PageText(HTMLParser):
             self.parts.append(text)
 
 
-def provider_request(name, base, key, query, limit):
+def provider_request(name, key, query, limit):
+    base = DEFAULTS[name]
     if name == "deepseek":
         return (
             "POST",
@@ -200,29 +207,12 @@ class WebResearch:
         self.active = 0
         self.locks = [asyncio.Lock() for _ in range(32)]
 
-    async def reserve(self, provider, cost, settings):
-        async with self.store.transaction() as cur:
-            await cur.execute(
-                "INSERT IGNORE INTO wiki_search_usage(day,provider) VALUES (UTC_DATE(),'total')"
-            )
-            await cur.execute(
-                "SELECT calls,cost_units FROM wiki_search_usage WHERE day=UTC_DATE() AND provider='total' FOR UPDATE"
-            )
-            row = await cur.fetchone()
-            if (
-                row["calls"] >= settings.daily_calls
-                or row["cost_units"] + cost > settings.daily_cost_units
-            ):
-                raise SearchUnavailable("budget_exhausted")
-            await cur.execute(
-                "UPDATE wiki_search_usage SET calls=calls+1,cost_units=cost_units+%s WHERE day=UTC_DATE() AND provider='total'",
-                (cost,),
-            )
-            await cur.execute(
-                """INSERT INTO wiki_search_usage VALUES (UTC_DATE(),%s,1,%s)
-                AS attempt ON DUPLICATE KEY UPDATE calls=wiki_search_usage.calls+1,cost_units=wiki_search_usage.cost_units+attempt.cost_units""",
-                (provider, cost),
-            )
+    async def record_attempt(self, provider):
+        await self.store.query(
+            """INSERT INTO wiki_search_usage(day,provider,calls) VALUES (UTC_DATE(),%s,1)
+            ON DUPLICATE KEY UPDATE calls=wiki_search_usage.calls+1""",
+            (provider,),
+        )
 
     async def cached(self, key, settings, perform):
         async with self.locks[int(key[:4], 16) % len(self.locks)]:
@@ -260,10 +250,9 @@ class WebResearch:
                 provider = settings.providers.get(name)
                 if not provider or not provider.enabled or not provider.api_key:
                     continue
-                await self.reserve(name, provider.cost_units, settings)
+                await self.record_attempt(name)
                 method, url, options = provider_request(
                     name,
-                    provider.base_url or DEFAULTS[name],
                     provider.api_key,
                     query,
                     settings.result_limit,
@@ -310,7 +299,7 @@ class WebResearch:
         url = public_url(url)
 
         async def perform():
-            await self.reserve("fetch", 1, settings)
+            await self.record_attempt("fetch")
             target = url
             try:
                 async with (

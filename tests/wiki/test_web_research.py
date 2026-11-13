@@ -1,6 +1,12 @@
 import pytest
 
-from core.wiki.web_research import normalized_results, provider_request, public_url
+from core.wiki.web_research import (
+    DEFAULTS,
+    normalized_results,
+    provider_request,
+    public_url,
+    stored_search_settings,
+)
 
 
 @pytest.mark.parametrize(
@@ -32,10 +38,8 @@ def test_only_public_urls(url):
     ],
 )
 def test_provider_requests_and_normalization(name, path, collection, field):
-    method, url, options = provider_request(
-        name, "https://search.example.org", "secret", "question", 3
-    )
-    assert url.endswith(path) and method == ("GET" if name == "serpapi" else "POST")
+    method, url, options = provider_request(name, "secret", "question", 3)
+    assert url == DEFAULTS[name] + path and method == ("GET" if name == "serpapi" else "POST")
     assert "secret" not in url and options
     records = normalized_results(
         name,
@@ -50,3 +54,22 @@ def test_provider_requests_and_normalization(name, path, collection, field):
     )
     assert len(records) == 1 and records[0]["url"] == "https://example.org/result"
     assert records[0]["provider"] == name
+
+
+def test_legacy_search_settings_keep_keys_without_custom_endpoints_or_limits():
+    result = stored_search_settings(
+        {
+            "daily_calls": 100,
+            "daily_cost_units": 1,
+            "providers": {
+                "tavily": {
+                    "enabled": True,
+                    "api_key": "fixture-key",
+                    "base_url": "https://old.example",
+                    "cost_units": 50,
+                }
+            },
+        }
+    )
+    assert result.providers["tavily"].model_dump() == {"enabled": True, "api_key": "fixture-key"}
+    assert "daily_calls" not in result.model_dump()

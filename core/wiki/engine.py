@@ -889,12 +889,8 @@ class WikiEngine:
                             for result in results["results"][:3]
                             if result.get("content") or result.get("snippet")
                         ]
-                    except SearchUnavailable as error:
+                    except SearchUnavailable:
                         external[item["index"]] = []
-                        if str(error) == "budget_exhausted" and config.fact_check_required:
-                            raise BudgetExceeded(
-                                "联网核查达到每日预算，可在预算恢复后继续"
-                            ) from None
             raw = await self.request(
                 job,
                 config,

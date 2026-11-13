@@ -99,11 +99,6 @@
             @compositionend="autosave?.setComposing(false)"
           >
             <div class="settings-grid">
-              <n-form-item label="自动联网核查"><n-switch :value="!!draft.fact_check" @update:value="draft.fact_check = $event" /></n-form-item>
-              <n-form-item label="仅发布已获外部证据核实的修订"><n-switch :value="!!draft.fact_check_required" @update:value="draft.fact_check_required = $event" /></n-form-item>
-              <n-form-item label="开放登录用户投稿"><n-switch :value="!!draft.proposals_enabled" @update:value="draft.proposals_enabled = $event" /></n-form-item>
-              <n-form-item label="开放社区注解"><n-switch :value="!!draft.annotations_enabled" @update:value="draft.annotations_enabled = $event" /></n-form-item>
-              <n-form-item label="通过主 Bot 通知管理员"><n-switch :value="!!draft.proposal_notifications" @update:value="draft.proposal_notifications = $event" /></n-form-item>
               <n-form-item label="启用 Wiki"
                 ><n-switch v-model:value="draft.enabled"
               /></n-form-item>
@@ -228,9 +223,29 @@
             >频道公开状态尚未确认，请检查 UserBot 连接。</n-text
           >
         </n-card>
+        <n-card title="社区协作" size="small">
+          <n-form label-placement="top" :show-feedback="false" :disabled="busy">
+            <div class="settings-grid">
+              <n-form-item label="允许读者提交词条修订">
+                <div class="wiki-option"><n-switch :value="!!draft.proposals_enabled" @update:value="draft.proposals_enabled = $event" />
+                  <n-text depth="3">Telegram 登录后可提交修订或纠错，审核并发布后才会公开。</n-text></div>
+              </n-form-item>
+              <n-form-item label="允许读者补充注解和来源">
+                <div class="wiki-option"><n-switch :value="!!draft.annotations_enabled" :disabled="!draft.proposals_enabled" @update:value="draft.annotations_enabled = $event" />
+                  <n-text depth="3">允许提交补充资料、争议或过期标记，同样需要审核。</n-text></div>
+              </n-form-item>
+              <n-form-item label="通知管理员审核">
+                <div class="wiki-option"><n-switch :value="!!draft.proposal_notifications" :disabled="!draft.proposals_enabled" @update:value="draft.proposal_notifications = $event" />
+                  <n-text depth="3">收到修订建议时，由主 Bot 通知管理员。</n-text></div>
+              </n-form-item>
+            </div>
+          </n-form>
+        </n-card>
         <n-card title="生成设置" size="small">
           <n-form label-placement="top" :show-feedback="false" :disabled="busy">
             <div class="settings-grid">
+              <n-form-item label="自动联网核查"><n-switch :value="!!draft.fact_check" @update:value="draft.fact_check = $event" /></n-form-item>
+              <n-form-item label="仅发布已获外部证据核实的修订"><n-switch :value="!!draft.fact_check_required" @update:value="draft.fact_check_required = $event" /></n-form-item>
               <n-form-item label="温度"
                 ><n-input-number
                   v-model:value="draft.temperature"
@@ -1161,6 +1176,7 @@ onUnmounted(() => {
 .settings-grid .wide {
   grid-column: 1/-1;
 }
+.wiki-option { display: grid; justify-items: start; gap: 6px; }
 .job-stats {
   margin: 16px 0;
 }

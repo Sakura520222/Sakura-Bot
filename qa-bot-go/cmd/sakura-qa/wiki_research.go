@@ -24,7 +24,7 @@ func withResearch(token, port string, stream func(context.Context, string, int64
 	client := &http.Client{Timeout: 35 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return func(ctx context.Context, text string, user int64, hint string) <-chan engine.Chunk {
 		ctx = engine.WithWebResearch(ctx, func(ctx context.Context, tool, value string) string {
-			const unavailable = `{"error":"联网检索暂不可用或已达到预算"}`
+			const unavailable = `{"error":"联网检索暂不可用"}`
 			if strings.TrimSpace(value) == "" || len(value) > 8192 {
 				return unavailable
 			}

@@ -117,10 +117,10 @@ async def queue(
 
 
 @admin.get("/pages/{page}/proposals")
-async def page_queue(page: str):
+async def page_queue(page: str, offset: int = Query(0, ge=0, le=100000)):
     if not IDENTIFIER.fullmatch(page):
         raise HTTPException(404)
-    return await runtime(admin=True).community.proposals(status="pending", page=page)
+    return await runtime(admin=True).community.proposals(status="pending", page=page, offset=offset)
 
 
 @admin.post("/proposals/{identifier}")

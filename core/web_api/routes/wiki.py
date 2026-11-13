@@ -762,6 +762,20 @@ async def hide_source(channel: str, body: SourceRequest, actor=ADMIN_AUTH):
     return {"success": True}
 
 
+@admin.get("/channels/{channel}/pages/{page_id}")
+async def page_state(channel: str, page_id: str):
+    service, ch = await managed(channel)
+    row = await service.store.one(
+        """SELECT p.id,p.title,p.locked,p.hidden FROM wiki_pages p WHERE p.channel_id=%s
+        AND (p.id=%s OR p.slug=%s OR EXISTS (SELECT 1 FROM wiki_slug_aliases a
+            WHERE a.channel_id=p.channel_id AND a.page_id=p.id AND a.slug=%s))""",
+        (ch["id"], page_id, page_id, page_id),
+    )
+    if row is None:
+        raise HTTPException(404, "词条不存在")
+    return {**row, "locked": bool(row["locked"]), "hidden": bool(row["hidden"])}
+
+
 @admin.post("/channels/{channel}/pages/{page_id}")
 async def page_action(channel: str, page_id: str, body: PageAction, actor=ADMIN_AUTH):
     service, ch = await managed(channel)

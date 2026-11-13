@@ -1,10 +1,10 @@
 <template>
   <section class="wiki-claim">
     <h2>社区贡献</h2>
-    <button v-if="article?.proposals_enabled" @click="openProposal">提交修订或纠错</button>
-    <button v-if="article" @click="loadContributors">查看词条贡献者</button>
-    <button v-else @click="loadContributors">查看贡献者</button>
-    <button v-if="user" @click="loadMine">我的投稿</button>
+    <div v-if="article?.proposals_enabled || user" class="community-actions">
+      <button v-if="article?.proposals_enabled" @click="openProposal">建议修订</button>
+      <button v-if="user && !mineFirst" @click="loadMine">我的修订建议</button>
+    </div>
     <p v-if="message" role="status">{{ message }}</p>
     <form v-if="editing && article" @submit.prevent="submit">
       <p><label>投稿类型 <select v-model="kind"><option value="edit">正文修订</option><option value="correction">纠错</option>
@@ -20,28 +20,31 @@
       <details v-if="kind === 'edit' || kind === 'correction'"><summary>对照当前正文</summary><pre>{{ article.claims[claim]?.text }}</pre></details>
       <button type="submit" :disabled="busy">提交审核</button> <button type="button" @click="editing = false">取消</button>
     </form>
-    <ul v-if="contributors !== undefined">
+    <p v-if="contributorsLoading" role="status">正在加载贡献者…</p>
+    <p v-else-if="contributorsError" role="alert">{{ contributorsError }} <button @click="readContributors()">重试</button></p>
+    <ul v-else-if="contributors?.length">
       <li v-for="entry in contributors" :key="entry.id">
         <img v-if="entry.avatar" :src="`/api/wiki/community/contributors/${entry.id}/avatar`" width="24" height="24" alt="" />
         <RouterLink :to="`/wiki/contributors/${entry.id}`">{{ entry.display_name }}</RouterLink>
         <span v-if="entry.username"> @{{ entry.username }}</span> · {{ entry.total }} 项有效贡献
         <span v-if="entry.total">（修订 {{ entry.edits }}、标注 {{ entry.annotations }}、来源 {{ entry.sources }}）</span>
       </li>
-      <li v-if="!contributors.length">暂无公开贡献。</li>
     </ul>
-    <button v-if="contributors?.length === 30" @click="nextContributors">下一页</button>
+    <p v-else-if="contributors">暂无公开贡献。</p>
+    <button v-if="contributorOffset > 0" :disabled="contributorsLoading" @click="readContributors(contributorOffset - 30)">上一页</button>
+    <button v-if="contributors?.length === 30" :disabled="contributorsLoading" @click="readContributors(contributorOffset + 30)">下一页</button>
     <ul v-if="mine">
       <li v-for="entry in mine" :key="entry.id">{{ entry.title }} · {{ proposalStates[entry.status] || entry.status }}
         <span v-if="entry.published"> · 曾发布</span><span v-if="entry.note"> · {{ entry.note }}</span>
         <button v-if="['pending', 'returned'].includes(entry.status)" @click="withdraw(entry.id)">撤回投稿</button>
       </li>
-      <li v-if="!mine.length">暂无投稿。</li>
+      <li v-if="!mine.length">暂无修订建议。</li>
     </ul>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { loadWikiSession } from "../../api/wiki-account";
 import { wikiOpenAccount } from "../../api/wiki-assistant";
@@ -59,12 +62,16 @@ const claim = ref(0);
 const draft = ref("");
 const sources = ref("");
 const contributorOffset = ref(0);
+const contributorsLoading = ref(false);
+const contributorsError = ref("");
+let contributorsRequest: AbortController | undefined;
 const contributors = ref<{ id: string; display_name: string; username?: string; avatar: boolean; total: number; edits: number; annotations: number; sources: number }[]>();
 const mine = ref<{ id: string; title: string; status: string; note?: string; published: boolean }[]>();
 const proposalStates: Record<string, string> = { pending: "待审", approved: "已批准", rejected: "已拒绝", returned: "已退回", withdrawn: "已撤回" };
 
-async function request(path: string, method = "GET", payload?: unknown) {
+async function request(path: string, method = "GET", payload?: unknown, signal?: AbortSignal) {
   const result = await fetch(root + path, { method, cache: "no-store", credentials: "same-origin",
+    signal,
     headers: method === "GET" ? {} : { "Content-Type": "application/json", "X-Wiki-Request": "1" },
     body: payload ? JSON.stringify(payload) : undefined });
   if (!result.ok) {
@@ -78,8 +85,21 @@ async function run(action: () => Promise<void>) {
   try { await action(); } catch (error) { message.value = error instanceof Error ? error.message : "操作失败"; }
 }
 async function refreshUser() { user.value = !!(await loadWikiSession()).user; }
-onMounted(() => { void refreshUser().then(() => { if (user.value && props.mineFirst) return loadMine(); }).catch(() => {}); });
-watch(() => props.article?.revision_id, () => { editing.value = false; contributors.value = undefined; });
+onMounted(() => {
+  void readContributors();
+  void refreshUser().then(() => { if (user.value && props.mineFirst) return loadMine(); }).catch(() => {});
+});
+onUnmounted(() => contributorsRequest?.abort());
+watch(() => props.article?.revision_id, () => {
+  editing.value = false;
+  contributorsRequest?.abort();
+  contributorsRequest = undefined;
+  contributors.value = undefined;
+  contributorOffset.value = 0;
+  contributorsLoading.value = false;
+  contributorsError.value = "";
+  void readContributors(0);
+});
 function chooseClaim() { draft.value = props.article?.claims[claim.value]?.text || ""; }
 function openProposal() {
   void run(async () => {
@@ -103,16 +123,29 @@ async function submit() {
     message.value = "已提交，等待管理员审核。"; editing.value = false;
   }); } finally { busy.value = false; }
 }
-function readContributors() {
-  return run(async () => {
-    const query = new URLSearchParams({ offset: String(contributorOffset.value) });
+async function readContributors(offset = contributorOffset.value) {
+  if (contributorsLoading.value) return;
+  const controller = new AbortController();
+  contributorsRequest = controller;
+  contributorOffset.value = offset;
+  contributorsLoading.value = true;
+  contributorsError.value = "";
+  contributors.value = undefined;
+  try {
+    const query = new URLSearchParams({ offset: String(offset) });
     if (props.article) query.set("page", props.article.id);
     if (props.channel) query.set("channel", props.channel);
-    contributors.value = await request(`/contributors?${query}`);
-  });
+    const entries = await request(`/contributors?${query}`, "GET", undefined, controller.signal);
+    if (!controller.signal.aborted) contributors.value = entries;
+  } catch {
+    if (!controller.signal.aborted) contributorsError.value = "贡献者加载失败。";
+  } finally {
+    if (contributorsRequest === controller) {
+      contributorsRequest = undefined;
+      contributorsLoading.value = false;
+    }
+  }
 }
-function loadContributors() { contributorOffset.value = 0; void readContributors(); }
-function nextContributors() { contributorOffset.value += 30; void readContributors(); }
 function loadMine() { return run(async () => { await refreshUser(); mine.value = await request("/proposals"); }); }
 function withdraw(id: string) { return run(async () => { await request(`/proposals/${id}`, "DELETE"); mine.value = await request("/proposals"); }); }
 </script>
@@ -121,4 +154,5 @@ function withdraw(id: string) { return run(async () => { await request(`/proposa
 textarea { display: block; width: 100%; box-sizing: border-box; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 img { border-radius: 50%; vertical-align: middle; }
+.community-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

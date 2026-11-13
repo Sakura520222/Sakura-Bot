@@ -33,6 +33,8 @@ let accountEnabled = false;
 let accountUser = null;
 let assistantEnabled = false;
 let assistantCheckedIn = false;
+let articleHidden = false;
+let researchSaved;
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
@@ -46,6 +48,28 @@ const server = http.createServer(async (req,res) => {
       config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
     };
     if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false, assistant_enabled: assistantEnabled };
+    else if (endpoint === "/api/wiki/community/contributors") out = [];
+    else if (endpoint === "/api/wiki/admin/proposals" || /^\/api\/wiki\/admin\/pages\/[^/]+\/proposals$/.test(endpoint)) out = [];
+    else if (endpoint === "/api/wiki/admin/research") {
+      const providers = { deepseek: "https://api.deepseek.com", tavily: "https://api.tavily.com", serpapi: "https://serpapi.com" };
+      if (req.method === "PUT") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        researchSaved = JSON.parse(Buffer.concat(chunks));
+      }
+      out = { enabled: researchSaved?.enabled ?? false, order: Object.keys(providers), result_limit: 5, timeout: 10, concurrency: 3, ttl_hours: 24,
+        providers: Object.fromEntries(Object.entries(providers).map(([name, official_url]) => [name, { enabled: false, has_key: false, official_url }])) };
+    }
+    else if (/^\/api\/wiki\/admin\/channels\/123\/pages\/[^/]+$/.test(endpoint)) {
+      assert.equal(req.headers.authorization, "Bearer wiki-test-token");
+      if (req.method === "POST") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const { action } = JSON.parse(Buffer.concat(chunks));
+        articleHidden = action === "hide";
+        out = { success: true };
+      } else out = { id: cards[0].id, title: cards[0].title, locked: false, hidden: articleHidden };
+    }
     else if (endpoint === "/api/wiki/assistant/status") out = { point_units: assistantCheckedIn ? 25 : 0, free_used: 0, free_limit: 3, site_used: 2, site_limit: 100,
       checked_in: assistantCheckedIn, checkin_enabled: true, exempt: false, day: "2026-11-13", timezone: "Asia/Shanghai" };
     else if (endpoint === "/api/wiki/assistant/checkin") {
@@ -133,6 +157,7 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint.includes("/pages/") && q.get("part") === "related") out = {previous:cards[1],next:null};
     else if (endpoint.includes("/pages/")) {
       const card = cards.find(row => row.slug === endpoint.split("/").at(-1)) || cards[0];
+      if (articleHidden && card === cards[0]) { res.writeHead(404); return res.end(); }
       const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history:[{revision_id:card.revision_id,created_at:channel.updated_at}],sources_total:1,history_total:1};
       out = {...card,verified_at:channel.updated_at,...(q.get("part") !== "references" ? {claims}:{}),...(q.get("part") !== "article" ? refs:{})};
     }
@@ -426,6 +451,16 @@ try {
   await cover.waitFor({state:"detached"});
   await desktop.evaluate(() => localStorage.setItem("sakura_bot_token", "wiki-test-token"));
   await desktop.goto(url + "/wiki/admin");
+  await desktop.getByText("社区与联网", { exact: true }).click();
+  await desktop.getByText("https://api.deepseek.com", { exact: true }).waitFor();
+  await desktop.getByText("没有待审修订建议", { exact: true }).waitFor();
+  assert.equal(await desktop.getByText("每日成本上限", { exact: true }).count(), 0);
+  await desktop.getByRole("button", { name: "保存联网设置" }).click();
+  await desktop.getByText("联网设置已保存。", { exact: true }).waitFor();
+  assert.deepEqual(researchSaved.providers.deepseek, { enabled: false });
+  assert.equal(researchSaved.daily_calls, undefined);
+  if (output) await desktop.screenshot({path:path.join(output,"wiki-search-settings.png")});
+  await desktop.getByText("设置", { exact: true }).click();
   const uploadButton = desktop.getByRole("button", { name: "上传本机图片" });
   const [fileChooser] = await Promise.all([desktop.waitForEvent("filechooser"), uploadButton.click()]);
   await fileChooser.setFiles({ name: "cover.png", mimeType: "image/png", buffer: avatar });
@@ -438,6 +473,24 @@ try {
   await desktop.getByRole("button", { name: "移除本机封面" }).click();
   await desktop.getByText("本机封面已移除", { exact: true }).waitFor();
   assert.equal(uploadedCover, undefined);
+  await desktop.goto(url + "/wiki/contributors");
+  await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
+  await desktop.goto(url + "/wiki/123/page/article-0");
+  await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
+  await desktop.getByText("管理本词条", { exact: true }).click();
+  await desktop.getByText("没有待审投稿。", { exact: true }).waitFor();
+  assert.ok((await desktop.getByRole("textbox", { name: "正文", exact: true }).inputValue()).includes("Sakura"));
+  if (output) await desktop.screenshot({path:path.join(output,"wiki-article-management.png")});
+  await desktop.getByRole("button", { name: "隐藏词条", exact: true }).click();
+  await desktop.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(articleHidden, false);
+  await desktop.getByRole("button", { name: "隐藏词条", exact: true }).click();
+  await desktop.getByRole("button", { name: "确认隐藏", exact: true }).click();
+  await desktop.getByText("词条已隐藏，访客无法访问。", { exact: true }).waitFor();
+  await desktop.reload();
+  await desktop.getByRole("button", { name: "恢复公开", exact: true }).click();
+  await desktop.getByText("已取消隐藏。", { exact: true }).waitFor();
+  await desktop.getByRole("heading", { name: cards[0].title, exact: true }).waitFor();
   await desktop.goto(url + "/wiki/123/graph");
   await desktop.locator(".wiki-graph-list button").first().waitFor();
   await desktop.locator(".wiki-graph-canvas canvas").first().waitFor();
