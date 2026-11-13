@@ -30,7 +30,7 @@ def admin_button(session, action="b", actor=ADMIN, **overrides):
     return event
 
 
-async def test_challenge_shows_identity_and_admin_buttons(guard, store):
+async def test_challenge_shows_identity_and_admin_buttons(guard, store, inline_button_payload):
     session = await begin(guard, store)
     message = guard.client.sent[(CHAT, session["message_id"])]
     assert "昵称：正常成员" in message["text"]
@@ -43,14 +43,19 @@ async def test_challenge_shows_identity_and_admin_buttons(guard, store):
         "仅踢出",
         "跳过验证",
     ]
-    assert [button.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"j", b"s"]
-    assert all(len(button.data) <= 64 for button in controls)
+    assert [inline_button_payload(button).rsplit(b":", 1)[1] for button in controls] == [
+        b"b",
+        b"x",
+        b"j",
+        b"s",
+    ]
+    assert all(len(inline_button_payload(button)) <= 64 for button in controls)
 
 
 @pytest.mark.parametrize("username", ["alice", None])
 @pytest.mark.parametrize("status", ["waiting", "held"])
 async def test_profile_button_targets_member_with_or_without_username(
-    guard, store, username, status
+    guard, store, username, status, inline_button_url
 ):
     guard.client.users[USER].username = username
     session = await begin(guard, store)
@@ -64,7 +69,7 @@ async def test_profile_button_targets_member_with_or_without_username(
         wire_markup = reader.tgread_object()
     profile = wire_markup.rows[-1].buttons[0]
     assert profile.text == "打开用户资料"
-    assert profile.url == f"tg://user?id={USER}"
+    assert inline_button_url(profile) == f"tg://user?id={USER}"
     assert (await store.verification(CHAT, USER))["status"] == status
 
 
@@ -76,7 +81,9 @@ async def test_missing_username_and_multiline_name_have_safe_plain_text_fallback
     assert "昵称：A B <管理员> C\n用户名：未设置" in text
 
 
-async def test_legacy_challenge_is_upgraded_without_resetting_session(guard, store):
+async def test_legacy_challenge_is_upgraded_without_resetting_session(
+    guard, store, inline_button_url
+):
     session = await begin(guard, store)
     original = {key: session[key] for key in ["id", "message_id", "expires_at"]}
     original_tokens = session["payload"]["answer_tokens"].copy()
@@ -94,7 +101,7 @@ async def test_legacy_challenge_is_upgraded_without_resetting_session(guard, sto
     assert updated["payload"]["challenge_version"] == CHALLENGE_VERSION
     buttons = guard.client.sent[(CHAT, session["message_id"])]["buttons"]
     assert len(buttons) == 4
-    assert buttons[-1][0].url == f"tg://user?id={USER}"
+    assert inline_button_url(buttons[-1][0]) == f"tg://user?id={USER}"
     guard.client.users[USER].first_name = "改名后的成员"
     await guard.recover_once()
     assert "改名后的成员" in guard.client.sent[(CHAT, session["message_id"])]["text"]

@@ -147,7 +147,9 @@ async def test_other_member_cannot_answer_with_the_correct_issued_token(guard, s
     assert saved["status"] == "waiting" and not saved["payload"].get("answer_events")
 
 
-async def test_old_token_is_invalid_even_when_rebound_to_a_new_message_id(guard, store):
+async def test_old_token_is_invalid_even_when_rebound_to_a_new_message_id(
+    guard, store, inline_button_payload
+):
     session = await begin(guard, store)
     old = callback(session)
     await guard.client.delete_messages(CHAT, [session["message_id"]])
@@ -157,7 +159,11 @@ async def test_old_token_is_invalid_even_when_rebound_to_a_new_message_id(guard,
     with pytest.raises(GuardError, match="invalid_callback"):
         await guard.verification.callback(old)
     assert (await store.verification(CHAT, USER))["status"] == "waiting"
-    assert all(len(button.data) <= 64 for row in challenge_buttons(new)[:-1] for button in row)
+    assert all(
+        len(inline_button_payload(button)) <= 64
+        for row in challenge_buttons(new)[:-1]
+        for button in row
+    )
 
 
 @pytest.mark.parametrize("action", ["allow", "warn", "mute"])
