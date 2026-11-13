@@ -1,9 +1,5 @@
 <template>
   <div class="wiki-view">
-    <p class="wiki-breadcrumb">
-      <RouterLink to="/wiki">首页</RouterLink> /
-      <RouterLink :to="channelBase">{{ data?.channel_title || "频道" }}</RouterLink> / 知识条目
-    </p>
     <WikiState v-if="stale && data" variant="stale" @retry="reload()" />
     <WikiSkeleton v-if="loading" variant="article" />
     <div v-else-if="error" class="wiki-error" role="alert">{{ error }} <button @click="reload()">重试</button></div>
@@ -165,7 +161,7 @@ async function showSection(id: string) {
 }
 function jump(id: string) {
   if (route.hash === "#" + id) void showSection(id);
-  else void router.push({ hash: "#" + id });
+  else void router.replace({ hash: "#" + id });
 }
 async function readReferences() {
   if (!data.value || loadingReferences.value) return;
