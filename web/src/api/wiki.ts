@@ -27,6 +27,11 @@ export interface WikiJob {
     stage?: string;
     error_detail?: string;
     review_complete?: boolean;
+    review_version?: string;
+    review_fallback?: boolean;
+    review_rejections?: number;
+    reviewed_pages?: number;
+    review_total?: number;
     published?: boolean;
     active_requests?: Record<string, WikiRequestProgress>;
     generation_failures?: {

@@ -377,7 +377,8 @@
                 >立即重试</n-button
               ><n-button
                 v-if="
-                  job.status === 'completed' && job.progress.review_complete
+                  job.status === 'completed' && job.progress.review_version &&
+                  job.progress.review_complete && Number(job.progress.pages) > 0
                 "
                 type="primary"
                 @click="publish(job.id)"
@@ -397,7 +398,7 @@
               :title="rev.title"
               size="small"
               ><n-space
-                ><n-tag>{{ rev.rejected ? "已撤回" : "已生成" }}</n-tag
+                ><n-tag>{{ rev.rejected ? "已撤回" : rev.approved ? "已准予发布" : "草稿" }}</n-tag
                 ><n-tag v-if="rev.locked">已锁定</n-tag
                 ><n-tag v-if="rev.hidden">已隐藏</n-tag></n-space
               >
@@ -422,14 +423,21 @@
               ></n-card
             >
           </div>
-          <n-card v-if="preview" :title="preview.document.title" size="small"
-            ><section
+          <n-card v-if="preview" :title="preview.document.title" size="small">
+            <n-alert v-if="preview.review" :type="preview.review.approved ? 'info' : 'warning'">
+              {{ preview.review.approved ? "来源审校通过" : "来源审校未通过" }} ·
+              {{ preview.review.result.model }} · {{ formatDate(preview.review.created_at) }}
+              <p v-for="(batch, i) in preview.review.result.batches" :key="i">{{ batch.reason }}</p>
+              <n-button v-if="!preview.review.approved" size="small" @click="retryRevisionReview(preview.id)">重新审校</n-button>
+            </n-alert>
+            <section
               v-for="(claim, index) in preview.document.claims"
               :key="index"
               class="claim"
             >
               <h3>{{ claim.key }}</h3>
               <n-tag size="small">{{ statusLabels[claim.status] }}</n-tag>
+              <p v-if="reviewedClaims.get(index)">{{ reviewedClaims.get(index)?.reason }}</p>
               <WikiMarkdown :text="claim.text" :channel="selected" />
               <n-collapse
                 ><n-collapse-item title="修正此断言" :name="index"
@@ -652,6 +660,11 @@ const jobs = ref<Job[]>([]),
     id: string;
     document: { title: string; claims: Claim[] };
     diff: string;
+    review?: {
+      approved: boolean;
+      created_at: string;
+      result: { model: string; batches: { reason: string; claims: { index: number; reason: string }[] }[] };
+    };
   }>(),
   previewRow = ref<Revision>(),
   editTitle = ref(""),
@@ -666,6 +679,9 @@ const coverInput = ref<HTMLInputElement>();
 const coverBusy = ref(false);
 const coverFeedback = ref<{ text: string; error?: boolean }>();
 const draft = computed(() => autosave.value?.values.settings);
+const reviewedClaims = computed(() => new Map(
+  preview.value?.review?.result.batches.flatMap(batch => batch.claims.map(claim => [claim.index, claim] as const)),
+));
 const siteOrigin = window.location.origin;
 const channelOptions = computed(() =>
   channels.value.map((ch) => ({ label: ch.title, value: ch.id })),
@@ -983,6 +999,9 @@ function publish(job_id: string) {
     () => wikiAdmin(`${root()}/publish`, "POST", { job_id }),
     "知识快照已发布",
   );
+}
+function retryRevisionReview(id: string) {
+  return perform(() => wikiAdmin(`${root()}/revisions/${id}/review/retry`, "POST"), "已安排重新审校");
 }
 function rollback(publication_id: string) {
   return perform(

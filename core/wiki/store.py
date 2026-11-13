@@ -18,6 +18,7 @@ from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
 from .schema import (
     CHANNEL_COVERS_TABLE,
     DIRTY_PAGES_TABLE,
+    REVISION_REVIEWS_TABLE,
     SCHEMA,
     SCHEMA_VERSION,
     WIKI_ACCOUNT_TABLES,
@@ -138,6 +139,7 @@ class WikiStore:
             await self.query(CHANNEL_COVERS_TABLE)
             for statement in WIKI_ACCOUNT_TABLES:
                 await self.query(statement)
+            await self.query(REVISION_REVIEWS_TABLE)
             return
         for statement in SCHEMA:
             try:
@@ -556,6 +558,7 @@ class WikiStore:
         "dropped_pages",
         "profile_narrative",
         "profile_generation",
+        "review_policy",
         "summary_topics",
     )
 

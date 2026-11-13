@@ -86,6 +86,10 @@
         </p>
       </details>
     </n-alert>
+    <n-alert v-if="p.review_rejections" type="warning" :show-icon="false">
+      {{ p.review_rejections }} 个修订未通过来源审校。可在草稿中查看理由、修正或重新审校。
+    </n-alert>
+    <n-text v-if="p.review_fallback" depth="3">未单独配置审校模型，本次通过生成模型发起独立审校请求。</n-text>
     <div v-if="events.length" class="events">
       <div v-for="(event, index) in events" :key="index">
         <span>{{ time(event.time) }}</span
@@ -122,6 +126,7 @@ const phaseNames: Record<string, string> = {
   collect: "采集历史",
   extract: "生成知识",
   assemble: "整理文章",
+  review: "来源审校",
   ready: "准备发布",
 };
 const errorNames: Record<string, string> = {
@@ -166,6 +171,12 @@ const portion = computed(() => {
       label: "整理文章",
       done: Number(p.value.assembled_pages || 0),
       total: Number(p.value.page_total || 0),
+    };
+  if (stage === "review")
+    return {
+      label: "已审校文章",
+      done: p.value.reviewed_pages || 0,
+      total: p.value.review_total || 0,
     };
   return {
     label: "生成来源",

@@ -249,9 +249,14 @@ class WikiRuntime:
                 await self.store.checkpoint(job, "extract")
             if job["phase"] == "extract":
                 await self.engine.generate(job, channel)
+            if job["phase"] == "ready" and not job["cursor"].get("review_policy"):
+                # An unfinished pre-upgrade job may have reached ready using the old flags.
+                await self.store.checkpoint(job, "review")
             if job["phase"] == "assemble":
                 await self.store.report(job, "正在整理文章与知识地图", stage="assemble")
                 await self.engine.assemble(job, channel)
+            if job["phase"] == "review":
+                await self.engine.review(job, channel)
             if job["phase"] == "ready":
                 if job["kind"] in {"backfill", "reconcile"}:
                     await self.collector.coverage(
@@ -278,9 +283,12 @@ class WikiRuntime:
                         task = asyncio.create_task(self.refresh_avatar(channel["id"]))
                         self.tasks.add(task)
                         task.add_done_callback(self.tasks.discard)
-                job["progress"]["activity"] = (
-                    "构建完成，内容已发布" if job["progress"]["published"] else "构建完成"
-                )
+                if job["progress"]["published"]:
+                    job["progress"]["activity"] = "构建完成，内容已发布"
+                elif job["progress"].get("review_rejections"):
+                    job["progress"]["activity"] = "部分修订未通过来源审校，请在草稿中处理"
+                else:
+                    job["progress"]["activity"] = "构建完成"
                 job["progress"]["stage"] = "done"
                 job["progress"]["active_requests"] = {}
                 await self.store.query(
@@ -326,7 +334,6 @@ class WikiRuntime:
                         else min(10, 2 ** job["attempts"])
                     )
                 if str(error) == "Publication includes revoked, rejected or hidden evidence":
-                    job["phase"] = "assemble"
                     job["cursor"].pop("page_after", None)
                     job["cursor"]["revisions"] = {}
                     job["cursor"].pop("dropped_pages", None)
@@ -338,7 +345,11 @@ class WikiRuntime:
                     job["progress"].update(
                         assembled_pages=0, pages=0, activity="来源有更新，正在刷新文章"
                     )
+                    await self.store.checkpoint(job, "assemble")
                     delay = 1
+                if str(error) == "Publication requires independent review of each new revision":
+                    job["progress"]["review_complete"] = False
+                    await self.store.checkpoint(job, "review")
                 if job["phase"] == "collect":
                     job["progress"]["collection_failures"] = (
                         job["progress"].get("collection_failures", 0) + 1

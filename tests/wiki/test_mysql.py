@@ -389,9 +389,9 @@ async def published(store, *, image=False, channel_id=12345):
     job["cursor"]["revisions"] = {page["id"]: revision}
     fresh = await store.channel(ch["id"])
     job["progress"].update(
-        generation_complete=True, review_complete=True, source_generation=fresh["source_generation"]
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
     )
-    await store.checkpoint(job, "ready")
+    await WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model")).review(job, fresh)
     await store.finish(job)
     publication = await knowledge.publish(ch["id"], job_id, "test")
     return ch, source, page, revision, publication
@@ -728,14 +728,13 @@ async def test_go_reads_identical_publication_and_revocation(store):
 
 
 class FakeAI:
-    """按 wiki-2 markdown 管线契约返回：分批 Markdown、主题行、纯文本简介。
+    """模拟生成模型与来源审校模型的响应。"""
 
-    1aafed9 起引擎不再发送 JSON schema / 独立审核请求，直接按负载形状分发。
-    """
-
-    def __init__(self, *, incomplete=False, stable=False):
+    def __init__(self, *, incomplete=False, stable=False, review_status="supported"):
         self.calls = 0
+        self.review_calls = 0
         self.incomplete = incomplete
+        self.review_status = review_status
         # stable：按消息内容前缀决定词条归属。默认按批次下标奇偶（既有测试契
         # 约）；source id 是哈希，批次构成在编辑/删除后会变，增量测试必须用
         # stable 才能得到确定的页面归属。
@@ -747,9 +746,22 @@ class FakeAI:
         return self
 
     async def create(self, **request):
-        self.calls += 1
         payload = json.loads(request["messages"][1]["content"])
-        if "summaries" in payload:
+        if "claims" in payload:
+            self.review_calls += 1
+            content = json.dumps(
+                {
+                    "approved": self.review_status == "supported",
+                    "reason": "审校结论",
+                    "claims": [
+                        {"index": item["index"], "status": self.review_status, "reason": "来源审校"}
+                        for item in payload["claims"]
+                    ]
+                    if self.review_status != "missing"
+                    else [],
+                }
+            )
+        elif "summaries" in payload:
             content = "中文检索\nSakura"
         elif "sources" in payload or "source" in payload:
             sources = payload.get("sources") or [{"source": 0, "text": payload["source"]}]
@@ -773,6 +785,7 @@ class FakeAI:
             content = "频道以中文检索与技术说明为主，长期保持稳定的更新节奏。"
         else:
             raise AssertionError(f"未知的生成请求负载：{sorted(payload)}")
+        self.calls += int("claims" not in payload)
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -893,13 +906,23 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
         message_id=1,
     )
     fake = FakeAI()
+    reviewer = FakeAI()
     runtime = WikiRuntime(store, None, None)
-    runtime.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    runtime.engine = WikiEngine(
+        store,
+        runtime=lambda purpose: (
+            (reviewer, "fixture-review") if purpose == "wiki_review" else (fake, "fixture-model")
+        ),
+    )
     first_id = await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     first = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (first_id,))
     assert first["status"] == "published", first
-    assert fake.calls == 3  # 两个提取批次 + 一次频道简介；独立审核已随管线移除
+    assert fake.calls == 3  # 两个提取批次 + 一次频道简介
+    assert reviewer.review_calls > 0 and reviewer.calls == fake.review_calls == 0
+    reviews = await store.query("SELECT * FROM wiki_revision_reviews", fetch=True)
+    assert len(reviews) == 2 and all(row["approved"] for row in reviews)
+    assert {decode(row["result"])["model"] for row in reviews} == {"fixture-review"}
     publication = (await store.channel(ch["id"]))["published_revision"]
     graph = await runtime.reader.graph(ch["id"], limit=3)
     assert len(graph["nodes"]) == 2 and graph["edges"]
@@ -923,9 +946,11 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     timeline = await runtime.reader.timeline(ch["id"], page_size=1)
     assert len(timeline["items"]) == 1 and timeline["total_pages"] >= 2
     charged = fake.calls
+    reviewed = reviewer.review_calls
     await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     assert fake.calls == charged
+    assert reviewer.review_calls == reviewed
     # 内容未变化：不创建重复 publication，沿用当前发布快照
     assert (await store.channel(ch["id"]))["published_revision"] == publication
     assert (await store.one("SELECT COUNT(*) n FROM wiki_publications"))["n"] == 1
@@ -934,6 +959,86 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     assert not (await runtime.reader.graph(ch["id"]))["nodes"]
     assert not (await runtime.reader.browse_graph(ch["id"]))["nodes"]
     assert await runtime.reader.browse_graph(ch["id"], root) is None
+
+
+@pytest.mark.parametrize("review_status", ["unsupported", "missing"])
+async def test_failed_review_preserves_existing_publication(store, monkeypatch, review_status):
+    ch, _, runtime = await build_and_publish(store)
+    publication = (await store.channel(ch["id"]))["published_revision"]
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status=review_status)
+    generator = FakeAI()
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (generator, "fixture-model")
+    )
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    progress = decode(saved["progress"])
+    assert not progress["review_complete"]
+    assert reviewer.review_calls > 0
+    assert (await store.channel(ch["id"]))["published_revision"] == publication
+    if review_status == "unsupported":
+        assert saved["status"] == "completed" and progress["review_rejections"] > 0
+        rejected = await store.one(
+            "SELECT revision_id FROM wiki_revision_reviews WHERE approved=FALSE"
+        )
+        assert rejected
+        monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+        runtime.ready = True
+        retry = await wiki.retry_revision_review(ch["id"], rejected["revision_id"], "test")
+        audit = await store.one(
+            "SELECT details FROM wiki_review_actions WHERE action='retry_revision_review'"
+        )
+        assert decode(audit["details"])["previous_reviews"]
+        reviewer.review_status = "supported"
+        await runtime.run_job(await store.claim_job())
+        saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (retry["job_id"],))
+        assert saved["status"] == "published"
+    else:
+        assert saved["status"] == "partial" and saved["phase"] == "review"
+        assert saved["error_code"] == "WikiResponseError"
+        await store.control_job(ch["id"], job_id, "retry", "test")
+        reviewer.review_status = "supported"
+        generation_calls = generator.calls
+        await runtime.run_job(await store.claim_job())
+        saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+        assert saved["status"] == "published", saved
+        assert generator.calls == generation_calls + 1  # Only the channel introduction.
+
+
+async def test_publish_requires_review_of_exact_document(store):
+    ch = await channel(store)
+    await store.put_source(
+        ch["id"], "message", 1, "原始消息", datetime(2020, 1, 1), verified=True, message_id=1
+    )
+    runtime = WikiRuntime(store, None, None)
+    ai = FakeAI()
+    runtime.engine = WikiEngine(store, runtime=lambda _: (ai, "fixture-model"))
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    row = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    cursor = decode(row["cursor"])
+    revision_id = next(iter(cursor["revisions"].values()))
+    assert decode(row["progress"])["review_complete"]
+    assert not (
+        await store.one("SELECT approved FROM wiki_page_revisions WHERE id=%s", (revision_id,))
+    )["approved"]
+    await store.query(
+        "UPDATE wiki_page_revisions SET document=JSON_SET(document,'$.title','审校后更改') WHERE id=%s",
+        (revision_id,),
+    )
+    with pytest.raises(ValueError, match="independent review"):
+        await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+    await store.query(
+        "UPDATE wiki_jobs SET `cursor`=JSON_REMOVE(`cursor`,'$.review_policy') WHERE id=%s",
+        (job_id,),
+    )
+    with pytest.raises(ValueError, match="predates independent review"):
+        await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+    assert not (await store.channel(ch["id"]))["published_revision"]
 
 
 async def test_manual_mode_and_budget_pause_do_not_publish(store):
@@ -952,7 +1057,7 @@ async def test_manual_mode_and_budget_pause_do_not_publish(store):
     job_id = await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     job = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
-    # 审核门已随 markdown 管线移除（review_complete 恒为 True）；非 auto 发布模式下仍不发布
+    # 手动发布模式先完成独立审校，再等待管理员发布。
     assert job["status"] == "completed", job
     assert decode(job["progress"])["review_complete"]
     assert (await store.channel(ch["id"]))["published_revision"] is None
@@ -1648,11 +1753,9 @@ async def test_prune_keeps_evidence_referenced_chunks(store):
     job["cursor"]["revisions"] = {page["id"]: revision}
     fresh = await store.channel(ch["id"])
     job["progress"].update(
-        generation_complete=True,
-        review_complete=True,
-        source_generation=fresh["source_generation"],
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
     )
-    await store.checkpoint(job, "ready")
+    await WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model")).review(job, fresh)
     await store.finish(job)
     await knowledge.publish(ch["id"], job["id"], "test")
     await store.put_source(
