@@ -68,9 +68,6 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 			c.replyPlain(ctx, msg, q.Message)
 			return
 		}
-		if c.community != nil && user < 0 {
-			c.community.say(ctx, msg, anonymousAdmissionNotice, nil)
-		}
 		c.runStream(ctx, msg, user, query, hint, placeholder, q, errPrefix)
 		return
 	}
@@ -127,9 +124,6 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 			if !allowed || (c.access != nil && !c.access(work, msg, user)) {
 				c.finishBilling(work, msg, user, false)
 				return
-			}
-			if user < 0 {
-				c.community.say(work, msg, anonymousAdmissionNotice, nil)
 			}
 		}
 		if c.community != nil && msg.Chat.Type != models.ChatTypePrivate {

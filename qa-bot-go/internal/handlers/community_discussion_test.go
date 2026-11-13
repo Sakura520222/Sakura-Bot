@@ -92,11 +92,14 @@ func TestLinkedDiscussionRoutingAndRevocation(t *testing.T) {
 	chat := models.Chat{ID: -time.Now().UnixNano(), Type: models.ChatTypeSupergroup}
 	t.Cleanup(func() { database.Exec("DELETE FROM qa_comments WHERE chat_id=?", chat.ID) })
 	var link atomic.Int64
+	var systemMessages atomic.Int64
 	link.Store(chat.ID)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		result := any(map[string]any{"message_id": 999, "date": 1, "chat": map[string]any{"id": chat.ID, "type": "supergroup"}})
 		switch r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:] {
+		case "sendMessage":
+			systemMessages.Add(1)
 		case "getMe":
 			result = map[string]any{"id": 123, "is_bot": true, "first_name": "QA", "username": "ActualBot"}
 		case "getChatMember":
@@ -220,6 +223,10 @@ func TestLinkedDiscussionRoutingAndRevocation(t *testing.T) {
 	requireSubscription = true
 	write()
 	before = len(billing.actors)
+	beforeMessages := systemMessages.Load()
+	answerClient := commands.tg.(*fakeTG)
+	beforeAnswers := len(answerClient.sent)
+	beforeQueries := len(probe.seen)
 	send("@ActualBot anonymous", func(m *models.Message) {
 		m.From = nil
 		m.SenderChat = &chat
@@ -232,6 +239,12 @@ func TestLinkedDiscussionRoutingAndRevocation(t *testing.T) {
 	})
 	if len(billing.actors) != before+2 || billing.channels[len(billing.channels)-1] != "https://t.me/second" {
 		t.Fatal("anonymous fallback ignored allowed linked rule", billing.channels)
+	}
+	if systemMessages.Load() != beforeMessages {
+		t.Fatal("authorized anonymous questions sent extra system messages")
+	}
+	if len(answerClient.sent) != beforeAnswers+2 || len(probe.seen) != beforeQueries+2 {
+		t.Fatal("authorized anonymous questions did not each produce one answer")
 	}
 	before = len(billing.actors)
 	send("小妲 explicit denied policy", func(m *models.Message) { m.From = nil; m.SenderChat = &chat })
@@ -253,6 +266,33 @@ func TestLinkedDiscussionRoutingAndRevocation(t *testing.T) {
 	anonymousPool := NewAIPool(ctx, 1, 1, time.Minute)
 	t.Cleanup(anonymousPool.Close)
 	commands.pool = anonymousPool
+	blockerJob, _, err := anonymousPool.AcquireScoped(99, "private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerEntered, releaseWorker := make(chan struct{}), make(chan struct{})
+	blockerJob.Submit(func(context.Context) { close(workerEntered); <-releaseWorker })
+	<-workerEntered
+	beforeMessages = systemMessages.Load()
+	beforeAnswers = len(answerClient.sent)
+	beforeQueries = len(probe.seen)
+	send("二号 anonymous worker question", func(m *models.Message) { m.From = nil; m.SenderChat = &chat })
+	workerJob, existing, err := anonymousPool.AcquireScoped(chat.ID, fmt.Sprintf("chat:%d:thread:50", chat.ID))
+	close(releaseWorker)
+	if err != nil || !existing {
+		t.Fatal("anonymous worker question was not queued", err)
+	}
+	select {
+	case <-workerJob.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("anonymous worker question did not finish")
+	}
+	if systemMessages.Load() != beforeMessages {
+		t.Fatal("authorized anonymous worker question sent an extra system message")
+	}
+	if len(answerClient.sent) != beforeAnswers+1 || len(probe.seen) != beforeQueries+1 {
+		t.Fatal("authorized anonymous worker question did not produce one answer")
+	}
 	anonymousJob, _, err := anonymousPool.AcquireScoped(chat.ID, fmt.Sprintf("chat:%d:thread:50", chat.ID))
 	if err != nil {
 		t.Fatal(err)
