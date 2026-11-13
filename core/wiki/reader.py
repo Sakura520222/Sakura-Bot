@@ -55,12 +55,16 @@ class PublicReader:
 
     async def visibility(self):
         rows = await self.store.query(
-            f"""SELECT c.id,c.published_revision,c.source_generation
-            FROM wiki_channels c WHERE {CHANNEL_VISIBLE} ORDER BY c.id""",
+            f"""SELECT c.id,c.published_revision,c.source_generation,cover.digest cover_digest
+            FROM wiki_channels c LEFT JOIN wiki_channel_covers cover ON cover.channel_id=c.id
+            WHERE {CHANNEL_VISIBLE} ORDER BY c.id""",
             fetch=True,
         )
         return {
-            row["id"]: f"{row['published_revision']}:{row['source_generation']}" for row in rows
+            row[
+                "id"
+            ]: f"{row['published_revision']}:{row['source_generation']}:{row['cover_digest'] or ''}"
+            for row in rows
         }
 
     @consistent_read
@@ -103,7 +107,11 @@ class PublicReader:
             "updated_at": ch["updated_at"],
             "coverage": public_coverage(ch["coverage"]),
             "columns": ch["config"].columns,
-            "cover_url": ch["config"].cover_url or None,
+            "cover_url": (
+                f"/api/public/wiki/channels/{ch['id']}/cover?v={ch['cover_digest']}"
+                if ch.get("cover_digest")
+                else ch["config"].cover_url or None
+            ),
             "description": ch["config"].description,
             "source_policy": {
                 "quotes": ch["config"].show_quotes,

@@ -218,7 +218,7 @@ export async function wikiAdmin<T>(
   path: string,
   method = "GET",
   data?: unknown,
-  options: { timeout?: number } = {},
+  options: { timeout?: number; headers?: Record<string, string> } = {},
 ): Promise<T> {
   return (
     await apiClient.request<T>({

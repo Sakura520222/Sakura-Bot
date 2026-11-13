@@ -9,7 +9,7 @@
           placeholder="选择频道"
           aria-label="频道"
           class="channel-picker"
-          :disabled="busy"
+        :disabled="busy || coverBusy"
           @update:value="switchChannel"
         />
         <n-tag
@@ -31,7 +31,7 @@
           @click="channel.active_job ? (tab = 'jobs') : startBuild()"
           >{{ channel.active_job ? "查看当前任务" : "开始构建" }}</n-button
         >
-        <n-button quaternary :loading="busy" @click="loadChannels"
+        <n-button quaternary :loading="busy" :disabled="coverBusy" @click="loadChannels"
           >刷新</n-button
         >
         <div class="toolbar-actions">
@@ -130,7 +130,23 @@
                 <n-input v-model:value="draft.description" type="textarea" :maxlength="280" />
               </n-form-item>
               <n-form-item label="公开频道封面">
-                <n-input v-model:value="draft.cover_url" placeholder="HTTPS 图片地址，可留空" :maxlength="2048" />
+                <n-space vertical style="width: 100%">
+                  <n-input v-model:value="draft.cover_url" placeholder="备用 HTTPS 图片地址，可留空" :maxlength="2048" />
+                  <input ref="coverInput" type="file" accept="image/png,image/jpeg" hidden @change="uploadCover" />
+                  <n-space align="center">
+                    <n-button :loading="coverBusy" :disabled="busy || coverBusy" @click="coverInput?.click()">
+                      {{ channel?.cover_digest ? "替换本机图片" : "上传本机图片" }}
+                    </n-button>
+                    <n-button v-if="channel?.cover_digest" :disabled="busy || coverBusy" @click="changeCover()">
+                      移除本机封面
+                    </n-button>
+                    <n-text depth="3">PNG / JPEG，最大 8 MiB</n-text>
+                  </n-space>
+                  <n-text v-if="channel?.cover_digest" depth="3">已使用上传的封面。移除后将使用备用地址。</n-text>
+                  <n-text v-if="coverFeedback" :type="coverFeedback.error ? 'error' : 'success'" :role="coverFeedback.error ? 'alert' : 'status'">
+                    {{ coverFeedback.text }}
+                  </n-text>
+                </n-space>
               </n-form-item>
               <n-form-item v-if="draft.frequency === 'cron'" label="Cron 表达式"
                 ><n-input
@@ -604,6 +620,7 @@ interface Channel {
   coverage: Coverage;
   published_revision: string | null;
   active_job: string | null;
+  cover_digest?: string | null;
 }
 interface Revision {
   id: string;
@@ -645,6 +662,9 @@ interface FormSettings extends Config {
   hiddenTopics: string;
 }
 const autosave = shallowRef<Autosave<{ settings: FormSettings }> | null>(null);
+const coverInput = ref<HTMLInputElement>();
+const coverBusy = ref(false);
+const coverFeedback = ref<{ text: string; error?: boolean }>();
 const draft = computed(() => autosave.value?.values.settings);
 const siteOrigin = window.location.origin;
 const channelOptions = computed(() =>
@@ -717,6 +737,7 @@ function configPayload(settings: FormSettings): Config {
   };
 }
 function applyChannel(loaded: Channel) {
+  coverFeedback.value = undefined;
   stopDraftCache?.();
   autosave.value?.stop();
   channel.value = loaded;
@@ -742,9 +763,10 @@ function applyChannel(loaded: Channel) {
           configPayload(submitted),
         );
         if (selected.value === owner) {
-          channel.value = saved;
+          const coverDigest = channel.value?.cover_digest;
+          channel.value = { ...saved, cover_digest: coverDigest };
           channels.value = channels.value.map((ch) =>
-            ch.id === owner ? saved : ch,
+            ch.id === owner ? { ...saved, cover_digest: ch.cover_digest } : ch,
           );
         }
         return {
@@ -784,8 +806,39 @@ function applyChannel(loaded: Channel) {
   if (!controller.values.settings.public_base_url)
     controller.values.settings.public_base_url = siteOrigin;
 }
+function uploadCover(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (file) void changeCover(file);
+}
+async function changeCover(file?: File) {
+  const owner = selected.value;
+  if (!owner || busy.value || coverBusy.value) return;
+  if (file && file.size > 8 * 1024 * 1024) {
+    coverFeedback.value = { text: "频道封面不能超过 8 MiB", error: true };
+    return;
+  }
+  coverBusy.value = true;
+  coverFeedback.value = undefined;
+  try {
+    const saved = await wikiAdmin<{ cover_digest: string | null }>(
+      `/channels/${owner}/cover`, file ? "PUT" : "DELETE", file,
+      file ? { headers: { "Content-Type": file.type || "application/octet-stream" }, timeout: 120_000 } : {},
+    );
+    channels.value = channels.value.map((ch) => ch.id === owner ? { ...ch, ...saved } : ch);
+    if (selected.value === owner && channel.value?.id === owner) {
+      channel.value = { ...channel.value, ...saved };
+      coverFeedback.value = { text: file ? "封面已上传" : "本机封面已移除" };
+    }
+  } catch (err) {
+    if (selected.value === owner) coverFeedback.value = { text: problem(err), error: true };
+  } finally {
+    coverBusy.value = false;
+  }
+}
 async function switchChannel(value: string) {
-  if (value === selected.value) return;
+  if (coverBusy.value || value === selected.value) return;
   await autosave.value?.flush();
   selected.value = value;
   localStorage.setItem("sakura_wiki_channel", value);

@@ -5,7 +5,6 @@ Only file IDs live between turns. Binary/data URLs exist during a request only.
 
 import asyncio
 import base64
-import io
 import os
 import re
 import threading
@@ -14,21 +13,25 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 import aiohttp
-from PIL import Image
 
-MAX_IMAGE_BYTES = 8 * 1024 * 1024
+from core.media.image_validation import (
+    MAX_IMAGE_BYTES as MAX_IMAGE_BYTES,
+)
+from core.media.image_validation import (
+    MAX_PIXELS,
+    MAX_SIDE,
+    validate_image,
+)
+from core.media.image_validation import (
+    ImageInputError as ImageInputError,
+)
+
 MAX_IMAGES = 4
-MAX_PIXELS = 12_000_000
-MAX_SIDE = 8192
 IMAGE_SLOTS = threading.BoundedSemaphore(2)
 IMAGE_ACK = "🖼️ 图片已暂存，可继续发图（最多 4 张），然后发送问题。5 分钟内可用「它 / 上图」追问；新图片替换上一批，/clear 清除。"
 VISION_DISABLED = "当前「助手问答」模型未开启图片输入。请在 WebUI 的 AI 配置中选择支持图片的助手模型，并开启该模型的图片能力。"
 IMAGE_FAILURE = "图片问答失败：上游未接受图片或请求超时，请检查助手模型的图片能力与服务配置后重试。"
 _FOLLOWUP = re.compile(r"它|这张|那张|上图|图中|图片|照片|\b(?:it|its|image|photo|picture)\b", re.I)
-
-
-class ImageInputError(ValueError):
-    """Safe, user-facing image failure; never wraps URLs, bytes or SDK errors."""
 
 
 def context_ttl():
@@ -181,27 +184,7 @@ def telegram_image_ref(message):
 
 
 def image_data_url(data):
-    if not data or len(data) > MAX_IMAGE_BYTES:
-        raise ImageInputError("单张图片不能超过 8 MiB，且不能为空。")
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            fmt = img.format
-            if fmt not in {"PNG", "JPEG"}:
-                raise ImageInputError("目前只支持 PNG / JPEG 图片。")
-            if (
-                img.width * img.height > MAX_PIXELS
-                or max(img.size) > MAX_SIDE
-                or getattr(img, "n_frames", 1) != 1
-            ):
-                raise ImageInputError("图片像素过大或为动画，请发送静态 PNG / JPEG。")
-            img.verify()
-        with Image.open(io.BytesIO(data)) as img:
-            img.load()
-    except ImageInputError:
-        raise
-    except Exception:
-        raise ImageInputError("图片已损坏或格式不受支持，请重新发送 PNG / JPEG。") from None
-    mime = "image/png" if fmt == "PNG" else "image/jpeg"
+    mime = validate_image(data)
     return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
 
 

@@ -9,7 +9,7 @@
 }
 .wiki-shell .wiki-columns {
   display: grid;
-  grid-template-columns: 200px minmax(0, 680px) 285px;
+  grid-template-columns: 200px minmax(0, 820px) 285px;
   grid-template-areas:
     "navigation main actions"
     "navigation main context";
@@ -212,7 +212,7 @@
 @media (max-width: 1150px) {
   .wiki-shell { --wiki-masthead: 54px; }
   .wiki-shell .wiki-columns {
-    grid-template-columns: 180px minmax(0, 720px);
+    grid-template-columns: 180px minmax(0, 820px);
     grid-template-areas: "navigation actions" "navigation main";
   }
   .wiki-shell .wiki-header-actions { border-bottom: 1px solid var(--sb-border); }

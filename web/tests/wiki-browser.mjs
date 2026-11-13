@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { chromium, devices } from "playwright-core";
 
 const web = fileURLToPath(new URL("../", import.meta.url));
@@ -27,7 +28,8 @@ const compressed = new Map();
 const mime = {".html":"text/html",".js":"application/javascript",".css":"text/css",".png":"image/png"};
 const avatar = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCXYAAAAASUVORK5CYII=","base64");
 let coverUrl;
-const server = http.createServer((req,res) => {
+let uploadedCover;
+const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
     const endpoint = parsed.pathname.replace("/api/public/wiki/","");
@@ -35,7 +37,29 @@ const server = http.createServer((req,res) => {
     const start = Number(q.get("cursor") || 0);
     let out;
     if (endpoint.endsWith("/avatar")) { res.writeHead(200,{"content-type":"image/png","cache-control":"private,no-cache","etag":'"avatar"'}); return res.end(avatar); }
+    const adminChannel = {
+      ...channel, enabled: true, access_verified: true, cover_digest: uploadedCover?.digest,
+      config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
+    };
     if (endpoint === "channels") out = [channel];
+    else if (endpoint === "/api/wiki/admin/channels") out = [adminChannel];
+    else if (endpoint === "/api/wiki/admin/channels/123/config") out = adminChannel;
+    else if (endpoint === "/api/wiki/admin/channels/123/cover" && req.method === "PUT") {
+      assert.equal(req.headers.authorization, "Bearer wiki-test-token");
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const image = Buffer.concat(chunks);
+      uploadedCover = { image, digest: createHash("sha256").update(image).digest("hex") };
+      out = { cover_digest: uploadedCover.digest };
+    }
+    else if (endpoint === "/api/wiki/admin/channels/123/cover" && req.method === "DELETE") {
+      uploadedCover = undefined;
+      out = { cover_digest: null };
+    }
+    else if (endpoint === "channels/123/cover" && uploadedCover) {
+      res.writeHead(200, { "content-type": "image/png" });
+      return res.end(uploadedCover.image);
+    }
     else if (endpoint === "visibility") out = {"123":"v1:1"};
     else if (endpoint === "feed") out = {items:cards.slice(start,start+20),has_more:start+20<cards.length,next_cursor:start+20<cards.length?String(start+20):null,terms:q.get("q")?.split(" ")||[]};
     else if (endpoint === "search") out = {items:cards.slice(0,Number(q.get("page_size")||20)),total:cards.length,page:1,page_size:20};
@@ -48,7 +72,11 @@ const server = http.createServer((req,res) => {
       const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history:[{revision_id:card.revision_id,created_at:channel.updated_at}],sources_total:1,history_total:1};
       out = {...card,verified_at:channel.updated_at,...(q.get("part") !== "references" ? {claims}:{}),...(q.get("part") !== "article" ? refs:{})};
     }
-    else if (endpoint === "channels/123") out = {...channel,cover_url:coverUrl,description:"Sakura 项目的更新与使用指南。",columns:["pages","graph","timeline","profile"]};
+    else if (endpoint === "channels/123") out = {
+      ...channel,
+      cover_url: uploadedCover ? `/api/public/wiki/channels/123/cover?v=${uploadedCover.digest}` : coverUrl,
+      description:"Sakura 项目的更新与使用指南。",columns:["pages","graph","timeline","profile"],
+    };
     else { res.writeHead(404); return res.end(); }
     res.writeHead(200,{"content-type":"application/json"}); return res.end(JSON.stringify(out));
   }
@@ -210,6 +238,8 @@ try {
   const settingsPosition = await settings.boundingBox();
   const contextPosition = await desktop.getByRole("complementary",{name:"相关导航"}).boundingBox();
   assert.ok(settingsPosition.y < contextPosition.y && settingsPosition.x > contextPosition.x + contextPosition.width / 2);
+  const columnWidths = await desktop.locator(".wiki-columns").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns);
+  assert.equal(columnWidths, "200px 820px 285px");
   if (output) await desktop.screenshot({path:path.join(output,"desktop.png")});
   await settings.click();
   await desktop.waitForURL("**/login");
@@ -225,6 +255,20 @@ try {
   await desktop.reload();
   await desktop.getByRole("heading",{name:channel.title,exact:true}).waitFor();
   await cover.waitFor({state:"detached"});
+  await desktop.evaluate(() => localStorage.setItem("sakura_bot_token", "wiki-test-token"));
+  await desktop.goto(url + "/wiki/admin");
+  const uploadButton = desktop.getByRole("button", { name: "上传本机图片" });
+  const [fileChooser] = await Promise.all([desktop.waitForEvent("filechooser"), uploadButton.click()]);
+  await fileChooser.setFiles({ name: "cover.png", mimeType: "image/png", buffer: avatar });
+  await desktop.getByText("封面已上传", { exact: true }).waitFor();
+  assert.deepEqual(uploadedCover.image, avatar);
+  await desktop.goto(url + "/wiki/123");
+  await cover.waitFor();
+  assert.match(await cover.getAttribute("src"), /^\/api\/public\/wiki\/channels\/123\/cover\?v=/);
+  await desktop.goto(url + "/wiki/admin");
+  await desktop.getByRole("button", { name: "移除本机封面" }).click();
+  await desktop.getByText("本机封面已移除", { exact: true }).waitFor();
+  assert.equal(uploadedCover, undefined);
   assert.deepEqual(errors,[]);
   if (output) fs.writeFileSync(path.join(output,"browser-results.json"),JSON.stringify({samples,bounded,feeds},null,2));
   console.log(JSON.stringify({samples,bounded,feeds}));
