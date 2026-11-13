@@ -19,8 +19,6 @@ import (
 	"unicode/utf16"
 )
 
-const anonymousAdmissionNotice = "本群匿名管理员按管理员授权使用共享群级额度。隐藏身份无法验证个人订阅，本次按匿名准入策略处理，不使用个人积分。"
-
 type publicRefreshKey struct{}
 type Community struct {
 	Config *config.Config
