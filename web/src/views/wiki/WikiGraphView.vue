@@ -4,10 +4,10 @@
     <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
     知识地图
   </p>
-  <div class="wiki-section-head">
+  <header class="wiki-page-heading">
     <h1>知识地图</h1>
     <button @click="share">{{ shared ? "已复制链接" : "分享视图" }}</button>
-  </div>
+  </header>
   <div class="wiki-filters">
     <label
       >定位<input
@@ -67,19 +67,6 @@
     </div>
     <div v-if="hover" class="wiki-graph-hover">{{ hover }}</div>
     <aside class="wiki-graph-sidebar">
-      <div v-if="selected" class="wiki-graph-detail">
-        <span v-if="selected.kind !== 'Topic'" class="wiki-tag wiki-chip-accent">{{
-          kindLabels[selected.kind]
-        }}</span>
-        <h3>{{ selected.title }}</h3>
-        <p class="wiki-muted">{{ selected.topic }}</p>
-        <RouterLink :to="selected.url">阅读条目</RouterLink>
-        <div class="wiki-graph-actions">
-          <button @click="load(selected.id, true)" :disabled="loading || expanding">
-            展开邻居</button
-          ><button @click="collapse">折叠邻居</button>
-        </div>
-      </div>
       <input
         v-model="nodeFilter"
         class="wiki-graph-filter"
@@ -101,13 +88,26 @@
         </button>
       </div>
     </aside>
+    <dialog ref="drawer" class="wiki-graph-drawer" aria-labelledby="wiki-node-title" @close="selected = undefined">
+      <div v-if="selected" class="wiki-graph-detail">
+        <button autofocus @click="drawer?.close()">关闭</button>
+        <h2 id="wiki-node-title">{{ selected.title }}</h2>
+        <p class="wiki-muted">{{ selected.topic }} · {{ kindLabels[selected.kind] }}</p>
+        <RouterLink :to="selected.url">阅读条目</RouterLink>
+        <div class="wiki-graph-actions">
+          <button @click="load(selected.id, true)" :disabled="loading || expanding">展开邻居</button>
+          <button @click="collapse">折叠邻居</button>
+        </div>
+        <p v-if="localError" role="alert">{{ localError }}</p>
+      </div>
+    </dialog>
   </div>
   <div class="wiki-graph-foot">
-    <div class="wiki-graph-legend">
+    <details class="wiki-graph-legend"><summary>图例</summary>
       <span v-for="(color, key) in palette.kinds" :key="key"
         ><i :style="{ background: color }"></i>{{ kindLabels[key] }}</span
       >
-    </div>
+    </details>
     <span class="wiki-muted">
       {{ graph?.nodes.length || 0 }} 个节点 ·
       {{ graph?.edges.length || 0 }} 条关系<span v-if="graph?.truncated">
@@ -119,18 +119,19 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, shallowRef, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, shallowRef, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 import { useRoute, useRouter } from "vue-router";
-import cytoscape, { type Core } from "cytoscape";
+import type cytoscape from "cytoscape";
+import type { Core } from "cytoscape";
 import {
   publicWikiUrl,
   kindLabels,
   type WikiGraph,
   type WikiNode,
 } from "../../api/wiki";
-import { useWikiResource, wikiUrl } from "../../composables/wiki-store";
+import { isUnavailable, useWikiResource, wikiUrl } from "../../composables/wiki-store";
 import { mergeGraph } from "./wiki-utils";
 
 defineOptions({ name: "WikiGraphView" });
@@ -139,8 +140,11 @@ const route = useRoute(),
   router = useRouter();
 const canvas = ref<HTMLElement>(),
   frame = ref<HTMLElement>();
+const drawer = ref<HTMLDialogElement>();
 let cy: Core | undefined;
 let resize: ResizeObserver | undefined;
+let disposed = false;
+let expansion: AbortController | undefined;
 // 本地图谱是视图私有的展开态：SWR 缓存只存单次请求载荷，展开合并不回写缓存
 const graph = shallowRef<WikiGraph>(),
   selected = ref<WikiNode>(),
@@ -151,7 +155,7 @@ const query = ref(String(route.query.q || "")),
   topic = ref(String(route.query.topic || "")),
   relation = ref(String(route.query.relation || "")),
   after = ref(String(route.query.after || "")),
-  limit = ref(Math.min(120, Math.max(30, Number(route.query.limit) || 60))),
+  limit = ref(Math.min(120, Math.max(30, Number(route.query.limit) || (innerWidth < 720 ? 30 : 60)))),
   layout = ref(String(route.query.layout || "cose"));
 // 根节点只取首挂载时的 ?node：分享写入 URL 的 node 不应反过来触发重新拉取
 const rootNodeId = ref(String(route.query.node || ""));
@@ -172,13 +176,14 @@ function graphUrl(nodeId?: string): string {
 const { data, loading, error, stale, reload } = useWikiResource<WikiGraph>(
   () => graphUrl(rootNodeId.value || undefined),
   publicWikiUrl<WikiGraph>,
-  { ttlMs: 300_000 },
+  { ttlMs: 30_000 },
 );
 watch(data, (payload) => {
-  if (!payload) return;
+  expansion?.abort();
   graph.value = payload;
+  if (!payload) drawer.value?.close();
   render();
-});
+}, { immediate: true });
 
 /** 侧栏节点列表的客户端筛选：只过滤展示，不参与图谱请求 */
 const nodeFilter = ref("");
@@ -229,11 +234,7 @@ const palettes: Record<"light" | "dark", GraphPalette> = {
 };
 const palette = ref<GraphPalette>(palettes.light);
 function syncPalette() {
-  // App.vue 在根组件 onMounted 才写入 html.dark（晚于本子组件挂载），
-  // 首屏判定需兼读持久化设置，避免暗色用户先渲染成亮色画布
-  const dark =
-    document.documentElement.classList.contains("dark") ||
-    localStorage.getItem("sakura_bot_theme") === "dark";
+  const dark = document.documentElement.classList.contains("dark");
   palette.value = dark ? palettes.dark : palettes.light;
 }
 function nodeColor(kind: string): string {
@@ -300,29 +301,36 @@ async function load(node?: string, append = false) {
     // 展开邻居是用户触发的增量动作：直接请求后本地合并，不占用缓存键
     localError.value = "";
     expanding.value = true;
+    const request = new AbortController();
+    expansion = request;
     try {
-      const payload = await publicWikiUrl<WikiGraph>(graphUrl(node));
+      const payload = await publicWikiUrl<WikiGraph>(graphUrl(node), request.signal);
       graph.value = mergeGraph(graph.value, payload, limit.value);
       render();
     } catch (err) {
+      if (request.signal.aborted) return;
+      if (isUnavailable(err)) await reload();
       localError.value = err instanceof Error ? err.message : "地图加载失败";
     } finally {
       expanding.value = false;
+      if (expansion === request) expansion = undefined;
     }
     return;
   }
   if (typeof node === "string") rootNodeId.value = node;
   localError.value = "";
+  drawer.value?.close();
   selected.value = undefined;
 }
 async function retry() {
   localError.value = "";
-  await reload();
+  await Promise.all([reload(), initializeGraph()]);
 }
 function render() {
-  if (!cy || !graph.value) return;
+  if (!cy) return;
   const saved = new Map(cy.nodes().map((node) => [node.id(), node.position()]));
   cy.elements().remove();
+  if (!graph.value) return;
   cy.add([
     ...graph.value.nodes.map((node) => ({
       data: {
@@ -349,6 +357,7 @@ function relayout() {
 }
 function select(node: WikiNode) {
   selected.value = node;
+  void nextTick(() => { if (drawer.value && !drawer.value.open) drawer.value.showModal(); });
   cy?.elements().unselect();
   const target = cy?.getElementById(node.id);
   target?.select();
@@ -412,33 +421,31 @@ async function fullscreen() {
     localError.value = "当前浏览器不支持全屏，可继续使用地图。";
   }
 }
+async function initializeGraph() {
+  if (cy || disposed) return;
+  try {
+    const { default: createGraph } = await import("cytoscape");
+    if (cy || disposed) return;
+    syncPalette();
+    cy = createGraph({ container: canvas.value, style: cyStyle(), minZoom: 0.2, maxZoom: 3 });
+    cy.on("tap", "node", (event) => {
+      const node = graph.value?.nodes.find((n) => n.id === event.target.id());
+      if (node) select(node);
+    });
+    cy.on("mouseover", "node,edge", (event) => {
+      hover.value = event.target.data("label");
+    });
+    cy.on("mouseout", "node,edge", () => {
+      hover.value = "";
+    });
+    window.addEventListener("theme-change", handleThemeChange);
+    render();
+  } catch {
+    if (!disposed) localError.value = "知识地图组件加载失败。";
+  }
+}
 onMounted(() => {
-  syncPalette();
-  // wheelSensitivity 保持 cytoscape 默认值 1（缩放速率与之成正比）；
-  // 此前显式设为 0.25，滚轮缩放比原生慢 4 倍。
-  cy = cytoscape({
-    container: canvas.value,
-    style: cyStyle(),
-    minZoom: 0.2,
-    maxZoom: 3,
-  });
-  cy.on("tap", "node", (event) => {
-    const node = graph.value?.nodes.find((n) => n.id === event.target.id());
-    if (node) select(node);
-  });
-  cy.on("mouseover", "node,edge", (event) => {
-    hover.value = event.target.data("label");
-  });
-  cy.on("mouseout", "node,edge", () => {
-    hover.value = "";
-  });
-  window.addEventListener("theme-change", handleThemeChange);
-  // 命中缓存时载荷在挂载前就已就绪（data watch 的 render 早于画布创建）：
-  // 画布建好后补渲染一次；冷路径由 data watch 接手
-  render();
-  load();
-});
-onMounted(() => {
+  void initializeGraph();
   resize = new ResizeObserver(() => {
     cy?.resize();
     cy?.fit(undefined, 35);
@@ -453,12 +460,28 @@ watch(
   },
 );
 onUnmounted(() => {
+  disposed = true;
+  expansion?.abort();
   window.removeEventListener("theme-change", handleThemeChange);
   resize?.disconnect();
   cy?.destroy();
 });
 </script>
 <style scoped>
+.wiki-graph-drawer {
+  position: fixed;
+  margin: auto 0 auto auto;
+  inset: 0 0 0 auto;
+  width: min(100%, 420px);
+  max-height: 100dvh;
+  min-height: min(240px, 100dvh);
+  padding: 20px;
+  border: 1px solid var(--sb-border);
+  border-radius: 12px 0 0 12px;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+}
+.wiki-graph-drawer::backdrop { background: rgb(0 0 0 / 38%); }
 .wiki-graph-frame {
   position: relative;
   display: grid;
@@ -611,7 +634,7 @@ onUnmounted(() => {
 .wiki-graph-frame:fullscreen .wiki-graph-canvas {
   height: 100vh;
 }
-@media (max-width: 760px) {
+@media (max-width: 1150px) {
   .wiki-graph-frame {
     grid-template-columns: 1fr;
   }

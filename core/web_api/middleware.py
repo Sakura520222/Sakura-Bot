@@ -64,14 +64,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 _wiki_buckets.popitem(last=False)
             if count > 120:
                 return JSONResponse(
-                    {"detail": "Wiki 请求过于频繁"}, status_code=429, headers={"Retry-After": "60"}
+                    {"detail": "Wiki 请求过于频繁"},
+                    status_code=429,
+                    headers={"Retry-After": "60", "Cache-Control": "no-store"},
                 )
             response = await call_next(request)
-            # 仅成功的头像响应（含 304 条件请求）允许浏览器短缓存；
-            # 404/503 与其余匿名 Wiki 响应一律 no-store。
             if response.status_code in {200, 304} and WIKI_AVATAR_ROUTE.fullmatch(path):
-                response.headers["Cache-Control"] = "public, max-age=3600"
-            else:
+                response.headers["Cache-Control"] = "private, no-cache, must-revalidate"
+            elif response.status_code not in {200, 304} or "ETag" not in response.headers:
                 response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Content-Security-Policy"] = (
@@ -93,10 +93,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # 提取 Token
         token = _extract_token(request)
+        headers = {"Cache-Control": "no-store"} if path.startswith("/api/wiki/admin") else None
         if not token:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "未提供认证 Token"},
+                headers=headers,
             )
 
         # 验证 Token
@@ -105,12 +107,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Token 无效或已过期"},
+                headers=headers,
             )
 
         # 将用户信息存入 request.state
         request.state.user = user
 
-        return await call_next(request)
+        response = await call_next(request)
+        if headers:
+            response.headers.update(headers)
+        return response
 
 
 def _extract_token(request: Request) -> str | None:

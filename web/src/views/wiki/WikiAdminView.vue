@@ -126,6 +126,12 @@
                   placeholder="Asia/Shanghai"
                   @blur="saveConfig(false)"
               /></n-form-item>
+              <n-form-item label="公开频道简介">
+                <n-input v-model:value="draft.description" type="textarea" :maxlength="280" />
+              </n-form-item>
+              <n-form-item label="公开频道封面">
+                <n-input v-model:value="draft.cover_url" placeholder="HTTPS 图片地址，可留空" :maxlength="2048" />
+              </n-form-item>
               <n-form-item v-if="draft.frequency === 'cron'" label="Cron 表达式"
                 ><n-input
                   v-model:value="draft.cron"
@@ -575,6 +581,8 @@ interface Config {
   show_quotes: boolean;
   show_telegram_links: boolean;
   public_base_url: string;
+  description?: string;
+  cover_url?: string;
   hidden_topics: string[];
   temperature: number;
   timeout_seconds: number;

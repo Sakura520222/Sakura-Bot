@@ -106,8 +106,8 @@ async def channel(store, channel_id=12345, public=True):
     return await store.channel(ch["id"])
 
 
-async def published(store, *, image=False):
-    ch = await channel(store)
+async def published(store, *, image=False, channel_id=12345):
+    ch = await channel(store, channel_id)
     if image:
         await store.put_source(
             ch["id"],
@@ -177,6 +177,61 @@ async def test_page_additive_counts_match_true_totals(store):
     # 夹具只有一条来源与一次发布：500/50 截断不会触发，但总量键必须与真实值一致
     assert article["sources_total"] == len(article["sources"]) == 1
     assert article["history_total"] == len(article["history"]) == 1
+
+
+@pytest.mark.parametrize("mode,q", [("latest", ""), ("recommended", ""), ("search", "中文")])
+async def test_feed_cursor_only_returns_visible_published_pages(store, mode, q):
+    first = await published(store, channel_id=12345)
+    second = await published(store, channel_id=12346)
+    third = await published(store, channel_id=12347)
+    records = {record[2]["id"]: record for record in (first, second, third)}
+    reader = PublicReader(store)
+    batch = await reader.feed(mode=mode, q=q, limit=1)
+    assert batch["has_more"] and batch["items"][0]["evidence_count"] == 1
+    cursor = batch["next_cursor"]
+    following = await reader.feed(mode=mode, q=q, cursor=cursor, limit=2)
+    assert len(following["items"]) == 2
+    assert not following["has_more"]
+    assert {item["id"] for item in batch["items"] + following["items"]} == records.keys()
+    assert following == await reader.feed(mode=mode, q=q, cursor=cursor, limit=2)
+    with pytest.raises(ValueError, match="游标"):
+        await reader.feed(mode=mode, q=q, topic="其他范围", cursor=cursor)
+    revoked = following["items"][0]["id"]
+    channel_row, source, *_ = records[revoked]
+    await store.revoke(channel_row["id"], source_id=source["id"], actor="test")
+    after = await reader.feed(mode=mode, q=q, cursor=cursor, limit=2)
+    assert len(after["items"]) == 1 and after["items"][0]["id"] != revoked
+
+
+async def test_article_parts_and_timeline_cursor_share_publication_gate(store):
+    ch, source, page, revision, publication = await published(store)
+    reader = PublicReader(store)
+    article = await reader.page(ch["id"], page["slug"], part="article")
+    refs = await reader.page(ch["id"], page["slug"], part="references")
+    assert article["claims"] and "history" not in article
+    assert refs["publication_id"] == publication and refs["revision_id"] == revision
+    assert refs["sources_total"] == 1 and "claims" not in refs
+    assert await reader.related(ch["id"], page["slug"]) == {"next": None, "previous": None}
+    before = await reader.visibility()
+    await store.query(
+        """INSERT INTO wiki_revision_claims (revision_id,ordinal,occurred_at,source_created_at,payload)
+        SELECT revision_id,ordinal+1,occurred_at,source_created_at,payload
+        FROM wiki_revision_claims WHERE revision_id=%s""",
+        (revision,),
+    )
+    first = await reader.timeline(ch["id"], cursor_mode=True, page_size=1)
+    assert first["has_more"]
+    second = await reader.timeline(
+        ch["id"], cursor_mode=True, page_size=1, cursor=first["next_cursor"]
+    )
+    assert (
+        not second["has_more"] and second["items"][0]["event_id"] != first["items"][0]["event_id"]
+    )
+    await store.revoke(ch["id"], source_id=source["id"], actor="test")
+    assert (await reader.visibility())[ch["id"]] != before[ch["id"]]
+    assert await reader.page(ch["id"], page["slug"], part="references") is None
+    assert await reader.related(ch["id"], page["slug"]) is None
+    assert not (await reader.timeline(ch["id"], cursor_mode=True))["items"]
 
 
 async def test_topic_trends_window_is_bounded_but_topics_remain_all_time(store):

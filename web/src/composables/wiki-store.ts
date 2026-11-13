@@ -10,7 +10,7 @@ const BASE = "/api/public/wiki";
 const CACHE_LIMIT = 120;
 const PREFETCH_DELAY = 80;
 const PREFETCH_CONCURRENCY = 2;
-const PREFETCH_BUDGET = 90; // 滑动 60s 窗口内的预取上限，只约束预取，不约束用户主动加载
+const PREFETCH_BUDGET = 12;
 
 interface CacheEntry {
   data: unknown;
@@ -23,6 +23,7 @@ const cache = new Map<string, CacheEntry>();
 const controllers = new Map<string, AbortController>();
 /** 失效广播：参数为被清除的缓存键 */
 const invalidationListeners = new Set<(url: string) => void>();
+const channelChangeListeners = new Set<(channels: string[]) => void>();
 /** 长时间隐藏后回前台：每个活跃资源自行决定是否再校验 */
 const resumeListeners = new Set<() => void>();
 const prefetchBudget: number[] = [];
@@ -57,7 +58,7 @@ function channelOf(url: string): string | null {
       return direct[1];
     }
   }
-  if (url.startsWith(`${BASE}/search?`)) {
+  if ([`${BASE}/search?`, `${BASE}/feed?`].some((prefix) => url.startsWith(prefix))) {
     try {
       return new URL(url.slice(BASE.length), "http://localhost").searchParams.get("channel");
     } catch {
@@ -91,6 +92,7 @@ function ensurePromise(
     try {
       refreshingCount.value++;
       const value = await fetcher(url, controller.signal);
+      controller.signal.throwIfAborted();
       const publicationId = publicationIdOf(value);
       // 同频道内 publication_id 变化 = 重新发布/撤回/回滚，该频道的相邻条目一并失效
       if (
@@ -100,13 +102,22 @@ function ensurePromise(
         existing.publicationId !== publicationId
       ) {
         const channelId = channelOf(url);
-        if (channelId) invalidateChannel(channelId, url);
+        if (channelId) notifyInvalidation(invalidateChannel(channelId, url));
       }
       entry.data = value;
       entry.publicationId = publicationId;
       entry.fetchedAt = Date.now();
       lruTouch(entry, url);
       return value;
+    } catch (error) {
+      if (!controller.signal.aborted && isUnavailable(error)) {
+        cache.delete(url);
+        const channel = channelOf(url);
+        if (channel && url.split("?")[0] === wikiUrl(`/channels/${channel}`)) {
+          notifyInvalidation(invalidateChannel(channel, url));
+        }
+      }
+      throw error;
     } finally {
       // 身份守卫：被顶掉的旧请求的迟到清理，不得删除继任请求的登记
       if (controllers.get(url) === controller) controllers.delete(url);
@@ -140,7 +151,13 @@ export function wikiUrl(path: string, params?: Record<string, unknown>): string 
 
 /** 以全新状态写入缓存：用于同数据多 URL（别名/规范化地址）的秒开回跳 */
 export function seedWiki(url: string, data: unknown): void {
+  if (cache.get(url)?.data === data) return;
+  abortInflight(url);
   lruTouch({ data, publicationId: publicationIdOf(data), fetchedAt: Date.now() }, url);
+}
+
+export function isUnavailable(error: unknown): boolean {
+  return [401, 403, 404, 410].includes((error as { status?: number } | null)?.status ?? 0);
 }
 
 /** 清除某个频道的全部缓存条目（含 search?channel= 键），exact 排除的键不失效 */
@@ -148,7 +165,8 @@ function invalidateChannel(channelId: string, keep?: string): string[] {
   const dropped: string[] = [];
   for (const url of [...cache.keys()]) {
     if (url === keep) continue;
-    if (channelOf(url) === channelId) {
+    const items = (cache.get(url)?.data as { items?: { channel_id?: string }[] } | undefined)?.items;
+    if (channelOf(url) === channelId || items?.some((item) => item.channel_id === channelId)) {
       cache.delete(url);
       abortInflight(url);
       dropped.push(url);
@@ -156,6 +174,12 @@ function invalidateChannel(channelId: string, keep?: string): string[] {
   }
   return dropped;
 }
+
+const notifyInvalidation = (urls: string[]) => {
+  for (const url of urls) {
+    for (const notify of [...invalidationListeners]) notify(url);
+  }
+};
 
 /** 手动失效：等于或位于前缀之下的缓存键被清除（路径语义，避免 123 误伤 1234），并通知活跃资源 */
 export function invalidateWiki(prefix?: string): void {
@@ -168,16 +192,19 @@ export function invalidateWiki(prefix?: string): void {
       dropped.push(url);
     }
   }
-  for (const url of dropped) {
-    for (const notify of [...invalidationListeners]) notify(url);
-  }
+  notifyInvalidation(dropped);
 }
 
 /** 失效一个频道的全部条目（详情/搜索/时间轴/画像/图谱/头像），通知活跃资源重拉 */
-export function invalidateChannelWiki(channelId: string): void {
-  for (const url of invalidateChannel(channelId)) {
-    for (const notify of [...invalidationListeners]) notify(url);
-  }
+export function invalidateChannelWiki(...channelIds: string[]): void {
+  notifyInvalidation(channelIds.flatMap((id) => invalidateChannel(id)));
+  invalidateWiki(wikiUrl("/channels"));
+  for (const notify of channelChangeListeners) notify(channelIds);
+}
+
+export function onWikiChannelChange(notify: (channels: string[]) => void): () => void {
+  channelChangeListeners.add(notify);
+  return () => { channelChangeListeners.delete(notify); };
 }
 
 /** 意图预取：悬停/聚焦后短延迟触发，受并发与滑动窗口预算约束（只约束预取） */
@@ -189,7 +216,11 @@ export function prefetchWiki(
   if (!withinBudget()) return;
   setTimeout(() => {
     const entry = cache.get(url);
-    if (prefetchActive >= PREFETCH_CONCURRENCY) return;
+    if (!withinBudget() || prefetchActive >= PREFETCH_CONCURRENCY || globalThis.document?.hidden) return;
+    const connection = (globalThis.navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string };
+    } | undefined)?.connection;
+    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
     if (entry?.promise) return;
     if (entry?.data !== undefined && Date.now() - entry.fetchedAt < ttlMs) return;
     prefetchBudget.push(Date.now());
@@ -200,6 +231,18 @@ export function prefetchWiki(
         prefetchActive = Math.max(0, prefetchActive - 1);
       });
   }, PREFETCH_DELAY);
+}
+
+export function loadWiki<T>(
+  url: string,
+  fetcher: (url: string, signal: AbortSignal) => Promise<T>,
+  ttlMs = 30_000,
+): Promise<T> {
+  const entry = cache.get(url);
+  if (entry?.data !== undefined && Date.now() - entry.fetchedAt < ttlMs) {
+    return Promise.resolve(entry.data as T);
+  }
+  return ensurePromise(url, fetcher) as Promise<T>;
 }
 
 export interface WikiResource<T> {
@@ -228,6 +271,7 @@ export function useWikiResource<T>(
   const error = ref("");
   let current = "";
   let generation = 0;
+  let active = true;
 
   async function revalidate(url: string, gen: number): Promise<void> {
     // 组件手里已有旧内容时，失败一律按 stale 处理（缓存条目可能刚被失效清除）
@@ -243,6 +287,10 @@ export function useWikiResource<T>(
       if (gen !== generation || current !== url) return;
       const name = (err as { name?: string })?.name;
       if (name === "AbortError") return; // 被顶掉/失效的请求静默退出，继任请求会接管
+      if (isUnavailable(err)) {
+        data.value = undefined;
+        stale.value = false;
+      }
       if (cache.get(url)?.data !== undefined || data.value !== undefined) stale.value = true;
       else
         error.value =
@@ -259,7 +307,7 @@ export function useWikiResource<T>(
     }
   }
 
-  function sync(): void {
+  function sync(force = false): Promise<void> | void {
     generation++;
     const gen = generation;
     const url = current;
@@ -273,26 +321,28 @@ export function useWikiResource<T>(
       data.value = entry.data as T;
       error.value = "";
       loading.value = false;
-      if (Date.now() - entry.fetchedAt >= ttlMs) void revalidate(url, gen);
+      if (force || Date.now() - entry.fetchedAt >= ttlMs) return revalidate(url, gen);
       else {
         refreshing.value = false;
         stale.value = false;
       }
     } else {
       loading.value = true;
-      void revalidate(url, gen);
+      return revalidate(url, gen);
     }
   }
 
   const notify = (dropped: string): void => {
     if (dropped !== current) return;
-    void revalidate(dropped, generation);
+    data.value = undefined;
+    stale.value = false;
+    if (active) void sync();
   };
   invalidationListeners.add(notify);
   const resume = (): void => {
     // 仅当条目已存在且超过 TTL 才再校验；在途/冷条目交给 ensurePromise 去重
     const entry = current ? cache.get(current) : undefined;
-    if (entry?.data !== undefined && Date.now() - entry.fetchedAt >= ttlMs) {
+    if (active && entry?.data !== undefined && Date.now() - entry.fetchedAt >= ttlMs) {
       void revalidate(current, generation);
     }
   };
@@ -301,36 +351,35 @@ export function useWikiResource<T>(
   watch(
     key,
     (url) => {
-      // 中止“上一个”键的在途请求；新键若有预取在途，则让其继续并被 dedupe 复用
       const previous = current;
       current = url ?? "";
-      if (previous && previous !== current) abortInflight(previous);
-      sync();
+      if (previous !== current) {
+        data.value = undefined;
+        stale.value = false;
+        error.value = "";
+      }
+      if (active) void sync();
     },
     { immediate: true },
   );
 
   onDeactivated(() => {
-    if (current) abortInflight(current);
+    active = false;
+    generation++;
   });
-  onActivated(sync);
+  onActivated(() => {
+    active = true;
+    void sync();
+  });
   onUnmounted(() => {
     invalidationListeners.delete(notify);
     resumeListeners.delete(resume);
-    if (current) abortInflight(current);
+    active = false;
+    generation++;
   });
 
   async function reload(force = true): Promise<void> {
-    if (force && current) {
-      cache.delete(current);
-      const channelId = channelOf(current);
-      if (channelId) {
-        for (const url of invalidateChannel(channelId, current)) {
-          for (const notify of [...invalidationListeners]) notify(url);
-        }
-      }
-    }
-    sync();
+    await sync(force);
   }
 
   return { data, loading, refreshing, stale, error, reload };

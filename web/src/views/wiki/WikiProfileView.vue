@@ -4,14 +4,14 @@
     <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
     频道画像
   </p>
-  <h1>
+  <header class="wiki-page-heading wiki-profile-heading"><h1>
     <WikiAvatar
       :channel-id="String(route.params.channel)"
       :title="profileTitle"
       :size="40"
     />
     频道画像
-  </h1>
+  </h1></header>
   <template v-if="loading">
     <WikiSkeleton variant="card-grid" class="wiki-stats" />
     <div class="wiki-profile-grid">
@@ -32,7 +32,7 @@
       <p>{{ data.narrative.style }}</p>
       <p class="wiki-muted">{{ data.narrative.limitations }}</p>
     </section>
-    <div class="wiki-stats">
+    <section class="wiki-stats" aria-label="频道关键统计">
       <div class="wiki-card wiki-stat">
         <span class="wiki-muted">消息</span
         ><strong>{{ data.statistics.message_count.toLocaleString() }}</strong
@@ -50,9 +50,13 @@
         ><strong>{{ formatDay(data.statistics.earliest) || "暂无" }}</strong
         ><span class="wiki-muted">以可访问历史为准</span>
       </div>
-    </div>
-    <div class="wiki-profile-grid">
-      <section class="wiki-card">
+    </section>
+    <nav class="wiki-feed-tabs" aria-label="统计图表">
+      <button v-for="panel in panels" :key="panel.id" :aria-pressed="activePanel === panel.id"
+        @click="activePanel = panel.id">{{ panel.label }}</button>
+    </nav>
+    <div class="wiki-profile-panels">
+      <section v-if="activePanel === 'topics'" class="wiki-card">
         <h2>频道主题</h2>
         <p class="wiki-muted">
           按主题归类的消息数，一条消息可计入多个主题
@@ -86,7 +90,7 @@
           {{ topicsExpanded ? "收起" : `展开全部（${data.topics.length}）` }}
         </button>
       </section>
-      <section class="wiki-card">
+      <section v-else-if="activePanel === 'months'" class="wiki-card">
         <h2>发布频率</h2>
         <p class="wiki-muted">按月统计</p>
         <div
@@ -109,15 +113,14 @@
           {{ monthsExpanded ? "收起" : `展开全部（${data.months.length}）` }}
         </button>
       </section>
-      <section class="wiki-card">
+      <section v-else class="wiki-card">
         <h2>活跃时间</h2>
         <p class="wiki-muted">按 UTC 小时统计</p>
         <div
           class="wiki-mini-bars"
-          role="img"
-          aria-label="按 UTC 小时统计的消息分布柱状图"
+          aria-label="按 UTC 小时统计的消息分布"
         >
-          <div
+          <button
             v-for="item in hourBars"
             :key="item.hour"
             class="wiki-mini-bar"
@@ -125,8 +128,12 @@
               height: `${Math.max(4, (100 * item.count) / maxHour)}%`,
             }"
             :title="`${String(item.hour).padStart(2, '0')}:00 UTC · ${item.count}`"
-          ></div>
+            :aria-label="`${String(item.hour).padStart(2, '0')}:00 UTC，${item.count} 条消息`"
+            :aria-pressed="selectedHour === item.hour"
+            @click="selectedHour = item.hour"
+          ></button>
         </div>
+        <p v-if="selectedHour !== null" role="status">{{ selectedHour }}:00 UTC · {{ hourBars[selectedHour]?.count || 0 }} 条消息</p>
         <div class="wiki-mini-bar-labels" aria-hidden="true">
           <span v-for="item in hourBars" :key="item.hour">{{
             item.hour % 6 === 0 ? String(item.hour).padStart(2, "0") : ""
@@ -139,6 +146,10 @@
       <p class="wiki-muted">
         每个主题按月份去重统计消息数量；可与上方发布频率对照。
       </p>
+      <label>主题 <select v-model="trendTopic">
+        <option value="">全部主题</option>
+        <option v-for="topic in data.topics" :key="topic.topic" :value="topic.topic">{{ topic.topic }}</option>
+      </select></label>
       <template v-for="[year, rows] in trendGroups" :key="year">
         <div class="wiki-trends-year"><strong>{{ year }}</strong></div>
         <div
@@ -166,6 +177,7 @@ import { useWikiResource, wikiUrl } from "../../composables/wiki-store";
 import WikiAvatar from "./WikiAvatar.vue";
 import WikiCoverage from "./WikiCoverage.vue";
 import WikiSkeleton from "./WikiSkeleton.vue";
+import WikiState from "./WikiState.vue";
 import { formatDay } from "./wiki-utils";
 
 defineOptions({ name: "WikiProfileView" });
@@ -174,15 +186,18 @@ const route = useRoute();
 const { data, loading, error, stale, reload } = useWikiResource<WikiProfile>(
   () => wikiUrl(`/channels/${route.params.channel}/profile`),
   publicWikiUrl<WikiProfile>,
-  { ttlMs: 300_000 },
+  { ttlMs: 30_000 },
 );
 
-/** 画像响应暂无 title 字段：预留展示位（服务端补充后即生效），缺省回退频道 ID */
-const profileTitle = computed(
-  () =>
-    (data.value as (WikiProfile & { title?: string }) | undefined)?.title ||
-    String(route.params.channel),
-);
+const profileTitle = computed(() => data.value?.title || String(route.params.channel));
+const panels = [
+  { id: "topics", label: "主题分布" },
+  { id: "months", label: "发布趋势" },
+  { id: "hours", label: "活跃时段" },
+] as const;
+const activePanel = ref<(typeof panels)[number]["id"]>("topics");
+const selectedHour = ref<number | null>(null);
+const trendTopic = ref("");
 
 const TOPICS_PREVIEW = 12,
   MONTHS_PREVIEW = 18;
@@ -221,6 +236,7 @@ const maxMonth = computed(() =>
 const trendGroups = computed(() => {
   const map = new Map<string, NonNullable<WikiProfile["topic_trends"]>>();
   for (const item of data.value?.topic_trends || []) {
+    if (trendTopic.value && item.topic !== trendTopic.value) continue;
     const year = String(item.month).slice(0, 4);
     const rows = map.get(year);
     if (rows) rows.push(item);

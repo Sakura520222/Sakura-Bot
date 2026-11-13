@@ -116,6 +116,17 @@ class WikiStore:
                 await self.query(
                     "ALTER TABLE wiki_publications ADD COLUMN content_hash CHAR(64) NOT NULL DEFAULT ''"
                 )
+            index = await self.one(
+                "SHOW INDEX FROM wiki_page_revisions WHERE Key_name='wiki_feed_latest'"
+            )
+            if not index:
+                try:
+                    await self.query(
+                        "ALTER TABLE wiki_page_revisions ADD INDEX wiki_feed_latest(created_at DESC,page_id DESC)"
+                    )
+                except aiomysql.OperationalError as error:
+                    if error.args[0] != 1061:  # Another starting worker created the same index.
+                        raise
             await self.query(DIRTY_PAGES_TABLE)
             return
         for statement in SCHEMA:

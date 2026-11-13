@@ -4,6 +4,8 @@
     :src="src"
     :alt="title"
     class="wiki-avatar"
+    :width="size"
+    :height="size"
     :style="style"
     loading="lazy"
     decoding="async"

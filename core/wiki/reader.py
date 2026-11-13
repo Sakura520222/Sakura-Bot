@@ -4,8 +4,10 @@
 
 """Public read model. Never serialize database rows directly to anonymous callers."""
 
+from datetime import timedelta
 from functools import wraps
 
+from .cursor import read_cursor, scope_key, write_cursor
 from .models import utc
 from .schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from .store import decode
@@ -15,6 +17,23 @@ VISIBLE = f"""{CHANNEL_VISIBLE} AND {REVISION_VISIBLE}
 PAGE_JOIN = """FROM wiki_channels c JOIN wiki_publication_pages pp ON pp.publication_id=c.published_revision
     JOIN wiki_pages p ON p.id=pp.page_id AND p.channel_id=c.id
     JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.channel_id=c.id"""
+CARD_FIELDS = """p.id,p.slug,p.kind,p.topic,c.id channel_id,c.title channel_title,
+    c.published_revision,r.id revision_id,r.created_at,
+    JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,
+    LEFT(JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.claims[0].text')),240) excerpt"""
+NODE_FIELDS = """p.id,p.slug,p.kind,p.topic,c.id channel_id,
+    JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,
+    r.id revision_id,c.published_revision publication_id"""
+LATEST_JOIN = """FROM wiki_page_revisions r FORCE INDEX (wiki_feed_latest)
+    STRAIGHT_JOIN wiki_pages p ON p.id=r.page_id AND p.channel_id=r.channel_id
+    STRAIGHT_JOIN wiki_channels c ON c.id=r.channel_id
+    STRAIGHT_JOIN wiki_publication_pages pp ON pp.publication_id=c.published_revision
+        AND pp.page_id=p.id AND pp.revision_id=r.id"""
+PUBLICATION_FEED_JOIN = """FROM wiki_channels c
+    STRAIGHT_JOIN wiki_publications pub ON pub.id=c.published_revision
+    STRAIGHT_JOIN wiki_publication_pages pp ON pp.publication_id=pub.id
+    STRAIGHT_JOIN wiki_pages p ON p.id=pp.page_id AND p.channel_id=c.id
+    STRAIGHT_JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.channel_id=c.id"""
 
 
 def like(value):
@@ -33,6 +52,16 @@ def consistent_read(method):
 class PublicReader:
     def __init__(self, store):
         self.store = store
+
+    async def visibility(self):
+        rows = await self.store.query(
+            f"""SELECT c.id,c.published_revision,c.source_generation
+            FROM wiki_channels c WHERE {CHANNEL_VISIBLE} ORDER BY c.id""",
+            fetch=True,
+        )
+        return {
+            row["id"]: f"{row['published_revision']}:{row['source_generation']}" for row in rows
+        }
 
     @consistent_read
     async def channels(self):
@@ -57,7 +86,7 @@ class PublicReader:
         ]
 
     @consistent_read
-    async def channel(self, channel):
+    async def channel(self, channel, *, summary=False):
         ch = await self.store.channel(channel)
         if not ch:
             return None
@@ -66,8 +95,7 @@ class PublicReader:
         )
         if not row:
             return None
-        pages = await self.search(channel=ch["id"], page_size=12)
-        return {
+        result = {
             "id": ch["id"],
             "title": ch["title"],
             "username": ch["username"],
@@ -75,13 +103,31 @@ class PublicReader:
             "updated_at": ch["updated_at"],
             "coverage": public_coverage(ch["coverage"]),
             "columns": ch["config"].columns,
-            "pages": pages["items"],
-            "page_count": pages["total"],
+            "cover_url": ch["config"].cover_url or None,
+            "description": ch["config"].description,
             "source_policy": {
                 "quotes": ch["config"].show_quotes,
                 "telegram_links": ch["config"].show_telegram_links,
             },
         }
+        if summary:
+            count = await self.store.one(
+                f"SELECT COUNT(*) total {PUBLICATION_FEED_JOIN} WHERE c.id=%s AND {VISIBLE}",
+                (ch["id"],),
+            )
+            topics = await self.store.query(
+                f"""SELECT p.topic,COUNT(*) total {PUBLICATION_FEED_JOIN}
+                WHERE c.id=%s AND {VISIBLE} GROUP BY p.topic ORDER BY total DESC,p.topic LIMIT 8""",
+                (ch["id"],),
+                fetch=True,
+            )
+            return {
+                **result,
+                "page_count": count["total"],
+                "topics": [row["topic"] for row in topics],
+            }
+        pages = await self.search(channel=ch["id"], page_size=12)
+        return {**result, "pages": pages["items"], "page_count": pages["total"]}
 
     @consistent_read
     async def search(
@@ -96,14 +142,46 @@ class PublicReader:
         before=None,
     ):
         page, page_size = max(1, min(page, 10000)), max(1, min(page_size, 50))
+        conditions, params, terms, ranking, rank_params = await self._filters(
+            q, channel, kind, topic, after, before
+        )
+        where = " AND ".join(conditions)
+        order = (f"({ranking}) DESC," if ranking else "") + "r.created_at DESC,p.id"
+        count = await self.store.one(f"SELECT COUNT(*) total {PAGE_JOIN} WHERE {where}", params)
+        rows = await self.store.query(
+            f"""SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id channel_id,c.title channel_title,
+            c.published_revision,r.id revision_id,r.created_at,r.document {PAGE_JOIN} WHERE {where}
+            ORDER BY {order} LIMIT %s OFFSET %s""",
+            [*params, *rank_params, page_size, (page - 1) * page_size],
+            fetch=True,
+        )
+        return {
+            "items": [page_card(row) for row in rows],
+            "total": count["total"],
+            "page": page,
+            "page_size": page_size,
+            "terms": terms,
+        }
+
+    async def _filters(self, q, channel, kind, topic, after, before):
+        resolved = await self.store.channel(channel) if channel else None
+        return self._page_filters(
+            q,
+            resolved["id"] if resolved else None,
+            kind,
+            topic,
+            after,
+            before,
+            has_channel=bool(channel),
+        )
+
+    @staticmethod
+    def _page_filters(q, channel, kind, topic, after, before, *, has_channel=False):
         after, before = utc(after) if after else None, utc(before) if before else None
         conditions, params = [VISIBLE], []
-        if channel:
-            resolved = await self.store.channel(channel)
-            if not resolved:
-                return {"items": [], "total": 0, "page": page, "page_size": page_size}
+        if has_channel:
             conditions.append("c.id=%s")
-            params.append(resolved["id"])
+            params.append(channel)
         terms = list(dict.fromkeys((q or "").split()))
         ranking, rank_params = [], []
         if terms:
@@ -127,26 +205,100 @@ class PublicReader:
             if value:
                 conditions.append(f"{column}{operator}%s")
                 params.append(value)
+        return conditions, params, terms, "+".join(ranking), rank_params
+
+    @consistent_read
+    async def feed(
+        self,
+        *,
+        mode="latest",
+        channel=None,
+        topic=None,
+        kind=None,
+        q="",
+        after=None,
+        before=None,
+        cursor=None,
+        limit=20,
+    ):
+        if channel:
+            visible = await self.visible_channel(channel)
+            if not visible:
+                return None
+            channel = visible["id"]
+        scope = scope_key("feed", mode, channel, topic, kind, q, after, before)
+        shuffle = mode == "recommended"
+        start, seed, position = read_cursor(cursor, scope, shuffle=shuffle)
+        conditions, params, terms, ranking, rank_params = self._page_filters(
+            q, channel, kind, topic, after, before, has_channel=bool(channel)
+        )
+        if shuffle:
+            # Rotate the order of channel/topic groups, then the order inside each group.
+            # A session has a fixed order, while a new session gets a fresh seed.
+            ranking = """(CASE WHEN r.created_at >= %s THEN 200 ELSE 0 END
+                + MOD(CRC32(CONCAT(%s, ':', c.id, ':', p.topic)) +
+                  MOD(CRC32(CONCAT(%s, ':', p.id)), 97), 127))"""
+            rank_params = [start - timedelta(days=7), seed, seed]
+        sort = f"CAST(({ranking}) AS SIGNED)" if ranking else "0"
+        order = "sort_rank DESC," if ranking else ""
+        indexed = not (ranking or channel or topic or kind)
+        join = LATEST_JOIN if indexed else PUBLICATION_FEED_JOIN
+        # Keep publications created after the first page out of its continuation.
+        if indexed:
+            conditions.append("""(SELECT pub.created_at FROM wiki_publications pub
+                WHERE pub.id=c.published_revision)<=%s""")
+        else:
+            conditions.append("pub.created_at<=%s")
+        params.append(start)
+        keyset = ""
+        if position:
+            rank, date, identity = position
+            if ranking:
+                keyset = "HAVING sort_rank<%s OR (sort_rank=%s AND (created_at,id)<(%s,%s))"
+                params.extend([rank, rank, date, identity])
+            else:
+                conditions.append("(r.created_at<%s OR (r.created_at=%s AND r.page_id<%s))")
+                params.extend([date, date, identity])
         where = " AND ".join(conditions)
-        order = ("(" + "+".join(ranking) + ") DESC," if ranking else "") + "r.created_at DESC,p.id"
-        count = await self.store.one(f"SELECT COUNT(*) total {PAGE_JOIN} WHERE {where}", params)
         rows = await self.store.query(
-            f"""SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id channel_id,c.title channel_title,
-            c.published_revision,r.id revision_id,r.created_at,r.document {PAGE_JOIN} WHERE {where}
-            ORDER BY {order} LIMIT %s OFFSET %s""",
-            [*params, *rank_params, page_size, (page - 1) * page_size],
+            f"""SELECT {CARD_FIELDS}, batch.sort_rank,
+            (SELECT COUNT(DISTINCT ev.source_id) FROM wiki_evidence ev
+             WHERE ev.revision_id=r.id) evidence_count
+            FROM (
+              SELECT c.id channel_id,p.id,r.id revision_id,r.created_at,{sort} sort_rank
+              {join}
+              WHERE {where} {keyset} ORDER BY {order}r.created_at DESC,r.page_id DESC LIMIT %s
+            ) batch
+            JOIN wiki_channels c ON c.id=batch.channel_id
+            JOIN wiki_pages p ON p.id=batch.id
+            JOIN wiki_page_revisions r ON r.id=batch.revision_id
+            ORDER BY batch.sort_rank DESC,r.created_at DESC,p.id DESC""",
+            [*rank_params, *params, limit + 1],
             fetch=True,
         )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = None
+        if has_more:
+            last = rows[-1]
+            next_cursor = write_cursor(
+                scope, start, seed, (last["sort_rank"], last["created_at"], last["id"])
+            )
         return {
             "items": [page_card(row) for row in rows],
-            "total": count["total"],
-            "page": page,
-            "page_size": page_size,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
             "terms": terms,
         }
 
+    async def visible_channel(self, channel):
+        ch = await self.store.channel(channel)
+        return ch and await self.store.one(
+            f"SELECT c.id FROM wiki_channels c WHERE c.id=%s AND {CHANNEL_VISIBLE}", (ch["id"],)
+        )
+
     @consistent_read
-    async def page(self, channel, slug):
+    async def page(self, channel, slug, *, part="full"):
         ch = await self.store.channel(channel)
         if not ch:
             return None
@@ -167,11 +319,6 @@ class PublicReader:
             (row["revision_id"],),
             fetch=True,
         )
-        sources_total = await self.store.one(
-            """SELECT COUNT(DISTINCT s.id) total FROM wiki_evidence e
-            JOIN wiki_sources s ON s.id=e.source_id WHERE e.revision_id=%s""",
-            (row["revision_id"],),
-        )
         evidence = {r["id"]: r for r in evidence_rows}
         result = page_card(row)
         doc = decode(row["document"])
@@ -179,11 +326,21 @@ class PublicReader:
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
+        if part == "article":
+            return result
+        sources_total = len(evidence_rows)
+        if len(evidence_rows) == 500:
+            total = await self.store.one(
+                """SELECT COUNT(DISTINCT s.id) total FROM wiki_evidence e
+                JOIN wiki_sources s ON s.id=e.source_id WHERE e.revision_id=%s""",
+                (row["revision_id"],),
+            )
+            sources_total = total["total"]
         result["sources"] = [
             source_card(source, row["username"], config) for source in evidence_rows
         ]
         # 总量独立于上方 500 条截断，前端据此提示"未全部展示"。
-        result["sources_total"] = sources_total["total"]
+        result["sources_total"] = sources_total
         # Historical metadata is restricted to revisions that were actually published.
         history = await self.store.query(
             f"""SELECT DISTINCT r.id,r.created_at FROM wiki_page_revisions r
@@ -192,23 +349,67 @@ class PublicReader:
             (row["id"],),
             fetch=True,
         )
-        history_total = await self.store.one(
-            f"""SELECT COUNT(DISTINCT r.id) total FROM wiki_page_revisions r
-            JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
-            WHERE p.id=%s AND {REVISION_VISIBLE}""",
-            (row["id"],),
-        )
+        history_total = len(history)
+        if len(history) == 50:
+            total = await self.store.one(
+                f"""SELECT COUNT(DISTINCT r.id) total FROM wiki_page_revisions r
+                JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
+                WHERE p.id=%s AND {REVISION_VISIBLE}""",
+                (row["id"],),
+            )
+            history_total = total["total"]
         result["history"] = [
             {"revision_id": r["id"], "created_at": r["created_at"]} for r in history
         ]
-        result["history_total"] = history_total["total"]
+        result["history_total"] = history_total
         # Recheck the same snapshot and visibility after multi-query assembly.
         valid = await self.store.one(
             f"""SELECT r.id {PAGE_JOIN} WHERE c.id=%s AND c.published_revision=%s
             AND r.id=%s AND {VISIBLE}""",
             (ch["id"], row["published_revision"], row["revision_id"]),
         )
-        return result if valid else None
+        if not valid:
+            return None
+        if part == "references":
+            return {
+                key: result[key]
+                for key in (
+                    "revision_id",
+                    "publication_id",
+                    "sources",
+                    "sources_total",
+                    "history",
+                    "history_total",
+                )
+            }
+        return result
+
+    @consistent_read
+    async def related(self, channel, slug):
+        ch = await self.store.channel(channel)
+        if not ch:
+            return None
+        current = await self.store.one(
+            f"""SELECT p.id,p.topic,r.created_at {PAGE_JOIN}
+            WHERE c.id=%s AND (p.slug=%s OR p.id=%s OR EXISTS (
+              SELECT 1 FROM wiki_slug_aliases a WHERE a.channel_id=c.id AND a.page_id=p.id
+              AND a.slug=%s)) AND {VISIBLE}""",
+            (ch["id"], slug, slug, slug),
+        )
+        if not current:
+            return None
+        topic = current["topic"]
+        output = {}
+        for label, operator, sort in [("previous", "<", "DESC"), ("next", ">", "ASC")]:
+            row = await self.store.one(
+                f"""SELECT {NODE_FIELDS} {PAGE_JOIN}
+                WHERE c.id=%s AND p.topic=%s AND {VISIBLE}
+                AND (r.created_at,p.id){operator}(%s,%s)
+                ORDER BY r.created_at {sort},p.id {sort} LIMIT 1""",
+                (ch["id"], topic, current["created_at"], current["id"]),
+            )
+            output[label] = graph_node(row) if row else None
+        return output
 
     @consistent_read
     async def profile(self, channel):
@@ -237,6 +438,7 @@ class PublicReader:
         )
         return {
             **live,
+            "title": ch["title"],
             "publication_id": row["id"],
             "published_at": row["created_at"],
             "coverage": public_coverage(ch["coverage"]),
@@ -248,22 +450,48 @@ class PublicReader:
         return await self.search(channel=channel, page=page, page_size=page_size)
 
     @consistent_read
-    async def timeline(self, channel, page=1, page_size=20):
+    async def timeline(
+        self, channel, page=1, page_size=20, *, cursor_mode=False, cursor=None, before=None
+    ):
         ch = await self.store.channel(channel)
+        empty = {"items": [], "page": page, "page_size": page_size, "total_pages": 0}
         if not ch:
-            return {"items": [], "page": page, "page_size": page_size, "total_pages": 0}
+            return None if cursor_mode else empty
+        if cursor_mode and not await self.store.one(
+            f"SELECT c.id FROM wiki_channels c WHERE c.id=%s AND {CHANNEL_VISIBLE}", (ch["id"],)
+        ):
+            return None
         join = PAGE_JOIN + " JOIN wiki_revision_claims wc ON wc.revision_id=r.id "
-        total = await self.store.one(
-            f"SELECT COUNT(*) n {join} WHERE c.id=%s AND {VISIBLE}", (ch["id"],)
-        )
+        event_time = "COALESCE(wc.occurred_at,wc.source_created_at)"
+        where = f"c.id=%s AND {VISIBLE}"
+        params = [ch["id"]]
+        if cursor_mode:
+            scope = scope_key("timeline", ch["id"], ch["published_revision"], before)
+            start, seed, position = read_cursor(cursor, scope)
+            if before:
+                where += f" AND {event_time}<=%s"
+                params.append(utc(before))
+            if position:
+                ordinal, date, revision = position
+                where += f""" AND ({event_time}<%s OR
+                    ({event_time}=%s AND (r.id,wc.ordinal)>(%s,%s)))"""
+                params.extend([date, date, revision, ordinal])
+            pagination = "LIMIT %s"
+            params.append(page_size + 1)
+        else:
+            total = await self.store.one(f"SELECT COUNT(*) n {join} WHERE {where}", params)
+            pagination = "LIMIT %s OFFSET %s"
+            params.extend([page_size, (page - 1) * page_size])
         rows = await self.store.query(
             f"""SELECT p.id,p.slug,c.id channel_id,c.username,c.config,c.published_revision,
-            JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,wc.payload {join}
-            WHERE c.id=%s AND {VISIBLE} ORDER BY COALESCE(wc.occurred_at,wc.source_created_at) DESC,r.id,wc.ordinal
-            LIMIT %s OFFSET %s""",
-            (ch["id"], page_size, (page - 1) * page_size),
+            JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,wc.payload,
+            r.id revision_id,wc.ordinal,{event_time} event_time {join}
+            WHERE {where} ORDER BY event_time DESC,r.id,wc.ordinal {pagination}""",
+            params,
             fetch=True,
         )
+        has_more = cursor_mode and len(rows) > page_size
+        rows = rows[:page_size]
         # 按断言合并引用，再分批读取来源；避免每个条目反复读取整页及历史。
         source_ids = sorted(
             {e["source_id"] for row in rows for e in decode(row["payload"])["evidence"]}
@@ -291,11 +519,25 @@ class PublicReader:
                     "title": row["title"],
                     "url": f"/wiki/{row['channel_id']}/page/{row['slug']}",
                     "publication_id": row["published_revision"],
+                    "event_id": f"{row['revision_id']}:{row['ordinal']}",
                     **public_claim(
                         decode(row["payload"]), sources, row["username"], decode(row["config"])
                     ),
                 }
             )
+        if cursor_mode:
+            next_cursor = None
+            if has_more:
+                last = rows[-1]
+                next_cursor = write_cursor(
+                    scope, start, seed, (last["ordinal"], last["event_time"], last["revision_id"])
+                )
+            return {
+                "items": events,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+                "publication_id": ch["published_revision"],
+            }
         return {
             "items": events,
             "page": page,
@@ -328,30 +570,23 @@ class PublicReader:
         limit, depth = max(1, min(limit, 120)), max(1, min(depth, 2))
         after, before = utc(after) if after else None, utc(before) if before else None
         if node_id:
-            root = await self.page(ch["id"], node_id)
+            root = await self.store.one(
+                f"""SELECT {NODE_FIELDS} {PAGE_JOIN}
+                WHERE c.id=%s AND (p.id=%s OR p.slug=%s OR EXISTS (
+                  SELECT 1 FROM wiki_slug_aliases a WHERE a.channel_id=c.id
+                    AND a.page_id=p.id AND a.slug=%s)) AND {VISIBLE} LIMIT 1""",
+                (ch["id"], node_id, node_id, node_id),
+            )
             if not root:
                 return None
-            nodes = {
-                root["id"]: {
-                    key: root[key]
-                    for key in (
-                        "id",
-                        "title",
-                        "kind",
-                        "topic",
-                        "url",
-                        "revision_id",
-                        "publication_id",
-                    )
-                }
-            }
+            nodes = {root["id"]: graph_node(root)}
         else:
-            initial = await self.search(
+            initial = await self.feed(
                 q=q,
                 channel=ch["id"],
                 kind=kind,
                 topic=topic,
-                page_size=min(20, limit),
+                limit=min(20, limit),
                 after=after,
                 before=before,
             )
@@ -373,6 +608,21 @@ class PublicReader:
                 [ch["published_revision"], ch["id"], *frontier, *frontier, limit * 3],
                 fetch=True,
             )
+            candidates = sorted(
+                {row[key] for row in rows for key in ("source_page", "target_page")} - nodes.keys()
+            )
+            neighbours = {}
+            if candidates:
+                marks = ",".join(["%s"] * len(candidates))
+                conditions, params, *_ = self._page_filters("", None, kind, topic, None, None)
+                where = " AND ".join(conditions)
+                valid_nodes = await self.store.query(
+                    f"""SELECT {NODE_FIELDS} {PAGE_JOIN}
+                    WHERE c.id=%s AND p.id IN ({marks}) AND {where}""",
+                    [ch["id"], *candidates, *params],
+                    fetch=True,
+                )
+                neighbours = {row["id"]: graph_node(row) for row in valid_nodes}
             frontier = []
             for row in rows:
                 if relation and row["kind"] != relation:
@@ -385,27 +635,11 @@ class PublicReader:
                         if len(nodes) >= limit:
                             valid = False
                             break
-                        page_row = await self.page(ch["id"], page_id)
-                        if (
-                            not page_row
-                            or page_row["publication_id"] != ch["published_revision"]
-                            or (kind and page_row["kind"] != kind)
-                            or (topic and page_row["topic"] != topic)
-                        ):
+                        page_row = neighbours.get(page_id)
+                        if not page_row:
                             valid = False
                             break
-                        nodes[page_id] = {
-                            key: page_row[key]
-                            for key in (
-                                "id",
-                                "title",
-                                "kind",
-                                "topic",
-                                "url",
-                                "revision_id",
-                                "publication_id",
-                            )
-                        }
+                        nodes[page_id] = page_row
                         frontier.append(page_id)
                 if valid:
                     payload = decode(row["relation_json"])
@@ -426,13 +660,29 @@ class PublicReader:
         }
 
 
+def graph_node(row):
+    return {
+        **{
+            key: row[key]
+            for key in ("id", "title", "kind", "topic", "revision_id", "publication_id")
+        },
+        "url": f"/wiki/{row['channel_id']}/page/{row['slug']}",
+    }
+
+
 def page_card(row):
-    doc = decode(row["document"])
-    claims = doc.get("claims", [])
+    if "document" in row:
+        doc = decode(row["document"])
+        claims = doc.get("claims", [])
+        title = doc["title"]
+        excerpt = claims[0]["text"][:240] if claims else ""
+        evidence_count = len({e["source_id"] for f in claims for e in f["evidence"]})
+    else:
+        title, excerpt, evidence_count = row["title"], row["excerpt"] or "", row["evidence_count"]
     return {
         "id": row["id"],
         "slug": row["slug"],
-        "title": doc["title"],
+        "title": title,
         "kind": row["kind"],
         "topic": row["topic"],
         "channel_id": row["channel_id"],
@@ -440,8 +690,8 @@ def page_card(row):
         "publication_id": row["published_revision"],
         "revision_id": row["revision_id"],
         "updated_at": row["created_at"],
-        "excerpt": claims[0]["text"][:240] if claims else "",
-        "evidence_count": len({e["source_id"] for f in claims for e in f["evidence"]}),
+        "excerpt": excerpt,
+        "evidence_count": evidence_count,
         "url": f"/wiki/{row['channel_id']}/page/{row['slug']}",
     }
 

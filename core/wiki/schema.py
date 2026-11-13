@@ -99,7 +99,8 @@ SCHEMA = (
         rejected BOOLEAN NOT NULL DEFAULT FALSE, created_at DATETIME(6) NOT NULL,
         FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE,
-        INDEX wiki_revision_page(page_id,created_at), INDEX wiki_revision_job(job_id)
+        INDEX wiki_revision_page(page_id,created_at), INDEX wiki_revision_job(job_id),
+        INDEX wiki_feed_latest(created_at DESC,page_id DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS wiki_evidence (
         revision_id CHAR(32) NOT NULL, source_id CHAR(64) NOT NULL,
