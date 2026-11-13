@@ -105,6 +105,8 @@ class Community:
             return identifier, config.get("proposal_notifications", False)
 
     async def decide(self, identifier, action, actor, note="", *, telegram=False):
+        if action not in {"approved", "rejected", "returned"}:
+            raise ValueError("审核操作无效")
         proposal = await self.store.one(
             "SELECT channel_id FROM wiki_edit_proposals WHERE id=%s", (identifier,)
         )
@@ -127,6 +129,12 @@ class Community:
             if action == "approved":
                 if not ch["enabled"] or ch["active_job"]:
                     raise ValueError("请等待当前 Wiki 任务结束后再批准")
+                await cur.execute(
+                    "SELECT blocked FROM wiki_users WHERE id=%s FOR UPDATE", (row["user_id"],)
+                )
+                author = await cur.fetchone()
+                if not author or author["blocked"]:
+                    raise ValueError("投稿账户不可用")
                 await cur.execute(
                     f"""SELECT r.id FROM wiki_publication_pages pp
                     JOIN wiki_page_revisions r ON r.id=pp.revision_id JOIN wiki_pages p ON p.id=pp.page_id
@@ -211,7 +219,10 @@ class Community:
         if history:
             select += ",e.kind,p.title,p.slug,e.channel_id,e.revision_id,x.created_at"
         else:
-            select += ",COUNT(*) total,MAX(x.created_at) latest"
+            select += """,COUNT(*) total,MAX(x.created_at) latest,
+                SUM(e.kind IN ('edit','correction')) edits,
+                SUM(e.kind IN ('annotation','dispute','outdated','fact_check')) annotations,
+                SUM(e.kind='source') sources"""
         group = "" if history else "GROUP BY u.id,u.display_name,username,avatar"
         order = "x.created_at DESC,x.proposal_id" if history else "total DESC,latest DESC,u.id"
         return await self.store.query(

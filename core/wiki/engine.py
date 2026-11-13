@@ -887,6 +887,7 @@ class WikiEngine:
                                 "snippet": result["snippet"][:450],
                             }
                             for result in results["results"][:3]
+                            if result.get("content") or result.get("snippet")
                         ]
                     except SearchUnavailable as error:
                         external[item["index"]] = []

@@ -9,7 +9,7 @@
       </li></ol>
       <button v-if="history.length === 30" @click="offset += 30">下一页</button>
     </template>
-    <WikiCommunity v-else :key="channel" :channel="channel" />
+    <WikiCommunity v-else :key="channel || String(route.query.mine)" :channel="channel" :mine-first="route.query.mine === '1'" />
   </div>
 </template>
 <script setup lang="ts">

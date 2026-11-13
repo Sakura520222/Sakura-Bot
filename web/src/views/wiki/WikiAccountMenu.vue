@@ -31,6 +31,7 @@
         <div class="wiki-account-buttons">
           <button type="submit" :disabled="busy">保存隐私设置</button>
           <button type="button" :disabled="busy" @click="login(true)">刷新 Telegram 资料</button>
+          <button type="button" @click="openContributions">我的投稿与贡献</button>
           <button type="button" :disabled="busy" @click="signOut">退出登录</button>
         </div>
       </form>
@@ -125,6 +126,11 @@ function login(refreshProfile: boolean) {
     if (refreshProfile) await reload();
     await beginWikiLogin(route.fullPath, refreshProfile);
   });
+}
+
+function openContributions() {
+  dialog.value?.close();
+  void router.push({ name: "WikiContributors", query: { mine: "1" } });
 }
 
 function save() {

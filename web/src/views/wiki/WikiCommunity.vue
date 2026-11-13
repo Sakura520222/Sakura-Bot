@@ -25,6 +25,7 @@
         <img v-if="entry.avatar" :src="`/api/wiki/community/contributors/${entry.id}/avatar`" width="24" height="24" alt="" />
         <RouterLink :to="`/wiki/contributors/${entry.id}`">{{ entry.display_name }}</RouterLink>
         <span v-if="entry.username"> @{{ entry.username }}</span> · {{ entry.total }} 项有效贡献
+        <span v-if="entry.total">（修订 {{ entry.edits }}、标注 {{ entry.annotations }}、来源 {{ entry.sources }}）</span>
       </li>
       <li v-if="!contributors.length">暂无公开贡献。</li>
     </ul>
@@ -47,7 +48,7 @@ import { wikiOpenAccount } from "../../api/wiki-assistant";
 import type { WikiArticle } from "../../api/wiki";
 import WikiMarkdown from "./WikiMarkdown.vue";
 
-const props = defineProps<{ article?: WikiArticle; channel?: string }>();
+const props = defineProps<{ article?: WikiArticle; channel?: string; mineFirst?: boolean }>();
 const root = "/api/wiki/community";
 const message = ref("");
 const user = ref(false);
@@ -58,7 +59,7 @@ const claim = ref(0);
 const draft = ref("");
 const sources = ref("");
 const contributorOffset = ref(0);
-const contributors = ref<{ id: string; display_name: string; username?: string; avatar: boolean; total: number }[]>();
+const contributors = ref<{ id: string; display_name: string; username?: string; avatar: boolean; total: number; edits: number; annotations: number; sources: number }[]>();
 const mine = ref<{ id: string; title: string; status: string; note?: string; published: boolean }[]>();
 const proposalStates: Record<string, string> = { pending: "待审", approved: "已批准", rejected: "已拒绝", returned: "已退回", withdrawn: "已撤回" };
 
@@ -77,7 +78,7 @@ async function run(action: () => Promise<void>) {
   try { await action(); } catch (error) { message.value = error instanceof Error ? error.message : "操作失败"; }
 }
 async function refreshUser() { user.value = !!(await loadWikiSession()).user; }
-onMounted(() => { void refreshUser().catch(() => {}); });
+onMounted(() => { void refreshUser().then(() => { if (user.value && props.mineFirst) return loadMine(); }).catch(() => {}); });
 watch(() => props.article?.revision_id, () => { editing.value = false; contributors.value = undefined; });
 function chooseClaim() { draft.value = props.article?.claims[claim.value]?.text || ""; }
 function openProposal() {

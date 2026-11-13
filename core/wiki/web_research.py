@@ -48,6 +48,7 @@ def public_url(value):
         if (
             "." not in host
             or not re.search(r"[a-zA-Z]", host.rstrip(".").rsplit(".", 1)[-1])
+            or re.fullmatch(r"(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*\.?", host, re.I)
             or host.rstrip(".").endswith((".local", ".internal", ".localhost"))
         ):
             raise ValueError("Invalid public hostname") from None
@@ -252,7 +253,7 @@ class WebResearch:
         query = " ".join(query.split())[:128]
         if not settings.enabled or not query:
             raise SearchUnavailable("search_disabled_or_empty")
-        key = digest("search-v1", query, settings.model_dump())
+        key = digest("search-v2", query, settings.model_dump())
 
         async def perform():
             for name in settings.order:
@@ -279,6 +280,14 @@ class WebResearch:
                             json.loads(await bounded_body(response, 1024 * 1024)),
                             settings.result_limit,
                         )
+                        reachable = await asyncio.gather(
+                            *(self.reachable(result["url"]) for result in results)
+                        )
+                        results = [
+                            result
+                            for result, available in zip(results, reachable, strict=True)
+                            if available
+                        ]
                         if results:
                             return {"results": results, "provider": name}
                 except (aiohttp.ClientError, TimeoutError, ValueError):
@@ -343,6 +352,26 @@ class WebResearch:
             raise SearchUnavailable("fetch_unavailable")
 
         return await self.cached(digest("fetch-v1", url), settings, perform)
+
+    async def reachable(self, url):
+        try:
+            target = public_url(url)
+            async with asyncio.timeout(5), self.client(5) as client:
+                for _ in range(4):
+                    async with client.get(
+                        target, allow_redirects=False, headers={"Range": "bytes=0-511"}
+                    ) as response:
+                        if response.status in {301, 302, 303, 307, 308} and response.headers.get(
+                            "Location"
+                        ):
+                            target = public_url(urljoin(target, response.headers["Location"]))
+                            continue
+                            return response.status in {200, 206} and bool(
+                                await response.content.read(1)
+                            )
+        except (ValueError, aiohttp.ClientError, TimeoutError):
+            pass
+        return False
 
     async def prune(self):
         for table in ("wiki_search_cache", "wiki_fact_checks"):

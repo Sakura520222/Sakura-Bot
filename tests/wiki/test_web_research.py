@@ -11,6 +11,7 @@ from core.wiki.web_research import normalized_results, provider_request, public_
         "https://[::1]",
         "http://169.254.169.254",
         "http://127.1",
+        "http://0x7f.0x1",
         "http://localhost.localdomain",
         "https://foo.internal",
         "https://user@public.example.com",
