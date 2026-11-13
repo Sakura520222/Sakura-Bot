@@ -19,6 +19,9 @@ from .store import decode, encode
 from .telegram_login import bounded_body
 
 DEFAULTS = {
+    "langsearch": "https://api.langsearch.com",
+    "serper": "https://google.serper.dev",
+    "mwmbl": "https://api.mwmbl.org",
     "deepseek": "https://api.deepseek.com",
     "tavily": "https://api.tavily.com",
     "serpapi": "https://serpapi.com",
@@ -26,8 +29,8 @@ DEFAULTS = {
     "crossref": "https://api.crossref.org",
     "github": "https://api.github.com",
 }
-FREE_PROVIDERS = {"wikipedia": 1, "crossref": 1, "github": 6}
-WEB_PROVIDERS = {"deepseek", "tavily", "serpapi"}
+FREE_PROVIDERS = {"mwmbl": 1, "wikipedia": 1, "crossref": 1, "github": 6}
+WEB_PROVIDERS = {"langsearch", "serper", "mwmbl", "deepseek", "tavily", "serpapi"}
 USER_AGENT = "Sakura-Bot/2.5 (https://github.com/Sakura520222/Sakura-Bot)"
 
 
@@ -179,6 +182,30 @@ class PageText(HTMLParser):
 def provider_request(name, key, query, limit):
     base = DEFAULTS[name]
     headers = {"User-Agent": USER_AGENT}
+    if name == "langsearch":
+        return (
+            "POST",
+            base + "/v1/web-search",
+            {
+                "headers": {**headers, "Authorization": f"Bearer {key}"},
+                "json": {"query": query, "count": limit},
+            },
+        )
+    if name == "serper":
+        return (
+            "POST",
+            base + "/search",
+            {
+                "headers": {**headers, "X-API-KEY": key},
+                "json": {"q": query, "num": limit},
+            },
+        )
+    if name == "mwmbl":
+        return (
+            "GET",
+            base + "/api/v2/search/",
+            {"headers": headers, "params": {"q": query}},
+        )
     if name == "wikipedia":
         wiki = "zh" if re.search(r"[\u3400-\u9fff]", query) else "en"
         return (
@@ -239,7 +266,30 @@ def provider_request(name, key, query, limit):
 def normalized_results(name, payload, limit, *, endpoint=""):
     if not isinstance(payload, dict) or payload.get("error"):
         raise SearchUnavailable("provider_error")
-    if name == "wikipedia":
+    if name == "langsearch":
+        if payload.get("code") != 200:
+            raise SearchUnavailable("provider_error")
+        pages = payload["data"].get("webPages") or {}
+        rows = [
+            {
+                "url": row.get("url"),
+                "title": row.get("name"),
+                "snippet": row.get("snippet"),
+                "content": row.get("text"),
+                "published_date": row.get("datePublished"),
+            }
+            for row in pages.get("value", [])
+            if isinstance(row, dict)
+        ]
+    elif name == "serper":
+        rows = payload.get("organic", [])
+    elif name == "mwmbl":
+        rows = [
+            {"url": row.get("url"), "title": row.get("title"), "snippet": row.get("content")}
+            for row in payload["results"]
+            if isinstance(row, dict)
+        ]
+    elif name == "wikipedia":
         rows = [
             {
                 "url": f"https://{urlsplit(endpoint).hostname}/wiki/{quote(row['key'], safe='')}",
@@ -280,7 +330,7 @@ def normalized_results(name, payload, limit, *, endpoint=""):
         if not isinstance(row, dict):
             continue
         try:
-            url = public_url(row.get("link" if name == "serpapi" else "url"))
+            url = public_url(row.get("link" if name in {"serper", "serpapi"} else "url"))
         except ValueError:
             continue
         results.setdefault(
@@ -407,6 +457,7 @@ class WebResearch:
                     ValueError,
                     TypeError,
                     AttributeError,
+                    KeyError,
                     IndexError,
                 ):
                     failures += 1

@@ -83,14 +83,14 @@ const server = http.createServer(async (req,res) => {
         original: "完整原文", payload: { claim: 0, excerpt: "所选测试片段", text: "新的说明", diff: "", sources: [] } };
     }
     else if (endpoint === "/api/wiki/admin/research") {
-      const providers = { deepseek: "https://api.deepseek.com", tavily: "https://api.tavily.com", serpapi: "https://serpapi.com", wikipedia: "https://www.wikipedia.org", crossref: "https://api.crossref.org", github: "https://api.github.com" };
+      const providers = { mwmbl: "https://api.mwmbl.org", langsearch: "https://api.langsearch.com", serper: "https://google.serper.dev", deepseek: "https://api.deepseek.com", tavily: "https://api.tavily.com", serpapi: "https://serpapi.com", wikipedia: "https://www.wikipedia.org", crossref: "https://api.crossref.org", github: "https://api.github.com" };
       if (req.method === "PUT") {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         researchSaved = JSON.parse(Buffer.concat(chunks));
       }
-      out = { enabled: researchSaved?.enabled ?? false, order: Object.keys(providers), result_limit: 5, timeout: 10, concurrency: 3, ttl_hours: 24,
-        providers: Object.fromEntries(Object.entries(providers).map(([name, official_url]) => [name, { enabled: false, has_key: false, official_url, requires_key: !["wikipedia", "crossref", "github"].includes(name) }])) };
+      out = { enabled: researchSaved?.enabled ?? false, order: researchSaved?.order ?? Object.keys(providers).filter((name) => name !== "mwmbl"), result_limit: 5, timeout: 10, concurrency: 3, ttl_hours: 24,
+        providers: Object.fromEntries(Object.entries(providers).map(([name, official_url]) => [name, { enabled: researchSaved?.providers[name]?.enabled ?? false, has_key: false, official_url, requires_key: !["mwmbl", "wikipedia", "crossref", "github"].includes(name), general_web: !["wikipedia", "crossref", "github"].includes(name) }])) };
     }
     else if (/^\/api\/wiki\/admin\/channels\/123\/pages\/[^/]+$/.test(endpoint)) {
       assert.equal(req.headers.authorization, "Bearer wiki-test-token");
@@ -516,11 +516,18 @@ try {
   await tools.getByRole("button", { name: "建议修订" }).click();
   const edit = accountPage.getByRole("dialog", { name: "提交修订建议" });
   await assertCentered(edit);
-  await edit.getByRole("textbox", { name: "替换选中文字" }).fill("Sakura Wiki");
+  await edit.getByRole("textbox", { name: "替换选中文字" }).fill("Saku🟢a");
+  await edit.getByText("查看差异", { exact: true }).click();
+  const removed = edit.locator(".revision-diff del");
+  const added = edit.locator(".revision-diff ins");
+  assert.equal(await removed.textContent(), "r");
+  assert.equal(await added.textContent(), "🟢");
+  assert.equal(await removed.evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(251, 218, 218)");
+  assert.equal(await added.evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(214, 243, 223)");
   await edit.getByRole("button", { name: "提交审核" }).click();
   await edit.waitFor({ state: "hidden" });
   await accountPage.getByRole("status").filter({ hasText: "已提交，等待管理员审核。" }).waitFor();
-  assert.equal(submittedProposal.text, claims[0].text.replace("Sakura", "Sakura Wiki"));
+  assert.equal(submittedProposal.text, claims[0].text.replace("Sakura", "Saku🟢a"));
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();
@@ -555,9 +562,12 @@ try {
   await desktop.getByText("百科条目 · 无需密钥", { exact: true }).waitFor();
   await desktop.getByText("没有待审修订建议", { exact: true }).waitFor();
   assert.equal(await desktop.getByText("每日成本上限", { exact: true }).count(), 0);
+  await desktop.getByRole("switch", { name: "启用 Mwmbl" }).click();
   await desktop.getByRole("button", { name: "保存联网设置" }).click();
   await desktop.getByText("联网设置已保存。", { exact: true }).waitFor();
   assert.deepEqual(researchSaved.providers.deepseek, { enabled: false });
+  assert.deepEqual(researchSaved.providers.mwmbl, { enabled: true });
+  assert.equal(researchSaved.order[researchSaved.order.length - 1], "mwmbl");
   assert.equal(researchSaved.daily_calls, undefined);
   if (output) await desktop.screenshot({path:path.join(output,"wiki-search-settings.png")});
   await desktop.getByText("设置", { exact: true }).click();
@@ -606,7 +616,7 @@ try {
   const historyDialog = desktop.getByRole("dialog", { name: "修订历史" });
   await assertCentered(historyDialog);
   await historyDialog.getByRole("button", { name: "与上一版本比较" }).click();
-  await historyDialog.locator("del").getByText("旧正文").waitFor();
+  await historyDialog.locator("del").getByText("旧", { exact: true }).waitFor();
   await historyDialog.locator("ins").getByText("第一处的注解。").waitFor();
   await historyDialog.getByRole("button", { name: "关闭修订历史" }).click();
   await historyDialog.waitFor({ state: "hidden" });

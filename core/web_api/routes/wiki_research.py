@@ -10,6 +10,7 @@ from core.wiki.models import Strict
 from core.wiki.web_research import (
     DEFAULTS,
     FREE_PROVIDERS,
+    WEB_PROVIDERS,
     Provider,
     SearchSettings,
     SearchUnavailable,
@@ -83,6 +84,7 @@ def masked(settings):
                 "has_key": bool(provider.api_key),
                 "official_url": DEFAULTS[name],
                 "requires_key": name not in FREE_PROVIDERS,
+                "general_web": name in WEB_PROVIDERS,
             }
             for name in DEFAULTS
             if (provider := settings.providers.get(name, Provider())) is not None

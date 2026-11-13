@@ -64,6 +64,73 @@ def test_provider_requests_and_normalization(name, path, collection, field):
     assert records[0]["provider"] == name
 
 
+@pytest.mark.parametrize(
+    ("name", "method", "path", "payload"),
+    [
+        (
+            "mwmbl",
+            "GET",
+            "/api/v2/search/",
+            {
+                "results": [
+                    {"url": "https://example.org/", "title": "Example", "content": "Snippet"},
+                ]
+            },
+        ),
+        (
+            "langsearch",
+            "POST",
+            "/v1/web-search",
+            {
+                "code": 200,
+                "data": {
+                    "webPages": {
+                        "value": [
+                            {
+                                "url": "https://example.org/",
+                                "name": "Example",
+                                "snippet": "Snippet",
+                            },
+                        ]
+                    }
+                },
+            },
+        ),
+        (
+            "serper",
+            "POST",
+            "/search",
+            {
+                "organic": [
+                    {"link": "https://example.org/", "title": "Example", "snippet": "Snippet"},
+                ]
+            },
+        ),
+    ],
+)
+def test_general_web_providers(name, method, path, payload):
+    key = "" if name == "mwmbl" else "fixture-key"
+    request_method, endpoint, options = provider_request(name, key, "千恋万花", 3)
+    assert request_method == method
+    assert endpoint == DEFAULTS[name] + path
+    if name == "mwmbl":
+        assert "Authorization" not in options["headers"]
+        assert options["params"] == {"q": "千恋万花"}
+    elif name == "langsearch":
+        assert options["headers"]["Authorization"] == "Bearer fixture-key"
+        assert options["json"] == {"query": "千恋万花", "count": 3}
+    else:
+        assert options["headers"]["X-API-KEY"] == "fixture-key"
+        assert options["json"] == {"q": "千恋万花", "num": 3}
+    [result] = normalized_results(name, payload, 3, endpoint=endpoint)
+    assert (result["provider"], result["url"], result["title"], result["snippet"]) == (
+        name,
+        "https://example.org/",
+        "Example",
+        "Snippet",
+    )
+
+
 def test_legacy_search_settings_keep_keys_without_custom_endpoints_or_limits():
     result = stored_search_settings(
         {

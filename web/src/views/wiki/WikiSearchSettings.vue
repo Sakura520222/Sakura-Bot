@@ -7,17 +7,19 @@
     <n-form v-if="settings" label-placement="top" :show-feedback="false" :disabled="saving" class="search-form">
       <n-form-item label="启用联网检索"><n-switch v-model:value="settings.enabled" /></n-form-item>
       <n-alert v-if="settings.enabled && !generalSearchReady" type="info">
-        当前仅可使用已启用的专题索引。检索公开网页和新闻需要启用已配置密钥的 Tavily、SerpAPI 或 DeepSeek。
+        当前没有可用的通用搜索源。启用 Mwmbl 即可免密钥搜索，也可配置 LangSearch 或 Serper。
       </n-alert>
       <n-divider title-placement="left">搜索服务</n-divider>
       <div class="settings-grid">
         <n-card v-for="name in names.filter((provider) => settings?.providers[provider])" :key="name" :title="providerNames[name]" size="small">
-          <template #header-extra><n-switch v-model:value="settings.providers[name].enabled" :aria-label="`启用 ${providerNames[name]}`" /></template>
+          <template #header-extra><n-switch :value="settings.providers[name].enabled" :aria-label="`启用 ${providerNames[name]}`" @update:value="toggleProvider(name, $event)" /></template>
           <n-text depth="3">{{ settings.providers[name].official_url }}</n-text>
           <n-form-item v-if="settings.providers[name].requires_key !== false" label="API Key" class="key-field">
             <n-input v-model:value="keys[name]" type="password" autocomplete="new-password" :placeholder="settings.providers[name].has_key ? '已保存，留空保留' : '输入 API Key'" />
           </n-form-item>
-          <p v-else class="key-field"><n-text depth="3">{{ freeDescriptions[name] }} · 无需密钥</n-text></p>
+          <p v-if="providerDescriptions[name] || settings.providers[name].requires_key === false" class="key-field">
+            <n-text depth="3">{{ providerDescriptions[name] }}<template v-if="settings.providers[name].requires_key === false"> · 无需密钥</template></n-text>
+          </p>
         </n-card>
       </div>
       <n-divider title-placement="left">请求设置</n-divider>
@@ -37,25 +39,38 @@ import { computed, onMounted, ref } from "vue";
 import { wikiAdmin } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 
-const names = ["deepseek", "tavily", "serpapi", "wikipedia", "crossref", "github"] as const;
+const names = ["mwmbl", "langsearch", "serper", "tavily", "serpapi", "deepseek", "wikipedia", "crossref", "github"] as const;
 type Provider = typeof names[number];
-const providerNames = { deepseek: "DeepSeek", tavily: "Tavily", serpapi: "SerpAPI", wikipedia: "维基百科", crossref: "Crossref", github: "GitHub" };
-const freeDescriptions: Partial<Record<Provider, string>> = { wikipedia: "百科条目", crossref: "论文与出版物", github: "开源项目" };
+const providerNames = { mwmbl: "Mwmbl", langsearch: "LangSearch", serper: "Serper（Google 搜索）", deepseek: "DeepSeek", tavily: "Tavily", serpapi: "SerpAPI", wikipedia: "维基百科", crossref: "Crossref", github: "GitHub" };
+const providerDescriptions: Partial<Record<Provider, string>> = {
+  mwmbl: "独立网页索引，匿名免费额度每月 1,000 次",
+  langsearch: "通用网页搜索，按每日免费 Token 额度使用",
+  serper: "Google 网页结果，新账户有 2,500 次免费查询",
+  wikipedia: "百科条目", crossref: "论文与出版物", github: "开源项目",
+};
 const providerOptions = names.map((name) => ({ label: providerNames[name], value: name }));
 type Search = {
   enabled: boolean; order: Provider[]; result_limit: number | null; timeout: number | null; concurrency: number | null; ttl_hours: number | null;
-  providers: Record<Provider, { enabled: boolean; official_url: string; has_key: boolean; requires_key?: boolean }>;
+  providers: Record<Provider, { enabled: boolean; official_url: string; has_key: boolean; requires_key?: boolean; general_web?: boolean }>;
 };
 const settings = ref<Search>();
 const keys = ref<Partial<Record<Provider, string>>>({});
-const generalSearchReady = computed(() => (["tavily", "serpapi", "deepseek"] as const).some((name) => {
+const generalSearchReady = computed(() => names.some((name) => {
   const provider = settings.value?.providers[name];
-  return settings.value?.order.includes(name) && provider?.enabled && (provider.has_key || keys.value[name]?.trim());
+  return settings.value?.order.includes(name) && provider?.enabled && provider.general_web
+    && (provider.requires_key === false || provider.has_key || keys.value[name]?.trim());
 }));
 const loading = ref(false);
 const saving = ref(false);
 const error = ref("");
 const saved = ref(false);
+
+function toggleProvider(name: Provider, enabled: boolean) {
+  const current = settings.value;
+  if (!current) return;
+  current.providers[name].enabled = enabled;
+  if (enabled && !current.order.includes(name)) current.order.push(name);
+}
 
 async function load() {
   loading.value = true; error.value = "";
