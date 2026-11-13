@@ -10,13 +10,20 @@ import os
 import subprocess
 import uuid
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import aiomysql
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from PIL import Image
 
+from core.web_api.auth import WebUIUser
+from core.web_api.middleware import AuthMiddleware, _wiki_buckets
+from core.web_api.routes import wiki
 from core.wiki.collector import SourceCollector
 from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import Knowledge
@@ -177,6 +184,57 @@ async def test_page_additive_counts_match_true_totals(store):
     # 夹具只有一条来源与一次发布：500/50 截断不会触发，但总量键必须与真实值一致
     assert article["sources_total"] == len(article["sources"]) == 1
     assert article["history_total"] == len(article["history"]) == 1
+
+
+async def test_uploaded_cover_replaces_and_withdraws_with_channel(store, monkeypatch):
+    ch, _, _, _, _ = await published(store)
+    channel_id = ch["id"]
+    reader = PublicReader(store)
+    config = ch["config"].model_copy(update={"cover_url": "https://example.com/cover.png"})
+    await store.configure(channel_id, config, "test")
+    versions = await reader.visibility()
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: SimpleNamespace(ready=True, store=store))
+    monkeypatch.setattr(
+        "core.web_api.middleware.verify_token", lambda _: WebUIUser(user_id="admin")
+    )
+    admin_path = f"/api/wiki/admin/channels/{channel_id}/cover"
+    public_path = f"/api/public/wiki/channels/{channel_id}/cover"
+    auth = {"Authorization": "Bearer test"}
+    _wiki_buckets.clear()
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(wiki.public, prefix="/api/public/wiki")
+    app.include_router(wiki.admin, prefix="/api/wiki/admin")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get(public_path)).status_code == 404
+        for color in ("red", "blue"):
+            payload = BytesIO()
+            Image.new("RGB", (16, 8), color).save(payload, "PNG")
+            image = payload.getvalue()
+            uploaded = await client.put(admin_path, content=image, headers=auth)
+            assert uploaded.status_code == 200
+            cover_digest = uploaded.json()["cover_digest"]
+            summary = await reader.channel(channel_id, summary=True)
+            assert summary["cover_url"] == f"{public_path}?v={cover_digest}"
+            result = await client.get(summary["cover_url"])
+            assert result.content == image
+            assert result.headers["content-type"] == "image/png"
+            assert "no-cache" in result.headers["cache-control"]
+            tag = {"If-None-Match": result.headers["etag"]}
+            assert (await client.get(public_path, headers=tag)).status_code == 304
+            head = await client.head(public_path)
+            assert head.content == b"" and int(head.headers["content-length"]) == len(image)
+            if color == "red":
+                previous_url = summary["cover_url"]
+        assert (await client.get(previous_url)).status_code == 404
+        assert (await reader.visibility())[channel_id] != versions[channel_id]
+        await store.configure(channel_id, config.model_copy(update={"public": False}), "test")
+        denied = await client.get(public_path, headers=tag)
+        assert denied.status_code == 404
+        assert denied.headers["cache-control"] == "no-store"
+        assert (await client.delete(admin_path, headers=auth)).json() == {"cover_digest": None}
+        await store.configure(channel_id, config, "test")
+        assert (await reader.channel(channel_id, summary=True))["cover_url"] == config.cover_url
 
 
 @pytest.mark.parametrize("mode,q", [("latest", ""), ("recommended", ""), ("search", "中文")])

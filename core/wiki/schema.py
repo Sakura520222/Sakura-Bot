@@ -13,6 +13,12 @@ DIRTY_PAGES_TABLE = """CREATE TABLE IF NOT EXISTS wiki_dirty_pages (
     FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE,
     FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+CHANNEL_COVERS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_channel_covers (
+    channel_id VARCHAR(32) PRIMARY KEY,
+    digest CHAR(64) NOT NULL,
+    image MEDIUMBLOB NOT NULL,
+    FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_schema (
         version INT PRIMARY KEY, applied_at DATETIME(6) NOT NULL
@@ -26,6 +32,7 @@ SCHEMA = (
         dirty_at DATETIME(6), scheduled_at DATETIME(6), reconciled_at DATETIME(6),
         updated_at DATETIME(6) NOT NULL, INDEX wiki_public(public,enabled,access_verified)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    CHANNEL_COVERS_TABLE,
     """CREATE TABLE IF NOT EXISTS wiki_channel_aliases (
         alias VARCHAR(255) PRIMARY KEY, channel_id VARCHAR(32) NOT NULL,
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE,

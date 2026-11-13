@@ -8,20 +8,29 @@
     ></div>
     <div class="wiki-columns">
       <header class="wiki-navigation">
-        <RouterLink to="/wiki" class="wiki-brand"><span class="wiki-wordmark" aria-hidden="true">桜</span> Sakura Wiki</RouterLink>
+        <RouterLink to="/wiki" class="wiki-brand">Sakura Wiki</RouterLink>
         <nav class="wiki-navigation-links" aria-label="站点导航">
           <RouterLink v-for="entry in navigation" :key="entry.label" :to="entry.to"
             :aria-current="entry.active ? 'page' : undefined">{{ entry.label }}</RouterLink>
         </nav>
-        <RouterLink class="wiki-mobile-management" to="/wiki/admin" aria-label="管理 Wiki">管理</RouterLink>
-        <label class="wiki-theme-label">外观
-          <select :value="theme" @change="changeTheme(($event.target as HTMLSelectElement).value)">
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-        </label>
       </header>
+      <div class="wiki-header-actions" role="group" aria-label="Wiki 工具">
+        <button type="button" class="wiki-header-icon" :aria-label="themeAction" :title="themeAction" @click="toggleTheme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <template v-if="isDark">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42m0-14.14-1.42 1.42M6.35 17.65l-1.42 1.42" />
+            </template>
+            <path v-else d="M20.9 13.2A9 9 0 0 1 10.8 3.1 9 9 0 1 0 20.9 13.2Z" />
+          </svg>
+        </button>
+        <RouterLink class="wiki-header-icon" to="/wiki/admin" aria-label="管理 Wiki" title="管理 Wiki">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+            <path d="m9.7 3-.6 2.2c-.6.2-1.2.5-1.7 1l-2.2-.6L3 9.4l1.6 1.6a8 8 0 0 0 0 2L3 14.6l2.2 3.8 2.2-.6c.5.5 1.1.8 1.7 1l.6 2.2h4.6l.6-2.2c.6-.2 1.2-.5 1.7-1l2.2.6 2.2-3.8-1.6-1.6a8 8 0 0 0 0-2L21 9.4l-2.2-3.8-2.2.6c-.5-.5-1.1-.8-1.7-1L14.3 3Z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </RouterLink>
+      </div>
       <main id="wiki-main" class="wiki-main" tabindex="-1">
         <div v-if="channel" class="wiki-context-nav">
           <RouterLink :to="channelBase">频道</RouterLink>
@@ -58,7 +67,6 @@
             {{ entry.title }}
           </RouterLink>
         </section>
-        <RouterLink class="wiki-management" to="/wiki/admin">管理 Wiki</RouterLink>
       </aside>
     </div>
   </div>
@@ -74,7 +82,11 @@ import "./wiki-public.css";
 const route = useRoute();
 const router = useRouter();
 const query = ref("");
-const theme = ref(localStorage.getItem("sakura_bot_theme") || "system");
+const isDark = ref(document.documentElement.classList.contains("dark"));
+const themeAction = computed(() => isDark.value ? "切换到浅色模式" : "切换到深色模式");
+function syncTheme() {
+  isDark.value = document.documentElement.classList.contains("dark");
+}
 const channel = computed(() => String(route.params.channel || ""));
 const channelBase = computed(() => `/wiki/${channel.value}`);
 const navigation = computed(() => [
@@ -114,11 +126,13 @@ onMounted(() => {
   void checkVisibility();
   visibilityTimer = setInterval(checkVisibility, 30_000);
   document.addEventListener("visibilitychange", checkVisibility);
+  window.addEventListener("theme-change", syncTheme);
 });
 onUnmounted(() => {
   clearInterval(visibilityTimer);
   visibilityRequest?.abort();
   document.removeEventListener("visibilitychange", checkVisibility);
+  window.removeEventListener("theme-change", syncTheme);
 });
 function search() {
   void router.push({ name: "WikiGlobalSearch", query: { q: query.value.trim() || undefined } });
@@ -152,9 +166,8 @@ watch(
   },
   { immediate: true },
 );
-function changeTheme(value: string) {
-  theme.value = value;
-  localStorage.setItem("sakura_bot_theme", value);
+function toggleTheme() {
+  localStorage.setItem("sakura_bot_theme", isDark.value ? "light" : "dark");
   window.dispatchEvent(new Event("sakura-theme-preference"));
 }
 </script>

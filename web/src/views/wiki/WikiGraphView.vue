@@ -88,10 +88,12 @@
         </button>
       </div>
     </aside>
-    <dialog ref="drawer" class="wiki-graph-drawer" aria-labelledby="wiki-node-title" @close="selected = undefined">
-      <div v-if="selected" class="wiki-graph-detail">
-        <button autofocus @click="drawer?.close()">关闭</button>
-        <h2 id="wiki-node-title">{{ selected.title }}</h2>
+    <dialog ref="nodeDialog" class="wiki-graph-dialog" aria-labelledby="wiki-node-title" @close="selected = undefined">
+      <template v-if="selected">
+        <header class="wiki-graph-dialog-header">
+          <h2 id="wiki-node-title">{{ selected.title }}</h2>
+          <button autofocus @click="nodeDialog?.close()">关闭</button>
+        </header>
         <p class="wiki-muted">{{ selected.topic }} · {{ kindLabels[selected.kind] }}</p>
         <RouterLink :to="selected.url">阅读条目</RouterLink>
         <div class="wiki-graph-actions">
@@ -99,7 +101,7 @@
           <button @click="collapse">折叠邻居</button>
         </div>
         <p v-if="localError" role="alert">{{ localError }}</p>
-      </div>
+      </template>
     </dialog>
   </div>
   <div class="wiki-graph-foot">
@@ -140,7 +142,7 @@ const route = useRoute(),
   router = useRouter();
 const canvas = ref<HTMLElement>(),
   frame = ref<HTMLElement>();
-const drawer = ref<HTMLDialogElement>();
+const nodeDialog = ref<HTMLDialogElement>();
 let cy: Core | undefined;
 let resize: ResizeObserver | undefined;
 let disposed = false;
@@ -181,7 +183,7 @@ const { data, loading, error, stale, reload } = useWikiResource<WikiGraph>(
 watch(data, (payload) => {
   expansion?.abort();
   graph.value = payload;
-  if (!payload) drawer.value?.close();
+  if (!payload) nodeDialog.value?.close();
   render();
 }, { immediate: true });
 
@@ -319,7 +321,7 @@ async function load(node?: string, append = false) {
   }
   if (typeof node === "string") rootNodeId.value = node;
   localError.value = "";
-  drawer.value?.close();
+  nodeDialog.value?.close();
   selected.value = undefined;
 }
 async function retry() {
@@ -357,7 +359,9 @@ function relayout() {
 }
 function select(node: WikiNode) {
   selected.value = node;
-  void nextTick(() => { if (drawer.value && !drawer.value.open) drawer.value.showModal(); });
+  void nextTick(() => {
+    if (nodeDialog.value && !nodeDialog.value.open) nodeDialog.value.showModal();
+  });
   cy?.elements().unselect();
   const target = cy?.getElementById(node.id);
   target?.select();
@@ -468,20 +472,30 @@ onUnmounted(() => {
 });
 </script>
 <style scoped>
-.wiki-graph-drawer {
+.wiki-graph-dialog {
   position: fixed;
-  margin: auto 0 auto auto;
-  inset: 0 0 0 auto;
-  width: min(100%, 420px);
-  max-height: 100dvh;
-  min-height: min(240px, 100dvh);
+  inset: 0;
+  margin: auto;
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
   padding: 20px;
   border: 1px solid var(--sb-border);
-  border-radius: 12px 0 0 12px;
+  border-radius: var(--sb-radius);
   background: var(--sb-surface);
   color: var(--sb-text);
 }
-.wiki-graph-drawer::backdrop { background: rgb(0 0 0 / 38%); }
+.wiki-graph-dialog::backdrop { background: rgb(0 0 0 / 38%); }
+.wiki-graph-dialog-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.wiki-graph-dialog-header h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.wiki-graph-dialog-header button { flex: none; }
 .wiki-graph-frame {
   position: relative;
   display: grid;
@@ -527,16 +541,6 @@ onUnmounted(() => {
   border-left: 1px solid var(--sb-border);
   overflow: auto;
   max-height: 600px;
-}
-.wiki-graph-detail {
-  padding-bottom: 12px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--sb-border);
-}
-.wiki-graph-detail h3 {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 8px 0 4px;
 }
 .wiki-graph-actions {
   display: flex;

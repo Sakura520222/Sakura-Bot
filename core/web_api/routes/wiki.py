@@ -4,6 +4,7 @@
 
 """Read-only anonymous Wiki endpoints and separately authorized administration."""
 
+import asyncio
 import difflib
 import re
 from datetime import datetime
@@ -15,6 +16,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.routing import APIRoute
 from pydantic import Field
 
+from core.media.image_validation import MAX_IMAGE_BYTES, ImageInputError, validate_image
+from core.wiki.avatars import sniff_media_type
 from core.wiki.cursor import InvalidCursor
 from core.wiki.models import Strict, WikiConfig
 from core.wiki.runtime import get_wiki_runtime
@@ -23,7 +26,7 @@ from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{{1,180}}))?)"
 )
 # avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
 WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
@@ -152,6 +155,29 @@ async def avatar(channel: str, request: Request):
         return Response(status_code=304, headers={"ETag": etag})
     # Cache-Control 由中间件统一改写（单一写者）；路由只负责内容与 ETag。
     return Response(content=data, media_type=media_type, headers={"ETag": etag})
+
+
+@public.api_route("/channels/{channel}/cover", methods=["GET", "HEAD"])
+async def cover(channel: str, request: Request, v: str | None = Query(None, max_length=64)):
+    store = runtime().store
+    ch = found(await store.channel(channel))
+    row = found(
+        await store.one(
+            f"""SELECT cover.digest,cover.image FROM wiki_channels c
+            JOIN wiki_channel_covers cover ON cover.channel_id=c.id
+            WHERE c.id=%s AND (%s IS NULL OR cover.digest=%s) AND {CHANNEL_VISIBLE}""",
+            (ch["id"], v, v),
+        )
+    )
+    media_type = found(sniff_media_type(row["image"]))
+    etag = f'"{row["digest"]}"'
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    if request.method == "HEAD":
+        headers["Content-Length"] = str(len(row["image"]))
+        return Response(media_type=media_type, headers=headers)
+    return Response(row["image"], media_type=media_type, headers=headers)
 
 
 @public.api_route("/feed", methods=["GET", "HEAD"])
@@ -434,6 +460,32 @@ async def set_config(channel: str, body: WikiConfig, actor=ADMIN_AUTH):
     return await service.store.channel(ch["id"])
 
 
+@admin.put("/channels/{channel}/cover")
+async def upload_cover(channel: str, request: Request, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+            raise HTTPException(413, "频道封面不能超过 8 MiB")
+        data.extend(chunk)
+    image = bytes(data)
+    try:
+        await asyncio.to_thread(validate_image, image)
+    except ImageInputError as error:
+        raise HTTPException(422, str(error)) from None
+    digest = sha256(image).hexdigest()
+    if not await service.store.set_cover(ch["id"], digest, image, actor):
+        raise HTTPException(404, "频道不存在")
+    return {"cover_digest": digest}
+
+
+@admin.delete("/channels/{channel}/cover")
+async def delete_cover(channel: str, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    await service.store.set_cover(ch["id"], None, None, actor)
+    return {"cover_digest": None}
+
+
 @admin.post("/channels/{channel}/jobs", status_code=202)
 async def create_job(channel: str, body: JobRequest, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
@@ -679,6 +731,7 @@ async def purge(channel: str, body: PurgeRequest, actor=ADMIN_AUTH):
             (encode(WikiConfig().model_dump(mode="json")), ch["id"]),
         )
         for table in (
+            "wiki_channel_covers",
             "wiki_publications",
             "wiki_jobs",
             "wiki_pages",

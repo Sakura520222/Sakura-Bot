@@ -383,7 +383,12 @@ def test_no_anonymous_admin_or_prefix_bypass(api, method, path):
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize(
-    "path", ["/api/public/wiki/channels", "/api/public/wiki/channels/123/avatar"]
+    "path",
+    [
+        "/api/public/wiki/channels",
+        "/api/public/wiki/channels/123/avatar",
+        "/api/public/wiki/channels/123/cover",
+    ],
 )
 def test_public_read_paths_never_authorize_writes(api, method, path):
     assert api.request(method, path).status_code == 401
@@ -397,6 +402,33 @@ def test_signed_non_admin_denied(api, monkeypatch):
         api.get("/api/wiki/admin/channels", headers={"Authorization": "Bearer signed"}).status_code
         == 403
     )
+    assert (
+        api.put(
+            "/api/wiki/admin/channels/123/cover", headers={"Authorization": "Bearer signed"}
+        ).status_code
+        == 403
+    )
+
+
+def test_upload_cover_rejects_anonymous_invalid_and_oversized_bodies(api, monkeypatch):
+    path = "/api/wiki/admin/channels/123/cover"
+    assert api.put(path, content=b"image").status_code == 401
+    assert api.delete(path).status_code == 401
+    store = SimpleNamespace(
+        channel=AsyncMock(return_value={"id": "123"}),
+        set_cover=AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: SimpleNamespace(ready=True, store=store))
+    monkeypatch.setattr(
+        "core.web_api.middleware.verify_token", lambda _: WebUIUser(user_id="admin")
+    )
+    monkeypatch.setattr(wiki, "MAX_IMAGE_BYTES", 12)
+    headers = {"Authorization": "Bearer test"}
+    invalid = api.put(path, content=b"not an image", headers=headers)
+    assert invalid.status_code == 422
+    assert invalid.headers["cache-control"] == "no-store"
+    assert api.put(path, content=b"x" * 13, headers=headers).status_code == 413
+    store.set_cover.assert_not_called()
 
 
 def test_bad_graph_bounds_are_rejected_before_db(api):

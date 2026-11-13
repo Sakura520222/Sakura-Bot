@@ -5,6 +5,7 @@
 """MySQL persistence, identity mapping and fenced per-channel jobs."""
 
 import asyncio
+import base64
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from datetime import timedelta
 import aiomysql
 
 from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
-from .schema import DIRTY_PAGES_TABLE, SCHEMA, SCHEMA_VERSION
+from .schema import CHANNEL_COVERS_TABLE, DIRTY_PAGES_TABLE, SCHEMA, SCHEMA_VERSION
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
 
@@ -128,6 +129,7 @@ class WikiStore:
                     if error.args[0] != 1061:  # Another starting worker created the same index.
                         raise
             await self.query(DIRTY_PAGES_TABLE)
+            await self.query(CHANNEL_COVERS_TABLE)
             return
         for statement in SCHEMA:
             try:
@@ -144,8 +146,9 @@ class WikiStore:
         except ValueError:
             return None
         row = await self.one(
-            """SELECT c.* FROM wiki_channels c JOIN wiki_channel_aliases a
-            ON a.channel_id=c.id WHERE a.alias=%s""",
+            """SELECT c.*,cover.digest cover_digest FROM wiki_channels c JOIN wiki_channel_aliases a
+            ON a.channel_id=c.id LEFT JOIN wiki_channel_covers cover ON cover.channel_id=c.id
+            WHERE a.alias=%s""",
             (key,),
         )
         if row:
@@ -240,6 +243,36 @@ class WikiStore:
                     WHERE channel_id=%s AND status IN ('running','pending','partial')""",
                     (channel,),
                 )
+
+    async def set_cover(self, channel, digest, image, actor):
+        async with self.transaction() as cur:
+            await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            if not await cur.fetchone():
+                return False
+            if image is None:
+                await cur.execute("DELETE FROM wiki_channel_covers WHERE channel_id=%s", (channel,))
+                if not cur.rowcount:
+                    return True
+            else:
+                await cur.execute(
+                    "SELECT digest FROM wiki_channel_covers WHERE channel_id=%s", (channel,)
+                )
+                previous = await cur.fetchone()
+                if previous and previous["digest"] == digest:
+                    return True
+                await cur.execute(
+                    """INSERT INTO wiki_channel_covers (channel_id,digest,image) VALUES (%s,%s,FROM_BASE64(%s))
+                    AS uploaded ON DUPLICATE KEY UPDATE digest=uploaded.digest,image=uploaded.image""",
+                    (channel, digest, base64.b64encode(image).decode("ascii")),
+                )
+            await cur.execute(
+                "UPDATE wiki_channels SET updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                (channel,),
+            )
+            await self.audit(
+                cur, channel, "remove_cover" if image is None else "upload_cover", channel, actor
+            )
+            return True
 
     async def audit(self, cur, channel, action, target, actor, details=None):
         await cur.execute(
