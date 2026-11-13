@@ -12,4 +12,4 @@
 Sakura-Bot - 核心模块
 """
 
-__version__ = "2.4.5"
+__version__ = "2.4.6"

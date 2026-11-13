@@ -36,6 +36,7 @@ test("only declared Wiki routes are public; admin stays authenticated", () => {
   for (const path of [
     "/wiki",
     "/wiki/search",
+    "/wiki/bookmarks",
     "/wiki/123",
     "/wiki/123/page/a",
     "/wiki/123/graph",

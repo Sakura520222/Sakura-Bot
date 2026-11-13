@@ -103,6 +103,7 @@ const navigation = computed(() => [
   { label: "首页", to: "/wiki", active: route.name === "WikiHome" && !isDirectory.value },
   { label: "探索", to: "/wiki/search", active: route.name === "WikiGlobalSearch" },
   { label: "频道", to: "/wiki?tab=channels", active: isDirectory.value },
+  { label: "收藏", to: "/wiki/bookmarks", active: route.name === "WikiBookmarks" },
   ...(channel.value ? [
     { label: "知识地图", to: `${channelBase.value}/graph`, active: route.name === "WikiGraph" },
     { label: "动态", to: `${channelBase.value}/timeline`, active: route.name === "WikiTimeline" },

@@ -217,6 +217,19 @@
 .wiki-shell .wiki-article { max-width: none; border: 0; box-shadow: none; padding-inline: 0; }
 .wiki-shell .wiki-meta, .wiki-shell .wiki-muted { color: var(--sb-text-2); }
 .wiki-shell .wiki-reader-header { border-bottom: 1px solid var(--sb-border); padding-bottom: 16px; }
+.wiki-shell .wiki-reader-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wiki-shell .wiki-reader-title h1 { min-width: 0; overflow-wrap: anywhere; }
+.wiki-shell .wiki-reader-actions { display: flex; flex: none; gap: 2px; }
+.wiki-shell .wiki-reader-actions button[aria-pressed="true"] { color: var(--sb-accent); }
+.wiki-shell .wiki-bookmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--sb-border);
+}
+.wiki-shell .wiki-bookmark-row .wiki-feed-card { border: 0; }
+.wiki-shell .wiki-bookmarks-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin: 16px 0; }
 .wiki-shell .wiki-reader-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 20px 0; }
 .wiki-shell .wiki-profile-heading h1 { display: flex; align-items: center; gap: 10px; }
 .wiki-shell .wiki-profile-panels { margin-block: 12px; }

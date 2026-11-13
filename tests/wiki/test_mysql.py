@@ -167,12 +167,16 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     # 增量总量字段与截断后的列表必须同时存在且一致
     assert article["sources_total"] == 1 and article["history_total"] == 1
     assert (await reader.search("中文"))["total"] == 1
+    bookmarks = await reader.bookmarks(["f" * 32, page["id"], page["id"]])
+    assert [item["id"] for item in bookmarks] == [page["id"]]
+    assert bookmarks[0]["url"] == article["url"]
     published_job = await store.one("SELECT * FROM wiki_jobs WHERE channel_id=%s", (ch["id"],))
     assert published_job["status"] == "published" and decode(published_job["progress"])["published"]
     assert await Knowledge(store).publish(ch["id"], published_job["id"], "retry") == publication
     await store.revoke(ch["id"], source_id=source["id"], actor="test")
     assert await reader.page(ch["id"], page["slug"]) is None
     assert not (await reader.search("中文"))["items"]
+    assert not await reader.bookmarks([page["id"]])
     with pytest.raises(ValueError, match="revoked"):
         await Knowledge(store).publish(ch["id"], None, "test", rollback=publication)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
