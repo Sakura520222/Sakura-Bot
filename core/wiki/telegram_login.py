@@ -32,6 +32,14 @@ _keys_at = 0.0
 _keys_lock = asyncio.Lock()
 
 
+class TelegramLoginError(ValueError):
+    def __init__(self, stage, reason, status=None):
+        super().__init__(stage, reason, status)
+        self.stage = stage
+        self.reason = reason
+        self.status = status
+
+
 class PublicAvatarResolver(aiohttp.ThreadedResolver):
     async def resolve(self, host, port=0, family=0):
         addresses = await super().resolve(host, port, family)
@@ -166,25 +174,80 @@ async def signing_key(client, header):
 
 async def exchange_code(config, code, verifier, nonce):
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as client:
-        async with client.post(
-            f"{ISSUER}/token",
-            allow_redirects=False,
-            auth=aiohttp.BasicAuth(config.client_id, config.client_secret),
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": config.callback,
-                "client_id": config.client_id,
-                "code_verifier": verifier,
-            },
-        ) as response:
-            if response.status != 200:
-                raise ValueError("Telegram rejected the code exchange")
-            token = json.loads(await bounded_body(response, 32 * 1024))["id_token"]
-        if not isinstance(token, str) or not 1 <= len(token) <= 16384:
-            raise ValueError("Invalid ID token")
-        key = await signing_key(client, jwt.get_unverified_header(token))
-    return verify_identity(token, key, config.client_id, nonce)
+        try:
+            async with client.post(
+                f"{ISSUER}/token",
+                allow_redirects=False,
+                auth=aiohttp.BasicAuth(config.client_id, config.client_secret),
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": config.callback,
+                    "client_id": config.client_id,
+                    "code_verifier": verifier,
+                },
+            ) as response:
+                token = token_from_response(
+                    response.status, await bounded_body(response, 32 * 1024)
+                )
+        except TelegramLoginError:
+            raise
+        except (aiohttp.ClientError, TimeoutError, ValueError) as error:
+            raise TelegramLoginError("exchange", type(error).__name__) from None
+
+        try:
+            key = await signing_key(client, jwt.get_unverified_header(token))
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            jwt.PyJWTError,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as error:
+            raise TelegramLoginError("signing_key", type(error).__name__) from None
+
+    try:
+        return verify_identity(token, key, config.client_id, nonce)
+    except jwt.MissingRequiredClaimError as error:
+        reason = f"missing_{error.claim}"
+    except TelegramLoginError:
+        raise
+    except (jwt.PyJWTError, ValueError, TypeError) as error:
+        reason = type(error).__name__
+    raise TelegramLoginError("identity", reason) from None
+
+
+def token_from_response(status, body):
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise TelegramLoginError("exchange", "invalid_json", status) from None
+    if not isinstance(payload, dict):
+        raise TelegramLoginError("exchange", "invalid_payload", status)
+    if status != 200 or "error" in payload:
+        error = payload.get("error")
+        reason = (
+            error
+            if isinstance(error, str)
+            and error
+            in {
+                "invalid_client",
+                "invalid_grant",
+                "invalid_request",
+                "unauthorized_client",
+                "unsupported_grant_type",
+                "access_denied",
+                "server_error",
+                "temporarily_unavailable",
+            }
+            else "provider_error"
+        )
+        raise TelegramLoginError("exchange", reason, status)
+    token = payload.get("id_token")
+    if not isinstance(token, str) or not 1 <= len(token) <= 16384:
+        raise TelegramLoginError("exchange", "invalid_id_token", status)
+    return token
 
 
 def verify_identity(token, key, audience, nonce):
@@ -203,16 +266,16 @@ def verify_identity(token, key, audience, nonce):
         or not signed_nonce.isascii()
         or not hmac.compare_digest(nonce, signed_nonce)
     ):
-        raise ValueError("Invalid nonce")
+        raise TelegramLoginError("identity", "nonce_mismatch")
     now = time.time()
     if type(claims["iat"]) is not int or not now - 630 <= claims["iat"] <= now + 30:
-        raise ValueError("Invalid token issue time")
+        raise TelegramLoginError("identity", "invalid_issued_at")
     if type(claims["exp"]) is not int or claims["exp"] <= claims["iat"]:
-        raise ValueError("Invalid token expiration")
+        raise TelegramLoginError("identity", "invalid_expiration")
     if not isinstance(subject, str) or not re.fullmatch(r"[\x21-\x7e]{1,255}", subject):
-        raise ValueError("Invalid Telegram subject")
+        raise TelegramLoginError("identity", "invalid_subject")
     if type(user_id) is not int or not 0 < user_id < 2**63:
-        raise ValueError("Missing or invalid Telegram user ID")
+        raise TelegramLoginError("identity", "invalid_user_id")
     name, username = claims.get("name"), claims.get("preferred_username")
     name = name.replace("\x00", "").strip()[:160] if isinstance(name, str) else ""
     username = (

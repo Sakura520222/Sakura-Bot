@@ -89,6 +89,22 @@ def test_authorization_is_bound_to_configured_bot_and_pkce():
     assert params["code_challenge"] == [challenge] and "secret" not in url.geturl()
 
 
+def test_telegram_token_endpoint_can_return_an_oauth_error_with_http_200():
+    with pytest.raises(telegram_login.TelegramLoginError) as failure:
+        telegram_login.token_from_response(
+            200, b'{"error":"invalid_grant","error_description":"private"}'
+        )
+    assert (failure.value.stage, failure.value.reason, failure.value.status) == (
+        "exchange",
+        "invalid_grant",
+        200,
+    )
+    assert "private" not in str(failure.value)
+    assert (
+        telegram_login.token_from_response(200, b'{"id_token":"example-token"}') == "example-token"
+    )
+
+
 @pytest.fixture(scope="module")
 def signing_keys():
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)

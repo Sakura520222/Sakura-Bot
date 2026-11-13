@@ -4,15 +4,14 @@
 
 """First-party Wiki account endpoints. WebUI administration uses its own credentials."""
 
+import logging
 import re
 import secrets
 from typing import Annotated
 from urllib.parse import unquote, urlencode, urlsplit
 
-import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from jwt import PyJWTError
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from core.settings import get_settings
@@ -22,6 +21,7 @@ from core.wiki.accounts import ACCESS_SECONDS, FLOW_SECONDS, AccountDenied, toke
 
 from .wiki import ADMIN_AUTH, runtime
 
+logger = logging.getLogger(__name__)
 ACCOUNT_PATH = "/api/wiki/account"
 ACCESS = "__Host-sakura-wiki-access"
 REFRESH = "__Host-sakura-wiki-refresh"
@@ -261,9 +261,21 @@ async def callback(request: Request):
                 tokens = await accounts.login(
                     identity, avatar, flow["refresh_session"], request.cookies.get(LOGOUT)
                 )
+            except telegram_login.TelegramLoginError as failure:
+                logger.warning(
+                    "Wiki Telegram 登录失败 stage=%s reason=%s status=%s",
+                    failure.stage,
+                    failure.reason,
+                    failure.status,
+                )
+                error = "failed"
             except AccountDenied:
+                logger.info("Wiki Telegram 登录被拒 stage=account")
                 error = "unavailable"
-            except (aiohttp.ClientError, TimeoutError, PyJWTError, ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError) as failure:
+                logger.warning(
+                    "Wiki Telegram 登录失败 stage=session reason=%s", type(failure).__name__
+                )
                 error = "failed"
             else:
                 response = RedirectResponse(config.origin + flow["redirect_path"], status_code=303)
