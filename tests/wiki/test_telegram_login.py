@@ -129,9 +129,10 @@ def id_claims():
     }
 
 
-def test_verified_identity_uses_numeric_id_and_opaque_subject(signing_keys):
+@pytest.mark.parametrize("user_id", [987654321, "987654321"])
+def test_verified_identity_uses_numeric_id_and_opaque_subject(signing_keys, user_id):
     private, public = signing_keys
-    token = jwt.encode(id_claims(), private, algorithm="RS256")
+    token = jwt.encode({**id_claims(), "id": user_id}, private, algorithm="RS256")
     assert verify_identity(token, public, "123456", "nonce") == (
         987654321,
         b"opaque-123",
@@ -154,6 +155,11 @@ def test_verified_identity_uses_numeric_id_and_opaque_subject(signing_keys):
         {"nonce": "非 ASCII"},
         {"id": None},
         {"id": "admin"},
+        {"id": "9223372036854775808"},
+        {"id": " 123"},
+        {"id": "1.5"},
+        {"id": "０１２３"},
+        {"id": 1.5},
         {"id": True},
         {"id": -1},
     ],

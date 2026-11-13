@@ -274,8 +274,11 @@ def verify_identity(token, key, audience, nonce):
         raise TelegramLoginError("identity", "invalid_expiration")
     if not isinstance(subject, str) or not re.fullmatch(r"[\x21-\x7e]{1,255}", subject):
         raise TelegramLoginError("identity", "invalid_subject")
+    # Telegram may serialize the signed numeric profile ID as a decimal string.
+    if isinstance(user_id, str) and re.fullmatch(r"[1-9][0-9]{0,18}", user_id):
+        user_id = int(user_id)
     if type(user_id) is not int or not 0 < user_id < 2**63:
-        raise TelegramLoginError("identity", "invalid_user_id")
+        raise TelegramLoginError("identity", f"invalid_user_id_{type(user_id).__name__}")
     name, username = claims.get("name"), claims.get("preferred_username")
     name = name.replace("\x00", "").strip()[:160] if isinstance(name, str) else ""
     username = (
