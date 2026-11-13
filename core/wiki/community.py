@@ -30,6 +30,7 @@ class Proposal(Strict):
     text: str = Field(min_length=1, max_length=10000)
     sources: list[str] = Field(default_factory=list, max_length=5)
     excerpt: str = Field(default="", max_length=500)
+    excerpt_occurrence: int | None = Field(default=None, ge=0, le=10000, strict=True)
 
     @field_validator("text")
     @classmethod
@@ -212,6 +213,8 @@ class Community:
             }
             if data.get("excerpt"):
                 annotation["excerpt"] = data["excerpt"]
+                if data.get("excerpt_occurrence") is not None:
+                    annotation["excerpt_occurrence"] = data["excerpt_occurrence"]
         revision = await self.knowledge.create_correction(
             cur,
             proposal["channel_id"],

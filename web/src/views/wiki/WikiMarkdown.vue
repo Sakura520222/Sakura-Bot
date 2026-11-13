@@ -11,7 +11,9 @@
 import { computed, nextTick, ref } from "vue";
 import { marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
-const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number }>();
+import type { WikiAnnotation } from "../../api/wiki";
+import { renderAnnotations } from "./wiki-annotations";
+const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number; annotations?: WikiAnnotation[] }>();
 const renderer = new Renderer();
 const renderedImages = new Map<string, string>();
 renderer.image = ({ href, text }) => {
@@ -43,20 +45,31 @@ async function previewImage(event: MouseEvent) {
   await nextTick();
   lightbox.value?.showModal();
 }
-const html = computed(() => {
-  renderedImages.clear();
-  const text = props.text.replace(
+function renderMarkdown(source: string, renderer: Renderer) {
+  const text = source.replace(
     /\[\[([^\]\n]+)\]\]/g,
     (_, title: string) =>
       `[${title}](/wiki/${encodeURIComponent(props.channel || "")}/search?q=${encodeURIComponent(title)})`,
   );
-  return DOMPurify.sanitize(
-    marked.parse(text, { async: false, breaks: true, renderer }),
-    {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ["img", "iframe", "form", "style"],
-    },
+  return marked.parse(text, { async: false, breaks: true, renderer });
+}
+const options = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["img", "iframe", "form", "style"],
+};
+const html = computed(() => {
+  renderedImages.clear();
+  const source = renderMarkdown(props.text, renderer);
+  if (!props.annotations?.length) return DOMPurify.sanitize(source, options);
+  const root = DOMPurify.sanitize(source, { ...options, RETURN_DOM_FRAGMENT: true });
+  const annotationRenderer = new Renderer();
+  annotationRenderer.image = () => "";
+  renderAnnotations(root, props.annotations, (text) =>
+    DOMPurify.sanitize(renderMarkdown(text, annotationRenderer), { ...options, RETURN_DOM_FRAGMENT: true }),
   );
+  const rendered = document.createElement("div");
+  rendered.append(root);
+  return DOMPurify.sanitize(rendered.innerHTML, options);
 });
 </script>
 <style scoped>
@@ -100,5 +113,30 @@ const html = computed(() => {
 .wiki-markdown :deep(td) {
   border: 1px solid var(--sb-border);
   padding: 8px 12px;
+}
+.wiki-markdown :deep(.wiki-annotation-mark) {
+  background: var(--wiki-note-highlight, #fff1aa);
+  color: inherit;
+  box-decoration-break: clone;
+  border-radius: 2px;
+}
+.wiki-markdown :deep(.wiki-inline-note) {
+  display: block;
+  margin: .4rem 0 .65rem;
+  padding: .4rem .7rem;
+  border-inline-start: 3px solid var(--wiki-note-border, #d5a633);
+  border-radius: 0 4px 4px 0;
+  background: var(--wiki-note-surface, #fffae6);
+  color: var(--sb-text);
+  font-size: .875em;
+}
+.wiki-markdown :deep(.wiki-inline-note-label) { font-weight: 650; }
+.wiki-markdown :deep(.wiki-inline-note q) { display: block; color: var(--sb-text-2); }
+.wiki-markdown :deep(.wiki-inline-note p) { margin: 0; }
+.wiki-markdown :deep(.wiki-inline-note-sources) { display: flex; flex-wrap: wrap; gap: .75em; }
+:global(html.dark .wiki-markdown) {
+  --wiki-note-highlight: #68531b;
+  --wiki-note-surface: #342b16;
+  --wiki-note-border: #b79445;
 }
 </style>

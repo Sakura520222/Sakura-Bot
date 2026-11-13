@@ -109,15 +109,29 @@ export interface Claim {
   source_created_at: string;
   evidence: Evidence[];
   fact_check?: { status: string; reason: string; checked_at?: string; model?: string; sources: { title: string; url: string; provider: string }[] };
-  community_notes?: { kind: string; text: string; sources: string[]; excerpt?: string }[];
+  community_notes?: WikiAnnotation[];
   title?: string;
   url?: string;
+}
+export interface WikiAnnotation {
+  kind: string;
+  text: string;
+  sources: string[];
+  excerpt?: string;
+  excerpt_occurrence?: number;
 }
 export interface WikiArticle extends WikiCard {
   verified_at: string;
   claims: Claim[];
   proposals_enabled?: boolean;
   annotations_enabled?: boolean;
+  history_total?: number;
+}
+export interface WikiRevisionComparison {
+  before: { id: string; created_at: string };
+  after: { id: string; created_at: string };
+  changes: { before: string | null; after: string | null }[];
+  truncated: boolean;
 }
 export interface WikiReferences {
   revision_id: string;

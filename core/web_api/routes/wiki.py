@@ -26,7 +26,8 @@ from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|bookmarks|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|bookmarks|channels/{CHANNEL}"
+    r"(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{1,180}(?:/compare)?))?)"
 )
 # avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
 WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
@@ -138,6 +139,16 @@ async def page(
             reader.page(channel, slug) if part == "full" else reader.page(channel, slug, part=part)
         )
     )
+
+
+@public.api_route("/channels/{channel}/pages/{slug}/compare", methods=["GET", "HEAD"])
+async def compare_page_revisions(
+    channel: str,
+    slug: str,
+    before: str = Query(pattern=r"^[a-f0-9]{32}$"),
+    after: str = Query(pattern=r"^[a-f0-9]{32}$"),
+):
+    return found(await runtime().reader.page(channel, slug, compare=(before, after)))
 
 
 @public.api_route("/channels/{channel}/avatar", methods=["GET", "HEAD"])

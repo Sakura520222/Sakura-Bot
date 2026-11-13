@@ -6,8 +6,6 @@
       @click.prevent="$emit('navigate', `claim-${i}`)">{{ title }}</a>
     <a href="#sources" :aria-current="active === 'sources' ? 'location' : undefined"
       @click.prevent="$emit('navigate', 'sources')">参考来源</a>
-    <a href="#history" :aria-current="active === 'history' ? 'location' : undefined"
-      @click.prevent="$emit('navigate', 'history')">修订记录</a>
   </nav>
 </template>
 <script setup lang="ts">

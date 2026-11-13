@@ -21,6 +21,12 @@ const cards = Array.from({length: 240}, (_, index) => ({
   excerpt: "公开知识条目摘要。这里记录项目发布、配置与日常使用问题。"
 }));
 const claims = Array.from({length: 18}, (_, index) => ({key:"章节 "+(index+1),text:"**Sakura** 条目正文，包含可核对的来源。" + (index === 0 ? "\n\n![示例](https://example.invalid/image.png)" : ""), status:"current", confidence:.9, source_created_at:channel.updated_at, evidence:[{source_id:"s1",start:0,end:4,url:"https://t.me/sakura_dev/1"}]}));
+const annotatedClaims = [{ ...claims[0], text: "- 词条名称：**护**\n- 画面元素：卡片。\n- 角色形象：护",
+  community_notes: [
+    { kind: "annotation", excerpt: "护", text: "第一处的注解。", sources: [] },
+    { kind: "annotation", excerpt: "护", excerpt_occurrence: 1, text: "第二处的注解。", sources: [] },
+    { kind: "annotation", excerpt: "旧版词句", text: "保留的旧注解。", sources: [] },
+  ] }, ...claims.slice(1)];
 const profile = {title:channel.title, coverage:channel.coverage, statistics:{message_count:120,avg_message_length:37}, topics:[{topic:"开发日志",message_count:45}],
   months:[{month:"2026-11",count:120}], hours_utc:[{hour:11,count:50}],as_of:channel.updated_at,publication_id:"v1"};
 const graph = {nodes:[cards[0],cards[1]],edges:[{id:"e1",source:cards[0].id,target:cards[1].id,kind:"supports",confidence:.9,evidence_count:1}],publication_id:"v1",limit:60,truncated:false};
@@ -183,11 +189,19 @@ const server = http.createServer(async (req,res) => {
       }
     }
     else if (endpoint.includes("/pages/") && q.get("part") === "related") out = {previous:cards[1],next:null};
+    else if (endpoint.endsWith("/article-1/compare")) {
+      assert.equal(q.get("before"), "old-r1");
+      assert.equal(q.get("after"), "r1");
+      out = {before:{id:"old-r1",created_at:"2026-11-11T16:00:00Z"},after:{id:"r1",created_at:channel.updated_at},
+        changes:[{before:"旧正文",after:"新正文"},{before:null,after:"第一处的注解。"}]};
+    }
     else if (endpoint.includes("/pages/")) {
       const card = cards.find(row => row.slug === endpoint.split("/").at(-1)) || cards[0];
       if (articleHidden && card === cards[0]) { res.writeHead(404); return res.end(); }
-      const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history:[{revision_id:card.revision_id,created_at:channel.updated_at}],sources_total:1,history_total:1};
-      out = {...card,verified_at:channel.updated_at,proposals_enabled:true,annotations_enabled:true,...(q.get("part") !== "references" ? {claims}:{}),...(q.get("part") !== "article" ? refs:{})};
+      const history = [{revision_id:card.revision_id,created_at:channel.updated_at}];
+      if (card === cards[1]) history.push({revision_id:"old-r1",created_at:"2026-11-11T16:00:00Z"});
+      const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history,sources_total:1,history_total:history.length};
+      out = {...card,verified_at:channel.updated_at,proposals_enabled:true,annotations_enabled:true,history_total:history.length,...(q.get("part") !== "references" ? {claims:card === cards[1] ? annotatedClaims : claims}:{}),...(q.get("part") !== "article" ? refs:{})};
     }
     else if (endpoint === "channels/123") out = {
       ...channel,
@@ -383,6 +397,10 @@ try {
   await page.reload();
   await mobileTools.getByRole("button",{name:"切换到浅色模式"}).click();
   assert.equal(await page.evaluate(()=>document.documentElement.classList.contains("dark")),false);
+  const mobileHistory = page.getByRole("button", { name: "修订历史", exact: true });
+  await mobileHistory.tap();
+  await assertCentered(page.getByRole("dialog", { name: "修订历史" }));
+  await page.getByRole("button", { name: "关闭修订历史" }).tap();
   if (output) await page.screenshot({path:path.join(output,"mobile.png")});
   const hiddenBookmark = "f".repeat(32);
   await page.evaluate(([legacyId, missingId]) => {
@@ -489,7 +507,7 @@ try {
   await note.getByRole("button", { name: "提交审核" }).click();
   await note.waitFor({ state: "hidden" });
   await accountPage.getByRole("status").filter({ hasText: "已提交，等待管理员审核。" }).waitFor();
-  assert.deepEqual([submittedProposal.claim, submittedProposal.excerpt, submittedProposal.kind], [0, "Sakura", "annotation"]);
+  assert.deepEqual([submittedProposal.claim, submittedProposal.excerpt, submittedProposal.kind, submittedProposal.excerpt_occurrence], [0, "Sakura", "annotation", 0]);
   await accountPage.locator(".wiki-markdown[data-claim='0'] strong").first().evaluate((element) => {
     const selection = window.getSelection();
     const range = document.createRange(); range.selectNodeContents(element);
@@ -565,6 +583,25 @@ try {
   await desktop.keyboard.press("Escape");
   await desktop.goto(url + "/wiki/contributors");
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
+  await desktop.goto(url + "/wiki/123/page/article-1");
+  const annotated = desktop.locator(".wiki-markdown[data-claim='0']");
+  await annotated.locator("li").nth(0).getByText("第一处的注解。").waitFor();
+  await annotated.locator("li").nth(2).getByText("第二处的注解。").waitFor();
+  await annotated.getByText("保留的旧注解。").waitFor();
+  assert.deepEqual(await annotated.locator("mark").allTextContents(), ["护", "护"]);
+  assert.equal(await annotated.locator("mark").first().evaluate((mark) => getComputedStyle(mark).backgroundColor), "rgb(255, 241, 170)");
+  const historyBadge = desktop.getByRole("button", { name: "修订历史", exact: true });
+  assert.equal(await historyBadge.textContent(), "[2]");
+  await historyBadge.hover();
+  await desktop.locator(".history-preview").getByText(/当前版本/).waitFor();
+  await historyBadge.click();
+  const historyDialog = desktop.getByRole("dialog", { name: "修订历史" });
+  await assertCentered(historyDialog);
+  await historyDialog.getByRole("button", { name: "与上一版本比较" }).click();
+  await historyDialog.locator("del").getByText("旧正文").waitFor();
+  await historyDialog.locator("ins").getByText("第一处的注解。").waitFor();
+  await historyDialog.getByRole("button", { name: "关闭修订历史" }).click();
+  await historyDialog.waitFor({ state: "hidden" });
   await desktop.goto(url + "/wiki/123/page/article-0");
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
   await desktop.locator(".wiki-markdown[data-claim='0'] p").first().click({ button: "right" });

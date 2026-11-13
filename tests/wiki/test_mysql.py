@@ -423,7 +423,7 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     assert (await store.channel(ch["id"]))["published_revision"] == publication
 
 
-async def test_community_contributions_follow_publication_and_privacy(store):
+async def test_community_contributions_follow_publication_and_privacy(store, monkeypatch):
     ch, source, page, revision, original = await published(store)
     await store.configure(
         ch["id"],
@@ -444,6 +444,8 @@ async def test_community_contributions_follow_publication_and_privacy(store):
         claim=0,
         text="社区补充说明",
         sources=["https://example.org/reference"],
+        excerpt="中文检索",
+        excerpt_occurrence=0,
     )
     identifier, notify = await service.community.submit(user, ch["id"], page["id"], proposal)
     assert not notify and not await service.community.contributions()
@@ -473,6 +475,13 @@ async def test_community_contributions_follow_publication_and_privacy(store):
     assert contributors[0]["total"] == 1 and contributors[0]["username"] is None
     article = await service.reader.page(ch["id"], page["slug"])
     assert article["claims"][0]["community_notes"][0]["text"] == "社区补充说明"
+    assert article["claims"][0]["community_notes"][0]["excerpt_occurrence"] == 0
+    comparison = await service.reader.page(
+        ch["id"], page["slug"], compare=(revision, article["revision_id"])
+    )
+    assert comparison["changes"] == [
+        {"before": None, "after": "注解「中文检索」　社区补充说明\nhttps://example.org/reference"}
+    ]
     with pytest.raises(ValueError, match="基线"):
         await service.community.decide(competing, "approved", "test")
     # Simulate an approval queued by the previous version, while the channel job is still paused.
@@ -484,6 +493,21 @@ async def test_community_contributions_follow_publication_and_privacy(store):
     [detail] = await service.community.proposals(identifier=legacy, review=True)
     assert detail["review_job_status"] == "pending"
     assert (await store.claim_job())["id"] == detail["review_job_id"]
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(wiki.public, prefix="/api/public/wiki")
+    compare_path = f"/api/public/wiki/channels/{ch['id']}/pages/{page['slug']}/compare"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            compare_path, params={"before": revision, "after": article["revision_id"]}
+        )
+        assert response.status_code == 200 and response.json()["changes"] == comparison["changes"]
+        response = await client.get(
+            compare_path, params={"before": revision, "after": detail["revision_id"]}
+        )
+        assert response.status_code == 404
     await service.engine.knowledge.publish(ch["id"], None, "test", rollback=original)
     assert not await service.community.contributions()
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
@@ -688,7 +712,7 @@ async def test_article_parts_and_timeline_cursor_share_publication_gate(store):
     reader = PublicReader(store)
     article = await reader.page(ch["id"], page["slug"], part="article")
     refs = await reader.page(ch["id"], page["slug"], part="references")
-    assert article["claims"] and "history" not in article
+    assert article["claims"] and "history" not in article and article["history_total"] == 1
     assert refs["publication_id"] == publication and refs["revision_id"] == revision
     assert refs["sources_total"] == 1 and "claims" not in refs
     assert await reader.related(ch["id"], page["slug"]) == {"next": None, "previous": None}
@@ -710,6 +734,7 @@ async def test_article_parts_and_timeline_cursor_share_publication_gate(store):
     await store.revoke(ch["id"], source_id=source["id"], actor="test")
     assert (await reader.visibility())[ch["id"]] != before[ch["id"]]
     assert await reader.page(ch["id"], page["slug"], part="references") is None
+    assert await reader.page(ch["id"], page["slug"], compare=(revision, revision)) is None
     assert await reader.related(ch["id"], page["slug"]) is None
     assert not (await reader.timeline(ch["id"], cursor_mode=True))["items"]
 

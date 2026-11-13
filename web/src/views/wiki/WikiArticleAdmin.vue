@@ -22,6 +22,9 @@
               <option v-for="(claim, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ plainWikiText(claim.text).slice(0, 42) }}</option>
             </select></label>
             <label>{{ passage?.range ? '替换选中文字' : '正文' }} <textarea v-model="draft" required maxlength="14000" rows="5" /></label>
+            <details v-if="submittedText !== original"><summary>查看差异</summary>
+              <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
+            </details>
             <div class="management-actions"><button type="submit" :disabled="!!pending || !draft.trim() || submittedText === original">{{ pending === 'correct' ? '正在提交…' : '提交审校' }}</button></div>
           </form>
           <details v-if="!editOnly" class="management-section" @toggle="versionsOpened">
@@ -53,6 +56,7 @@ import { computed, ref, watch } from "vue";
 import { formatDate, wikiAdmin, type WikiArticle } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
+import WikiRevisionDiff from "./WikiRevisionDiff.vue";
 import { plainWikiText } from "./wiki-utils";
 import { revisionText, type WikiPassage } from "./wiki-selection";
 
@@ -125,7 +129,6 @@ function correct() {
   return run("correct", async () => {
     await wikiAdmin(`${root.value}/revisions/${revision}/correct`, "POST", { claim: ordinal.value, text: submittedText.value });
     notice.value = "已提交词条审校，可在任务页查看进度。";
-    if (page.value) page.value.locked = true;
   });
 }
 function versionsOpened(event: Event) {

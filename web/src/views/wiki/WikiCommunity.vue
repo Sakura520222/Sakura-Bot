@@ -20,7 +20,9 @@
       <p><label>{{ editingText ? (passage?.range ? '替换选中文字' : '修订后的段落') : '说明' }} <textarea v-model="draft" required maxlength="10000" rows="6" /></label></p>
       <p><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
       <details><summary>预览</summary><WikiMarkdown :text="submittedText" :channel="article.channel_id" /></details>
-      <details v-if="kind === 'edit' || kind === 'correction'"><summary>对照当前正文</summary><pre>{{ article.claims[claim]?.text }}</pre></details>
+      <details v-if="editingText && submittedText !== original"><summary>查看差异</summary>
+        <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
+      </details>
       <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
     </form>
     </dialog>
@@ -54,6 +56,7 @@ import { loadWikiSession } from "../../api/wiki-account";
 import { wikiOpenAccount } from "../../api/wiki-assistant";
 import type { WikiArticle } from "../../api/wiki";
 import WikiMarkdown from "./WikiMarkdown.vue";
+import WikiRevisionDiff from "./WikiRevisionDiff.vue";
 import { revisionText, type WikiPassage } from "./wiki-selection";
 
 const props = defineProps<{ article?: WikiArticle; channel?: string; mineFirst?: boolean }>();
@@ -136,7 +139,8 @@ async function submit() {
     await refreshUser();
     if (props.article?.revision_id !== article.revision_id || !editing.value) return;
     await request("/proposals", "POST", { channel: article.channel_id, page: article.id, revision: article.revision_id,
-      kind: kind.value, claim: claim.value, text: submittedText.value, excerpt: passage.value?.excerpt || "", sources: sources.value.split(/\s+/).filter(Boolean) });
+      kind: kind.value, claim: claim.value, text: submittedText.value, excerpt: passage.value?.excerpt || "",
+      excerpt_occurrence: passage.value?.excerptOccurrence, sources: sources.value.split(/\s+/).filter(Boolean) });
     message.value = "已提交，等待管理员审核。"; editor.value?.close();
   }); } finally { busy.value = false; }
 }

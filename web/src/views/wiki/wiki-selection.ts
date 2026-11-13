@@ -1,6 +1,7 @@
 export interface WikiPassage {
   claim: number;
   excerpt: string;
+  excerptOccurrence?: number;
   range?: { start: number; end: number };
 }
 

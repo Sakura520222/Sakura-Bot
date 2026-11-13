@@ -5,7 +5,9 @@
 """Public read model. Never serialize database rows directly to anonymous callers."""
 
 from datetime import timedelta
+from difflib import SequenceMatcher
 from functools import wraps
+from itertools import zip_longest
 
 from .cursor import read_cursor, scope_key, write_cursor
 from .models import utc
@@ -324,7 +326,7 @@ class PublicReader:
         )
 
     @consistent_read
-    async def page(self, channel, slug, *, part="full"):
+    async def page(self, channel, slug, *, part="full", compare=None):
         ch = await self.store.channel(channel)
         if not ch:
             return None
@@ -337,6 +339,8 @@ class PublicReader:
         )
         if not row:
             return None
+        if compare:
+            return await self.compare_revisions(row["id"], *compare)
         config = decode(row["config"])
         evidence_rows = await self.store.query(
             """SELECT DISTINCT s.id,s.source_type,s.message_id,s.created_at,s.edited_at
@@ -351,6 +355,12 @@ class PublicReader:
         result["verified_at"] = doc["verified_at"]
         result["proposals_enabled"] = bool(config.get("proposals_enabled"))
         result["annotations_enabled"] = bool(config.get("annotations_enabled"))
+        history_scope = f"""FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+            WHERE p.id=%s AND {REVISION_VISIBLE}
+            AND EXISTS (SELECT 1 FROM wiki_publication_pages pp WHERE pp.revision_id=r.id)"""
+        if part == "article":
+            total = await self.store.one(f"SELECT COUNT(*) total {history_scope}", (row["id"],))
+            result["history_total"] = total["total"]
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
@@ -380,18 +390,14 @@ class PublicReader:
         result["sources_total"] = sources_total
         # Historical metadata is restricted to revisions that were actually published.
         history = await self.store.query(
-            f"""SELECT DISTINCT r.id,r.created_at FROM wiki_page_revisions r
-            JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
-            WHERE p.id=%s AND {REVISION_VISIBLE} ORDER BY r.created_at DESC LIMIT 50""",
+            f"SELECT r.id,r.created_at {history_scope} ORDER BY r.created_at DESC,r.id DESC LIMIT 50",
             (row["id"],),
             fetch=True,
         )
         history_total = len(history)
         if len(history) == 50:
             total = await self.store.one(
-                f"""SELECT COUNT(DISTINCT r.id) total FROM wiki_page_revisions r
-                JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
-                WHERE p.id=%s AND {REVISION_VISIBLE}""",
+                f"SELECT COUNT(*) total {history_scope}",
                 (row["id"],),
             )
             history_total = total["total"]
@@ -420,6 +426,49 @@ class PublicReader:
                 )
             }
         return result
+
+    async def compare_revisions(self, page_id, before, after):
+        rows = await self.store.query(
+            f"""SELECT r.id,r.created_at,r.document FROM wiki_page_revisions r
+            JOIN wiki_pages p ON p.id=r.page_id WHERE p.id=%s AND r.id IN (%s,%s)
+            AND {REVISION_VISIBLE}
+            AND EXISTS (SELECT 1 FROM wiki_publication_pages pp WHERE pp.revision_id=r.id)""",
+            (page_id, before, after),
+            fetch=True,
+        )
+        versions = {row["id"]: row for row in rows}
+        if before not in versions or after not in versions:
+            return None
+
+        def blocks(row):
+            document = decode(row["document"])
+            result = [document["title"], document["topic"]]
+            for claim in document["claims"]:
+                result.append(claim["text"])
+                for note in claim.get("community_notes", []):
+                    excerpt = f"「{note['excerpt']}」" if note.get("excerpt") else ""
+                    result.append("\n".join([f"注解{excerpt}　{note['text']}", *note["sources"]]))
+            return result
+
+        old, new = blocks(versions[before]), blocks(versions[after])
+        changes = []
+        truncated = False
+        for tag, start, end, new_start, new_end in SequenceMatcher(None, old, new).get_opcodes():
+            if tag == "equal":
+                continue
+            for removed, added in zip_longest(old[start:end], new[new_start:new_end]):
+                if len(changes) == 100:
+                    truncated = True
+                    break
+                changes.append({"before": removed, "after": added})
+            if truncated:
+                break
+        return {
+            "before": {key: versions[before][key] for key in ("id", "created_at")},
+            "after": {key: versions[after][key] for key in ("id", "created_at")},
+            "changes": changes,
+            "truncated": truncated,
+        }
 
     @consistent_read
     async def related(self, channel, slug):
