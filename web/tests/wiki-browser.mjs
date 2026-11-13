@@ -71,7 +71,7 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === `/api/wiki/admin/proposals/${reviewProposalId}`) {
       if (req.method === "POST") {
         reviewProposalStatus = "approved";
-        out = { status: "approved", queued: true };
+        out = { status: "approved", job_id: "b".repeat(32) };
       } else out = { id: reviewProposalId, channel_id: "123", channel_title: channel.title, status: reviewProposalStatus,
         title: "审核样例", kind: "annotation", job_status: "paused", active_job: "a".repeat(32), created_at: channel.updated_at,
         original: "完整原文", payload: { claim: 0, excerpt: "所选测试片段", text: "新的说明", diff: "", sources: [] } };
@@ -588,9 +588,9 @@ try {
   await desktop.goto(url + `/wiki/admin?proposal=${reviewProposalId}`);
   await desktop.getByText("所选测试片段", { exact: true }).waitFor();
   await desktop.getByText("新的说明", { exact: true }).waitFor();
-  await desktop.getByRole("link", { name: "查看任务" }).waitFor();
   await desktop.getByRole("button", { name: "批准", exact: true }).click();
-  await desktop.getByText("已批准并排队，频道空闲后自动生成修订。", { exact: true }).waitFor();
+  await desktop.getByText("已批准，已提交词条审校。", { exact: true }).waitFor();
+  assert.match(await desktop.getByRole("link", { name: "查看词条任务" }).getAttribute("href"), /#job-b{32}$/);
   await desktop.goto(url + "/wiki/123/graph");
   await desktop.locator(".wiki-graph-list button").first().waitFor();
   await desktop.locator(".wiki-graph-canvas canvas").first().waitFor();

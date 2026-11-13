@@ -12,6 +12,10 @@ from .schema import REVISION_EVIDENCE, REVISION_VISIBLE
 from .store import decode, encode
 
 
+class PageEditConflict(ValueError):
+    pass
+
+
 class Knowledge:
     def __init__(self, store):
         self.store = store
@@ -164,8 +168,17 @@ class Knowledge:
         if not facts:
             return None
         old = await self.store.one(
-            "SELECT * FROM wiki_page_revisions WHERE page_id=%s ORDER BY created_at DESC,id DESC LIMIT 1",
-            (page["id"],),
+            """SELECT r.* FROM wiki_page_revisions r
+            JOIN wiki_channels c ON c.id=r.channel_id
+            LEFT JOIN wiki_publication_pages pp ON pp.publication_id=c.published_revision
+                AND pp.page_id=r.page_id AND pp.revision_id=r.id
+            WHERE r.page_id=%s AND (
+                NOT COALESCE(JSON_EXTRACT(r.document,'$.standalone_edit')=TRUE,FALSE)
+                OR pp.revision_id IS NOT NULL)
+            ORDER BY (%s AND pp.revision_id IS NOT NULL
+                AND COALESCE(JSON_EXTRACT(r.document,'$.standalone_edit')=TRUE,FALSE)) DESC,
+                r.created_at DESC,r.id DESC LIMIT 1""",
+            (page["id"], page["locked"]),
         )
         if page["locked"]:
             if not old:
@@ -358,6 +371,101 @@ class Knowledge:
             {key: value for key, value in profile.items() if key != "as_of"},
         )
 
+    @staticmethod
+    async def published_page(cur, publication, page):
+        await cur.execute(
+            "SELECT revision_id FROM wiki_publication_pages WHERE publication_id=%s AND page_id=%s",
+            (publication, page),
+        )
+        row = await cur.fetchone()
+        return row["revision_id"] if row else None
+
+    async def approve_revision(self, cur, channel, page, revision, policy):
+        _, subject_hash, _ = await self.review_subject(cur, channel, page, revision)
+        await cur.execute(
+            """SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s
+            AND policy_key=%s AND subject_hash=%s""",
+            (revision, policy, subject_hash),
+        )
+        review = await cur.fetchone()
+        if not review or not review["approved"]:
+            raise ValueError("Publication requires independent review of each new revision")
+        await cur.execute(
+            "UPDATE wiki_page_revisions SET approved=TRUE WHERE id=%s AND approved=FALSE",
+            (revision,),
+        )
+
+    async def publish_page_edit(self, cur, ch, job, manifest, progress, publication, actor):
+        channel, previous = ch["id"], ch["published_revision"]
+        page = manifest["page_id"]
+        revision = manifest["revisions"][page]
+        if await self.published_page(cur, previous, page) != manifest["base_revision"]:
+            raise PageEditConflict("该词条已有其他发布版本，请在最新版本上重新提交修订")
+        await cur.execute("SELECT topic FROM wiki_pages WHERE id=%s", (page,))
+        topic = await cur.fetchone()
+        if not topic or topic["topic"] in (decode(ch["config"]).get("hidden_topics") or []):
+            raise PageEditConflict("该词条已隐藏，无法发布修订")
+        await self.approve_revision(cur, channel, page, revision, manifest["review_policy"])
+        await cur.execute("SELECT profile,coverage FROM wiki_publications WHERE id=%s", (previous,))
+        snapshot = await cur.fetchone()
+        profile = decode(snapshot["profile"]) if snapshot else {}
+        await cur.execute(
+            """INSERT INTO wiki_publications (id,channel_id,job_id,profile,coverage,created_at)
+            VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP(6))""",
+            (
+                publication,
+                channel,
+                job["id"],
+                encode(profile),
+                snapshot["coverage"] if snapshot else ch["coverage"],
+            ),
+        )
+        await cur.execute(
+            """INSERT INTO wiki_publication_pages SELECT %s,page_id,revision_id
+            FROM wiki_publication_pages WHERE publication_id=%s AND page_id<>%s""",
+            (publication, previous, page),
+        )
+        await cur.execute(
+            "INSERT INTO wiki_publication_pages VALUES (%s,%s,%s)", (publication, page, revision)
+        )
+        await cur.execute(
+            """INSERT INTO wiki_publication_edges SELECT %s,pe.edge_id
+            FROM wiki_publication_edges pe JOIN wiki_edges e ON e.id=pe.edge_id
+            WHERE pe.publication_id=%s AND (e.source_page<>%s OR EXISTS (
+                SELECT 1 FROM wiki_evidence ev WHERE ev.revision_id=%s
+                AND ev.chunk_id=e.chunk_id AND ev.source_hash=e.source_hash))""",
+            (publication, previous, page, revision),
+        )
+        await cur.execute(
+            "SELECT page_id,revision_id FROM wiki_publication_pages WHERE publication_id=%s",
+            (publication,),
+        )
+        fingerprint = self.publication_fingerprint(await cur.fetchall(), profile)
+        await cur.execute(
+            "UPDATE wiki_publications SET content_hash=%s WHERE id=%s", (fingerprint, publication)
+        )
+        await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (page,))
+        await cur.execute(
+            "UPDATE wiki_channels SET published_revision=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+            (publication, channel),
+        )
+        await cur.execute(
+            """INSERT IGNORE INTO wiki_contributions
+            SELECT id,revision_id,%s,UTC_TIMESTAMP(6) FROM wiki_edit_proposals
+            WHERE revision_id=%s AND channel_id=%s AND status='approved'""",
+            (publication, revision, channel),
+        )
+        if job["status"] == "completed":
+            progress.update(published=True, publication_id=publication, activity="词条修订已发布")
+            await cur.execute(
+                "UPDATE wiki_jobs SET status='published',progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                (encode(progress), job["id"]),
+            )
+        await self.store.audit(
+            cur, channel, "publish", publication, actor, {"previous": previous, "page_id": page}
+        )
+        return publication
+
     async def publish(self, channel, job_id, actor, *, rollback=None, running_job=None):
         publication_id = uuid.uuid4().hex
         async with self.store.transaction() as cur:
@@ -380,7 +488,7 @@ class Knowledge:
                 )
                 existing = await cur.fetchone()
                 if existing:
-                    if existing["id"] != ch["published_revision"]:
+                    if existing["id"] != ch["published_revision"] and not running_job:
                         raise ValueError(
                             "This job was already published; use explicit rollback for an older snapshot"
                         )
@@ -424,11 +532,29 @@ class Knowledge:
                 policy = manifest.get("review_policy")
                 if not policy:
                     raise ValueError("Job predates independent review; rebuild before publishing")
+                if job["kind"] == "page_edit":
+                    return await self.publish_page_edit(
+                        cur, ch, job, manifest, progress, publication_id, actor
+                    )
                 if job["kind"] in {"update", "reconcile", "proposal"}:
                     # 增量任务只携带增量修订：与基线快照合并得到完整发布清单
                     revisions = await self.expand_revisions(cur, ch, manifest)
                 else:
-                    revisions = manifest.get("revisions", {})
+                    revisions = dict(manifest.get("revisions", {}))
+                if ch["published_revision"]:
+                    # A channel job may have staged its manifest before a separate edit was published.
+                    await cur.execute(
+                        f"""SELECT p.id page_id,r.id revision_id FROM wiki_publication_pages pp
+                        JOIN wiki_page_revisions r ON r.id=pp.revision_id JOIN wiki_pages p ON p.id=pp.page_id
+                        JOIN wiki_channels c ON c.id=p.channel_id
+                        WHERE pp.publication_id=%s AND p.locked=TRUE AND {REVISION_VISIBLE}
+                        AND JSON_EXTRACT(r.document,'$.standalone_edit')=TRUE
+                        AND NOT JSON_CONTAINS(JSON_EXTRACT(c.config,'$.hidden_topics'),JSON_QUOTE(p.topic))""",
+                        (ch["published_revision"],),
+                    )
+                    for edit in await cur.fetchall():
+                        revisions[edit["page_id"]] = edit["revision_id"]
+                        manifest.get("revisions", {}).pop(edit["page_id"], None)
                 # Revisions are prepared as an explicit manifest, including unchanged pages.
                 candidates = [
                     {"page_id": key, "revision_id": value} for key, value in revisions.items()
@@ -448,22 +574,8 @@ class Knowledge:
                     revision_id not in baseline
                     or candidate["page_id"] in manifest.get("revisions", {})
                 ):
-                    _, subject_hash, _ = await self.review_subject(
-                        cur, channel, candidate["page_id"], revision_id
-                    )
-                    await cur.execute(
-                        """SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s
-                        AND policy_key=%s AND subject_hash=%s""",
-                        (revision_id, policy, subject_hash),
-                    )
-                    review = await cur.fetchone()
-                    if not review or not review["approved"]:
-                        raise ValueError(
-                            "Publication requires independent review of each new revision"
-                        )
-                    await cur.execute(
-                        "UPDATE wiki_page_revisions SET approved=TRUE WHERE id=%s AND approved=FALSE",
-                        (revision_id,),
+                    await self.approve_revision(
+                        cur, channel, candidate["page_id"], revision_id, policy
                     )
                     continue
                 await cur.execute(
@@ -593,6 +705,7 @@ class Knowledge:
         annotation=None,
         proposal_id=None,
         replace_text=True,
+        standalone=False,
     ):
         new_id = uuid.uuid4().hex
         await cur.execute(
@@ -604,6 +717,8 @@ class Knowledge:
         if not old:
             raise ValueError("Correction requires current valid evidence")
         document = decode(old["document"])
+        if standalone:
+            document["standalone_edit"] = True
         if proposal_id:
             document["community_contributions"] = [
                 *document.get("community_contributions", []),
@@ -653,18 +768,42 @@ class Knowledge:
                     encode(fact),
                 ),
             )
-        await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (old["page_id"],))
-        await cur.execute(
-            "INSERT IGNORE INTO wiki_dirty_pages VALUES (%s,%s)", (channel, old["page_id"])
-        )
-        await cur.execute(
-            "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
-            (channel,),
-        )
+        if not standalone:
+            await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (old["page_id"],))
+            await cur.execute(
+                "INSERT IGNORE INTO wiki_dirty_pages VALUES (%s,%s)", (channel, old["page_id"])
+            )
+            await cur.execute(
+                "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                (channel,),
+            )
         await self.store.audit(
             cur, channel, "correct", new_id, actor, {"previous": revision_id, "claim": ordinal}
         )
         return new_id
+
+    async def correct_page(self, channel, revision_id, ordinal, text, actor):
+        async with self.store.transaction() as cur:
+            await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            ch = await cur.fetchone()
+            if not ch or not ch["enabled"]:
+                raise ValueError("请先启用频道 Wiki")
+            await cur.execute(
+                "SELECT page_id,approved FROM wiki_page_revisions WHERE id=%s AND channel_id=%s",
+                (revision_id, channel),
+            )
+            original = await cur.fetchone()
+            if not original:
+                raise ValueError("找不到要修订的版本")
+            page = original["page_id"]
+            base = await self.published_page(cur, ch["published_revision"], page)
+            if original["approved"] and base != revision_id:
+                raise PageEditConflict("该词条的发布版本已变更，请在最新版本上重新提交修订")
+            revision = await self.create_correction(
+                cur, channel, revision_id, ordinal, text, actor, standalone=True
+            )
+            job = await self.store.enqueue_page_edit(cur, channel, page, revision, base, actor)
+            return revision, job
 
     async def manage_page(self, channel, page_id, action, actor, **options):
         async with self.store.transaction() as cur:

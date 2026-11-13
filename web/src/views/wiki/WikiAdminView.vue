@@ -916,6 +916,7 @@ const jobLabels: Record<string, string> = {
   update: "增量更新",
   reconcile: "历史核对",
   reindex: "重建索引",
+  page_edit: "词条修订",
   page: "页面重生成",
 };
 const stateLabels: Record<string, string> = {
@@ -1125,7 +1126,7 @@ function correctClaim(claim: number, text: string) {
           claim,
           text,
         }),
-      "已保存锁定草稿并排队校验；完成后可在任务页发布",
+      "已提交词条审校，可在任务页查看进度",
     );
 }
 async function purge() {

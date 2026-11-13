@@ -1057,7 +1057,7 @@ class WikiEngine:
         for start in range(0, len(candidates), 64):
             await self.extract_batch([check(*item) for item in candidates[start : start + 64]])
         progress["review_complete"] = not progress["review_rejections"]
-        if progress["review_complete"] and progress.get("pages"):
+        if job["kind"] != "page_edit" and progress["review_complete"] and progress.get("pages"):
             await self.describe_channel(job, channel)
         await self.store.checkpoint(job, "ready")
 

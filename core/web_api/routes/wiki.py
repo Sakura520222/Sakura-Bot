@@ -631,12 +631,12 @@ async def reject(channel: str, revision_id: str, actor=ADMIN_AUTH):
 async def correct(channel: str, revision_id: str, body: CorrectionRequest, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
     try:
-        new_id = await service.engine.knowledge.correct(
+        new_id, job_id = await service.engine.knowledge.correct_page(
             ch["id"], revision_id, body.claim, body.text, actor
         )
-        job_id = await service.store.enqueue(ch["id"], "reindex", actor)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
+    service.wake()
     return {"revision_id": new_id, "job_id": job_id}
 
 
@@ -647,7 +647,18 @@ async def retry_revision_review(channel: str, revision_id: str, actor=ADMIN_AUTH
         await cur.execute(
             "SELECT active_job FROM wiki_channels WHERE id=%s FOR UPDATE", (ch["id"],)
         )
-        if (await cur.fetchone())["active_job"]:
+        channel_row = await cur.fetchone()
+        await cur.execute(
+            """SELECT j.id,j.`cursor`,j.status,j.phase FROM wiki_jobs j
+            JOIN wiki_page_revisions r ON r.job_id=j.id
+            WHERE r.id=%s AND r.channel_id=%s AND j.kind='page_edit' FOR UPDATE""",
+            (revision_id, ch["id"]),
+        )
+        edit_job = await cur.fetchone()
+        if edit_job:
+            if edit_job["status"] not in {"completed", "failed"}:
+                raise HTTPException(409, "该词条修订仍在处理中")
+        elif channel_row["active_job"]:
             raise HTTPException(409, "请等待当前 Wiki 任务结束")
         await cur.execute(
             """SELECT rv.policy_key,rv.subject_hash,rv.result,rv.created_at FROM wiki_revision_reviews rv
@@ -670,7 +681,13 @@ async def retry_revision_review(channel: str, revision_id: str, actor=ADMIN_AUTH
             actor,
             {"previous_reviews": [{**row, "result": decode(row["result"])} for row in previous]},
         )
-    job_id = await service.store.enqueue(ch["id"], "reindex", actor)
+        if edit_job:
+            manifest = decode(edit_job["cursor"])
+            job_id = await service.store.enqueue_page_edit(
+                cur, ch["id"], manifest["page_id"], revision_id, manifest["base_revision"], actor
+            )
+        else:
+            job_id = await service.store.enqueue(ch["id"], "reindex", actor, cur=cur)
     service.wake()
     return {"job_id": job_id}
 

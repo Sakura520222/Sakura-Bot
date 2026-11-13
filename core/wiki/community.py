@@ -157,8 +157,7 @@ class Community:
                 if not ch["enabled"]:
                     raise ValueError("请先启用频道 Wiki")
                 await self.validate_approval(cur, ch, row)
-                if not ch["active_job"] and not decode(ch["config"]).get("paused"):
-                    revision, job = await self.build_approved(cur, row, actor)
+                revision, job = await self.build_approved(cur, row, actor)
             await cur.execute(
                 "UPDATE wiki_edit_proposals SET status=%s,revision_id=%s,actor=%s,note=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
                 (action, revision, str(actor), note, identifier),
@@ -223,20 +222,23 @@ class Community:
             annotation=annotation,
             proposal_id=proposal["id"],
             replace_text=replace,
+            standalone=True,
         )
-        job = await self.store.enqueue(proposal["channel_id"], "proposal", actor, cur=cur)
+        job = await self.store.enqueue_page_edit(
+            cur,
+            proposal["channel_id"],
+            proposal["page_id"],
+            revision,
+            proposal["base_revision"],
+            actor,
+        )
         return revision, job
 
     async def dispatch_approved(self, channel):
         async with self.store.transaction() as cur:
             await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
             ch = await cur.fetchone()
-            if (
-                not ch
-                or not ch["enabled"]
-                or ch["active_job"]
-                or decode(ch["config"]).get("paused")
-            ):
+            if not ch or not ch["enabled"]:
                 return False
             await cur.execute(
                 """SELECT * FROM wiki_edit_proposals WHERE channel_id=%s AND status='approved' AND revision_id IS NULL
@@ -299,15 +301,16 @@ class Community:
             where.append("e.id=%s")
             args.append(identifier)
         review_fields = (
-            """,c.title channel_title,j.status job_status,j.phase job_phase,
-            c.active_job,base.document base_document,
-            JSON_EXTRACT(c.config,'$.paused')='true' channel_paused"""
+            """,c.title channel_title,j.id review_job_id,j.status review_job_status,
+            JSON_EXTRACT(j.progress,'$.review_complete')=TRUE review_complete,base.document base_document"""
             if review
             else ""
         )
         review_joins = (
-            """JOIN wiki_channels c ON c.id=e.channel_id LEFT JOIN wiki_jobs j ON j.id=c.active_job
-            LEFT JOIN wiki_page_revisions base ON base.id=e.base_revision AND base.page_id=e.page_id"""
+            """JOIN wiki_channels c ON c.id=e.channel_id
+            LEFT JOIN wiki_page_revisions base ON base.id=e.base_revision AND base.page_id=e.page_id
+            LEFT JOIN wiki_page_revisions edit ON edit.id=e.revision_id
+            LEFT JOIN wiki_jobs j ON j.id=edit.job_id AND j.kind='page_edit'"""
             if review
             else ""
         )

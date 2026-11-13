@@ -47,7 +47,7 @@
       {{ duration(Number(p.ai_elapsed_seconds)) }}
     </n-text>
     <div class="job-counts">
-      <n-statistic label="已处理来源 / 总来源">
+      <n-statistic v-if="job.kind !== 'page_edit'" label="已处理来源 / 总来源">
         {{ number(p.processed) }} /
         {{ p.source_total == null ? "统计中" : number(p.source_total) }}
       </n-statistic>
@@ -57,7 +57,7 @@
       <n-statistic label="完成批次 / 缓存命中">
         {{ number(p.completed_batches) }} / {{ number(p.cache_hits) }}
       </n-statistic>
-      <n-statistic label="已整理文章">{{ number(p.pages) }}</n-statistic>
+      <n-statistic v-if="job.kind !== 'page_edit'" label="已整理文章">{{ number(p.pages) }}</n-statistic>
     </div>
     <n-text v-if="requests.length" depth="3"
       >Token 用量在每次模型请求结束后结算，接收进度实时更新。</n-text

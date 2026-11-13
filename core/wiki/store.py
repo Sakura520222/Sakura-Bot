@@ -251,7 +251,7 @@ class WikiStore:
             if not config.enabled or config.paused:
                 await cur.execute(
                     """UPDATE wiki_jobs SET status='paused',lease_token=NULL,lease_until=NULL
-                    WHERE channel_id=%s AND status IN ('running','pending','partial')""",
+                    WHERE channel_id=%s AND kind<>'page_edit' AND status IN ('running','pending','partial')""",
                     (channel,),
                 )
 
@@ -479,13 +479,45 @@ class WikiStore:
         await self.audit(cur, channel, "enqueue", job_id, actor, {"kind": kind})
         return job_id
 
+    async def enqueue_page_edit(self, cur, channel, page, revision, base_revision, actor):
+        job_id = uuid.uuid4().hex
+        cursor = {"page_id": page, "revisions": {page: revision}, "base_revision": base_revision}
+        progress = {
+            "generation_complete": True,
+            "published": False,
+            "pages": 1,
+            "activity": "等待词条审校",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hits": 0,
+        }
+        await cur.execute(
+            """INSERT INTO wiki_jobs
+            (id,channel_id,kind,phase,`cursor`,progress,next_attempt,created_at,updated_at)
+            VALUES (%s,%s,'page_edit','review',%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
+            (job_id, channel, encode(cursor), encode(progress)),
+        )
+        await cur.execute(
+            "UPDATE wiki_page_revisions SET job_id=%s WHERE id=%s", (job_id, revision)
+        )
+        await self.audit(
+            cur, channel, "enqueue", job_id, actor, {"kind": "page_edit", "page_id": page}
+        )
+        return job_id
+
     async def claim_job(self):
         async with self.transaction() as cur:
             await cur.execute("""SELECT j.id FROM wiki_jobs j JOIN wiki_channels c ON c.id=j.channel_id
-                WHERE c.enabled=TRUE AND JSON_EXTRACT(c.config,'$.paused')=FALSE
-                AND c.active_job=j.id AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
+                WHERE c.enabled=TRUE AND (
+                    (j.kind='page_edit' AND NOT EXISTS (
+                        SELECT 1 FROM wiki_jobs running WHERE running.channel_id=j.channel_id
+                        AND running.kind='page_edit' AND running.status='running'
+                        AND running.lease_until>=UTC_TIMESTAMP(6)
+                    ))
+                    OR (c.active_job=j.id AND JSON_EXTRACT(c.config,'$.paused')=FALSE)
+                ) AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
                 OR (j.status='running' AND j.lease_until<UTC_TIMESTAMP(6)))
-                ORDER BY c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
+                ORDER BY (j.kind='page_edit') DESC,c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
             selected = await cur.fetchone()
             if not selected:
                 return None
@@ -555,6 +587,7 @@ class WikiStore:
     # 终态任务仅保留发布/展示所需的清单与叙述，窗口游标等临时状态不再回写
     TERMINAL_CURSOR_KEYS = (
         "page_id",
+        "base_revision",
         "revisions",
         "dropped_pages",
         "profile_narrative",
@@ -586,12 +619,12 @@ class WikiStore:
                     job["id"],
                 ),
             )
-            if status in {"completed", "published", "failed"}:
+            if job["kind"] != "page_edit" and status in {"completed", "published", "failed"}:
                 await cur.execute(
                     "UPDATE wiki_channels SET active_job=NULL WHERE id=%s AND active_job=%s",
                     (job["channel_id"], job["id"]),
                 )
-            if status == "failed":
+            if job["kind"] != "page_edit" and status == "failed":
                 # A terminal failure must not immediately create another identical job
                 # through the dirty/debounce path and defeat the retry limit.
                 await cur.execute(
@@ -614,7 +647,8 @@ class WikiStore:
             job = await cur.fetchone()
             if not job or not channel_row:
                 raise ValueError("Unknown job")
-            if channel_row["active_job"] not in (None, job_id):
+            page_edit = job["kind"] == "page_edit"
+            if not page_edit and channel_row["active_job"] not in (None, job_id):
                 raise ValueError("Another job is active")
             if job["status"] in {"completed", "published"}:
                 raise ValueError("Completed jobs are immutable; start a new job")
@@ -627,9 +661,10 @@ class WikiStore:
                 attempts=0,error_code=NULL,next_attempt=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),progress=%s WHERE id=%s""",
                 ("paused" if action == "pause" else "pending", encode(progress), job_id),
             )
-            await cur.execute(
-                "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
-            )
+            if not page_edit:
+                await cur.execute(
+                    "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
+                )
             await self.audit(cur, channel, action, job_id, actor)
 
     async def source_batch(self, channel, after="", limit=100, page_id=None, group=None):

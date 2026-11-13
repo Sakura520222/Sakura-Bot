@@ -107,7 +107,9 @@ def register_wiki_commands(client, runtime):
             await event.answer(str(error), alert=True)
             return
         runtime.wake()
-        await event.answer("已批准，等待频道空闲后处理" if result["queued"] else "投稿已处理")
+        await event.answer(
+            "已批准，已提交词条审校" if result["status"] == "approved" else "投稿已处理"
+        )
 
     @client.on(events.NewMessage(pattern=r"^/wiki_(status|build|pause)(?:@\w+)?(?:\s+(\S+))?\s*$"))
     async def handle(event):

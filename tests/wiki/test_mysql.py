@@ -450,19 +450,22 @@ async def test_community_contributions_follow_publication_and_privacy(store):
     competing, _ = await service.community.submit(user, ch["id"], page["id"], proposal)
     current_job = await store.enqueue(ch["id"], "update")
     await store.control_job(ch["id"], current_job, "pause", "test")
+    before = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,))
     approved = await service.community.decide(identifier, "approved", "test")
-    assert approved["queued"] and not approved["job_id"]
+    assert not approved["queued"] and approved["job_id"] != current_job
     assert not await service.community.dispatch_approved(ch["id"])
     assert (await store.channel(ch["id"]))["active_job"] == current_job
     [detail] = await service.community.proposals(identifier=identifier, review=True)
-    assert detail["original"] and detail["job_status"] == "paused"
-    await store.control_job(ch["id"], current_job, "resume", "test")
-    await store.finish(await store.claim_job(), "failed")
-    assert await service.community.dispatch_approved(ch["id"])
+    assert detail["original"] and detail["review_job_id"] == approved["job_id"]
+    assert detail["review_job_status"] == "pending"
     assert not await service.community.contributions()
     job = await store.claim_job()
+    assert job["kind"] == "page_edit" and job["id"] == approved["job_id"]
     await service.run_job(job)
+    assert job["progress"]["reviewed_pages"] == job["progress"]["review_total"] == 1
     await service.engine.knowledge.publish(ch["id"], job["id"], "test")
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before
+    assert (await store.channel(ch["id"]))["active_job"] == current_job
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
     assert not await service.community.contributions()  # Anonymous by default.
     await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
@@ -472,9 +475,60 @@ async def test_community_contributions_follow_publication_and_privacy(store):
     assert article["claims"][0]["community_notes"][0]["text"] == "社区补充说明"
     with pytest.raises(ValueError, match="基线"):
         await service.community.decide(competing, "approved", "test")
+    # Simulate an approval queued by the previous version, while the channel job is still paused.
+    legacy, _ = await service.community.submit(
+        user, ch["id"], page["id"], proposal.model_copy(update={"revision": article["revision_id"]})
+    )
+    await store.query("UPDATE wiki_edit_proposals SET status='approved' WHERE id=%s", (legacy,))
+    assert await service.community.dispatch_approved(ch["id"])
+    [detail] = await service.community.proposals(identifier=legacy, review=True)
+    assert detail["review_job_status"] == "pending"
+    assert (await store.claim_job())["id"] == detail["review_job_id"]
     await service.engine.knowledge.publish(ch["id"], None, "test", rollback=original)
     assert not await service.community.contributions()
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before
+
+
+async def test_page_edit_publishes_while_channel_paused_and_survives_stale_manifest(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    service = WikiRuntime(store, None, None)
+    service.engine = WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model"))
+    knowledge = service.engine.knowledge
+    channel_job_id = await store.enqueue(channel_id, "reindex")
+    channel_job = await store.claim_job()
+    channel_job["cursor"]["revisions"] = {page["id"]: revision}
+    fresh = await store.channel(channel_id)
+    channel_job["progress"].update(
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
+    )
+    await service.engine.review(channel_job, fresh)
+    await store.configure(
+        channel_id,
+        fresh["config"].model_copy(update={"paused": True, "publication_mode": "auto"}),
+        "test",
+    )
+    before = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (channel_job_id,))
+    assert before["status"] == "paused"
+    corrected, edit_id = await knowledge.correct_page(channel_id, revision, 0, "人工核对。", "test")
+    _, stale_id = await knowledge.correct_page(channel_id, revision, 0, "另一版改动。", "test")
+    edit = await store.claim_job()
+    assert edit["id"] == edit_id and await store.claim_job() is None
+    await service.run_job(edit)
+    assert edit["progress"]["review_total"] == 1 and edit["progress"]["published"]
+    await service.run_job(await store.claim_job())
+    assert (await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (stale_id,)))[
+        "status"
+    ] == "failed"
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (channel_job_id,)) == before
+    article = await service.reader.page(channel_id, page["slug"])
+    assert article["revision_id"] == corrected and article["claims"][0]["text"] == "人工核对。"
+    await store.configure(channel_id, fresh["config"], "test")
+    await store.control_job(channel_id, channel_job_id, "resume", "test")
+    await service.run_job(await store.claim_job())
+    await knowledge.publish(channel_id, channel_job_id, "test")
+    assert (await service.reader.page(channel_id, page["slug"]))["revision_id"] == corrected
 
 
 async def test_fact_check_requires_real_evidence_and_reuses_cached_claims(store, monkeypatch):

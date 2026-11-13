@@ -124,7 +124,7 @@ function correct() {
   const revision = props.article.revision_id;
   return run("correct", async () => {
     await wikiAdmin(`${root.value}/revisions/${revision}/correct`, "POST", { claim: ordinal.value, text: submittedText.value });
-    notice.value = "修订已提交审校。";
+    notice.value = "已提交词条审校，可在任务页查看进度。";
     if (page.value) page.value.locked = true;
   });
 }
