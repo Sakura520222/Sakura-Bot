@@ -61,7 +61,9 @@
         </details>
       </section>
       <button v-if="visibleCount < data.claims.length" @click="visibleCount += 8">继续阅读</button>
-      <WikiCommunity ref="community" :article="data" />
+      <Teleport defer to="#wiki-article-contributors" :disabled="!hasSidebar">
+        <WikiCommunity ref="community" :article="data" :sidebar="hasSidebar" />
+      </Teleport>
       <section id="sources" class="wiki-claim">
         <h2>参考来源</h2>
         <details @toggle="openReferences">
@@ -124,6 +126,9 @@ import WikiState from "./WikiState.vue";
 import { wikiAskArticle, wikiAssistantEnabled } from "../../api/wiki-assistant";
 
 const route = useRoute();
+const sidebarMedia = window.matchMedia("(min-width: 1151px)");
+const hasSidebar = ref(sidebarMedia.matches);
+function updateSidebar() { hasSidebar.value = sidebarMedia.matches; }
 const canAdmin = ref(false);
 const hiddenByAdmin = ref(false);
 const managementReady = ref(false);
@@ -166,7 +171,7 @@ const menuItems = computed<Action[]>(() => [
   { id: "history", label: "修订历史", icon: "history" },
   { id: "copy", label: "复制链接", icon: "copy" },
 ]);
-const popupActive = () => !!view.value?.querySelector("dialog[open]");
+const popupActive = () => !!document.querySelector(".wiki-shell dialog[open]");
 function passageActions(selected: boolean): Action[] {
   const items: Action[] = [];
   if (data.value?.proposals_enabled) {
@@ -240,6 +245,7 @@ function askArticle(selected = "") {
 }
 function reposition() { menu.value = undefined; selectionChanged(); }
 onMounted(() => {
+  sidebarMedia.addEventListener("change", updateSidebar);
   document.addEventListener("selectionchange", selectionChanged);
   document.addEventListener("pointerdown", dismissOutside);
   window.addEventListener("scroll", reposition, { passive: true });
@@ -248,6 +254,7 @@ onMounted(() => {
   window.visualViewport?.addEventListener("resize", reposition);
 });
 onUnmounted(() => {
+  sidebarMedia.removeEventListener("change", updateSidebar);
   clearTimeout(selectionTimer);
   document.removeEventListener("selectionchange", selectionChanged);
   document.removeEventListener("pointerdown", dismissOutside);

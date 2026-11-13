@@ -364,6 +364,10 @@ class PublicReader:
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
+        if part != "references" and doc.get("community_contributions"):
+            await self.credit_annotations(
+                row["id"], doc["community_contributions"], doc["claims"], result["claims"]
+            )
         review = await self.store.one(
             """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
             ORDER BY created_at DESC LIMIT 1""",
@@ -426,6 +430,67 @@ class PublicReader:
                 )
             }
         return result
+
+    async def credit_annotations(self, page_id, proposal_ids, raw_claims, claims):
+        if not any(claim["community_notes"] for claim in claims):
+            return
+        marks = ",".join(["%s"] * len(proposal_ids))
+        rows = await self.store.query(
+            f"""SELECT e.id,u.id contributor_id,u.display_name,
+            IF(u.show_username,u.username,NULL) username,
+            (u.show_avatar AND u.avatar IS NOT NULL) avatar
+            FROM wiki_contributions x JOIN wiki_edit_proposals e ON e.id=x.proposal_id
+            JOIN wiki_users u ON u.id=e.user_id
+            WHERE e.page_id=%s AND e.id IN ({marks}) AND e.status='approved'
+            AND u.blocked=FALSE AND u.anonymous_contributions=FALSE""",
+            (page_id, *proposal_ids),
+            fetch=True,
+        )
+        by_id = {row["id"]: row for row in rows}
+        # Older annotations recorded only their text. Resolve a legacy match only if it is unique,
+        # including anonymous proposals in the match so a public author cannot inherit their credit.
+        legacy = []
+        if any(
+            not note.get("proposal_id")
+            for claim in raw_claims
+            for note in claim.get("community_notes", [])
+        ):
+            legacy = await self.store.query(
+                f"""SELECT id,kind,payload FROM wiki_edit_proposals
+                WHERE page_id=%s AND id IN ({marks}) AND status='approved'""",
+                (page_id, *proposal_ids),
+                fetch=True,
+            )
+            for entry in legacy:
+                entry["payload"] = decode(entry["payload"])
+        for ordinal, claim in enumerate(claims):
+            for note, public_note in zip(
+                raw_claims[ordinal].get("community_notes", []),
+                claim["community_notes"],
+                strict=True,
+            ):
+                proposal = note.get("proposal_id")
+                if not proposal:
+                    matches = [
+                        entry["id"]
+                        for entry in legacy
+                        if entry["kind"] == note["kind"]
+                        and entry["payload"].get("claim") == ordinal
+                        and all(
+                            entry["payload"].get(key) == note.get(key)
+                            for key in ("text", "sources")
+                        )
+                        and (entry["payload"].get("excerpt") or "") == (note.get("excerpt") or "")
+                    ]
+                    proposal = matches[0] if len(matches) == 1 else None
+                row = by_id.get(proposal)
+                if row:
+                    public_note["contributor"] = {
+                        "id": row["contributor_id"],
+                        "display_name": row["display_name"],
+                        "username": row["username"],
+                        "avatar": bool(row["avatar"]),
+                    }
 
     async def compare_revisions(self, page_id, before, after):
         rows = await self.store.query(
@@ -911,7 +976,14 @@ def source_card(source, username, config):
 
 def public_claim(fact, sources, username, config):
     return {
-        "community_notes": fact.get("community_notes", []),
+        "community_notes": [
+            {
+                key: note[key]
+                for key in ("kind", "text", "sources", "excerpt", "excerpt_occurrence")
+                if key in note
+            }
+            for note in fact.get("community_notes", [])
+        ],
         **{
             key: fact.get(key)
             for key in (

@@ -1,7 +1,15 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 from core.wiki.web_research import (
     DEFAULTS,
+    PageText,
+    Provider,
+    SearchSettings,
+    SearchUnavailable,
+    WebResearch,
     normalized_results,
     provider_request,
     public_url,
@@ -117,3 +125,81 @@ def test_free_provider_uses_official_endpoint_without_key(name, body, expected):
     [result] = normalized_results(name, body, 3, endpoint=url)
     assert result["url"].startswith(expected)
     assert "<span>" not in result["snippet"]
+
+
+@pytest.mark.asyncio
+async def test_reachable_accepts_success_after_public_redirect():
+    class Response:
+        def __init__(self, status, headers):
+            self.status = status
+            self.headers = headers
+            self.content = SimpleNamespace(read=AsyncMock(return_value=b"<"))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def get(self, url, *, allow_redirects):
+            assert not allow_redirects
+            return responses[url]
+
+    responses = {
+        "https://example.org/": Response(302, {"Location": "/article"}),
+        "https://example.org/article": Response(200, {}),
+        "https://example.org/missing": Response(404, {}),
+        "https://example.org/private": Response(302, {"Location": "http://127.0.0.1/"}),
+    }
+    service = WebResearch(None)
+    service.client = lambda _: Client()
+    assert await service.reachable("https://example.org/")
+    assert not await service.reachable("https://example.org/missing")
+    assert not await service.reachable("https://example.org/private")
+
+
+@pytest.mark.asyncio
+async def test_assistant_keeps_index_snippets_and_prefers_general_web_search():
+    class Research(WebResearch):
+        async def cached(self, key, settings, perform):
+            return await perform()
+
+    service = Research(None)
+    service.request_provider = AsyncMock(
+        return_value={"results": [{"url": "https://example.org/", "content": "Indexed text"}]}
+    )
+    service.reachable = AsyncMock(return_value=False)
+    settings = SearchSettings(
+        enabled=True,
+        order=["wikipedia", "tavily"],
+        providers={
+            "wikipedia": Provider(enabled=True),
+            "tavily": Provider(enabled=True, api_key="test"),
+        },
+    )
+    answer = await service.search("千恋万花", settings, assistant=True)
+    assert answer["scope"] == "web" and answer["provider"] == "tavily"
+    assert answer["results"][0]["snippet"] == "Indexed text"
+    assert answer["results"][0]["page_reachable"] is False
+    assert service.request_provider.await_count == 1
+    with pytest.raises(SearchUnavailable, match="no_search_evidence"):
+        await service.search("千恋万花", settings)
+
+
+def test_page_text_extracts_title_and_article_without_navigation():
+    parser = PageText()
+    parser.feed(
+        "<title>示例 &amp; 更新</title><nav>导航</nav><main><article>"
+        "<h1>标题</h1><p>游戏<strong>动画</strong>消息</p><script>隐藏文本</script>"
+        "<p>第二段</p></article></main><footer>页脚</footer>"
+    )
+    parser.close()
+    assert "".join(parser.title) == "示例 & 更新"
+    assert parser.content() == "标题\n游戏动画消息\n第二段"

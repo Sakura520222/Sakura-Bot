@@ -6,6 +6,9 @@
     <n-skeleton v-if="loading && !settings" :repeat="4" text />
     <n-form v-if="settings" label-placement="top" :show-feedback="false" :disabled="saving" class="search-form">
       <n-form-item label="启用联网检索"><n-switch v-model:value="settings.enabled" /></n-form-item>
+      <n-alert v-if="settings.enabled && !generalSearchReady" type="info">
+        当前仅可使用已启用的专题索引。检索公开网页和新闻需要启用已配置密钥的 Tavily、SerpAPI 或 DeepSeek。
+      </n-alert>
       <n-divider title-placement="left">搜索服务</n-divider>
       <div class="settings-grid">
         <n-card v-for="name in names.filter((provider) => settings?.providers[provider])" :key="name" :title="providerNames[name]" size="small">
@@ -30,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { wikiAdmin } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 
@@ -45,6 +48,10 @@ type Search = {
 };
 const settings = ref<Search>();
 const keys = ref<Partial<Record<Provider, string>>>({});
+const generalSearchReady = computed(() => (["tavily", "serpapi", "deepseek"] as const).some((name) => {
+  const provider = settings.value?.providers[name];
+  return settings.value?.order.includes(name) && provider?.enabled && (provider.has_key || keys.value[name]?.trim());
+}));
 const loading = ref(false);
 const saving = ref(false);
 const error = ref("");

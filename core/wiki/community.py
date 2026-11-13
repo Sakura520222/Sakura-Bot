@@ -207,6 +207,7 @@ class Community:
         replace = proposal["kind"] in {"edit", "correction"}
         if not replace or data["sources"]:
             annotation = {
+                "proposal_id": proposal["id"],
                 "kind": proposal["kind"],
                 "text": data["text"],
                 "sources": data["sources"],

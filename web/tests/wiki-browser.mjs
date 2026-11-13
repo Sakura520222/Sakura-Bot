@@ -23,7 +23,7 @@ const cards = Array.from({length: 240}, (_, index) => ({
 const claims = Array.from({length: 18}, (_, index) => ({key:"章节 "+(index+1),text:"**Sakura** 条目正文，包含可核对的来源。" + (index === 0 ? "\n\n![示例](https://example.invalid/image.png)" : ""), status:"current", confidence:.9, source_created_at:channel.updated_at, evidence:[{source_id:"s1",start:0,end:4,url:"https://t.me/sakura_dev/1"}]}));
 const annotatedClaims = [{ ...claims[0], text: "- 词条名称：**护**\n- 画面元素：卡片。\n- 角色形象：护",
   community_notes: [
-    { kind: "annotation", excerpt: "护", text: "第一处的注解。", sources: [] },
+    { kind: "annotation", excerpt: "护", text: "第一处的注解。", sources: [], contributor: { id: "c".repeat(32), display_name: "注解作者", avatar: false } },
     { kind: "annotation", excerpt: "护", excerpt_occurrence: 1, text: "第二处的注解。", sources: [] },
     { kind: "annotation", excerpt: "旧版词句", text: "保留的旧注解。", sources: [] },
   ] }, ...claims.slice(1)];
@@ -584,12 +584,20 @@ try {
   await desktop.goto(url + "/wiki/contributors");
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
   await desktop.goto(url + "/wiki/123/page/article-1");
+  await desktop.locator(".wiki-context #wiki-article-contributors").getByRole("heading", { name: "社区贡献" }).waitFor();
+  assert.equal(await desktop.locator("article").getByRole("heading", { name: "社区贡献" }).count(), 0);
   const annotated = desktop.locator(".wiki-markdown[data-claim='0']");
   await annotated.locator("li").nth(0).getByText("第一处的注解。").waitFor();
   await annotated.locator("li").nth(2).getByText("第二处的注解。").waitFor();
   await annotated.getByText("保留的旧注解。").waitFor();
   assert.deepEqual(await annotated.locator("mark").allTextContents(), ["护", "护"]);
   assert.equal(await annotated.locator("mark").first().evaluate((mark) => getComputedStyle(mark).backgroundColor), "rgb(255, 241, 170)");
+  const caption = annotated.locator(".wiki-inline-caption").first();
+  const markBox = await annotated.locator("mark").first().boundingBox();
+  const captionBox = await caption.boundingBox();
+  assert.ok(captionBox.y >= markBox.y + markBox.height - 1 && Math.abs(captionBox.x - markBox.x) < 2);
+  await caption.hover();
+  await caption.getByRole("tooltip").getByText("注解作者").waitFor();
   const historyBadge = desktop.getByRole("button", { name: "修订历史", exact: true });
   assert.equal(await historyBadge.textContent(), "[2]");
   await historyBadge.hover();

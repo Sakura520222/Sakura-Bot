@@ -476,6 +476,17 @@ async def test_community_contributions_follow_publication_and_privacy(store, mon
     article = await service.reader.page(ch["id"], page["slug"])
     assert article["claims"][0]["community_notes"][0]["text"] == "社区补充说明"
     assert article["claims"][0]["community_notes"][0]["excerpt_occurrence"] == 0
+    assert article["claims"][0]["community_notes"][0]["contributor"] == {
+        "id": user,
+        "display_name": "测试贡献者",
+        "username": None,
+        "avatar": False,
+    }
+    assert "proposal_id" not in article["claims"][0]["community_notes"][0]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=TRUE WHERE id=%s", (user,))
+    anonymous = await service.reader.page(ch["id"], page["slug"], part="article")
+    assert "contributor" not in anonymous["claims"][0]["community_notes"][0]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
     comparison = await service.reader.page(
         ch["id"], page["slug"], compare=(revision, article["revision_id"])
     )

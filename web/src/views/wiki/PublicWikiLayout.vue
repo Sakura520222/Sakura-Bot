@@ -79,6 +79,7 @@
             {{ entry.title }}
           </RouterLink>
         </section>
+        <div id="wiki-article-contributors"></div>
       </aside>
     </div>
   </div>

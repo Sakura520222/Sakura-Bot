@@ -69,7 +69,7 @@ const html = computed(() => {
   );
   const rendered = document.createElement("div");
   rendered.append(root);
-  return DOMPurify.sanitize(rendered.innerHTML, options);
+  return DOMPurify.sanitize(rendered.innerHTML, { ...options, FORBID_TAGS: ["iframe", "form", "style"] });
 });
 </script>
 <style scoped>
@@ -120,7 +120,26 @@ const html = computed(() => {
   box-decoration-break: clone;
   border-radius: 2px;
 }
-.wiki-markdown :deep(.wiki-inline-note) {
+.wiki-markdown :deep(.wiki-note-anchor) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: start;
+  vertical-align: top;
+  max-width: 100%;
+}
+.wiki-markdown :deep(.wiki-inline-caption) {
+  display: block;
+  position: relative;
+  max-width: min(21em, 80vw);
+  font-size: .75em;
+  line-height: 1.4;
+  padding: 0 .2em;
+  border-radius: 2px;
+  background: var(--wiki-note-surface, #fffae6);
+  color: var(--sb-text);
+}
+.wiki-markdown :deep(.wiki-note-unanchored) {
+  position: relative;
   display: block;
   margin: .4rem 0 .65rem;
   padding: .4rem .7rem;
@@ -130,10 +149,29 @@ const html = computed(() => {
   color: var(--sb-text);
   font-size: .875em;
 }
-.wiki-markdown :deep(.wiki-inline-note-label) { font-weight: 650; }
 .wiki-markdown :deep(.wiki-inline-note q) { display: block; color: var(--sb-text-2); }
 .wiki-markdown :deep(.wiki-inline-note p) { margin: 0; }
 .wiki-markdown :deep(.wiki-inline-note-sources) { display: flex; flex-wrap: wrap; gap: .75em; }
+.wiki-markdown :deep(.wiki-note-credit) {
+  display: none;
+  position: absolute;
+  z-index: 12;
+  inset-inline-start: 0;
+  bottom: 100%;
+  width: max-content;
+  max-width: min(18rem, 75vw);
+  align-items: center;
+  gap: .45em;
+  padding: .4rem .55rem;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  border: 1px solid var(--sb-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 15%);
+}
+.wiki-markdown :deep(.wiki-inline-note:hover > .wiki-note-credit),
+.wiki-markdown :deep(.wiki-inline-note:focus-within > .wiki-note-credit) { display: flex; }
+.wiki-markdown :deep(.wiki-note-credit img) { width: 1.5rem; height: 1.5rem; border-radius: 50%; object-fit: cover; }
 :global(html.dark .wiki-markdown) {
   --wiki-note-highlight: #68531b;
   --wiki-note-surface: #342b16;

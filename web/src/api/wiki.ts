@@ -119,6 +119,7 @@ export interface WikiAnnotation {
   sources: string[];
   excerpt?: string;
   excerpt_occurrence?: number;
+  contributor?: { id: string; display_name: string; username?: string | null; avatar: boolean };
 }
 export interface WikiArticle extends WikiCard {
   verified_at: string;

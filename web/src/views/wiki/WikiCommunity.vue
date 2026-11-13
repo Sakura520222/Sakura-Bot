@@ -1,10 +1,13 @@
 <template>
-  <section class="wiki-claim">
-    <h2>社区贡献</h2>
+  <section :class="sidebar ? 'wiki-context-card community-sidebar' : 'wiki-claim'">
+    <button v-if="article && !sidebar" type="button" :aria-expanded="showList" @click="showList = !showList">社区贡献</button>
+    <h2 v-else>社区贡献</h2>
+    <div v-show="!article || sidebar || showList">
     <div v-if="user && !mineFirst" class="community-actions">
       <button v-if="user && !mineFirst" @click="loadMine">我的修订建议</button>
     </div>
     <p v-if="message" role="status">{{ message }}</p>
+    </div>
     <dialog v-if="article" ref="editor" class="proposal-dialog" aria-labelledby="proposal-heading" @close="editing = false">
     <form v-if="editing" @submit.prevent="submit">
       <h2 id="proposal-heading">{{ kind === 'annotation' ? '添加注解' : '提交修订建议' }}</h2>
@@ -26,14 +29,17 @@
       <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
     </form>
     </dialog>
+    <div v-show="!article || sidebar || showList">
     <p v-if="contributorsLoading" role="status">正在加载贡献者…</p>
     <p v-else-if="contributorsError" role="alert">{{ contributorsError }} <button @click="readContributors()">重试</button></p>
-    <ul v-else-if="contributors?.length">
+    <ul v-else-if="contributors?.length" class="contributors-list">
       <li v-for="entry in contributors" :key="entry.id">
-        <img v-if="entry.avatar" :src="`/api/wiki/community/contributors/${entry.id}/avatar`" width="24" height="24" alt="" />
-        <RouterLink :to="`/wiki/contributors/${entry.id}`">{{ entry.display_name }}</RouterLink>
-        <span v-if="entry.username"> @{{ entry.username }}</span> · {{ entry.total }} 项有效贡献
-        <span v-if="entry.total">（修订 {{ entry.edits }}、标注 {{ entry.annotations }}、来源 {{ entry.sources }}）</span>
+        <div class="contributor-name">
+          <img v-if="entry.avatar" :src="`/api/wiki/community/contributors/${entry.id}/avatar`" width="24" height="24" alt="" />
+          <RouterLink :to="`/wiki/contributors/${entry.id}`">{{ entry.display_name }}</RouterLink>
+          <span v-if="entry.username"> @{{ entry.username }}</span>
+        </div>
+        <span class="wiki-meta">{{ entry.total }} 项贡献<span v-if="entry.edits"> · 修订 {{ entry.edits }}</span><span v-if="entry.annotations"> · 标注 {{ entry.annotations }}</span><span v-if="entry.sources"> · 来源 {{ entry.sources }}</span></span>
       </li>
     </ul>
     <p v-else-if="contributors">暂无公开贡献。</p>
@@ -46,7 +52,8 @@
       </li>
       <li v-if="!mine.length">暂无修订建议。</li>
     </ul>
-  </section>
+    </div>
+    </section>
 </template>
 
 <script setup lang="ts">
@@ -59,7 +66,8 @@ import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiRevisionDiff from "./WikiRevisionDiff.vue";
 import { revisionText, type WikiPassage } from "./wiki-selection";
 
-const props = defineProps<{ article?: WikiArticle; channel?: string; mineFirst?: boolean }>();
+const props = defineProps<{ article?: WikiArticle; channel?: string; mineFirst?: boolean; sidebar?: boolean }>();
+const showList = ref(false);
 const root = "/api/wiki/community";
 const message = ref("");
 const user = ref(false);
@@ -141,6 +149,7 @@ async function submit() {
     await request("/proposals", "POST", { channel: article.channel_id, page: article.id, revision: article.revision_id,
       kind: kind.value, claim: claim.value, text: submittedText.value, excerpt: passage.value?.excerpt || "",
       excerpt_occurrence: passage.value?.excerptOccurrence, sources: sources.value.split(/\s+/).filter(Boolean) });
+    showList.value = true;
     message.value = "已提交，等待管理员审核。"; editor.value?.close();
   }); } finally { busy.value = false; }
 }
@@ -176,6 +185,12 @@ textarea { display: block; width: 100%; box-sizing: border-box; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 img { border-radius: 50%; vertical-align: middle; }
 .community-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.community-sidebar { margin-block-start: 16px; }
+.community-sidebar .contributors-list { padding: 0; margin: 0; list-style: none; }
+.community-sidebar .contributors-list li + li { border-top: 1px solid var(--sb-border); padding-top: 8px; margin-top: 8px; }
+.community-sidebar .contributor-name { display: flex; flex-wrap: wrap; align-items: center; column-gap: .35em; overflow-wrap: anywhere; }
+.community-sidebar .contributor-name a { padding: 0; }
+.community-sidebar .contributor-name span { color: var(--sb-text-2); font-size: .8em; }
 .proposal-dialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 16px; border: 1px solid var(--sb-border); border-radius: 14px; background: var(--sb-surface); color: var(--sb-text); }
 .proposal-dialog::backdrop { background: rgb(0 0 0 / 30%); }
 .proposal-dialog h2 { margin-top: 0; }

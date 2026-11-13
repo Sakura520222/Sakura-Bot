@@ -27,6 +27,7 @@ DEFAULTS = {
     "github": "https://api.github.com",
 }
 FREE_PROVIDERS = {"wikipedia": 1, "crossref": 1, "github": 6}
+WEB_PROVIDERS = {"deepseek", "tavily", "serpapi"}
 USER_AGENT = "Sakura-Bot/2.5 (https://github.com/Sakura520222/Sakura-Bot)"
 
 
@@ -124,20 +125,55 @@ class PublicResolver(aiohttp.ThreadedResolver):
 class PageText(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.skip = 0
+        self.skip = []
         self.parts = []
+        self.main_parts = []
+        self.title = []
+        self.in_title = False
+        self.in_main = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style", "template", "noscript"}:
-            self.skip += 1
+        if tag in {"script", "style", "template", "noscript", "nav", "footer", "aside"}:
+            self.skip.append(tag)
+        if self.skip:
+            return
+        if tag == "title":
+            self.in_title = True
+        if tag in {"main", "article"}:
+            self.in_main += 1
+        if tag in {"p", "br", "li", "h1", "h2", "h3", "blockquote", "pre", "tr", "section"}:
+            self.append("\n")
 
     def handle_endtag(self, tag):
-        if self.skip and tag in {"script", "style", "template", "noscript"}:
-            self.skip -= 1
+        if self.skip:
+            if self.skip[-1] == tag:
+                self.skip.pop()
+            return
+        if tag == "title":
+            self.in_title = False
+        if tag in {"p", "li", "h1", "h2", "h3", "blockquote", "pre", "tr", "main", "article"}:
+            self.append("\n")
+        if self.in_main and tag in {"main", "article"}:
+            self.in_main -= 1
 
     def handle_data(self, text):
-        if not self.skip:
-            self.parts.append(text)
+        if self.skip:
+            return
+        if self.in_title:
+            self.title.append(text)
+        else:
+            self.append(text)
+
+    def append(self, text):
+        self.parts.append(text)
+        if self.in_main:
+            self.main_parts.append(text)
+
+    def content(self):
+        parts = self.main_parts if any(part.strip() for part in self.main_parts) else self.parts
+        return "\n".join(
+            line for raw in "".join(parts).splitlines() if (line := " ".join(raw.split()))
+        )
 
 
 def provider_request(name, key, query, limit):
@@ -209,6 +245,7 @@ def normalized_results(name, payload, limit, *, endpoint=""):
                 "url": f"https://{urlsplit(endpoint).hostname}/wiki/{quote(row['key'], safe='')}",
                 "title": row.get("title"),
                 "snippet": plain_snippet(row.get("excerpt")),
+                "content": plain_snippet(row.get("description")),
             }
             for row in payload.get("pages", [])
             if isinstance(row, dict) and isinstance(row.get("key"), str)
@@ -309,25 +346,30 @@ class WebResearch:
             )
             return result
 
-    async def search(self, query, settings=None):
+    async def search(self, query, settings=None, *, assistant=False):
         settings = settings or search_settings()
         query = " ".join(query.split())[:128]
         if not settings.enabled or not query:
             raise SearchUnavailable("search_disabled_or_empty")
-        key = digest("search-v2", query, settings.model_dump())
+        key = digest("search-v3", query, settings.model_dump(), assistant)
 
         async def perform():
-            for name in settings.order:
-                provider = settings.providers.get(name)
-                if (
-                    not provider
-                    or not provider.enabled
-                    or (name not in FREE_PROVIDERS and not provider.api_key)
-                ):
-                    continue
+            order = [
+                name
+                for name in settings.order
+                if (provider := settings.providers.get(name))
+                and provider.enabled
+                and (name in FREE_PROVIDERS or provider.api_key)
+            ]
+            if not order:
+                raise SearchUnavailable("no_search_provider_configured")
+            if assistant:
+                order = sorted(order, key=lambda name: name not in WEB_PROVIDERS)
+            failures = 0
+            for name in order:
                 method, url, options = provider_request(
                     name,
-                    provider.api_key,
+                    settings.providers[name].api_key,
                     query,
                     settings.result_limit,
                 )
@@ -339,6 +381,19 @@ class WebResearch:
                     reachable = await asyncio.gather(
                         *(self.reachable(result["url"]) for result in results)
                     )
+                    if assistant:
+                        usable = [
+                            {**result, "page_reachable": available}
+                            for result, available in zip(results, reachable, strict=True)
+                            if available or result["snippet"] or result["content"]
+                        ]
+                        if usable:
+                            return {
+                                "results": usable,
+                                "provider": name,
+                                "scope": "web" if name in WEB_PROVIDERS else name,
+                                "guidance": "按返回来源的覆盖范围作答。page_reachable=false 仅有搜索索引资料，不能声称读过原网页，也不能用空结果推断没有新闻。",
+                            }
                     results = [
                         result
                         for result, available in zip(results, reachable, strict=True)
@@ -354,7 +409,11 @@ class WebResearch:
                     AttributeError,
                     IndexError,
                 ):
-                    continue
+                    failures += 1
+            if failures == len(order):
+                raise SearchUnavailable("search_providers_unavailable")
+            if assistant and WEB_PROVIDERS.isdisjoint(order):
+                raise SearchUnavailable("no_general_web_provider")
             raise SearchUnavailable("no_search_evidence")
 
         return await self.cached(key, settings, perform)
@@ -410,7 +469,14 @@ class WebResearch:
                     self.client(settings.timeout) as client,
                 ):
                     for _ in range(4):
-                        async with client.get(target, allow_redirects=False) as response:
+                        async with client.get(
+                            target,
+                            allow_redirects=False,
+                            headers={
+                                "User-Agent": USER_AGENT,
+                                "Accept": "text/html, text/plain;q=0.9, text/markdown;q=0.9, application/xhtml+xml;q=0.8",
+                            },
+                        ) as response:
                             if response.status in {
                                 301,
                                 302,
@@ -420,47 +486,64 @@ class WebResearch:
                             } and response.headers.get("Location"):
                                 target = public_url(urljoin(target, response.headers["Location"]))
                                 continue
-                            if response.status != 200 or response.content_type not in {
+                            if response.status != 200:
+                                raise SearchUnavailable(f"fetch_http_{response.status}")
+                            if response.content_type not in {
                                 "text/html",
+                                "application/xhtml+xml",
                                 "text/plain",
                                 "text/markdown",
                             }:
-                                break
-                            text = (await bounded_body(response, 512 * 1024)).decode(
+                                raise SearchUnavailable("fetch_unsupported_type")
+                            chunks = bytearray()
+                            max_bytes = 512 * 1024
+                            async for chunk in response.content.iter_chunked(16384):
+                                chunks.extend(chunk[: max_bytes + 1 - len(chunks)])
+                                if len(chunks) > max_bytes:
+                                    break
+                            text = chunks[:max_bytes].decode(
                                 response.charset or "utf-8", errors="replace"
                             )
-                            if response.content_type == "text/html":
+                            title = ""
+                            if response.content_type in {"text/html", "application/xhtml+xml"}:
                                 parser = PageText()
                                 parser.feed(text)
-                                text = " ".join(parser.parts)
+                                parser.close()
+                                text = parser.content()
+                                title = " ".join("".join(parser.title).split())[:300]
+                            text = text.strip()
+                            if not text:
+                                raise SearchUnavailable("fetch_no_text")
                             return {
                                 "url": target,
                                 "provider": "fetch",
-                                "content": " ".join(text.split())[:12000],
+                                "title": title,
+                                "content": text[:12000],
+                                "truncated": len(chunks) > max_bytes or len(text) > 12000,
                                 "fetched_at": utc().isoformat() + "Z",
                             }
+            except SearchUnavailable:
+                raise
             except (aiohttp.ClientError, TimeoutError, ValueError, LookupError):
                 pass
             raise SearchUnavailable("fetch_unavailable")
 
-        return await self.cached(digest("fetch-v1", url), settings, perform)
+        return await self.cached(digest("fetch-v2", url), settings, perform)
 
     async def reachable(self, url):
         try:
             target = public_url(url)
             async with asyncio.timeout(5), self.client(5) as client:
                 for _ in range(4):
-                    async with client.get(
-                        target, allow_redirects=False, headers={"Range": "bytes=0-511"}
-                    ) as response:
+                    async with client.get(target, allow_redirects=False) as response:
                         if response.status in {301, 302, 303, 307, 308} and response.headers.get(
                             "Location"
                         ):
                             target = public_url(urljoin(target, response.headers["Location"]))
                             continue
-                            return response.status in {200, 206} and bool(
-                                await response.content.read(1)
-                            )
+                        return response.status in {200, 206} and bool(
+                            await response.content.read(1)
+                        )
         except (ValueError, aiohttp.ClientError, TimeoutError):
             pass
         return False

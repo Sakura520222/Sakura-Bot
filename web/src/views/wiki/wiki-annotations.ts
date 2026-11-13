@@ -12,7 +12,7 @@ function renderedText(root: HTMLElement | DocumentFragment) {
       return NodeFilter.FILTER_ACCEPT;
     },
   });
-  const positions: ({ node: Text; offset: number; block: Element | null } | null)[] = [];
+  const positions: ({ node: Text; offset: number } | null)[] = [];
   const characters: string[] = [];
   let previousBlock: Element | null = null;
   function addSpace(position: (typeof positions)[number] = null) {
@@ -32,11 +32,11 @@ function renderedText(root: HTMLElement | DocumentFragment) {
       const character = node.data[offset];
       if (previousBlock !== block) addSpace();
       if (!character.trim()) {
-        addSpace({ node, offset, block });
+        addSpace({ node, offset });
         continue;
       }
       characters.push(character);
-      positions.push({ node, offset, block });
+      positions.push({ node, offset });
       previousBlock = block;
     }
   }
@@ -63,8 +63,9 @@ export function renderAnnotations(
 ) {
   const { text, positions } = renderedText(root);
   const highlights = new Map<Text, Set<number>>();
-  const placements = new Map<Element | null, HTMLElement[]>();
-  for (const [index, note] of notes.entries()) {
+  const placements = new Map<Text, Map<number, HTMLElement[]>>();
+  const unanchored: HTMLElement[] = [];
+  for (const note of notes) {
     const excerpt = normalize(note.excerpt || "");
     let start = excerpt ? text.indexOf(excerpt) : -1;
     for (let i = 0; start >= 0 && i < (note.excerpt_occurrence ?? 0); i++) {
@@ -78,20 +79,36 @@ export function renderAnnotations(
       offsets.add(position.offset);
       highlights.set(position.node, offsets);
     }
-    const aside = document.createElement("aside");
-    aside.className = "wiki-inline-note";
-    const label = document.createElement("span");
-    label.className = "wiki-inline-note-label";
-    const kind: Record<string, string> = { source: "补充来源", fact_check: "事实标注", dispute: "争议标注", outdated: "过期标注", edit: "修订来源", correction: "纠错来源" };
-    label.textContent = `[${index + 1}] ${kind[note.kind] ?? "注解"}`;
-    aside.setAttribute("aria-label", label.textContent);
-    aside.append(label);
+    const aside = document.createElement(last ? "span" : "aside");
+    aside.className = last ? "wiki-inline-note wiki-inline-caption" : "wiki-inline-note wiki-note-unanchored";
+    const author = note.contributor;
+    const byline = author ? `${author.display_name}${author.username ? ` @${author.username}` : ""}` : "匿名贡献者";
+    const insideLink = !!last?.node.parentElement?.closest("a");
+    if (!insideLink) aside.tabIndex = 0;
     if (excerpt && !last) {
       const quote = document.createElement("q");
       quote.textContent = note.excerpt || "";
       aside.append(quote);
     }
-    aside.append(render(note.text));
+    const body = render(note.text);
+    if (last) {
+      aside.append(body.textContent?.trim() || note.text);
+    } else {
+      aside.append(body);
+    }
+    const tooltip = document.createElement("span");
+    tooltip.className = "wiki-note-credit";
+    tooltip.setAttribute("role", "tooltip");
+    if (author?.avatar && /^[a-f0-9]{32}$/.test(author.id)) {
+      const image = document.createElement("img");
+      image.src = `/api/wiki/community/contributors/${author.id}/avatar`;
+      image.alt = "";
+      image.loading = "lazy";
+      tooltip.append(image);
+    }
+    tooltip.append(byline);
+    aside.setAttribute("aria-label", `${aside.textContent} · ${byline}`);
+    aside.append(tooltip);
     if (note.sources.length) {
       const sources = document.createElement("div");
       sources.className = "wiki-inline-note-sources";
@@ -99,6 +116,7 @@ export function renderAnnotations(
         let url: URL;
         try { url = new URL(source); } catch { continue; }
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) continue;
+        if (insideLink) continue;
         const link = document.createElement("a");
         link.href = url.href;
         link.target = "_blank";
@@ -106,38 +124,48 @@ export function renderAnnotations(
         link.textContent = `来源 ${i + 1}`;
         sources.append(link);
       }
-      if (sources.childElementCount) aside.append(sources);
+      if (sources.childElementCount) {
+        if (last) {
+          const links = document.createElement("span");
+          links.className = sources.className;
+          links.append(...sources.childNodes);
+          tooltip.append(links);
+        } else aside.append(sources);
+      }
     }
-    const block = last?.block ?? null;
-    const group = placements.get(block) ?? [];
-    group.push(aside);
-    placements.set(block, group);
+    if (last) {
+      const byOffset = placements.get(last.node) ?? new Map<number, HTMLElement[]>();
+      const captions = byOffset.get(last.offset) ?? [];
+      captions.push(aside);
+      byOffset.set(last.offset, captions);
+      placements.set(last.node, byOffset);
+    } else {
+      unanchored.push(aside);
+    }
   }
   for (const [node, offsets] of highlights) {
     const fragment = document.createDocumentFragment();
+    const captions = placements.get(node);
     for (let start = 0; start < node.length;) {
       const marked = offsets.has(start);
       let end = start + 1;
-      while (end < node.length && offsets.has(end) === marked) end++;
+      while (end < node.length && offsets.has(end) === marked && !captions?.has(end - 1)) end++;
       const value = node.data.slice(start, end);
       if (marked) {
         const mark = document.createElement("mark");
         mark.className = "wiki-annotation-mark";
         mark.textContent = value;
-        fragment.append(mark);
+        const notesAtEnd = captions?.get(end - 1);
+        if (notesAtEnd) {
+          const anchor = document.createElement("span");
+          anchor.className = "wiki-note-anchor";
+          anchor.append(mark, ...notesAtEnd);
+          fragment.append(anchor);
+        } else fragment.append(mark);
       } else fragment.append(value);
       start = end;
     }
     node.replaceWith(fragment);
   }
-  for (const [block, notesAtBlock] of placements) {
-    if (!block) root.append(...notesAtBlock);
-    else if (block.matches("li, td, th, dd, blockquote")) block.append(...notesAtBlock);
-    else if (block.matches("dt")) {
-      const definition = document.createElement("dd");
-      definition.append(...notesAtBlock);
-      block.after(definition);
-    }
-    else block.after(...notesAtBlock);
-  }
+  root.append(...unanchored);
 }
