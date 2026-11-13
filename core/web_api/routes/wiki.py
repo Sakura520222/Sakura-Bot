@@ -242,11 +242,27 @@ async def graph(
     q: str = Query("", max_length=200),
     after: datetime | None = None,
     before: datetime | None = None,
+    pagination: Literal["legacy", "cursor"] = "legacy",
+    cursor: str | None = Query(None, max_length=512),
 ):
-    return found(
-        await runtime().reader.graph(
-            channel, node_id, depth, limit, kind, topic, relation, q, after, before
+    reader = runtime().reader
+    if pagination == "cursor":
+        return found(
+            await reader.browse_graph(
+                channel,
+                node_id,
+                cursor=cursor,
+                limit=limit,
+                kind=kind,
+                topic=topic,
+                relation=relation,
+                q=q,
+                after=after,
+                before=before,
+            )
         )
+    return found(
+        await reader.graph(channel, node_id, depth, limit, kind, topic, relation, q, after, before)
     )
 
 

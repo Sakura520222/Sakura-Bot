@@ -31,7 +31,7 @@
           </svg>
         </RouterLink>
       </div>
-      <main id="wiki-main" class="wiki-main" :class="{ 'wiki-reading': isArticle }" tabindex="-1">
+      <main id="wiki-main" class="wiki-main" :class="{ 'wiki-reading': backTitle }" tabindex="-1">
         <div v-if="channel" class="wiki-context-nav">
           <RouterLink :to="channelBase">频道</RouterLink>
           <RouterLink :to="`${channelBase}/graph`">知识地图</RouterLink>
@@ -39,13 +39,14 @@
           <RouterLink :to="`${channelBase}/profile`">画像</RouterLink>
           <RouterLink :to="`${channelBase}/search`">搜索</RouterLink>
         </div>
-        <header v-if="isArticle" class="wiki-article-toolbar">
-          <button type="button" class="wiki-header-icon wiki-article-back" aria-label="返回" title="返回" @click="backFromArticle">
+        <header v-if="backTitle" class="wiki-article-toolbar">
+          <button type="button" class="wiki-header-icon wiki-article-back" aria-label="返回" title="返回" @click="backFromDetail">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="m11 5-7 7 7 7M4 12h16" />
             </svg>
           </button>
-          <span>知识条目</span>
+          <h1 v-if="!isArticle">{{ backTitle }}</h1>
+          <span v-else>{{ backTitle }}</span>
         </header>
         <RouterView v-slot="{ Component, route: view }">
           <KeepAlive :include="WIKI_KEEP_ALIVE" :max="12">
@@ -98,6 +99,12 @@ function syncTheme() {
 const channel = computed(() => String(route.params.channel || ""));
 const channelBase = computed(() => `/wiki/${channel.value}`);
 const isArticle = computed(() => route.name === "WikiArticle");
+const backTitle = computed(() => {
+  if (isArticle.value) return "知识条目";
+  if (route.name === "WikiGraph") return "知识地图";
+  if (route.name === "WikiProfile") return "频道画像";
+  return "";
+});
 const isDirectory = computed(() => route.name === "WikiHome" && route.query.tab === "channels");
 const navigation = computed(() => [
   { label: "首页", to: "/wiki", active: route.name === "WikiHome" && !isDirectory.value },
@@ -112,7 +119,7 @@ const navigation = computed(() => [
 const { data: channels } = useWikiResource<WikiChannel[]>(
   () => channel.value || isDirectory.value ? null : wikiUrl("/channels"), publicWikiUrl, { ttlMs: 30_000 },
 );
-function backFromArticle() {
+function backFromDetail() {
   const previous = router.options.history.state.back;
   if (typeof previous === "string") {
     const target = router.resolve(previous);

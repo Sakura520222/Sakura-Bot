@@ -1,5 +1,4 @@
 import { customRef, type Ref } from "vue";
-import type { WikiGraph } from "../../api/wiki";
 
 /** 覆盖状态的短词（频道头行内联用） */
 const COVERAGE_LABELS: Record<string, string> = {
@@ -106,38 +105,4 @@ export function highlight(
     start = index + length;
   }
   return parts;
-}
-
-export function mergeGraph(
-  previous: WikiGraph | undefined,
-  next: WikiGraph,
-  limit: number,
-): WikiGraph {
-  const same = previous?.publication_id === next.publication_id;
-  const nodes = [
-    ...new Map(
-      [...(same ? previous!.nodes : []), ...next.nodes].map((node) => [
-        node.id,
-        node,
-      ]),
-    ).values(),
-  ].slice(0, limit);
-  const ids = new Set(nodes.map((n) => n.id));
-  const edges = [
-    ...new Map(
-      [...(same ? previous!.edges : []), ...next.edges].map((edge) => [
-        edge.id,
-        edge,
-      ]),
-    ).values(),
-  ]
-    .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
-    .slice(0, limit * 3);
-  return {
-    nodes,
-    edges,
-    publication_id: next.publication_id,
-    limit,
-    truncated: next.truncated || nodes.length >= limit,
-  };
 }

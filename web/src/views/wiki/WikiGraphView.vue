@@ -1,45 +1,33 @@
 <template>
   <div class="wiki-view">
-  <p class="wiki-breadcrumb">
-    <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
-    知识地图
-  </p>
-  <header class="wiki-page-heading">
-    <h1>知识地图</h1>
-    <button @click="share">{{ shared ? "已复制链接" : "分享视图" }}</button>
-  </header>
-  <div class="wiki-filters">
+  <form class="wiki-filters wiki-graph-filters" @submit.prevent="applyFilters">
     <label
       >定位<input
         v-model="query"
         placeholder="定位节点"
-        @keydown.enter="load()" /></label
+        /></label
     ><label
-      >类型<select v-model="kind" @change="load()">
+      >类型<select v-model="kind">
         <option value="">全部</option>
         <option v-for="(label, key) in kindLabels" :key="key" :value="key">
           {{ label }}
         </option>
       </select></label
     ><label
-      >主题<input v-model="topic" placeholder="全部" @change="load()" /></label
+      >主题<input v-model="topic" placeholder="全部" /></label
     ><label
-      >关系<select v-model="relation" @change="load()">
+      >关系<select v-model="relation">
         <option value="">全部</option>
         <option v-for="(label, key) in relations" :key="key" :value="key">
           {{ label }}
         </option>
       </select></label
     ><label
-      >发生起始<input v-model="after" type="date" @change="load()" /></label
-    ><label
-      >节点上限<select v-model.number="limit" @change="load()">
-        <option :value="30">30</option>
-        <option :value="60">60</option>
-        <option :value="120">120</option>
-      </select></label
-    ><button class="wiki-primary" @click="load()">查找</button>
-  </div>
+      >发生起始<input v-model="after" type="date" /></label
+    ><button type="submit" class="wiki-primary">查找</button>
+    <button type="button" @click="share">{{ shared ? "已复制链接" : "分享视图" }}</button>
+    <button v-if="rootNodeId" type="button" @click="setRoot('')">返回节点总览</button>
+  </form>
   <p v-if="localError || error" class="wiki-error" role="alert">
     {{ localError || error }}<button @click="retry()">重试</button>
   </p>
@@ -62,8 +50,11 @@
       aria-label="可拖拽、缩放的知识地图；也可使用右侧节点列表操作"
     ></div>
     <div v-if="loading" class="wiki-graph-notice" role="status">加载中…</div>
-    <div v-else-if="!graph?.nodes.length" class="wiki-graph-notice">
+    <div v-else-if="!error && !localError && !graph?.nodes.length" class="wiki-graph-notice">
       无匹配节点，调整筛选后重试
+    </div>
+    <div v-else-if="rootNodeId && graph?.nodes.length === 1" class="wiki-graph-notice">
+      当前筛选下没有相邻节点
     </div>
     <div v-if="hover" class="wiki-graph-hover">{{ hover }}</div>
     <aside class="wiki-graph-sidebar">
@@ -87,6 +78,11 @@
           }}</small>
         </button>
       </div>
+      <nav v-if="batchIndex || graph?.next_cursor" class="wiki-graph-pagination" aria-label="节点分页">
+        <button type="button" :disabled="loading || !batchIndex" @click="previousBatch">上一批</button>
+        <span aria-live="polite">第 {{ batchIndex + 1 }} 批</span>
+        <button type="button" :disabled="loading || !graph?.next_cursor" @click="nextBatch">下一批</button>
+      </nav>
     </aside>
     <dialog ref="nodeDialog" class="wiki-graph-dialog" aria-labelledby="wiki-node-title" @close="selected = undefined">
       <template v-if="selected">
@@ -97,8 +93,7 @@
         <p class="wiki-muted">{{ selected.topic }} · {{ kindLabels[selected.kind] }}</p>
         <RouterLink :to="selected.url">阅读条目</RouterLink>
         <div class="wiki-graph-actions">
-          <button @click="load(selected.id, true)" :disabled="loading || expanding">展开邻居</button>
-          <button @click="collapse">折叠邻居</button>
+          <button @click="setRoot(selected.id)" :disabled="loading || selected.id === rootNodeId">查看邻居</button>
         </div>
         <p v-if="localError" role="alert">{{ localError }}</p>
       </template>
@@ -111,12 +106,10 @@
       >
     </details>
     <span class="wiki-muted">
-      {{ graph?.nodes.length || 0 }} 个节点 ·
-      {{ graph?.edges.length || 0 }} 条关系<span v-if="graph?.truncated">
-        · 已按上限截断 —— 提高节点上限或添加筛选</span
-      >
+      当前批次 {{ graph?.nodes.length || 0 }} 个节点 ·
+      {{ graph?.edges.length || 0 }} 条关系
     </span>
-    <span class="wiki-muted">滚轮缩放 · 拖拽平移 · 点击节点展开邻居 · 箭头为关系方向</span>
+    <span class="wiki-muted">滚轮缩放 · 拖拽平移 · 点击节点查看详情</span>
   </div>
   </div>
 </template>
@@ -133,8 +126,7 @@ import {
   type WikiGraph,
   type WikiNode,
 } from "../../api/wiki";
-import { isUnavailable, useWikiResource, wikiUrl } from "../../composables/wiki-store";
-import { mergeGraph } from "./wiki-utils";
+import { useWikiResource, wikiUrl } from "../../composables/wiki-store";
 
 defineOptions({ name: "WikiGraphView" });
 
@@ -146,10 +138,7 @@ const nodeDialog = ref<HTMLDialogElement>();
 let cy: Core | undefined;
 let resize: ResizeObserver | undefined;
 let disposed = false;
-let expansion: AbortController | undefined;
-// 本地图谱是视图私有的展开态：SWR 缓存只存单次请求载荷，展开合并不回写缓存
-const graph = shallowRef<WikiGraph>(),
-  selected = ref<WikiNode>(),
+const selected = ref<WikiNode>(),
   hover = ref(""),
   shared = ref(false);
 const query = ref(String(route.query.q || "")),
@@ -157,32 +146,33 @@ const query = ref(String(route.query.q || "")),
   topic = ref(String(route.query.topic || "")),
   relation = ref(String(route.query.relation || "")),
   after = ref(String(route.query.after || "")),
-  limit = ref(Math.min(120, Math.max(30, Number(route.query.limit) || (innerWidth < 720 ? 30 : 60)))),
   layout = ref(String(route.query.layout || "cose"));
-// 根节点只取首挂载时的 ?node：分享写入 URL 的 node 不应反过来触发重新拉取
 const rootNodeId = ref(String(route.query.node || ""));
-const expanding = ref(false),
-  localError = ref("");
+const localError = ref("");
+const batchCursors = ref<(string | null)[]>([null]);
+const batchIndex = ref(0);
+const pageSize = innerWidth < 720 ? 24 : 36;
+const filters = shallowRef(graphFilters());
 
-function graphUrl(nodeId?: string): string {
+function graphFilters() {
+  return { q: query.value.trim(), kind: kind.value, topic: topic.value.trim(), relation: relation.value, after: after.value };
+}
+function graphUrl(): string {
   return wikiUrl(`/channels/${route.params.channel}/graph`, {
-    node_id: nodeId || undefined,
-    q: query.value,
-    kind: kind.value,
-    topic: topic.value,
-    relation: relation.value,
-    after: after.value,
-    limit: limit.value,
+    ...filters.value,
+    node_id: rootNodeId.value,
+    limit: pageSize,
+    pagination: "cursor",
+    cursor: batchCursors.value[batchIndex.value],
   });
 }
 const { data, loading, error, stale, reload } = useWikiResource<WikiGraph>(
-  () => graphUrl(rootNodeId.value || undefined),
+  graphUrl,
   publicWikiUrl<WikiGraph>,
   { ttlMs: 30_000 },
 );
+const graph = data;
 watch(data, (payload) => {
-  expansion?.abort();
-  graph.value = payload;
   if (!payload) nodeDialog.value?.close();
   render();
 }, { immediate: true });
@@ -248,16 +238,16 @@ function cyStyle(): cytoscape.StylesheetJson {
     {
       selector: "node",
       style: {
-        label: "data(label)",
+        label: "",
         "background-color": "data(color)",
         color: value.label,
         "font-size": 11,
-        "text-wrap": "wrap",
+        "text-wrap": "ellipsis",
         "text-max-width": "100px",
         "text-valign": "bottom",
         "text-margin-y": 8,
-        width: 28,
-        height: 28,
+        width: 22,
+        height: 22,
       },
     },
     {
@@ -268,15 +258,19 @@ function cyStyle(): cytoscape.StylesheetJson {
         "target-arrow-color": value.edge,
         "target-arrow-shape": "triangle",
         "curve-style": "bezier",
-        label: "data(label)",
+        label: "",
         "font-size": 9,
         color: value.label,
         "text-rotation": "autorotate",
       },
     },
     {
-      selector: ":selected",
-      style: { "border-width": 3, "border-color": value.selected },
+      selector: "node.show-label",
+      style: { label: "data(label)", "min-zoomed-font-size": 7 },
+    },
+    {
+      selector: "node:selected",
+      style: { label: "data(label)", "min-zoomed-font-size": 0, "border-width": 3, "border-color": value.selected },
     },
   ];
 }
@@ -298,64 +292,90 @@ const relations: Record<string, string> = {
   contradicts: "反驳",
   evolves: "演化",
 };
-async function load(node?: string, append = false) {
-  if (append && node) {
-    // 展开邻居是用户触发的增量动作：直接请求后本地合并，不占用缓存键
-    localError.value = "";
-    expanding.value = true;
-    const request = new AbortController();
-    expansion = request;
-    try {
-      const payload = await publicWikiUrl<WikiGraph>(graphUrl(node), request.signal);
-      graph.value = mergeGraph(graph.value, payload, limit.value);
-      render();
-    } catch (err) {
-      if (request.signal.aborted) return;
-      if (isUnavailable(err)) await reload();
-      localError.value = err instanceof Error ? err.message : "地图加载失败";
-    } finally {
-      expanding.value = false;
-      if (expansion === request) expansion = undefined;
-    }
-    return;
-  }
-  if (typeof node === "string") rootNodeId.value = node;
+function resetBatches() {
+  batchCursors.value = [null];
+  batchIndex.value = 0;
   localError.value = "";
+  hover.value = "";
   nodeDialog.value?.close();
   selected.value = undefined;
 }
+function applyFilters() {
+  filters.value = graphFilters();
+  resetBatches();
+}
+function setRoot(id: string) {
+  rootNodeId.value = id;
+  resetBatches();
+}
+function previousBatch() {
+  if (batchIndex.value > 0) batchIndex.value--;
+}
+function nextBatch() {
+  const cursor = graph.value?.next_cursor;
+  if (!cursor || loading.value) return;
+  batchCursors.value[batchIndex.value + 1] = cursor;
+  batchIndex.value++;
+}
 async function retry() {
   localError.value = "";
+  if (batchIndex.value) resetBatches();
   await Promise.all([reload(), initializeGraph()]);
 }
 function render() {
   if (!cy) return;
-  const saved = new Map(cy.nodes().map((node) => [node.id(), node.position()]));
-  cy.elements().remove();
-  if (!graph.value) return;
-  cy.add([
-    ...graph.value.nodes.map((node) => ({
-      data: {
-        ...node,
-        label: node.title,
-        color: nodeColor(node.kind),
-      },
-      position: saved.get(node.id),
-    })),
-    ...graph.value.edges.map((edge) => ({
-      data: { ...edge, label: relations[edge.kind] || edge.kind },
-    })),
-  ]);
+  cy.batch(() => {
+    cy?.elements().remove();
+    if (!graph.value) return;
+    cy?.add([
+      ...graph.value.nodes.map((node) => ({
+        data: { ...node, label: node.title, color: nodeColor(node.kind) },
+      })),
+      ...graph.value.edges.map((edge) => ({
+        data: { ...edge, label: relations[edge.kind] || edge.kind },
+      })),
+    ]);
+  });
+  if (rootNodeId.value) cy.getElementById(rootNodeId.value).select();
   relayout();
 }
 function relayout() {
-  cy?.layout({
+  if (!cy?.nodes().length) return;
+  const instance = cy;
+  instance.layout({
     name: ["circle", "grid", "cose"].includes(layout.value)
       ? layout.value
       : "cose",
     animate: false,
     padding: 45,
+    nodeRepulsion: 7500,
+    idealEdgeLength: 100,
+    nodeOverlap: 24,
+    componentSpacing: 90,
+    minNodeSpacing: 45,
+    spacingFactor: 1.35,
   } as cytoscape.LayoutOptions).run();
+  refreshLabels();
+}
+function refreshLabels() {
+  if (!cy) return;
+  const instance = cy;
+  const occupied: { x: number; y: number }[] = [];
+  instance.batch(() => {
+    const nodes = instance.nodes();
+    nodes.removeClass("show-label");
+    if (instance.zoom() < 0.95) return;
+    const selectedNodes = nodes.filter(":selected");
+    selectedNodes.forEach((node) => { occupied.push(node.renderedPosition()); });
+    nodes.forEach((node) => {
+      if (node.selected()) return;
+      const { x, y } = node.renderedPosition();
+      if (x < 0 || x > instance.width() || y < 0 || y > instance.height()) return;
+      if (occupied.some((point) => Math.abs(x - point.x) < 130 && Math.abs(y - point.y) < 28)) return;
+      occupied.push({ x, y });
+      node.addClass("show-label");
+    });
+  });
 }
 function select(node: WikiNode) {
   selected.value = node;
@@ -371,24 +391,6 @@ function select(node: WikiNode) {
       duration: reduceMotion.matches ? 0 : 200,
     });
 }
-function collapse() {
-  if (!selected.value || !graph.value) return;
-  const remove = new Set(
-    cy
-      ?.getElementById(selected.value.id)
-      .neighborhood()
-      .nodes()
-      .map((node) => node.id()),
-  );
-  graph.value = {
-    ...graph.value,
-    nodes: graph.value.nodes.filter((n) => !remove.has(n.id)),
-    edges: graph.value.edges.filter(
-      (e) => !remove.has(e.source) && !remove.has(e.target),
-    ),
-  };
-  render();
-}
 function zoom(factor: number) {
   if (cy)
     cy.zoom({
@@ -399,13 +401,8 @@ function zoom(factor: number) {
 async function share() {
   await router.replace({
     query: {
-      node: selected.value?.id,
-      q: query.value,
-      kind: kind.value,
-      topic: topic.value,
-      relation: relation.value,
-      after: after.value,
-      limit: limit.value,
+      node: rootNodeId.value || selected.value?.id,
+      ...filters.value,
       layout: layout.value,
     },
   });
@@ -432,6 +429,8 @@ async function initializeGraph() {
     if (cy || disposed) return;
     syncPalette();
     cy = createGraph({ container: canvas.value, style: cyStyle(), minZoom: 0.2, maxZoom: 3 });
+    cy.on("zoom pan dragfree", refreshLabels);
+    cy.on("select unselect", "node", refreshLabels);
     cy.on("tap", "node", (event) => {
       const node = graph.value?.nodes.find((n) => n.id === event.target.id());
       if (node) select(node);
@@ -452,26 +451,35 @@ onMounted(() => {
   void initializeGraph();
   resize = new ResizeObserver(() => {
     cy?.resize();
-    cy?.fit(undefined, 35);
+    refreshLabels();
   });
   if (canvas.value) resize.observe(canvas.value);
 });
 watch(
   () => route.params.channel,
   () => {
-    rootNodeId.value = "";
-    load();
+    setRoot(String(route.query.node || ""));
   },
 );
 onUnmounted(() => {
   disposed = true;
-  expansion?.abort();
   window.removeEventListener("theme-change", handleThemeChange);
   resize?.disconnect();
   cy?.destroy();
 });
 </script>
 <style scoped>
+.wiki-graph-filters { margin-top: 16px; }
+.wiki-graph-pagination {
+  position: sticky;
+  bottom: -14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-block: 8px;
+  background: var(--sb-surface);
+}
 .wiki-graph-dialog {
   position: fixed;
   inset: 0;

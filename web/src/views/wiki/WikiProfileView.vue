@@ -1,17 +1,5 @@
 <template>
-  <div class="wiki-view">
-  <p class="wiki-breadcrumb">
-    <RouterLink :to="`/wiki/${route.params.channel}`">返回频道</RouterLink> /
-    频道画像
-  </p>
-  <header class="wiki-page-heading wiki-profile-heading"><h1>
-    <WikiAvatar
-      :channel-id="String(route.params.channel)"
-      :title="profileTitle"
-      :size="40"
-    />
-    频道画像
-  </h1></header>
+  <div class="wiki-view wiki-profile-view">
   <template v-if="loading">
     <WikiSkeleton variant="card-grid" class="wiki-stats" />
     <div class="wiki-profile-grid">
@@ -174,7 +162,6 @@ import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { publicWikiUrl, type WikiProfile } from "../../api/wiki";
 import { useWikiResource, wikiUrl } from "../../composables/wiki-store";
-import WikiAvatar from "./WikiAvatar.vue";
 import WikiCoverage from "./WikiCoverage.vue";
 import WikiSkeleton from "./WikiSkeleton.vue";
 import WikiState from "./WikiState.vue";
@@ -189,7 +176,6 @@ const { data, loading, error, stale, reload } = useWikiResource<WikiProfile>(
   { ttlMs: 30_000 },
 );
 
-const profileTitle = computed(() => data.value?.title || String(route.params.channel));
 const panels = [
   { id: "topics", label: "主题分布" },
   { id: "months", label: "发布趋势" },
