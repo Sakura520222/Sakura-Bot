@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urlsplit
 import aiohttp
 import jwt
 
+from core.config.runtime import runtime_config
 from core.media.image_validation import validate_image
 from core.settings import get_settings
 
@@ -54,9 +55,23 @@ class LoginConfig:
         return self.origin + CALLBACK
 
 
-def login_config():
-    settings = get_settings()
-    config = settings.wiki_login
+def wiki_login_settings(settings=None):
+    settings = settings or get_settings()
+    defaults = settings.wiki_login
+    saved = runtime_config.read().get("wiki_login", {})
+    if not isinstance(saved, dict) or not saved:
+        return defaults
+    overrides = {
+        type(defaults).model_fields[key].alias: saved[key]
+        for key in ("enabled", "origin", "client_secret", "assistant_enabled", "assistant_checkin")
+        if key in saved
+    }
+    return type(defaults).model_validate({**defaults.model_dump(by_alias=True), **overrides})
+
+
+def login_config(settings=None, config=None):
+    settings = settings or get_settings()
+    config = config or wiki_login_settings(settings)
     token = settings.telegram.qa_bot_token
     if not config.enabled or not token or not config.client_secret.get_secret_value():
         return None

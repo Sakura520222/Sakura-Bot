@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 async def notify_proposal(runtime, identifier, channel, kind):
-    from core.settings import get_settings
+    from .telegram_login import wiki_login_settings
 
     if not runtime.bot_client:
         return
-    base = get_settings().wiki_login.origin.rstrip("/")
+    base = wiki_login_settings().origin.rstrip("/")
     buttons = [
         Button.inline("批准", f"wpr:a:{identifier}"),
         Button.inline("拒绝", f"wpr:r:{identifier}"),

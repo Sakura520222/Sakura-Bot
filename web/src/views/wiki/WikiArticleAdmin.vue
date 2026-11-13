@@ -1,12 +1,12 @@
 <template>
-  <details class="article-management" :open="expanded" @toggle="opened">
-    <summary>管理本词条</summary>
+  <dialog ref="dialog" class="article-management" aria-labelledby="article-management-title">
+    <header class="management-toolbar management-header"><h2 id="article-management-title">{{ editOnly ? '修订正文' : '管理本词条' }}</h2><button type="button" @click="dialog?.close()">关闭</button></header>
     <div class="management-body">
       <p v-if="notice || actionStatus" role="status" class="management-feedback">{{ notice || actionStatus }}</p>
       <p v-if="error" role="alert" class="management-feedback">{{ error }} <button v-if="!page" type="button" @click="loadState">重试</button></p>
       <p v-if="!page && !error" role="status" class="wiki-meta">正在加载管理状态…</p>
       <template v-if="page">
-        <div class="management-toolbar">
+        <div v-if="!editOnly" class="management-toolbar">
           <span class="wiki-meta">{{ page.hidden ? '已隐藏' : '允许公开展示' }} · {{ page.locked ? '已锁定' : '未锁定' }}</span>
           <div class="management-actions">
             <button type="button" :disabled="!!pending" @click="moderate(page.locked ? 'unlock' : 'lock')">{{ page.locked ? '解锁' : '锁定' }}</button>
@@ -16,14 +16,15 @@
         </div>
         <template v-if="article && !page.hidden">
           <form class="management-section" @submit.prevent="correct">
-            <h3>修订正文</h3>
-            <label>段落 <select v-model.number="ordinal" @change="fillText">
+            <h3 v-if="!editOnly">修订正文</h3>
+            <blockquote v-if="passage?.excerpt" class="management-excerpt">{{ passage.excerpt }}</blockquote>
+            <label v-if="!passage">段落 <select v-model.number="ordinal" @change="fillText">
               <option v-for="(claim, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ plainWikiText(claim.text).slice(0, 42) }}</option>
             </select></label>
-            <label>正文 <textarea v-model="draft" required maxlength="14000" rows="5" /></label>
-            <div class="management-actions"><button type="submit" :disabled="!!pending || !draft.trim() || draft === article.claims[ordinal]?.text">{{ pending === 'correct' ? '正在提交…' : '提交审校' }}</button></div>
+            <label>{{ passage?.range ? '替换选中文字' : '正文' }} <textarea v-model="draft" required maxlength="14000" rows="5" /></label>
+            <div class="management-actions"><button type="submit" :disabled="!!pending || !draft.trim() || submittedText === original">{{ pending === 'correct' ? '正在提交…' : '提交审校' }}</button></div>
           </form>
-          <details class="management-section" @toggle="versionsOpened">
+          <details v-if="!editOnly" class="management-section" @toggle="versionsOpened">
             <summary>频道发布与回滚</summary>
             <p v-if="pending === 'versions'" role="status" class="wiki-meta">正在加载版本…</p>
             <p v-else-if="versions && !versions.length" class="wiki-meta">暂无可操作的版本。</p>
@@ -32,7 +33,7 @@
                 <button type="button" :disabled="!!pending" @click="publishChoice(entry)">{{ entry.kind === 'publish' ? '发布' : '回滚' }}</button></li>
             </ul>
           </details>
-          <WikiCommunityAdmin class="management-section" :page="page.id" />
+          <WikiCommunityAdmin v-if="!editOnly" class="management-section" :page="page.id" />
         </template>
       </template>
     </div>
@@ -44,7 +45,7 @@
         <button type="button" @click="confirmHide?.close(); moderate('hide')">确认隐藏</button>
       </div>
     </dialog>
-  </details>
+  </dialog>
 </template>
 
 <script setup lang="ts">
@@ -53,6 +54,7 @@ import { formatDate, wikiAdmin, type WikiArticle } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
 import { plainWikiText } from "./wiki-utils";
+import { revisionText, type WikiPassage } from "./wiki-selection";
 
 type PageState = { id: string; title: string; locked: boolean; hidden: boolean };
 type Choice = { id: string; created_at: string; kind: "publish" | "rollback" };
@@ -60,7 +62,9 @@ type PageAction = "lock" | "unlock" | "hide" | "show";
 const props = defineProps<{ channel: string; slug: string; article?: WikiArticle }>();
 const emit = defineEmits<{ visibility: [hidden: boolean]; published: [] }>();
 const page = ref<PageState>();
-const expanded = ref(false);
+const dialog = ref<HTMLDialogElement>();
+const editOnly = ref(false);
+const passage = ref<WikiPassage>();
 const confirmHide = ref<HTMLDialogElement>();
 const notice = ref("");
 const error = ref("");
@@ -72,12 +76,14 @@ const actionMessages: Record<string, string> = {
 const actionStatus = computed(() => actionMessages[pending.value]);
 const ordinal = ref(0);
 const draft = ref("");
+const original = computed(() => props.article?.claims[ordinal.value]?.text || "");
+const submittedText = computed(() => passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
 const versions = ref<Choice[]>();
 const root = computed(() => `/channels/${encodeURIComponent(props.channel)}`);
 const pagePath = (id: string) => `${root.value}/pages/${encodeURIComponent(id)}`;
 
-function fillText() { draft.value = props.article?.claims[ordinal.value]?.text || ""; }
-watch(() => props.article?.revision_id, () => { ordinal.value = 0; fillText(); }, { immediate: true });
+function fillText() { draft.value = passage.value?.range ? passage.value.excerpt : original.value; }
+watch(() => props.article?.revision_id, () => { passage.value = undefined; ordinal.value = 0; fillText(); }, { immediate: true });
 
 async function run(operation: string, action: () => Promise<void>) {
   if (pending.value) return;
@@ -88,14 +94,18 @@ async function run(operation: string, action: () => Promise<void>) {
 function loadState() {
   return run("state", async () => {
     page.value = await wikiAdmin<PageState>(pagePath(props.slug));
-    if (page.value.hidden) { expanded.value = true; emit("visibility", true); }
+    if (page.value.hidden) { editOnly.value = false; emit("visibility", true); }
   });
 }
-function opened(event: Event) {
-  if (event.target !== event.currentTarget) return;
-  expanded.value = (event.currentTarget as HTMLDetailsElement).open;
-  if (expanded.value && !page.value) void loadState();
+function open(selection?: WikiPassage, editing = false) {
+  passage.value = selection;
+  editOnly.value = editing;
+  ordinal.value = selection?.claim ?? 0;
+  fillText();
+  if (!dialog.value?.open) dialog.value?.showModal();
+  if (!page.value) void loadState();
 }
+defineExpose({ open });
 watch(() => !!props.article, (available) => { if (!available && !page.value) void loadState(); }, { immediate: true });
 
 function moderate(action: PageAction) {
@@ -113,7 +123,7 @@ function correct() {
   if (!props.article) return;
   const revision = props.article.revision_id;
   return run("correct", async () => {
-    await wikiAdmin(`${root.value}/revisions/${revision}/correct`, "POST", { claim: ordinal.value, text: draft.value });
+    await wikiAdmin(`${root.value}/revisions/${revision}/correct`, "POST", { claim: ordinal.value, text: submittedText.value });
     notice.value = "修订已提交审校。";
     if (page.value) page.value.locked = true;
   });
@@ -140,7 +150,11 @@ function publishChoice(entry: Choice) {
 </script>
 
 <style scoped>
-.article-management { margin-block: 16px; border: 1px solid var(--sb-border); border-radius: 12px; background: var(--sb-surface); }
+.article-management { width: min(620px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--sb-border); border-radius: 16px; background: var(--sb-surface); color: var(--sb-text); }
+.article-management::backdrop { background: rgb(0 0 0 / 30%); }
+.management-header { padding: 12px 16px; }
+.management-header h2 { margin: 0; font-size: 17px; }
+.management-excerpt { border-inline-start: 3px solid var(--sb-accent); margin: 0; padding-inline: 10px; overflow-wrap: anywhere; }
 summary { padding: 12px 16px; cursor: pointer; font-weight: 650; }
 .management-body { padding: 0 16px 16px; display: grid; gap: 14px; }
 .management-toolbar, .management-actions, .management-versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

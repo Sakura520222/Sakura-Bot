@@ -1,37 +1,34 @@
 <template>
-  <div class="wiki-view">
+  <div ref="view" class="wiki-view" @contextmenu="contextMenu">
     <WikiArticleAdmin v-if="canAdmin && managementReady" :key="apiPath" :channel="String(route.params.channel)"
-      :slug="String(route.params.slug)" :article="data || undefined" @visibility="visibilityChanged" @published="reload()" />
+      ref="manager" :slug="String(route.params.slug)" :article="data || undefined" @visibility="visibilityChanged" @published="reload()" />
+    <WikiArticleMenu v-if="menu" :items="menuItems" :anchor="menu.anchor" @choose="chooseAction" @dismiss="dismissMenu" />
+    <WikiArticleMenu v-else-if="selection && selectionItems.length" toolbar :items="selectionItems" :anchor="selection.anchor"
+      @choose="chooseAction" @dismiss="selection = undefined" />
     <WikiState v-if="stale && data && !hiddenByAdmin" variant="stale" @retry="reload()" />
-    <p v-if="hiddenByAdmin" class="wiki-meta">此词条当前已隐藏。</p>
+    <p v-if="hiddenByAdmin" class="wiki-meta">此词条当前已隐藏。 <button v-if="canAdmin" type="button" @click="manager?.open()">管理本词条</button></p>
     <WikiSkeleton v-else-if="loading" variant="article" />
-    <div v-else-if="error" class="wiki-error" role="alert">{{ error }} <button @click="reload()">重试</button></div>
+    <div v-else-if="error" class="wiki-error" role="alert">{{ error }} <button @click="reload()">重试</button> <button v-if="canAdmin" @click="manager?.open()">管理本词条</button></div>
     <article v-else-if="data" class="wiki-article">
       <header class="wiki-reader-header">
         <RouterLink class="wiki-tag" :to="topicLink">{{ data.topic }}</RouterLink>
         <div class="wiki-reader-title">
           <h1>{{ data.title }}</h1>
           <div class="wiki-reader-actions" role="group" aria-label="文章操作">
-            <button type="button" class="wiki-header-icon" aria-label="复制链接" title="复制链接" @click="share">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path v-if="copyStatus === '已复制'" d="m5 12 4 4L19 6" />
-                <path v-else d="M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2m2 6a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2" />
-              </svg>
-            </button>
             <button type="button" class="wiki-header-icon" :aria-pressed="saved"
               :aria-label="saved ? '取消收藏' : '收藏到本机'" :title="saved ? '取消收藏' : '收藏到本机'" @click="toggleSaved">
               <svg viewBox="0 0 24 24" :fill="saved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
                 <path d="M6 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4-6 4z" />
               </svg>
             </button>
+            <button ref="menuButton" type="button" class="wiki-header-icon" aria-label="更多词条操作" title="更多词条操作"
+              aria-haspopup="menu" :aria-expanded="!!menu" @click="openMore" @keydown.down.prevent="openMore">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+            </button>
           </div>
         </div>
         <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 修订于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
         <span class="wiki-sr-only" role="status">{{ copyStatus }}</span>
-        <div v-if="assistantEnabled" class="wiki-reader-links" aria-label="向小妲提问">
-          <button type="button" @click="askArticle()">询问当前词条</button>
-          <button v-if="selectedText" type="button" @pointerdown.prevent @click="askArticle(selectedText)">询问选中文字</button>
-        </div>
         <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
           {{ bookmarkError || copyStatus }}
         </p>
@@ -45,7 +42,7 @@
         <h2 v-if="!claim.key.startsWith('md:')">{{ claim.key }}</h2>
         <span v-if="claim.status !== 'current'" class="wiki-tag">{{ statusLabels[claim.status] }}</span>
         <span v-if="claim.occurred_at" class="wiki-meta">发生于 {{ formatDay(claim.occurred_at) }}</span>
-        <WikiMarkdown :text="claim.text" :channel="data.channel_id" image-preview />
+        <WikiMarkdown :text="claim.text" :channel="data.channel_id" :claim-index="index" image-preview />
         <details v-if="claim.fact_check" class="wiki-evidence-card">
           <summary>{{ factLabels[claim.fact_check.status] || "待核实" }}</summary>
           <p>{{ claim.fact_check.reason }}<span v-if="claim.fact_check.checked_at"> · {{ claim.fact_check.model }} · {{ formatDay(claim.fact_check.checked_at) }}</span></p>
@@ -53,7 +50,7 @@
         </details>
         <span v-else class="wiki-meta">待核实</span>
         <details v-for="(note, i) in claim.community_notes || []" :key="i" class="wiki-evidence-card">
-          <summary>社区补充</summary><WikiMarkdown :text="note.text" :channel="data.channel_id" />
+          <summary>社区补充</summary><blockquote v-if="note.excerpt">{{ note.excerpt }}</blockquote><WikiMarkdown :text="note.text" :channel="data.channel_id" />
           <ul><li v-for="source in note.sources" :key="source"><a :href="source" target="_blank" rel="noopener noreferrer">{{ source }}</a></li></ul>
         </details>
         <span v-if="claim.valid_until" class="wiki-meta">有效至 {{ formatDay(claim.valid_until) }}</span>
@@ -67,7 +64,7 @@
         </details>
       </section>
       <button v-if="visibleCount < data.claims.length" @click="visibleCount += 8">继续阅读</button>
-      <WikiCommunity :article="data" />
+      <WikiCommunity ref="community" :article="data" />
       <section id="sources" class="wiki-claim">
         <h2>参考来源</h2>
         <details @toggle="openReferences">
@@ -88,7 +85,7 @@
       </section>
       <section id="history" class="wiki-claim">
         <h2>修订记录</h2>
-        <details @toggle="openReferences">
+        <details :open="historyOpen" @toggle="historyOpen = ($event.currentTarget as HTMLDetailsElement).open; openReferences($event)">
           <summary>查看已发布版本</summary>
           <p v-if="loadingReferences" role="status">正在加载…</p>
           <p v-if="referenceError" role="alert">{{ referenceError }} <button @click="readReferences">重试</button></p>
@@ -127,6 +124,8 @@ import { formatDay, plainWikiText } from "./wiki-utils";
 import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiCommunity from "./WikiCommunity.vue";
 import WikiArticleAdmin from "./WikiArticleAdmin.vue";
+import WikiArticleMenu from "./WikiArticleMenu.vue";
+import { wikiPassage, type WikiPassage } from "./wiki-selection";
 import { canManageWiki } from "../../api/wiki-account";
 import WikiReaderToc from "./WikiReaderToc.vue";
 import WikiSkeleton from "./WikiSkeleton.vue";
@@ -161,12 +160,79 @@ const headings = computed(() => (data.value?.claims ?? []).map((claim) =>
 ));
 const activeClaim = ref("");
 const assistantEnabled = inject(wikiAssistantEnabled, ref(false));
-const selectedText = ref("");
+const view = ref<HTMLElement>();
+const menuButton = ref<HTMLButtonElement>();
+const community = ref<InstanceType<typeof WikiCommunity>>();
+const manager = ref<InstanceType<typeof WikiArticleAdmin>>();
+type Anchor = { x: number; y: number; below?: number };
+const selection = shallowRef<{ passage: WikiPassage; anchor: Anchor }>();
+const menu = shallowRef<{ passage?: WikiPassage; anchor: Anchor }>();
+type Action = { id: string; label: string; icon: "edit" | "note" | "ask" | "manage" | "history" | "copy" };
+const selectionItems = computed(() => passageActions(true));
+const menuItems = computed<Action[]>(() => [
+  ...passageActions(!!menu.value?.passage?.excerpt),
+  ...(canAdmin.value ? [{ id: "manage", label: "管理本词条", icon: "manage" } as const] : []),
+  { id: "history", label: "修订记录", icon: "history" },
+  { id: "copy", label: "复制链接", icon: "copy" },
+]);
+const popupActive = () => !!view.value?.querySelector("dialog[open]");
+function passageActions(selected: boolean): Action[] {
+  const items: Action[] = [];
+  if (data.value?.proposals_enabled) {
+    if (data.value.annotations_enabled) items.push({ id: "note", label: "添加注解", icon: "note" });
+    items.push({ id: "suggest", label: "建议修订", icon: "edit" });
+  }
+  if (canAdmin.value) items.push({ id: "edit", label: "修订正文", icon: "edit" });
+  if (assistantEnabled.value) items.push({ id: "ask", label: selected ? "问小妲" : "询问当前词条", icon: "ask" });
+  return items;
+}
 function readSelection() {
-  const selection = document.getSelection();
-  const text = selection?.toString().trim() || "";
-  const claim = selection?.anchorNode?.parentElement?.closest(".wiki-claim-section .wiki-markdown");
-  selectedText.value = claim && selection?.focusNode && claim.contains(selection.focusNode) && [...text].length <= 500 ? text : "";
+  const selected = document.getSelection();
+  const text = selected?.toString().trim() || "";
+  const block = selected?.anchorNode?.parentElement?.closest<HTMLElement>(".wiki-markdown[data-claim]");
+  if (!selected?.rangeCount || !text || [...text].length > 500 || !block || !view.value?.contains(block) || !selected.focusNode || !block.contains(selected.focusNode) || !data.value || popupActive()) {
+    selection.value = undefined;
+    return;
+  }
+  const claim = Number(block.dataset.claim);
+  const original = data.value.claims[claim]?.text;
+  if (original === undefined) return;
+  const rect = selected.getRangeAt(0).getBoundingClientRect();
+  selection.value = rect.bottom > 0 && rect.top < innerHeight ? { passage: wikiPassage(claim, original, text), anchor: { x: rect.left + rect.width / 2, y: rect.top, below: rect.bottom } } : undefined;
+}
+let selectionTimer: ReturnType<typeof setTimeout>;
+function selectionChanged() { clearTimeout(selectionTimer); selectionTimer = setTimeout(readSelection, 100); }
+function openMore() {
+  if (menu.value) { dismissMenu(); return; }
+  const rect = menuButton.value?.getBoundingClientRect();
+  if (rect) menu.value = { anchor: { x: rect.right - 172, y: rect.bottom + 4 } };
+}
+function contextMenu(event: MouseEvent) {
+  if (!data.value || !(event.target instanceof Element) || !event.target.closest(".wiki-article") || event.target.closest("a, button, input, textarea, select, summary, dialog")) return;
+  const block = event.target.closest<HTMLElement>(".wiki-markdown[data-claim]");
+  readSelection();
+  const claim = Number(block?.dataset.claim);
+  const original = data.value.claims[claim]?.text;
+  const passage = original === undefined ? undefined : selection.value?.passage.claim === claim ? selection.value.passage : wikiPassage(claim, original);
+  event.preventDefault();
+  event.stopPropagation();
+  const rect = event.target.getBoundingClientRect();
+  menu.value = { passage, anchor: { x: event.clientX || rect.left, y: event.clientY || rect.bottom } };
+}
+function dismissMenu() { menu.value = undefined; menuButton.value?.focus({ preventScroll: true }); }
+function dismissOutside(event: PointerEvent) {
+  if (!(event.target instanceof Element) || !event.target.closest(".article-popup, [aria-haspopup='menu']")) menu.value = undefined;
+}
+function chooseAction(action: string) {
+  const passage = menu.value ? menu.value.passage : selection.value?.passage;
+  menu.value = undefined;
+  selection.value = undefined;
+  document.getSelection()?.removeAllRanges();
+  if (action === "note" || action === "suggest") community.value?.openProposal(action === "note" ? "annotation" : "edit", passage);
+  if (action === "manage" || action === "edit") manager.value?.open(passage, action === "edit");
+  if (action === "ask") askArticle(passage?.excerpt);
+  if (action === "copy") { void share(); menuButton.value?.focus({ preventScroll: true }); }
+  if (action === "history") { historyOpen.value = true; void readReferences(); jump("history"); }
 }
 function askArticle(selected = "") {
   if (!data.value) return;
@@ -174,9 +240,27 @@ function askArticle(selected = "") {
     channel: data.value.channel_id, page: data.value.id, revision: data.value.revision_id, selected,
   } }));
 }
-onMounted(() => document.addEventListener("selectionchange", readSelection));
-onUnmounted(() => document.removeEventListener("selectionchange", readSelection));
+function reposition() { menu.value = undefined; selectionChanged(); }
+onMounted(() => {
+  document.addEventListener("selectionchange", selectionChanged);
+  document.addEventListener("pointerdown", dismissOutside);
+  window.addEventListener("scroll", reposition, { passive: true });
+  window.addEventListener("resize", reposition);
+  window.visualViewport?.addEventListener("scroll", reposition, { passive: true });
+  window.visualViewport?.addEventListener("resize", reposition);
+});
+onUnmounted(() => {
+  clearTimeout(selectionTimer);
+  document.removeEventListener("selectionchange", selectionChanged);
+  document.removeEventListener("pointerdown", dismissOutside);
+  window.removeEventListener("scroll", reposition);
+  window.removeEventListener("resize", reposition);
+  window.visualViewport?.removeEventListener("scroll", reposition);
+  window.visualViewport?.removeEventListener("resize", reposition);
+});
+watch([apiPath, () => data.value?.revision_id], () => { menu.value = undefined; selection.value = undefined; });
 const references = shallowRef<WikiReferences>();
+const historyOpen = ref(false);
 const showRelated = ref(false);
 const { data: related, error: relatedError, loading: relatedLoading, reload: reloadRelated } =
   useWikiResource<{ next: WikiNode | null; previous: WikiNode | null }>(
@@ -193,6 +277,7 @@ let copyTimer: ReturnType<typeof setTimeout> | undefined;
 let observer: IntersectionObserver | undefined;
 
 watch([() => data.value?.revision_id, () => data.value?.publication_id], () => {
+  historyOpen.value = false;
   references.value = undefined;
   referenceError.value = "";
   loadingReferences.value = false;

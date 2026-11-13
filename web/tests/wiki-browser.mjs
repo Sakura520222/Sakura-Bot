@@ -35,6 +35,7 @@ let assistantEnabled = false;
 let assistantCheckedIn = false;
 let articleHidden = false;
 let researchSaved;
+let submittedProposal;
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
   if (parsed.pathname.startsWith("/api/")) {
@@ -48,6 +49,21 @@ const server = http.createServer(async (req,res) => {
       config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
     };
     if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false, assistant_enabled: assistantEnabled };
+    else if (endpoint === "/api/wiki/admin/account-settings") {
+      let enabled = false;
+      if (req.method === "PUT") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        enabled = JSON.parse(Buffer.concat(chunks)).enabled;
+      }
+      out = { enabled, origin: "https://wiki.example.test", has_secret: true, has_bot: true, assistant_enabled: enabled, assistant_checkin: true };
+    }
+    else if (endpoint === "/api/wiki/community/proposals" && req.method === "POST") {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      submittedProposal = JSON.parse(Buffer.concat(chunks));
+      out = { id: "fixture-proposal", status: "pending" };
+    }
     else if (endpoint === "/api/wiki/community/contributors") out = [];
     else if (endpoint === "/api/wiki/admin/proposals" || /^\/api\/wiki\/admin\/pages\/[^/]+\/proposals$/.test(endpoint)) out = [];
     else if (endpoint === "/api/wiki/admin/research") {
@@ -159,7 +175,7 @@ const server = http.createServer(async (req,res) => {
       const card = cards.find(row => row.slug === endpoint.split("/").at(-1)) || cards[0];
       if (articleHidden && card === cards[0]) { res.writeHead(404); return res.end(); }
       const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history:[{revision_id:card.revision_id,created_at:channel.updated_at}],sources_total:1,history_total:1};
-      out = {...card,verified_at:channel.updated_at,...(q.get("part") !== "references" ? {claims}:{}),...(q.get("part") !== "article" ? refs:{})};
+      out = {...card,verified_at:channel.updated_at,proposals_enabled:true,annotations_enabled:true,...(q.get("part") !== "references" ? {claims}:{}),...(q.get("part") !== "article" ? refs:{})};
     }
     else if (endpoint === "channels/123") out = {
       ...channel,
@@ -338,7 +354,8 @@ try {
   const actionsRow = await actions.boundingBox();
   assert.ok(actionsRow.x >= titleRow.x + titleRow.width && Math.abs(actionsRow.y - titleRow.y) < 30);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
-  await actions.getByRole("button", { name: "复制链接" }).click();
+  await actions.getByRole("button", { name: "更多词条操作" }).click();
+  await page.getByRole("menuitem", { name: "复制链接" }).click();
   await page.getByText("已复制", { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), url + "/wiki/123/page/article-0#claim-12");
   await actions.getByRole("button",{name:"收藏到本机",exact:true}).click();
@@ -414,7 +431,8 @@ try {
     privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
   assistantEnabled = true;
   await accountPage.goto(url + "/wiki/123/page/article-0");
-  await accountPage.getByRole("button", { name: "询问当前词条" }).click();
+  await accountPage.getByRole("button", { name: "更多词条操作" }).click();
+  await accountPage.getByRole("menuitem", { name: "询问当前词条" }).click();
   const assistant = accountPage.getByRole("dialog", { name: "小妲助手" });
   await assistant.getByRole("button", { name: "签到", exact: true }).click();
   await assistant.getByText("积分 2.5", { exact: true }).waitFor();
@@ -422,6 +440,29 @@ try {
   await assistant.getByRole("button", { name: "发送", exact: true }).click();
   await assistant.locator("strong").getByText("小妲回答", { exact: true }).waitFor();
   await assistant.getByRole("button", { name: "收起助手" }).click();
+  await accountPage.locator(".wiki-markdown[data-claim='0'] strong").first().evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange(); range.selectNodeContents(element);
+    selection.removeAllRanges(); selection.addRange(range);
+  });
+  const tools = accountPage.getByRole("toolbar", { name: "选中文字操作" });
+  await tools.getByRole("button", { name: "添加注解" }).click();
+  const note = accountPage.getByRole("dialog", { name: "添加注解" });
+  await note.getByRole("textbox", { name: "说明" }).fill("这段需要补充来源。");
+  await note.getByRole("button", { name: "提交审核" }).click();
+  await accountPage.getByText("已提交，等待管理员审核。", { exact: true }).waitFor();
+  assert.deepEqual([submittedProposal.claim, submittedProposal.excerpt, submittedProposal.kind], [0, "Sakura", "annotation"]);
+  await accountPage.locator(".wiki-markdown[data-claim='0'] strong").first().evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange(); range.selectNodeContents(element);
+    selection.removeAllRanges(); selection.addRange(range);
+  });
+  await tools.getByRole("button", { name: "建议修订" }).click();
+  const edit = accountPage.getByRole("dialog", { name: "提交修订建议" });
+  await edit.getByRole("textbox", { name: "替换选中文字" }).fill("Sakura Wiki");
+  await edit.getByRole("button", { name: "提交审核" }).click();
+  await accountPage.getByText("已提交，等待管理员审核。", { exact: true }).waitFor();
+  assert.equal(submittedProposal.text, claims[0].text.replace("Sakura", "Sakura Wiki"));
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();
@@ -461,6 +502,9 @@ try {
   assert.equal(researchSaved.daily_calls, undefined);
   if (output) await desktop.screenshot({path:path.join(output,"wiki-search-settings.png")});
   await desktop.getByText("设置", { exact: true }).click();
+  await desktop.getByText("Telegram 登录与小妲助手", { exact: true }).waitFor();
+  await desktop.getByRole("button", { name: "保存登录与助手设置" }).click();
+  await desktop.getByText("设置已生效。", { exact: true }).waitFor();
   const uploadButton = desktop.getByRole("button", { name: "上传本机图片" });
   const [fileChooser] = await Promise.all([desktop.waitForEvent("filechooser"), uploadButton.click()]);
   await fileChooser.setFiles({ name: "cover.png", mimeType: "image/png", buffer: avatar });
@@ -477,7 +521,8 @@ try {
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
   await desktop.goto(url + "/wiki/123/page/article-0");
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
-  await desktop.getByText("管理本词条", { exact: true }).click();
+  await desktop.locator(".wiki-markdown[data-claim='0'] p").first().click({ button: "right" });
+  await desktop.getByRole("menuitem", { name: "管理本词条", exact: true }).click();
   await desktop.getByText("没有待审投稿。", { exact: true }).waitFor();
   assert.ok((await desktop.getByRole("textbox", { name: "正文", exact: true }).inputValue()).includes("Sakura"));
   if (output) await desktop.screenshot({path:path.join(output,"wiki-article-management.png")});
@@ -488,6 +533,7 @@ try {
   await desktop.getByRole("button", { name: "确认隐藏", exact: true }).click();
   await desktop.getByText("词条已隐藏，访客无法访问。", { exact: true }).waitFor();
   await desktop.reload();
+  await desktop.getByRole("button", { name: "管理本词条", exact: true }).click();
   await desktop.getByRole("button", { name: "恢复公开", exact: true }).click();
   await desktop.getByText("已取消隐藏。", { exact: true }).waitFor();
   await desktop.getByRole("heading", { name: cards[0].title, exact: true }).waitFor();

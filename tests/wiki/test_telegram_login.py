@@ -1,13 +1,20 @@
 import base64
 import hashlib
 import time
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
+from pydantic import SecretStr
 
+from core.settings import WikiLoginSettings
+from core.web_api.routes import wiki_account
 from core.web_api.routes.wiki_account import safe_wiki_path
+from core.wiki import telegram_login
+from core.wiki.community import selection_text
 from core.wiki.telegram_login import (
     ISSUER,
     LoginConfig,
@@ -15,6 +22,57 @@ from core.wiki.telegram_login import (
     download_avatar,
     verify_identity,
 )
+
+
+def test_selection_matches_rendered_markdown():
+    assert (
+        selection_text("**Sakura** 支持 [[中文检索]] 与 [使用指南](https://example.org)。")
+        == "Sakura 支持 中文检索 与 使用指南。"
+    )
+
+
+async def test_webui_settings_hot_apply_and_keep_secret_on_omission(monkeypatch):
+    raw = {}
+    settings = SimpleNamespace(
+        wiki_login=WikiLoginSettings(),
+        telegram=SimpleNamespace(qa_bot_token=SecretStr("123456:fixture")),
+    )
+    monkeypatch.setattr(wiki_account, "get_settings", lambda: settings)
+    monkeypatch.setattr(wiki_account, "get_config", lambda: dict(raw))
+    monkeypatch.setattr(wiki_account, "write_config", raw.update)
+    monkeypatch.setattr(telegram_login.runtime_config, "read", lambda: raw)
+    data = {
+        "enabled": True,
+        "origin": "https://wiki.example.test",
+        "assistant_enabled": True,
+        "assistant_checkin": True,
+    }
+
+    class Update:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    assert not (await wiki_account.read_account_settings())["enabled"]
+    with pytest.raises(HTTPException, match="HTTPS"):
+        await wiki_account.update_account_settings(Update(data))
+    view = await wiki_account.update_account_settings(
+        Update({**data, "client_secret": "fixture-secret"})
+    )
+    assert view["enabled"] and view["assistant_enabled"] and view["has_secret"]
+    assert "fixture-secret" not in str(view)
+    assert (
+        telegram_login.login_config(settings).callback
+        == "https://wiki.example.test/api/wiki/account/callback"
+    )
+    await wiki_account.update_account_settings(Update({**data, "assistant_enabled": False}))
+    assert not telegram_login.wiki_login_settings(settings).assistant_enabled
+    assert (
+        telegram_login.wiki_login_settings(settings).client_secret.get_secret_value()
+        == "fixture-secret"
+    )
 
 
 def test_authorization_is_bound_to_configured_bot_and_pkce():

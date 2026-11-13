@@ -90,6 +90,7 @@
         }}</n-tab>
       </n-tabs>
       <template v-if="tab === 'config'">
+        <WikiAccountSettings :origin="draft.public_base_url" />
         <n-card title="频道设置" size="small">
           <n-form
             label-placement="top"
@@ -609,6 +610,7 @@ import WikiJobProgress from "./WikiJobProgress.vue";
 import WikiExclusions from "./WikiExclusions.vue";
 import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
+import WikiAccountSettings from "./WikiAccountSettings.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
 interface Config {
   enabled: boolean;

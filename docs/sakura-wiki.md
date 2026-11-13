@@ -65,7 +65,7 @@ Wiki 需要 MySQL 8.0 或更新版本（集成测试使用 8.4），首次启用
 
 ## Telegram 登录
 
-默认关闭。在 BotFather 的助手 Bot（`QA_BOT_TOKEN` 对应的 Bot）打开 Login Widget 设置，登记本站 HTTPS origin 和完整回调 `https://wiki.example.com/api/wiki/account/callback`。在 `data/.env` 设置 `WIKI_LOGIN_ENABLED=true`、`WIKI_LOGIN_ORIGIN=https://wiki.example.com` 及 `WIKI_TELEGRAM_CLIENT_SECRET`，重启服务。Client ID 取自助手 Bot 数字 ID，Secret 取自 BotFather 的登录设置。反向代理须保留公开 `Host`，回调路径的访问日志只记录路径，省略查询参数。使用 Telegram 默认的 RS256 或 ES256 签名。 [Telegram 官方配置](https://core.telegram.org/bots/telegram-login)
+默认关闭。在「Sakura Wiki → 设置 → Telegram 登录与小妲助手」填写站点 HTTPS 地址。在 BotFather 的助手 Bot（`QA_BOT_TOKEN` 对应的 Bot）打开 Login Widget，登记站点地址和页面显示的完整回调。填入 Client Secret 后启用登录并保存，配置即时生效。Client ID 取自助手 Bot 数字 ID。旧环境变量仍可作为默认值。反向代理须保留公开 `Host`，回调路径的访问日志只记录路径，省略查询参数。使用 Telegram 默认的 RS256 或 ES256 签名。[Telegram 官方配置](https://core.telegram.org/bots/telegram-login)
 
 Wiki 在用户同意后读取 `openid profile`，保存 Telegram 数字 ID 和 OIDC subject 以绑定账户，保存昵称、可选用户名和经验证的头像快照。账户菜单可重新授权以刷新资料。公开署名默认匿名，头像与用户名默认隐藏。管理接口保持现有 WebUI 认证，管理员可通过 `/api/wiki/admin/accounts` 查询账户，并向 `/api/wiki/admin/accounts/{id}/blocked` 发送 `PUT` 和 JSON `{"blocked":true}` 撤销该用户的全部 Wiki 会话。
 
@@ -73,7 +73,7 @@ Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放�
 
 ## Go 助手
 
-启用 Telegram 登录后，可设置 `WIKI_ASSISTANT_ENABLED=true` 并重启主服务与 Go 助手。`WIKI_ASSISTANT_PORT` 默认 `8091`，由 Go 助手监听 `127.0.0.1`，FastAPI 在同一主机或容器内转发，反向代理只需转发 `/api/wiki/assistant/`，对该路径关闭 SSE 缓冲。`WIKI_ASSISTANT_CHECKIN_ENABLED=false` 只关闭网页签到入口，助手全局签到开关也适用于网页。
+启用 Telegram 登录后，在同一设置卡启用 Wiki 小妲助手并保存。Go 助手在 WebUI 启用时监听 `127.0.0.1` 的 `WIKI_ASSISTANT_PORT`（默认 `8091`），FastAPI 在同一主机或容器内转发，并即时读取开关。反向代理只需转发 `/api/wiki/assistant/`，对该路径关闭 SSE 缓冲。网页签到开关只影响 Wiki，助手全局签到开关也适用于网页。
 
 网页与 Telegram 使用同一 Telegram 数字 ID、业务日时区、积分账本、免费次数和全站上限。网页对话历史使用独立会话范围。网页检索使用受公开权限与来源撤回约束的 Wiki 工具。断线后可用原请求继续接收，回放保留至下一轮、最多五分钟，并受进程内缓存容量限制。停止生成会结算退款。重启由现有账本恢复流程退回未结算预留。
 

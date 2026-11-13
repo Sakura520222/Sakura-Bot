@@ -13,9 +13,10 @@ import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from jwt import PyJWTError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from core.settings import get_settings
+from core.web_api.deps import get_config, write_config
 from core.wiki import telegram_login
 from core.wiki.accounts import ACCESS_SECONDS, FLOW_SECONDS, AccountDenied, token_hash
 
@@ -55,6 +56,65 @@ class Privacy(BaseModel):
 class AccountBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     blocked: bool
+
+
+class AccountSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool
+    origin: str = Field(max_length=255)
+    client_secret: str | None = Field(default=None, max_length=1024)
+    assistant_enabled: bool
+    assistant_checkin: bool
+
+
+def public_settings(settings, config):
+    return {
+        "enabled": config.enabled,
+        "origin": config.origin,
+        "has_secret": bool(config.client_secret.get_secret_value()),
+        "has_bot": bool(settings.telegram.qa_bot_token),
+        "assistant_enabled": config.assistant_enabled,
+        "assistant_checkin": config.assistant_checkin,
+    }
+
+
+@admin.get("/account-settings")
+async def read_account_settings():
+    settings = get_settings()
+    return public_settings(settings, telegram_login.wiki_login_settings(settings))
+
+
+@admin.put("/account-settings")
+async def update_account_settings(request: Request):
+    settings = get_settings()
+    previous = telegram_login.wiki_login_settings(settings)
+    try:
+        body = AccountSettings.model_validate(await request.json())
+    except ValueError:
+        raise HTTPException(422, "Wiki 登录设置无效") from None
+    raw = get_config()
+    data = body.model_dump(exclude={"client_secret"})
+    data["origin"] = data["origin"].strip().rstrip("/")
+    stored = raw.get("wiki_login", {})
+    if body.client_secret is not None:
+        data["client_secret"] = body.client_secret.strip()
+    elif isinstance(stored, dict) and "client_secret" in stored:
+        data["client_secret"] = stored["client_secret"]
+    config = previous.model_copy(
+        update={
+            **data,
+            "client_secret": SecretStr(
+                data.get("client_secret", previous.client_secret.get_secret_value())
+            ),
+        }
+    )
+    if body.assistant_enabled and not body.enabled:
+        raise HTTPException(422, "启用小妲助手前，请先启用 Telegram 登录")
+    if body.enabled and not telegram_login.login_config(settings, config):
+        raise HTTPException(422, "请配置有效的 HTTPS 站点地址、BotFather Client Secret 和助手 Bot")
+    raw["wiki_login"] = data
+    write_config(raw)
+    return public_settings(settings, config)
 
 
 def safe_wiki_path(path):
@@ -144,7 +204,7 @@ async def session_status(request: Request):
     user = await accounts.session(request.cookies.get(ACCESS))
     return {
         "enabled": True,
-        "assistant_enabled": get_settings().wiki_login.assistant_enabled,
+        "assistant_enabled": telegram_login.wiki_login_settings(get_settings()).assistant_enabled,
         "user": profile(user) if user else None,
         "can_refresh": not user and token_hash(request.cookies.get(REFRESH)) is not None,
     }

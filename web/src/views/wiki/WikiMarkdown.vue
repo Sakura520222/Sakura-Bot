@@ -1,5 +1,5 @@
 <template>
-  <div class="wiki-markdown" @click="previewImage" v-html="html" />
+  <div class="wiki-markdown" :data-claim="claimIndex" @click="previewImage" v-html="html" />
   <dialog v-if="preview" ref="lightbox" class="wiki-lightbox" aria-label="图片预览" @close="preview = undefined">
     <button autofocus @click="lightbox?.close()">关闭图片预览</button>
     <img v-if="!imageFailed" :src="preview.url" :alt="preview.label" referrerpolicy="no-referrer"
@@ -11,7 +11,7 @@
 import { computed, nextTick, ref } from "vue";
 import { marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
-const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean }>();
+const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number }>();
 const renderer = new Renderer();
 const renderedImages = new Map<string, string>();
 renderer.image = ({ href, text }) => {

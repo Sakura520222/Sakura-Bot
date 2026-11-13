@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.settings import get_settings
 from core.wiki.accounts import token_hash
+from core.wiki.telegram_login import wiki_login_settings
 
 from .wiki_account import LOGOUT, WikiUser, same_origin
 
@@ -52,7 +53,7 @@ class Question(BaseModel):
 
 async def bridge(request, user, method, path, *, body=None, stream=False):
     settings = get_settings()
-    config = settings.wiki_login
+    config = wiki_login_settings(settings)
     token = settings.telegram.qa_bot_token
     if not config.assistant_enabled or not token:
         raise HTTPException(404, "Wiki 助手未启用")
@@ -132,7 +133,7 @@ async def status(request: Request, user: WikiUser):
 
 @router.post("/checkin", dependencies=[Depends(same_origin)])
 async def checkin(request: Request, user: WikiUser):
-    if not get_settings().wiki_login.assistant_checkin:
+    if not wiki_login_settings(get_settings()).assistant_checkin:
         raise HTTPException(403, "Wiki 签到未启用")
     return await bridge(request, user, "POST", "/checkin")
 

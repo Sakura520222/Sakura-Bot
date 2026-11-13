@@ -1,4 +1,6 @@
 import difflib
+import html
+import re
 import uuid
 from typing import Literal
 
@@ -17,6 +19,7 @@ class Proposal(Strict):
     claim: int = Field(ge=0, le=10000, strict=True)
     text: str = Field(min_length=1, max_length=10000)
     sources: list[str] = Field(default_factory=list, max_length=5)
+    excerpt: str = Field(default="", max_length=500)
 
     @field_validator("text")
     @classmethod
@@ -30,6 +33,16 @@ class Proposal(Strict):
     @classmethod
     def urls(cls, values):
         return list(dict.fromkeys(public_url(value) for value in values))
+
+
+def selection_text(value):
+    value = re.sub(
+        r"!?\[([^\]\n]*)\]\([^\n)]*\)|\[\[([^\]\n]+)\]\]",
+        lambda match: match[1] or match[2] or "",
+        value,
+    )
+    value = re.sub(r"[`*_~]", "", html.unescape(value))
+    return " ".join(value.split())
 
 
 class Community:
@@ -72,6 +85,10 @@ class Community:
             if proposal.claim >= len(claims):
                 raise ValueError("找不到所选段落")
             original = claims[proposal.claim]["text"]
+            if proposal.excerpt:
+                excerpt = selection_text(proposal.excerpt)
+                if not excerpt or excerpt not in selection_text(original):
+                    raise ValueError("所选正文与当前版本不一致，请重新划选")
             if proposal.kind in {"edit", "correction"} and proposal.text == original:
                 raise ValueError("修订内容没有变化")
             changes = (
@@ -154,6 +171,8 @@ class Community:
                         "text": data["text"],
                         "sources": data["sources"],
                     }
+                    if data.get("excerpt"):
+                        annotation["excerpt"] = data["excerpt"]
                 revision = await self.knowledge.create_correction(
                     cur,
                     channel,

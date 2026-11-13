@@ -109,7 +109,7 @@ export interface Claim {
   source_created_at: string;
   evidence: Evidence[];
   fact_check?: { status: string; reason: string; checked_at?: string; model?: string; sources: { title: string; url: string; provider: string }[] };
-  community_notes?: { kind: string; text: string; sources: string[] }[];
+  community_notes?: { kind: string; text: string; sources: string[]; excerpt?: string }[];
   title?: string;
   url?: string;
 }
