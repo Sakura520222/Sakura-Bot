@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 )
 
 type emptyCommentInbox struct{}
@@ -55,5 +57,37 @@ func TestPrivatePromptDoesNotGainCommentPersona(t *testing.T) {
 	prompt := h.engine.buildSystemPrompt(context.Background(), "", true)
 	if !strings.Contains(prompt, "自定义私聊人格") || strings.Contains(prompt, "【评论区交互上下文】") {
 		t.Fatal("comment context leaked into private chat")
+	}
+}
+
+func TestTelegramDiscussionFactsReachModelWithoutRewritingQuery(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fallback), func(t *testing.T) {
+			entries := []scriptEntry{{lines: []string{contentLine("当前关联频道是 Nahida")}}}
+			if fallback {
+				entries = append([]scriptEntry{{status: 500}}, entries...)
+			}
+			h := newHarness(t, entries)
+			facts := contracts.TelegramContext{
+				ChatID: -1001, ChatTitle: "Firefly Chat", AssistantID: 123, AssistantUsername: "NahidaQABot",
+				Channels: []contracts.TelegramChannel{{ID: -1005, Title: "Nahida", Username: "Nahida", URL: "https://t.me/Nahida"}},
+			}
+			ctx := contracts.WithTelegramContext(WithScope(context.Background(), "chat:-1001:thread:0"), facts)
+			ctx = WithTurn(ctx, emptyCommentInbox{})
+			query := "@NahidaQABot 你是区"
+			collectChunks(t, h.engine.ProcessQueryStream(ctx, query, -1001, ""))
+			for i := range entries {
+				req := h.llm.requestBody(t, i)
+				system := req.Messages[0].text()
+				for _, want := range []string{"Firefly Chat", "NahidaQABot", "https://t.me/Nahida", `"chat_id":-1001`, "assistant_username", "当前聊天"} {
+					if !strings.Contains(system, want) {
+						t.Fatalf("Telegram discussion fact missing from system prompt: %q", want)
+					}
+				}
+				if req.Messages[len(req.Messages)-1].text() != query {
+					t.Fatal("bot mention rewrote original query")
+				}
+			}
+		})
 	}
 }

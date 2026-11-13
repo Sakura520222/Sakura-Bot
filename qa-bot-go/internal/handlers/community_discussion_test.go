@@ -89,7 +89,7 @@ func TestLinkedDiscussionRoutingAndRevocation(t *testing.T) {
 	if err = manager.InitComments(ctx); err != nil {
 		t.Fatal(err)
 	}
-	chat := models.Chat{ID: -time.Now().UnixNano(), Type: models.ChatTypeSupergroup}
+	chat := models.Chat{ID: -time.Now().UnixNano(), Type: models.ChatTypeSupergroup, IsForum: true}
 	t.Cleanup(func() { database.Exec("DELETE FROM qa_comments WHERE chat_id=?", chat.ID) })
 	var link atomic.Int64
 	var systemMessages atomic.Int64

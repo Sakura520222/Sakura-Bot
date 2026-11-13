@@ -47,6 +47,8 @@ usage_quota 承担真实用户免费次数及匿名群组共享额度。真实�
 会话按 actor 和作用域隔离。真实用户使用正数 Telegram 用户 ID，本群匿名管理员使用当前群的负数 ID 作为内部共享 actor，个人注册会跳过该 actor。
 
 私聊作用域为 `private`。映射到频道帖子的评论使用 `chat:<chat_id>:post:<root_id>`。其余合格讨论群消息使用 `chat:<chat_id>:thread:<message_thread_id>`，普通群聊的 thread 为 0。普通回复目标消息 ID 不参与群聊作用域计算。
+
+`message_thread_id` 同时可表示普通消息线程与论坛话题。`messageTopicID` 依据 `is_topic_message` 或聊天的 `is_forum` 标记确认论坛话题，普通群的回复线程归入 thread 0。已映射的帖子继续使用原帖作用域。字段定义见 [Telegram Bot API](https://core.telegram.org/bots/api#message)。
 进程重启后按同一用户和 scope_key 恢复 30 分钟内活跃的会话；历史取最近 20 条后按时间及 ID 稳定排序。
 评论快照保存助手真实 user_id 和 author_role=assistant，避免将助手先前回答误归为外部 Bot。
 同一作用域的活动回合接纳后续消息，每条独立预留；容量/权限检查失败不扣费。
@@ -72,6 +74,8 @@ FINALIZING 与接纳使用同一把锁，关闭后消息进入下一回合，下
 多频道共用讨论群时优先匹配帖子的配置归属。无帖子映射时优先匹配显式唤醒词，普通回退按配置顺序选择。未指明频道的匿名消息优先选择允许匿名身份的关联频道。每个 Update 只进入一次助手处理。
 
 `effectiveUserMessage` 归一化真实用户和本群匿名 actor。Go 使用 `SenderChat.ID == Chat.ID` 与群组类型核实匿名来源，自动转发、其他频道身份、机器人、系统消息和编辑消息会被过滤。@提及依据 Telegram mention/text_mention 实体与实际助手身份验证。回复助手及同 actor、同作用域的活动回合消息也可触发。
+
+同步路径与 Worker 在开始模型调用前通过 `Community.modelContext` 传递 `contracts.TelegramContext`，包含当前群组、实际论坛话题、关联的已启用频道及核实过的助手 ID/用户名。引擎将这些标识作为数据写入系统上下文，用户原文保持完整。`resolve_channel` 识别当前助手用户名及其链接并返回明确的身份说明，其他频道解析沿用原逻辑。
 跨频道转发使用 sender_chat 与关联讨论群确认当前归属，forward_origin 单独记录原始来源。不能将原始来源的帖子 ID 当成当前频道的帖子 ID；Bot API 未提供当前帖子 ID 时保留群内根消息映射，不猜测编号。UserBot 回溯优先使用 saved_from_peer / saved_from_msg_id 精确匹配转发后的帖子。
 原帖及已收集评论按时间/消息 ID 排序作为不可信参考资料注入，公共评论不冒充个人追问。
 可见编辑会更新快照；媒体保存说明，不声称获得不可见的媒体内容。

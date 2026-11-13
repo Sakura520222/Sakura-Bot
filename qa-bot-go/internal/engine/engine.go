@@ -429,6 +429,7 @@ func (e *Engine) buildSystemPrompt(ctx context.Context, channelHint string, incl
 	)
 	systemPrompt := r.Replace(baseSystemTemplate)
 	systemPrompt += commentInteractionPrompt(ctx)
+	systemPrompt += telegramChatPrompt(ctx)
 
 	if includeTools {
 		systemPrompt += strings.ReplaceAll(agentToolInstructions,

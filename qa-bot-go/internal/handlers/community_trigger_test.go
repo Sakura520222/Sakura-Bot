@@ -83,6 +83,31 @@ func TestDiscussionScopeIgnoresOrdinaryReplyTarget(t *testing.T) {
 	}
 }
 
+func TestDiscussionScopeDistinguishesForumTopicsFromOrdinaryThreads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chat   models.Chat
+		topic  bool
+		thread int
+		want   string
+	}{
+		{"ordinary question", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, false, 0, "chat:-1001:thread:0"},
+		{"ordinary reply thread", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, false, 501, "chat:-1001:thread:0"},
+		{"another ordinary thread", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, false, 700, "chat:-1001:thread:0"},
+		{"forum topic", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup, IsForum: true}, true, 50, "chat:-1001:thread:50"},
+		{"another forum topic", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup, IsForum: true}, true, 51, "chat:-1001:thread:51"},
+		{"forum chat flag", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup, IsForum: true}, false, 50, "chat:-1001:thread:50"},
+		{"topic message flag", models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, true, 50, "chat:-1001:thread:50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := &models.Message{Chat: tc.chat, IsTopicMessage: tc.topic, MessageThreadID: tc.thread}
+			if got := messageScope(msg); got != tc.want {
+				t.Fatalf("scope=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEffectiveActorRejectsSenderDisguises(t *testing.T) {
 	chat := models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}
 	for _, tc := range []struct {
