@@ -132,6 +132,8 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === "channels") out = [channel];
     else if (endpoint === "/api/wiki/admin/channels") out = [adminChannel];
     else if (endpoint === "/api/wiki/admin/channels/123/config") out = adminChannel;
+    else if (endpoint === "/api/wiki/admin/channels/123/jobs") out = [];
+    else if (endpoint === "/api/wiki/admin/channels/123/excluded") out = { total: 0, unverified_total: 0, reasons: [], items: [] };
     else if (endpoint === "/api/wiki/admin/channels/123/cover" && req.method === "PUT") {
       assert.equal(req.headers.authorization, "Bearer wiki-test-token");
       const chunks = [];
@@ -201,6 +203,16 @@ const listen = (app) => new Promise((resolve, reject) => {
 const port = await listen(server);
 const baselinePort = baseline ? await listen(before) : null;
 const url = "http://127.0.0.1:" + port;
+async function assertCentered(dialog) {
+  await dialog.waitFor();
+  await dialog.evaluate(async (element) => {
+    await Promise.allSettled(element.getAnimations().map((animation) => animation.finished));
+    const { left, top, width, height } = element.getBoundingClientRect();
+    const x = left + width / 2 - document.documentElement.clientWidth / 2;
+    const y = top + height / 2 - innerHeight / 2;
+    if (Math.abs(x) >= 2 || Math.abs(y) >= 2) throw new Error(`Dialog center offset: ${x}px, ${y}px`);
+  });
+}
 let browser;
 try {
   browser = await chromium.launch({ ...(chrome ? { executablePath: chrome } : {}), args: ["--disable-gpu"] });
@@ -321,13 +333,7 @@ try {
   if (output) await page.screenshot({path:path.join(output,"graph-mobile.png")});
   await page.locator(".wiki-graph-list button").first().click();
   const nodeDialog = page.getByRole("dialog");
-  await nodeDialog.waitFor();
-  const centered = await nodeDialog.evaluate((dialog) => {
-    const { left, top, width, height } = dialog.getBoundingClientRect();
-    return Math.abs(left + width / 2 - document.documentElement.clientWidth / 2) < 2 &&
-      Math.abs(top + height / 2 - innerHeight / 2) < 2;
-  });
-  assert.ok(centered, "Node details open in the center of the viewport");
+  await assertCentered(nodeDialog);
   await nodeDialog.getByRole("button", { name:"查看邻居" }).click();
   await page.getByRole("button", { name:"返回节点总览" }).waitFor();
   await page.locator(".wiki-graph-list button").getByText(cards[1].title, { exact:true }).waitFor();
@@ -345,7 +351,7 @@ try {
   await page.getByText("频道原帖",{exact:true}).waitFor();
   await page.getByRole("link",{name:"预览图片 · 示例"}).waitFor();
   await page.getByRole("link",{name:"预览图片 · 示例"}).click();
-  await page.getByRole("dialog",{name:"图片预览"}).waitFor();
+  await assertCentered(page.getByRole("dialog",{name:"图片预览"}));
   await page.keyboard.press("Escape");
   await page.getByRole("dialog",{name:"图片预览"}).waitFor({state:"hidden"});
   const actions = page.getByRole("group", { name: "文章操作" });
@@ -408,10 +414,19 @@ try {
   await desktop.waitForURL("**/login");
   await desktop.getByText("登录",{exact:true}).first().waitFor();
   accountEnabled = true;
+  assistantEnabled = true;
+  await desktop.goto(url + "/wiki");
+  await desktop.getByRole("button", { name: "Telegram 登录", exact: true }).click();
+  await assertCentered(desktop.getByRole("dialog", { name: "使用 Telegram 登录" }));
+  await desktop.keyboard.press("Escape");
+  await desktop.getByRole("button", { name: "小妲助手", exact: true }).click();
+  await assertCentered(desktop.getByRole("dialog", { name: "小妲助手" }));
+  await desktop.keyboard.press("Escape");
   const accountPage = await browser.newPage({ ...devices["iPhone 13"] });
   await accountPage.route("https://oauth.telegram.org/auth?fixture=1", (route) => route.fulfill({ body: "Telegram fixture" }));
   await accountPage.goto(url + "/wiki");
   await accountPage.getByRole("button", { name: "Telegram 登录", exact: true }).click();
+  await assertCentered(accountPage.getByRole("dialog", { name: "使用 Telegram 登录" }));
   await accountPage.getByText("Wiki 会使用你的 Telegram 数字 ID", { exact: false }).waitFor();
   await accountPage.getByRole("button", { name: "前往 Telegram 授权" }).click();
   await accountPage.waitForURL("https://oauth.telegram.org/auth?fixture=1");
@@ -435,6 +450,7 @@ try {
   await accountPage.getByRole("menuitem", { name: "询问当前词条" }).click();
   const assistant = accountPage.getByRole("dialog", { name: "小妲助手" });
   await assistant.getByRole("button", { name: "签到", exact: true }).click();
+  await assertCentered(assistant);
   await assistant.getByText("积分 2.5", { exact: true }).waitFor();
   await assistant.getByRole("textbox", { name: "问题" }).fill("这个词条讲了什么？");
   await assistant.getByRole("button", { name: "发送", exact: true }).click();
@@ -448,9 +464,11 @@ try {
   const tools = accountPage.getByRole("toolbar", { name: "选中文字操作" });
   await tools.getByRole("button", { name: "添加注解" }).click();
   const note = accountPage.getByRole("dialog", { name: "添加注解" });
+  await assertCentered(note);
   await note.getByRole("textbox", { name: "说明" }).fill("这段需要补充来源。");
   await note.getByRole("button", { name: "提交审核" }).click();
-  await accountPage.getByText("已提交，等待管理员审核。", { exact: true }).waitFor();
+  await note.waitFor({ state: "hidden" });
+  await accountPage.getByRole("status").filter({ hasText: "已提交，等待管理员审核。" }).waitFor();
   assert.deepEqual([submittedProposal.claim, submittedProposal.excerpt, submittedProposal.kind], [0, "Sakura", "annotation"]);
   await accountPage.locator(".wiki-markdown[data-claim='0'] strong").first().evaluate((element) => {
     const selection = window.getSelection();
@@ -459,9 +477,11 @@ try {
   });
   await tools.getByRole("button", { name: "建议修订" }).click();
   const edit = accountPage.getByRole("dialog", { name: "提交修订建议" });
+  await assertCentered(edit);
   await edit.getByRole("textbox", { name: "替换选中文字" }).fill("Sakura Wiki");
   await edit.getByRole("button", { name: "提交审核" }).click();
-  await accountPage.getByText("已提交，等待管理员审核。", { exact: true }).waitFor();
+  await edit.waitFor({ state: "hidden" });
+  await accountPage.getByRole("status").filter({ hasText: "已提交，等待管理员审核。" }).waitFor();
   assert.equal(submittedProposal.text, claims[0].text.replace("Sakura", "Sakura Wiki"));
   assistantEnabled = false;
   accountUser = null;
@@ -517,6 +537,11 @@ try {
   await desktop.getByRole("button", { name: "移除本机封面" }).click();
   await desktop.getByText("本机封面已移除", { exact: true }).waitFor();
   assert.equal(uploadedCover, undefined);
+  await desktop.getByText("任务", { exact: true }).click();
+  await desktop.getByRole("button", { name: /查看原因/ }).click();
+  await desktop.getByText("没有符合条件的记录", { exact: true }).waitFor();
+  await assertCentered(desktop.locator(".n-modal").filter({ hasText: "未纳入知识生成的消息" }));
+  await desktop.keyboard.press("Escape");
   await desktop.goto(url + "/wiki/contributors");
   await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
   await desktop.goto(url + "/wiki/123/page/article-0");
@@ -524,9 +549,11 @@ try {
   await desktop.locator(".wiki-markdown[data-claim='0'] p").first().click({ button: "right" });
   await desktop.getByRole("menuitem", { name: "管理本词条", exact: true }).click();
   await desktop.getByText("没有待审投稿。", { exact: true }).waitFor();
+  await assertCentered(desktop.getByRole("dialog", { name: "管理本词条" }));
   assert.ok((await desktop.getByRole("textbox", { name: "正文", exact: true }).inputValue()).includes("Sakura"));
   if (output) await desktop.screenshot({path:path.join(output,"wiki-article-management.png")});
   await desktop.getByRole("button", { name: "隐藏词条", exact: true }).click();
+  await assertCentered(desktop.getByRole("dialog", { name: /^隐藏「/ }));
   await desktop.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   assert.equal(articleHidden, false);
   await desktop.getByRole("button", { name: "隐藏词条", exact: true }).click();

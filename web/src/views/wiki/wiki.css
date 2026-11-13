@@ -16,6 +16,14 @@
   box-sizing: border-box;
 }
 
+.wiki-shell dialog:modal {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+
 /* 元素基线：控件统一 32px 高，按钮药丸、输入 8px 圆角，focus 用 accent 外圈 */
 .wiki-shell a {
   color: var(--sb-accent);

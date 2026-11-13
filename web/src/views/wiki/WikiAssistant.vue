@@ -247,7 +247,7 @@ async function checkin() {
 
 <style scoped>
 .assistant-open { white-space: nowrap; }
-.assistant-panel { position: fixed; inset: 60px 12px auto auto; width: min(430px, calc(100vw - 24px)); max-height: calc(100dvh - 75px); box-sizing: border-box; border: 1px solid var(--sb-border); border-radius: 14px; padding: 0; color: var(--sb-text); background: var(--sb-surface); }
+.assistant-panel { width: min(430px, calc(100% - 24px)); border: 1px solid var(--sb-border); border-radius: 14px; padding: 0; color: var(--sb-text); background: var(--sb-surface); }
 .assistant-panel[open] { display: flex; flex-direction: column; }
 .assistant-panel::backdrop { background: rgb(0 0 0 / 25%); }
 header, .assistant-quota, .assistant-actions, .assistant-article { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -255,7 +255,7 @@ header { justify-content: space-between; padding: 8px 14px; border-bottom: 1px s
 h2 { margin: 0; font-size: 1.1rem; }
 .assistant-quota { padding: 8px 14px; font-size: 0.85rem; }
 .assistant-body { overflow-y: auto; padding: 0 14px; min-height: 90px; }
-.assistant-history { min-height: 160px; overscroll-behavior: contain; }
+.assistant-history { min-height: min(160px, 24dvh); overscroll-behavior: contain; }
 .assistant-entry { margin: 14px 0; overflow-wrap: anywhere; }
 .assistant-question { padding: 8px 12px; background: var(--sb-surface-2); border-radius: 10px; white-space: pre-wrap; }
 .assistant-error, .assistant-notice { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -264,7 +264,4 @@ h2 { margin: 0; font-size: 1.1rem; }
 .assistant-compose textarea { box-sizing: border-box; display: block; width: 100%; resize: vertical; color: inherit; background: var(--sb-surface); border: 1px solid var(--sb-border); border-radius: 8px; padding: 8px; }
 .assistant-actions { justify-content: flex-end; margin-top: 6px; }
 .assistant-article { margin: 0 0 6px; }
-@media (max-width: 720px) {
-  .assistant-panel { inset: auto 0 0; margin: 0; width: 100%; max-width: none; max-height: 88dvh; border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); }
-}
 </style>
