@@ -25,7 +25,14 @@ func messageScope(msg *models.Message) string {
 	if msg.Chat.Type == models.ChatTypePrivate || msg.Chat.Type == "" {
 		return "private"
 	}
-	return fmt.Sprintf("chat:%d:thread:%d", msg.Chat.ID, msg.MessageThreadID)
+	return fmt.Sprintf("chat:%d:thread:%d", msg.Chat.ID, messageTopicID(msg))
+}
+
+func messageTopicID(msg *models.Message) int {
+	if msg.IsTopicMessage || msg.Chat.IsForum {
+		return msg.MessageThreadID
+	}
+	return 0
 }
 func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64, query, hint, placeholder, errPrefix string) {
 	scope := engine.Scope(ctx)
@@ -67,6 +74,9 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 		if !q.Allowed {
 			c.replyPlain(ctx, msg, q.Message)
 			return
+		}
+		if c.community != nil {
+			ctx = c.community.modelContext(ctx, msg)
 		}
 		c.runStream(ctx, msg, user, query, hint, placeholder, q, errPrefix)
 		return
@@ -125,6 +135,7 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 				c.finishBilling(work, msg, user, false)
 				return
 			}
+			work = c.community.modelContext(work, msg)
 		}
 		if c.community != nil && msg.Chat.Type != models.ChatTypePrivate {
 			root := c.community.DB.CommentRoot(work, msg.Chat.ID, msg.ID)

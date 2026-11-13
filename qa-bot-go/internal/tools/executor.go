@@ -16,6 +16,9 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/config"
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 )
 
 // ToolExecutor 工具执行器：将 LLM 的 tool_call 请求路由到实际的检索组件
@@ -329,10 +332,22 @@ func (e *ToolExecutor) executeListChannels(ctx context.Context, args map[string]
 	}), nil
 }
 
-// executeResolveChannel 对齐 _execute_resolve_channel（agent_tools.py:480-482）：
-// 解析结果字典原样透传。
+// executeResolveChannel preserves channel lookup results while guarding the
+// assistant identity verified by the Telegram handler.
 func (e *ToolExecutor) executeResolveChannel(ctx context.Context, args map[string]any) (string, error) {
-	result, err := e.memoryMgr.ResolveChannel(ctx, optArgString(args, "channel_hint"))
+	hint := optArgString(args, "channel_hint")
+	telegram, trusted := contracts.TelegramContextFrom(ctx)
+	if trusted && strings.TrimSpace(telegram.AssistantUsername) != "" {
+		assistant := config.NormalizeChannelID(strings.ToLower(telegram.AssistantUsername))
+		if config.NormalizeChannelID(strings.ToLower(hint)) == assistant {
+			return marshalJSON(map[string]any{
+				"success":    false,
+				"error":      "该标识对应当前助手 Bot 的唤醒用户名，请结合当前聊天与已关联频道上下文处理用户问题。",
+				"candidates": []any{},
+			}), nil
+		}
+	}
+	result, err := e.memoryMgr.ResolveChannel(ctx, hint)
 	if err != nil {
 		return "", err
 	}
