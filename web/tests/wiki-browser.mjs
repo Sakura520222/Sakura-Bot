@@ -15,7 +15,7 @@ if (output) fs.mkdirSync(output, { recursive: true });
 const channel = { id: "123", title: "Sakura 开发频道", username: "sakura_dev", page_count: 240,
   updated_at: "2026-11-12T16:00:00Z", publication_id: "v1", coverage: {status:"accessible"} };
 const cards = Array.from({length: 240}, (_, index) => ({
-  id: "p"+index, slug: "article-"+index, title: "Sakura Wiki 知识条目 "+(index+1), topic: ["开发日志","使用指南","更新记录"][index%3],
+  id: index.toString(16).padStart(32, "0"), slug: "article-"+index, title: "Sakura Wiki 知识条目 "+(index+1), topic: ["开发日志","使用指南","更新记录"][index%3],
   kind: "Topic", channel_id: channel.id, channel_title: channel.title, url: "/wiki/123/page/article-"+index,
   updated_at: channel.updated_at, revision_id:"r"+index, publication_id:"v1", evidence_count: 3,
   excerpt: "公开知识条目摘要。这里记录项目发布、配置与日常使用问题。"
@@ -61,6 +61,9 @@ const server = http.createServer(async (req,res) => {
       return res.end(uploadedCover.image);
     }
     else if (endpoint === "visibility") out = {"123":"v1:1"};
+    else if (endpoint === "bookmarks") {
+      out = { items: q.getAll("id").map((id) => cards.find((card) => card.id === id)).filter(Boolean) };
+    }
     else if (endpoint === "feed") out = {items:cards.slice(start,start+20),has_more:start+20<cards.length,next_cursor:start+20<cards.length?String(start+20):null,terms:q.get("q")?.split(" ")||[]};
     else if (endpoint === "search") out = {items:cards.slice(0,Number(q.get("page_size")||20)),total:cards.length,page:1,page_size:20};
     else if (endpoint.endsWith("/timeline")) out = {items:[{...claims[0],title:cards[0].title,url:cards[0].url,event_id:"event1"}],total_pages:1,has_more:false,next_cursor:null};
@@ -219,7 +222,16 @@ try {
   await page.getByRole("dialog",{name:"图片预览"}).waitFor();
   await page.keyboard.press("Escape");
   await page.getByRole("dialog",{name:"图片预览"}).waitFor({state:"hidden"});
-  await page.getByRole("button",{name:"本机收藏",exact:true}).click();
+  const actions = page.getByRole("group", { name: "文章操作" });
+  assert.equal(await actions.locator("button svg").count(), 2);
+  const titleRow = await page.locator(".wiki-reader-title h1").boundingBox();
+  const actionsRow = await actions.boundingBox();
+  assert.ok(actionsRow.x >= titleRow.x + titleRow.width && Math.abs(actionsRow.y - titleRow.y) < 30);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
+  await actions.getByRole("button", { name: "复制链接" }).click();
+  await page.getByText("已复制", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), url + "/wiki/123/page/article-0#claim-12");
+  await actions.getByRole("button",{name:"收藏到本机",exact:true}).click();
   await page.getByRole("button",{name:"取消收藏",exact:true}).waitFor();
   assert.equal(await page.getByRole("button",{name:"返回顶部",exact:true}).count(), 0);
   const mobileTools = page.getByRole("group",{name:"Wiki 工具"});
@@ -229,9 +241,24 @@ try {
   await mobileTools.getByRole("button",{name:"切换到浅色模式"}).click();
   assert.equal(await page.evaluate(()=>document.documentElement.classList.contains("dark")),false);
   if (output) await page.screenshot({path:path.join(output,"mobile.png")});
+  const hiddenBookmark = "f".repeat(32);
+  await page.evaluate(([legacyId, missingId]) => {
+    localStorage.setItem("sakura-wiki-saved:" + legacyId, "1");
+    localStorage.setItem("sakura-wiki-saved:" + missingId, "1");
+  }, [cards[1].id, hiddenBookmark]);
+  await page.getByRole("navigation", { name: "站点导航" }).getByRole("link", { name: "收藏", exact: true }).click();
+  await page.waitForURL(url + "/wiki/bookmarks");
+  await page.getByRole("link", { name: cards[0].title, exact: true }).waitFor();
+  await page.getByRole("link", { name: cards[1].title, exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole("button", { name: `取消收藏 ${cards[0].title}` }).click();
+  await page.getByRole("button", { name: `取消收藏 ${cards[1].title}` }).click();
+  await page.getByRole("button", { name: "移除不可访问的收藏" }).click();
+  await page.getByText("还没有收藏", { exact: true }).waitFor();
   const desktop = await browser.newPage({viewport:{width:1440,height:900}});
   await desktop.goto(url + "/wiki");
   await desktop.locator(".wiki-feed-card").first().waitFor();
+  assert.equal(await desktop.getByRole("navigation", { name: "站点导航" }).getByRole("link", { name: "收藏", exact: true }).getAttribute("href"), "/wiki/bookmarks");
   const tabs = desktop.getByRole("navigation", { name: "首页栏目" });
   assert.deepEqual(await tabs.getByRole("link").allTextContents(), ["推荐", "最新"]);
   const brand = desktop.getByRole("link",{name:"Sakura Wiki",exact:true});

@@ -24,6 +24,8 @@ CARD_FIELDS = """p.id,p.slug,p.kind,p.topic,c.id channel_id,c.title channel_titl
 NODE_FIELDS = """p.id,p.slug,p.kind,p.topic,c.id channel_id,
     JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.title')) title,
     r.id revision_id,c.published_revision publication_id"""
+EVIDENCE_COUNT = """(SELECT COUNT(DISTINCT ev.source_id) FROM wiki_evidence ev
+    WHERE ev.revision_id=r.id) evidence_count"""
 LATEST_JOIN = """FROM wiki_page_revisions r FORCE INDEX (wiki_feed_latest)
     STRAIGHT_JOIN wiki_pages p ON p.id=r.page_id AND p.channel_id=r.channel_id
     STRAIGHT_JOIN wiki_channels c ON c.id=r.channel_id
@@ -66,6 +68,20 @@ class PublicReader:
             ]: f"{row['published_revision']}:{row['source_generation']}:{row['cover_digest'] or ''}"
             for row in rows
         }
+
+    async def bookmarks(self, page_ids):
+        ordered = list(dict.fromkeys(page_ids))
+        if not ordered:
+            return []
+        placeholders = ",".join(["%s"] * len(ordered))
+        rows = await self.store.query(
+            f"""SELECT {CARD_FIELDS}, {EVIDENCE_COUNT} {PAGE_JOIN}
+            WHERE p.id IN ({placeholders}) AND {VISIBLE}""",
+            ordered,
+            fetch=True,
+        )
+        cards = {row["id"]: page_card(row) for row in rows}
+        return [cards[page_id] for page_id in ordered if page_id in cards]
 
     @consistent_read
     async def channels(self):
@@ -269,9 +285,7 @@ class PublicReader:
                 params.extend([date, date, identity])
         where = " AND ".join(conditions)
         rows = await self.store.query(
-            f"""SELECT {CARD_FIELDS}, batch.sort_rank,
-            (SELECT COUNT(DISTINCT ev.source_id) FROM wiki_evidence ev
-             WHERE ev.revision_id=r.id) evidence_count
+            f"""SELECT {CARD_FIELDS}, batch.sort_rank, {EVIDENCE_COUNT}
             FROM (
               SELECT c.id channel_id,p.id,r.id revision_id,r.created_at,{sort} sort_rank
               {join}

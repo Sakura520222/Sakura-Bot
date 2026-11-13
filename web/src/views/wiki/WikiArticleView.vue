@@ -6,12 +6,28 @@
     <article v-else-if="data" class="wiki-article">
       <header class="wiki-reader-header">
         <RouterLink class="wiki-tag" :to="topicLink">{{ data.topic }}</RouterLink>
-        <h1>{{ data.title }}</h1>
-        <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 核实于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
-        <div class="wiki-filters">
-          <button @click="share">{{ copyStatus || "复制链接" }}</button>
-          <button :aria-pressed="saved" @click="toggleSaved">{{ saved ? "取消收藏" : "本机收藏" }}</button>
+        <div class="wiki-reader-title">
+          <h1>{{ data.title }}</h1>
+          <div class="wiki-reader-actions" role="group" aria-label="文章操作">
+            <button type="button" class="wiki-header-icon" aria-label="复制链接" title="复制链接" @click="share">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path v-if="copyStatus === '已复制'" d="m5 12 4 4L19 6" />
+                <path v-else d="M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2m2 6a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2" />
+              </svg>
+            </button>
+            <button type="button" class="wiki-header-icon" :aria-pressed="saved"
+              :aria-label="saved ? '取消收藏' : '收藏到本机'" :title="saved ? '取消收藏' : '收藏到本机'" @click="toggleSaved">
+              <svg viewBox="0 0 24 24" :fill="saved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4-6 4z" />
+              </svg>
+            </button>
+          </div>
         </div>
+        <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 核实于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
+        <span class="wiki-sr-only" role="status">{{ copyStatus }}</span>
+        <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
+          {{ bookmarkError || copyStatus }}
+        </p>
         <details class="wiki-reader-inline"><summary>本页目录</summary><WikiReaderToc :headings="headings" :active="activeClaim" @navigate="jump" /></details>
       </header>
       <Teleport defer to="#wiki-reader-context">
@@ -88,6 +104,7 @@ import { computed, nextTick, onUnmounted, ref, shallowRef, watch, watchEffect } 
 import { useRoute, useRouter } from "vue-router";
 import { formatDate, publicWikiUrl, statusLabels, type WikiArticle, type WikiNode, type WikiReferences } from "../../api/wiki";
 import { isUnavailable, loadWiki, useWikiResource, wikiUrl } from "../../composables/wiki-store";
+import { useWikiBookmarks } from "../../composables/wiki-bookmarks";
 import { formatDay, plainWikiText } from "./wiki-utils";
 import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiReaderToc from "./WikiReaderToc.vue";
@@ -121,18 +138,19 @@ const loadingReferences = ref(false);
 const referenceError = ref("");
 const sourceLimit = ref(20);
 const copyStatus = ref("");
-const saved = ref(false);
-const savedKey = () => `sakura-wiki-saved:${data.value?.id}`;
+const { ids: bookmarkedIds, error: bookmarkError, setBookmarked } = useWikiBookmarks();
+const saved = computed(() => !!data.value && bookmarkedIds.value.includes(data.value.id));
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 let observer: IntersectionObserver | undefined;
 
 watch([() => data.value?.revision_id, () => data.value?.publication_id], () => {
   references.value = undefined;
   referenceError.value = "";
   loadingReferences.value = false;
+  clearTimeout(copyTimer);
   copyStatus.value = "";
   visibleCount.value = 8;
   sourceLimit.value = 20;
-  saved.value = !!data.value && localStorage.getItem(savedKey()) === "1";
 });
 watchEffect(() => {
   if (!data.value) return;
@@ -186,18 +204,24 @@ function openReferences(event: Event) {
   if ((event.target as HTMLDetailsElement).open && !references.value) void readReferences();
 }
 async function share() {
-  if (!data.value) return;
+  const article = data.value;
+  if (!article) return;
+  clearTimeout(copyTimer);
+  copyStatus.value = "";
   try {
-    await navigator.clipboard.writeText(new URL(data.value.url + route.hash, location.origin).href);
+    await navigator.clipboard.writeText(new URL(article.url + route.hash, location.origin).href);
+    if (data.value?.id !== article.id) return;
     copyStatus.value = "已复制";
+    copyTimer = setTimeout(() => { copyStatus.value = ""; }, 2000);
   } catch {
-    copyStatus.value = "复制失败，重试";
+    if (data.value?.id === article.id) copyStatus.value = "复制失败，重试";
   }
 }
 function toggleSaved() {
-  if (saved.value) localStorage.removeItem(savedKey());
-  else localStorage.setItem(savedKey(), "1");
-  saved.value = !saved.value;
+  if (data.value) setBookmarked(data.value.id, !saved.value);
 }
-onUnmounted(() => observer?.disconnect());
+onUnmounted(() => {
+  observer?.disconnect();
+  clearTimeout(copyTimer);
+});
 </script>

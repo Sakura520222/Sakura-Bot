@@ -33,6 +33,12 @@ export const wikiRoutes: RouteRecordRaw = {
       meta: { public: true },
     },
     {
+      path: "bookmarks",
+      name: "WikiBookmarks",
+      component: () => import("../views/wiki/WikiBookmarksView.vue"),
+      meta: { public: true },
+    },
+    {
       path: ":channel(\\d+)",
       name: "WikiChannel",
       props: routeProps,

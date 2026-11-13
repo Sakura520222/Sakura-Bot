@@ -178,6 +178,7 @@ def api(monkeypatch):
     _wiki_buckets.clear()
     reader = SimpleNamespace(
         channels=AsyncMock(return_value=[]),
+        bookmarks=AsyncMock(return_value=[]),
         channel=AsyncMock(return_value=None),
         page=AsyncMock(return_value=None),
         search=AsyncMock(return_value={"items": [], "total": 0}),
@@ -190,6 +191,16 @@ def api(monkeypatch):
     app.include_router(wiki.public, prefix="/api/public/wiki")
     app.include_router(wiki.admin, prefix="/api/wiki/admin")
     return TestClient(app)
+
+
+def test_bookmark_lookup_accepts_bounded_public_ids(api):
+    path = "/api/public/wiki/bookmarks"
+    page_id = "a" * 32
+    assert api.get(path, params={"id": page_id}).json() == {"items": []}
+    assert api.get(path).status_code == 422
+    assert api.get(path, params={"id": "bad"}).status_code == 422
+    assert api.get(path, params=[("id", page_id)] * 51).status_code == 422
+    assert api.post(path, params={"id": page_id}).status_code == 401
 
 
 def test_public_reads_without_token_revalidate_cached_responses(api):

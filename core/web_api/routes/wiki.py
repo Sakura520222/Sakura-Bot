@@ -9,7 +9,7 @@ import difflib
 import re
 from datetime import datetime
 from hashlib import sha256
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
@@ -26,7 +26,7 @@ from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|bookmarks|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{{1,180}}))?)"
 )
 # avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
 WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
@@ -107,6 +107,15 @@ async def channels():
 @public.api_route("/visibility", methods=["GET", "HEAD"])
 async def visibility():
     return await runtime().reader.visibility()
+
+
+@public.api_route("/bookmarks", methods=["GET", "HEAD"])
+async def bookmarks(
+    id: Annotated[
+        list[Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]], Query(min_length=1, max_length=50)
+    ],
+):
+    return {"items": await runtime().reader.bookmarks(id)}
 
 
 @public.api_route("/channels/{channel}", methods=["GET", "HEAD"])

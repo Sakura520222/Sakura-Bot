@@ -199,6 +199,7 @@ export function invalidateWiki(prefix?: string): void {
 export function invalidateChannelWiki(...channelIds: string[]): void {
   notifyInvalidation(channelIds.flatMap((id) => invalidateChannel(id)));
   invalidateWiki(wikiUrl("/channels"));
+  invalidateWiki(wikiUrl("/bookmarks"));
   for (const notify of channelChangeListeners) notify(channelIds);
 }
 
