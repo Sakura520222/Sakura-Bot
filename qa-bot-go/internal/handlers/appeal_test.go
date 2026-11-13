@@ -753,14 +753,14 @@ func TestAppealQuickReviewIntegration(t *testing.T) {
 	ctx := context.Background()
 	userID := time.Now().UnixNano() % 1_000_000_000
 	adminID := userID + 7
-	origin := originOf(-100999, 77)
+	origin := originOf(adminID, 77)
 	h := NewAppealHandler(repo, nil, nil, nil)
 	h.IsAdmin = func(int64) bool { return true }
 
 	caseRow := seedAppealCase(t, repo, -int64(100000+time.Now().UnixNano()%900000), userID)
 	caseID := rowStr(caseRow, "id")
 
-	// 走到 pending：begin → submit。
+	// 提交后由主进程验证并转为 pending，再生成当前版本的审核卡片。
 	appeal, err := h.inboxBegin(ctx, userID, caseID)
 	if err != nil {
 		t.Fatalf("begin 失败: %v", err)
@@ -772,13 +772,18 @@ func TestAppealQuickReviewIntegration(t *testing.T) {
 	if _, err := h.inboxSubmit(ctx, userID, rowStr(entry, "token")); err != nil {
 		t.Fatalf("submit 失败: %v", err)
 	}
-	revision := rowInt64(appeal, "revision") // 1
+	if _, err := repo.DB.ExecContext(ctx,
+		"UPDATE moderation_appeals SET status='pending',revision=revision+1 WHERE id=?",
+		rowStr(appeal, "id")); err != nil {
+		t.Fatalf("准备主进程审核状态失败: %v", err)
+	}
 
 	// 绑定审核人卡片通知行（check_origin 的前置条件）。
 	fresh, err := repo.Get(ctx, rowStr(appeal, "id"))
 	if err != nil {
 		t.Fatalf("取申诉失败: %v", err)
 	}
+	revision := rowInt64(fresh, "revision")
 	err = repo.Reader(ctx, func(s *guard.Store) error {
 		return s.SaveNotice(ctx, fresh, adminID, origin.messageID, "reviewer")
 	})
@@ -813,7 +818,12 @@ func TestAppealQuickReviewIntegration(t *testing.T) {
 
 	// global 非管理员：拒绝。
 	h.IsAdmin = func(int64) bool { return false }
-	err = h.inboxQuickReview(ctx, adminID+1, rowStr(appeal, "id"), revision, originOf(-100999, 78), "global")
+	if err := repo.Reader(ctx, func(s *guard.Store) error {
+		return s.SaveNotice(ctx, fresh, adminID+1, 78, "reviewer")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = h.inboxQuickReview(ctx, adminID+1, rowStr(appeal, "id"), revision, originOf(adminID+1, 78), "global")
 	if ge, ok := err.(*GuardError); !ok || ge.Key != "appeal.global_admin_required" {
 		t.Fatalf("global 非管理员应拒绝: %v", err)
 	}

@@ -107,6 +107,7 @@ class GuardGroup(BaseModel):
     ai_report_review_history_window_days: int = Field(default=14, ge=1, le=90)
     ai_report_review_history_limit: int = Field(default=10, ge=1, le=50)
     ai_learning_enabled: bool = False
+    allow_anonymous_admin_report: bool = False
     mute_seconds: int = Field(default=600, ge=30, le=86400 * 30)
     rules: list[GuardRule] = Field(default_factory=list, max_length=100)
     ban_any_traditional: bool = False

@@ -33,6 +33,14 @@ from .conftest import ADMIN, CHAT, USER
 REPORTER = 300
 
 
+def anonymous_event(event):
+    event.sender_id = CHAT
+    event.message.from_id = PeerChannel(1234567890)
+    event.message.peer_id = PeerChannel(1234567890)
+    event.message.post = False
+    return event
+
+
 def report_event(guard, *, text="@admin 举报", reporter=REPORTER, message_id=42, chat_id=CHAT):
     guard.client.admins.add(guard.bot_id)
     guard.client.users[reporter] = SimpleNamespace(
@@ -161,12 +169,14 @@ async def test_unrelated_text_does_not_trigger_reports(guard, store, text):
     assert not store.cases and not event.reply.called and not guard.client.sent
 
 
-@pytest.mark.parametrize("kind", ["private", "channel", "anonymous", "bot", "edit", "self_bot"])
-async def test_private_channel_anonymous_bot_and_edited_messages_are_ignored(guard, store, kind):
+@pytest.mark.parametrize(
+    "kind", ["private", "channel", "unknown_negative", "bot", "edit", "self_bot"]
+)
+async def test_private_channel_unknown_bot_and_edited_messages_are_ignored(guard, store, kind):
     event = report_event(guard)
     if kind in {"private", "channel"}:
         event.is_group = False
-    elif kind == "anonymous":
+    elif kind == "unknown_negative":
         event.sender_id = CHAT
     elif kind == "bot":
         guard.client.users[REPORTER].bot = True
@@ -176,6 +186,70 @@ async def test_private_channel_anonymous_bot_and_edited_messages_are_ignored(gua
         event.sender_id = guard.bot_id
     await guard.reports.handle(event)
     assert not store.cases and not event.reply.called
+
+
+async def test_confirmed_current_group_anonymous_admin_can_report(guard, store):
+    event = anonymous_event(report_event(guard))
+    await send(guard, event)
+    case = report_case(store)
+    actor = case["payload"]["reporter"]
+    assert case["status"] == "pending" and not guard.client.calls
+    assert actor["actor_type"] == "anonymous_group_admin"
+    assert actor["user_id"] is None and actor["chat_id"] == CHAT
+    assert actor["message_id"] == event.id and actor["source"] == "telegram:peer_channel"
+    assert actor["name"] == "本群匿名管理员（真实身份不可见）"
+    for notice in guard.client.sent.values():
+        assert actor["name"] in notice["text"]
+        assert all(
+            entity.user_id.user_id > 0
+            for entity in notice["entities"]
+            if isinstance(entity, InputMessageEntityMentionName)
+        )
+    assert f"tg://user?id={CHAT}" not in notification_text(case, link_profile=True)
+
+
+async def test_native_telethon_anonymous_message_is_accepted(guard, store):
+    event = report_event(guard)
+    event.sender_id = CHAT
+    event.message = Message(
+        id=142,
+        peer_id=PeerChannel(1234567890),
+        from_id=PeerChannel(1234567890),
+        message="@admin 举报",
+        reply_to=MessageReplyHeader(reply_to_msg_id=42),
+    )
+    await send(guard, event)
+    assert report_case(store)["payload"]["reporter"]["actor_type"] == "anonymous_group_admin"
+
+
+@pytest.mark.parametrize(
+    "kind", ["external", "fake_positive", "post", "auto_forward", "service", "edit", "wrong_peer"]
+)
+async def test_unsafe_channel_command_identities_are_ignored(guard, store, kind):
+    event = anonymous_event(report_event(guard))
+    if kind in {"external", "fake_positive"}:
+        event.message.from_id = PeerChannel(888)
+        if kind == "fake_positive":
+            event.sender_id = REPORTER
+    elif kind == "wrong_peer":
+        event.message.peer_id = PeerChannel(888)
+    elif kind == "post":
+        event.message.post = True
+    elif kind == "auto_forward":
+        event.message.fwd_from = object()
+    elif kind == "service":
+        event.message.action = object()
+    else:
+        event.message.edit_date = datetime.now(UTC)
+    await guard.reports.handle(event)
+    assert not store.cases and not event.reply.called
+
+
+async def test_external_target_with_fake_positive_sender_is_rejected(guard, store):
+    event = report_event(guard)
+    event.get_reply_message.return_value.from_id = PeerChannel(888)
+    await send(guard, event)
+    assert not store.cases and "请引用" in event.reply.call_args.args[0]
 
 
 @pytest.mark.parametrize(

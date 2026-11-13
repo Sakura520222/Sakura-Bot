@@ -2,6 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 """真实 MySQL 的学习样本幂等、任务租约、规则合并与命中审计。"""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,6 +28,7 @@ pytestmark = [
 
 @pytest.fixture
 def stores(guard, mysql_repository):
+    guard.repository = mysql_repository
     guard.config.ai_learning.enabled = True
     guard.group(CHAT).ai_learning_enabled = True
     guard.learning.samples = AISamples(mysql_repository)
@@ -66,11 +68,139 @@ async def test_mysql_admin_report_is_idempotent_and_enqueues_once(guard, stores,
         assert len((await stores.jobs.list())["rows"]) == 1
         job = await stores.jobs.get(store, first["id"])
         assert job and job["status"] == "queued"
-        # 不同管理员重复上报：样本不重建，上报人累计。
-        third, again = await admin_submit(stores, sender=11)
-        assert not again
-        assert len(third["payload"]["reporters"]) == 2
-        assert len((await stores.jobs.list())["rows"]) == 1
+    # 不同管理员重复上报：样本不重建，上报人累计。
+    third, again = await admin_submit(stores, sender=11)
+    assert not again
+    assert len(third["payload"]["reporters"]) == 2
+    assert len((await stores.jobs.list())["rows"]) == 1
+
+
+async def test_mysql_anonymous_reports_share_audited_actor_across_concurrent_events(
+    guard, stores, mysql_repository
+):
+    from telethon import events
+
+    from .test_ai_learning import submit_event
+    from .test_reports import anonymous_event
+
+    guard.repository = mysql_repository
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+
+    async def submit_anonymous():
+        with pytest.raises(events.StopPropagation):
+            await stores.handle_report(anonymous_event(submit_event(guard)))
+
+    await asyncio.gather(*(submit_anonymous() for _ in range(6)))
+    samples = await stores.samples.list(chat_id=CHAT)
+    assert samples["total"] == 1 and (await stores.jobs.list())["total"] == 1
+    reporter = samples["rows"][0]["payload"]["reporters"]
+    assert len(reporter) == 1 and reporter[0]["user_id"] is None
+    assert reporter[0]["actor_key"] == f"anonymous_group_admin:{CHAT}"
+    feedback = await stores.feedback.list()
+    assert feedback["total"] == 1
+    assert feedback["rows"][0]["actor"] == f"anonymous_group_admin:{CHAT}"
+
+
+async def test_mysql_learning_enqueue_failure_rolls_back_sample_and_feedback(
+    guard, stores, mysql_repository, monkeypatch
+):
+    enqueue = stores.jobs.enqueue
+    monkeypatch.setattr(stores.jobs, "enqueue", AsyncMock(side_effect=RuntimeError("queue failed")))
+    with pytest.raises(RuntimeError, match="queue failed"):
+        await admin_submit(stores)
+    assert (await stores.samples.list())["total"] == 0
+    assert (await stores.feedback.list())["total"] == 0
+    monkeypatch.setattr(stores.jobs, "enqueue", enqueue)
+    _, created = await admin_submit(stores)
+    assert created and (await stores.jobs.list())["total"] == 1
+
+
+async def test_mysql_anonymous_policy_revoked_during_enqueue_rolls_back_all_writes(
+    guard, stores, mysql_repository, monkeypatch
+):
+    from telethon import events
+
+    from .test_ai_learning import submit_event
+    from .test_reports import anonymous_event
+
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    enqueue = stores.jobs.enqueue
+
+    async def revoke(store, sample):
+        await enqueue(store, sample)
+        guard.group(CHAT).allow_anonymous_admin_report = False
+
+    monkeypatch.setattr(stores.jobs, "enqueue", revoke)
+    event = anonymous_event(submit_event(guard))
+    with pytest.raises(events.StopPropagation):
+        await stores.handle_report(event)
+    assert "权限" in event.reply.call_args.args[0]
+    assert (await stores.samples.list())["total"] == 0
+    assert (await stores.jobs.list())["total"] == 0
+    assert (await stores.feedback.list())["total"] == 0
+
+
+async def test_mysql_anonymous_policy_revoked_during_existing_sample_save_is_rolled_back(
+    guard, stores, mysql_repository, monkeypatch
+):
+    from telethon import events
+
+    from .test_ai_learning import submit_event
+    from .test_reports import anonymous_event
+
+    sample, _ = await admin_submit(stores)
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    save = stores.samples.save
+
+    async def revoke(*args, **kwargs):
+        result = await save(*args, **kwargs)
+        guard.group(CHAT).allow_anonymous_admin_report = False
+        return result
+
+    monkeypatch.setattr(stores.samples, "save", revoke)
+    event = anonymous_event(submit_event(guard))
+    with pytest.raises(events.StopPropagation):
+        await stores.handle_report(event)
+    assert "权限" in event.reply.call_args.args[0]
+    async with mysql_repository.lock(USER) as store:
+        persisted = await stores.samples.get(store, sample["id"])
+    assert [item["user_id"] for item in persisted["payload"]["reporters"]] == [ADMIN]
+
+
+async def test_mysql_anonymous_samples_do_not_add_verified_independent_reporter_weight(
+    guard, stores, mysql_repository
+):
+    from telethon import events
+
+    from .test_ai_learning import submit_event
+    from .test_reports import anonymous_event
+
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    with pytest.raises(events.StopPropagation):
+        await stores.handle_report(anonymous_event(submit_event(guard)))
+    sample = (await stores.samples.list())["rows"][0]
+    rule = {
+        "id": "a" * 32,
+        "rule_key": "b" * 64,
+        "chat_id": CHAT,
+        "rule_type": "message",
+        "match_kind": "keyword",
+        "value": "加我微信",
+        "normalized_value": "加我微信",
+        "action": "delete",
+        "status": "candidate",
+        "confidence": 0.9,
+        "explanation": "广告",
+        "sample_ids": [sample["id"]],
+    }
+    async with mysql_repository.lock(USER) as store:
+        row = await stores.rules.upsert(store, rule)
+        await stores.rules.refresh_stats(store, row, [sample, sample])
+        assert (await stores.rules.get(store, row["id"]))["reporters"] == 0
 
 
 async def test_mysql_learning_job_lease_is_exclusive_and_restart_recovers(stores, mysql_repository):
@@ -163,8 +293,11 @@ async def test_mysql_hit_audit_and_correction_pause_the_rule(stores, mysql_repos
         assert paused["status"] == "disabled" and paused["corrections"] == 2
         assert paused["version"] == 2
         feedback = await stores.feedback.list(rule_id=row["id"])
-        assert feedback["total"] == 2 and all(
-            row_["polarity"] == "negative" for row_ in feedback["rows"]
+        corrections = [item for item in feedback["rows"] if item["kind"] == "hit_correction"]
+        assert len(corrections) == 2 and all(item["polarity"] == "negative" for item in corrections)
+        assert any(
+            item["kind"] == "lifecycle" and item["payload"]["to"] == "disabled"
+            for item in feedback["rows"]
         )
 
 

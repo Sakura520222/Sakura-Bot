@@ -2,6 +2,7 @@
 # 本项目采用 AGPL-3.0 许可
 """AI 自适应风控：样本入口、反馈闭环、候选规则与实时缓存匹配。"""
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -13,6 +14,7 @@ from core.moderation.ai_rule_extractor import sanitize_candidates
 
 from .ai_learning_fakes import wired
 from .conftest import ADMIN, CHAT, USER
+from .test_reports import anonymous_event
 
 REPORTER = 300
 SECOND_ADMIN = 11
@@ -106,6 +108,95 @@ async def test_admin_report_requires_explicit_authorization(guard, learning):
     guard.client.admins.add(REPORTER)
     await submit(guard, sender=REPORTER, text="@admin 上报")
     assert len(learning.samples.rows) == 1
+
+
+async def test_anonymous_admin_report_requires_group_policy_and_audits_shared_actor(
+    guard, learning
+):
+    guard.client.admins.add(guard.bot_id)
+    event = anonymous_event(submit_event(guard))
+    await submit(guard, event)
+    assert not learning.samples.rows and "权限" in event.reply.call_args.args[0]
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    await submit(guard, anonymous_event(submit_event(guard)))
+    await submit(guard, anonymous_event(submit_event(guard)))
+    sample = only_sample(learning)
+    assert len(sample["payload"]["reporters"]) == 1 and len(learning.jobs.rows) == 1
+    actor = sample["payload"]["reporters"][0]
+    assert actor["actor_type"] == "anonymous_group_admin" and actor["user_id"] is None
+    assert actor["chat_id"] == CHAT and actor["message_id"] == event.id
+    assert actor["name"] == "本群匿名管理员（真实身份不可见）"
+    feedback = learning.feedback.rows[0]
+    assert feedback["actor"] == f"anonymous_group_admin:{CHAT}"
+    assert feedback["payload"]["reporter"]["source"] == "telegram:peer_channel"
+
+
+async def test_anonymous_report_policy_revoked_during_reply_lookup_is_effective(guard, learning):
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    event = anonymous_event(submit_event(guard))
+    original = event.get_reply_message.return_value
+
+    async def revoke():
+        guard.group(CHAT).allow_anonymous_admin_report = False
+        return original
+
+    event.get_reply_message.side_effect = revoke
+    await submit(guard, event)
+    assert not learning.samples.rows and not learning.jobs.rows
+
+
+async def test_external_identity_cannot_use_fake_positive_admin_sender(guard, learning):
+    from telethon.tl.types import PeerChannel
+
+    event = submit_event(guard)
+    event.message.from_id = PeerChannel(888)
+    await guard.learning.handle_report(event)
+    assert not learning.samples.rows and not event.reply.called
+
+
+async def test_concurrent_anonymous_reports_share_one_sample_and_reporter(guard, learning):
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    await asyncio.gather(*(submit(guard, anonymous_event(submit_event(guard))) for _ in range(8)))
+    sample = only_sample(learning)
+    assert len(sample["payload"]["reporters"]) == 1
+    assert len(learning.jobs.rows) == 1 and len(learning.feedback.rows) == 1
+
+
+async def test_anonymous_policy_revoked_while_waiting_for_target_lock(guard, learning):
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    event = anonymous_event(submit_event(guard))
+    reached = asyncio.Event()
+    original = event.get_reply_message.return_value
+
+    async def reply_lookup():
+        reached.set()
+        return original
+
+    event.get_reply_message.side_effect = reply_lookup
+    async with guard.repository.lock(USER):
+        task = asyncio.create_task(submit(guard, event))
+        await reached.wait()
+        guard.group(CHAT).allow_anonymous_admin_report = False
+    await task
+    assert not learning.samples.rows and not learning.jobs.rows
+
+
+async def test_anonymous_policy_revoked_during_sample_lookup(guard, learning, monkeypatch):
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    lookup = learning.samples.by_key
+
+    async def revoke(*args):
+        result = await lookup(*args)
+        guard.group(CHAT).allow_anonymous_admin_report = False
+        return result
+
+    monkeypatch.setattr(learning.samples, "by_key", revoke)
+    await submit(guard, anonymous_event(submit_event(guard)))
+    assert not learning.samples.rows and not learning.jobs.rows
 
 
 @pytest.mark.parametrize(

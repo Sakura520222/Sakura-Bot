@@ -6,6 +6,7 @@ import uuid
 from copy import deepcopy
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from core.infrastructure.database.mysql import utc_now_naive
 
@@ -380,6 +381,9 @@ class MemoryAIRuleFeedback:
 
 def wired(guard):
     """把内存替身接入学习服务，返回替身集合。"""
+    guard.repository.store.connection = SimpleNamespace(
+        begin=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock()
+    )
     samples, jobs, rules = MemoryAISamples(), MemoryLearningJobs(), MemoryAIRules()
     feedback = MemoryAIRuleFeedback()
     guard.learning.samples = samples

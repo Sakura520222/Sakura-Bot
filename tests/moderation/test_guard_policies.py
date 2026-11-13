@@ -135,7 +135,7 @@ async def test_disabled_admin_action_is_hidden_and_rejected_even_with_forged_dat
     await guard.recover_once()
     buttons = guard.client.sent[(CHAT, session["message_id"])]["buttons"]
     assert len(buttons) == 2
-    assert buttons[-1][0].type.url == f"tg://user?id={USER}"
+    assert buttons[-1][0].url == f"tg://user?id={USER}"
     assert not any(case["payload"].get("verification_admin") for case in store.cases.values())
 
 

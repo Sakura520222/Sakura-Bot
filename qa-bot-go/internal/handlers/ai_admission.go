@@ -25,11 +25,7 @@ func messageScope(msg *models.Message) string {
 	if msg.Chat.Type == models.ChatTypePrivate || msg.Chat.Type == "" {
 		return "private"
 	}
-	root := msg.MessageThreadID
-	if msg.ReplyToMessage != nil {
-		root = msg.ReplyToMessage.ID
-	}
-	return fmt.Sprintf("chat:%d:post:%d", msg.Chat.ID, root)
+	return fmt.Sprintf("chat:%d:thread:%d", msg.Chat.ID, msg.MessageThreadID)
 }
 func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64, query, hint, placeholder, errPrefix string) {
 	scope := engine.Scope(ctx)
@@ -37,11 +33,25 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 		scope = messageScope(msg)
 		ctx = engine.WithScope(ctx, scope)
 	}
+	if c.community != nil {
+		var allowed bool
+		ctx, allowed = c.community.admissionContext(ctx, msg, user)
+		if !allowed {
+			return
+		}
+	}
 	if c.access != nil && !c.access(ctx, msg, user) {
 		return
 	}
 	turnID := ""
 	reserve := func() contracts.QuotaCheckResult {
+		if c.community != nil {
+			var allowed bool
+			ctx, allowed = c.community.admissionContext(ctx, msg, user)
+			if !allowed {
+				return contracts.QuotaCheckResult{Message: "本群助手访问权限已变更，请联系管理员。"}
+			}
+		}
 		if billing, ok := c.quota.(interface {
 			ReserveTurnMessage(context.Context, string, int64, string) contracts.QuotaCheckResult
 		}); ok {
@@ -57,6 +67,9 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 		if !q.Allowed {
 			c.replyPlain(ctx, msg, q.Message)
 			return
+		}
+		if c.community != nil && user < 0 {
+			c.community.say(ctx, msg, anonymousAdmissionNotice, nil)
 		}
 		c.runStream(ctx, msg, user, query, hint, placeholder, q, errPrefix)
 		return
@@ -108,6 +121,17 @@ func (c *Commands) submitAI(ctx context.Context, msg *models.Message, user int64
 			work = engine.WithPublicContext(work, refresh)
 		}
 		work = context.WithValue(work, jobContextKey{}, job)
+		if c.community != nil {
+			var allowed bool
+			work, allowed = c.community.admissionContext(work, msg, user)
+			if !allowed || (c.access != nil && !c.access(work, msg, user)) {
+				c.finishBilling(work, msg, user, false)
+				return
+			}
+			if user < 0 {
+				c.community.say(work, msg, anonymousAdmissionNotice, nil)
+			}
+		}
 		if c.community != nil && msg.Chat.Type != models.ChatTypePrivate {
 			root := c.community.DB.CommentRoot(work, msg.Chat.ID, msg.ID)
 			work = tg.WithReplyObserver(work, func(reply *models.Message, text string) {

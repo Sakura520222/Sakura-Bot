@@ -75,6 +75,10 @@ func TestQuotaReserveLimitRefund(t *testing.T) {
 	uid := uniqueUserID()
 
 	cleanupQuota(t, m, uid)
+	totalBefore, err := m.GetTotalDailyUsage(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// 预留：1/3 → 2/3 → 3/3，remaining 递减。
 	wantRemaining := []int64{2, 1, 0}
@@ -94,12 +98,15 @@ func TestQuotaReserveLimitRefund(t *testing.T) {
 		t.Fatalf("达限后应拒绝: %+v", r)
 	}
 
-	// 退款幂等：首次退回 true，第二次因 usage_count=0 返回 false，不出负。
-	if ok, err := m.RefundQuota(ctx, uid, ""); err != nil || !ok {
-		t.Fatalf("首次退款应成功: ok=%v err=%v", ok, err)
+	// 旧配额接口每次退回一个占用，退完三次后保持零值。
+	// 消息级幂等由 ReserveMessage / FinishReservation 的持久化消息键保证。
+	for i := 0; i < 3; i++ {
+		if ok, err := m.RefundQuota(ctx, uid, ""); err != nil || !ok {
+			t.Fatalf("第 %d 次退款应成功: ok=%v err=%v", i+1, ok, err)
+		}
 	}
 	if ok, err := m.RefundQuota(ctx, uid, ""); err != nil || ok {
-		t.Fatalf("第二次退款应无副作用: ok=%v err=%v", ok, err)
+		t.Fatalf("额度退完后应无副作用: ok=%v err=%v", ok, err)
 	}
 	var usage int
 	if err := m.DB.QueryRow("SELECT usage_count FROM usage_quota WHERE user_id=? AND query_date=?",
@@ -115,10 +122,10 @@ func TestQuotaReserveLimitRefund(t *testing.T) {
 		t.Fatalf("无记录退款应返回 false: ok=%v err=%v", ok, err)
 	}
 
-	// 总用量：至少包含本次操作。
+	// 本用户退完额度后，总用量恢复到预留前。
 	total, err := m.GetTotalDailyUsage(ctx, "")
-	if err != nil || total < 1 {
-		t.Fatalf("总用量应 ≥1: total=%d err=%v", total, err)
+	if err != nil || total != totalBefore {
+		t.Fatalf("退款后总用量错误: total=%d want=%d err=%v", total, totalBefore, err)
 	}
 
 	// 管理员直通：不落行。

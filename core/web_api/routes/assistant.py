@@ -25,6 +25,8 @@ class CommentSettings(StrictModel):
     channel: str
     enabled: bool = False
     wake_word: str = Field(default="小妲", min_length=1, max_length=32)
+    anonymous_enabled: bool = False
+    anonymous_daily_limit: int = Field(default=20, ge=1, le=1000)
 
     @field_validator("wake_word")
     @classmethod
@@ -165,13 +167,19 @@ async def diagnose(settings):
                         f"{target}权限检查失败：助手当前成员状态为 {status}，"
                         "请解除成员限制并确认助手为普通成员或管理员"
                     )
+                confirmed.append(f"讨论群身份为 {status}")
+                privacy_disabled = bool(me.get("can_read_all_group_messages"))
+                confirmed.append("群隐私模式已关闭" if privacy_disabled else "群隐私模式已开启")
+                if status in ("administrator", "creator"):
+                    confirmed.append("讨论群管理员权限已确认，具备普通群消息接收权限")
                 stage = "discussion_visibility"
-                if status == "member" and not me.get("can_read_all_group_messages"):
+                if status == "member" and not privacy_disabled:
                     raise ValueError(
                         f"{target}已加入，但群隐私模式限制评论读取；"
-                        "请关闭助手 Bot 隐私模式或将其设为讨论群管理员"
+                        "请关闭助手 Bot 隐私模式或将其设为讨论群管理员，确保可接收直接唤醒与回合内追问"
                     )
                 confirmed.append(f"{target}成员身份及评论读取权限已确认")
+                confirmed.append("普通群消息接收权限已具备，实际收消息请在关联讨论群发送唤醒词验证")
             results.append(
                 {"channel": ch, "ok": True, "stage": "complete", "message": "；".join(confirmed)}
             )

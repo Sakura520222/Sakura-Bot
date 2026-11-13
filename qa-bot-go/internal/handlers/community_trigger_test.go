@@ -71,3 +71,70 @@ func TestAssistantReplyTriggersAfterTurnClosed(t *testing.T) {
 		t.Fatal("reply cannot start a new turn after completion")
 	}
 }
+
+func TestDiscussionScopeIgnoresOrdinaryReplyTarget(t *testing.T) {
+	msg := &models.Message{Chat: models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}, MessageThreadID: 50}
+	want := messageScope(msg)
+	for _, id := range []int{4, 99} {
+		msg.ReplyToMessage = &models.Message{ID: id, Chat: msg.Chat}
+		if got := messageScope(msg); got != want {
+			t.Fatalf("reply split scope: %q != %q", got, want)
+		}
+	}
+}
+
+func TestEffectiveActorRejectsSenderDisguises(t *testing.T) {
+	chat := models.Chat{ID: -1001, Type: models.ChatTypeSupergroup}
+	for _, tc := range []struct {
+		name string
+		msg  models.Message
+		want int64
+	}{
+		{"real user", models.Message{Chat: chat, Text: "hi", From: &models.User{ID: 7}}, 7},
+		{"anonymous fake from", models.Message{Chat: chat, Text: "hi", From: &models.User{ID: 1087968824, IsBot: true}, SenderChat: &chat}, chat.ID},
+		{"anonymous missing from", models.Message{Chat: chat, Text: "hi", SenderChat: &chat}, chat.ID},
+		{"external sender chat", models.Message{Chat: chat, Text: "hi", From: &models.User{ID: 7}, SenderChat: &models.Chat{ID: -1002, Type: models.ChatTypeChannel}}, 0},
+		{"bot", models.Message{Chat: chat, Text: "hi", From: &models.User{ID: 123, IsBot: true}}, 0},
+		{"negative fake user", models.Message{Chat: chat, Text: "hi", From: &models.User{ID: -7}}, 0},
+		{"automatic forward", models.Message{Chat: chat, Text: "hi", IsAutomaticForward: true, SenderChat: &chat}, 0},
+		{"service", models.Message{Chat: chat, SenderChat: &chat, NewChatTitle: "hi"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := tc.msg.From
+			actor, msg, ok := effectiveUserMessage(&models.Update{Message: &tc.msg})
+			if ok != (tc.want != 0) || ok && (actor.ID != tc.want || msg != &tc.msg) {
+				t.Fatalf("actor=%+v ok=%v want=%d", actor, ok, tc.want)
+			}
+			if tc.msg.From != original {
+				t.Fatal("raw Telegram sender mutated")
+			}
+		})
+	}
+}
+
+func TestMentionTriggerUsesTelegramEntitiesAndUTF16(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		entity     models.MessageEntity
+		want       bool
+	}{
+		{"actual username", "😀 @ActualBot explain", models.MessageEntity{Type: models.MessageEntityTypeMention, Offset: 3, Length: 10}, true},
+		{"case insensitive", "@actualbot explain", models.MessageEntity{Type: models.MessageEntityTypeMention, Length: 10}, true},
+		{"unverified text", "@ActualBot explain", models.MessageEntity{}, false},
+		{"wrong username", "@OtherBot explain", models.MessageEntity{Type: models.MessageEntityTypeMention, Length: 9}, false},
+		{"text mention actual id", "助手 explain", models.MessageEntity{Type: models.MessageEntityTypeTextMention, Length: 2, User: &models.User{ID: 123}}, true},
+		{"text mention wrong id", "助手 explain", models.MessageEntity{Type: models.MessageEntityTypeTextMention, Length: 2, User: &models.User{ID: 456}}, false},
+		{"invalid range", "@ActualBot", models.MessageEntity{Type: models.MessageEntityTypeMention, Offset: 1 << 30, Length: 10}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := &models.Message{Text: tc.text, Entities: []models.MessageEntity{tc.entity}}
+			if got := commentWakeRequested(msg, "小妲", 123, "ActualBot"); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+			msg.Text, msg.Entities, msg.Caption, msg.CaptionEntities = "", nil, tc.text, []models.MessageEntity{tc.entity}
+			if got := commentWakeRequested(msg, "小妲", 123, "ActualBot"); got != tc.want {
+				t.Fatalf("caption got %v want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -61,6 +61,11 @@ func (m *Manager) ReserveMessage(ctx context.Context, id string, user int64, lim
 	return m.ReserveMessageOnDay(ctx, id, user, limits, admin, QuotaDate(time.Now()))
 }
 func (m *Manager) ReserveMessageOnDay(ctx context.Context, id string, user int64, limits contracts.QuotaLimits, admin bool, date string, turnIDs ...string) (contracts.QuotaCheckResult, error) {
+	// Anonymous actors share the current group's negative ID and hard allowance.
+	// They cannot receive the real-account administrator exemption or spend points.
+	if user < 0 {
+		admin = false
+	}
 	turnID := ""
 	if len(turnIDs) > 0 {
 		turnID = turnIDs[0]
@@ -100,6 +105,9 @@ func (m *Manager) ReserveMessageOnDay(ctx context.Context, id string, user int64
 			return contracts.QuotaCheckResult{}, err
 		}
 		if used >= limits.UserDaily {
+			if user < 0 {
+				return contracts.QuotaCheckResult{Used: used, Message: "本群匿名管理员的当日共享额度已用尽，请明日重试或使用真实账号提问。"}, nil
+			}
 			var units int64
 			err = tx.QueryRowContext(ctx, `SELECT units FROM qa_points WHERE user_id=?`, user).Scan(&units)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {

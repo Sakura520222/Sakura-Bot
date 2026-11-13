@@ -161,6 +161,7 @@ class GroupSwitchRequest(BaseModel):
         "block_contact_messages",
         "ai_report_review_enabled",
         "ai_learning_enabled",
+        "allow_anonymous_admin_report",
         "share_global_blacklist",
         "ban_any_traditional",
         "allow_group_admin_review",

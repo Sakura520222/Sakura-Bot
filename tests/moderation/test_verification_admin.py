@@ -43,8 +43,8 @@ async def test_challenge_shows_identity_and_admin_buttons(guard, store):
         "仅踢出",
         "跳过验证",
     ]
-    assert [button.type.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"j", b"s"]
-    assert all(len(button.type.data) <= 64 for button in controls)
+    assert [button.data.rsplit(b":", 1)[1] for button in controls] == [b"b", b"x", b"j", b"s"]
+    assert all(len(button.data) <= 64 for button in controls)
 
 
 @pytest.mark.parametrize("username", ["alice", None])
@@ -64,7 +64,7 @@ async def test_profile_button_targets_member_with_or_without_username(
         wire_markup = reader.tgread_object()
     profile = wire_markup.rows[-1].buttons[0]
     assert profile.text == "打开用户资料"
-    assert profile.type.url == f"tg://user?id={USER}"
+    assert profile.url == f"tg://user?id={USER}"
     assert (await store.verification(CHAT, USER))["status"] == status
 
 
@@ -94,7 +94,7 @@ async def test_legacy_challenge_is_upgraded_without_resetting_session(guard, sto
     assert updated["payload"]["challenge_version"] == CHALLENGE_VERSION
     buttons = guard.client.sent[(CHAT, session["message_id"])]["buttons"]
     assert len(buttons) == 4
-    assert buttons[-1][0].type.url == f"tg://user?id={USER}"
+    assert buttons[-1][0].url == f"tg://user?id={USER}"
     guard.client.users[USER].first_name = "改名后的成员"
     await guard.recover_once()
     assert "改名后的成员" in guard.client.sent[(CHAT, session["message_id"])]["text"]

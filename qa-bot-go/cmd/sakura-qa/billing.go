@@ -19,7 +19,25 @@ func (q *quotaManager) ReserveTurnMessage(ctx context.Context, id string, user i
 	if err != nil {
 		return quotaSystemError()
 	}
-	result, err := q.db.ReserveMessageOnDay(ctx, id, user, limits, q.cfg.IsAdmin(user), settings.BillingDay(time.Now()), turn)
+	if user < 0 {
+		chatID, dailyLimit, authorized := contracts.AnonymousQuota(ctx)
+		if !authorized || chatID != user {
+			return contracts.QuotaCheckResult{Message: "匿名群组身份尚未获得助手准入授权，请联系管理员开启本群匿名身份策略。"}
+		}
+		channel := contracts.AnonymousChannel(ctx)
+		currentLimit := 0
+		for _, rule := range settings.Comments {
+			if rule.Channel == channel && rule.Enabled && rule.AnonymousEnabled {
+				currentLimit = rule.AnonymousDailyLimit
+				break
+			}
+		}
+		if currentLimit <= 0 {
+			return contracts.QuotaCheckResult{Message: "本群匿名助手授权已关闭，请使用真实账号提问。"}
+		}
+		limits.UserDaily = int64(min(dailyLimit, currentLimit))
+	}
+	result, err := q.db.ReserveMessageOnDay(ctx, id, user, limits, user > 0 && q.cfg.IsAdmin(user), settings.BillingDay(time.Now()), turn)
 	if err != nil {
 		q.log.Error("消息额度预留失败", "error", err)
 		return quotaSystemError()
@@ -33,6 +51,9 @@ func (q *quotaManager) FinishReservation(ctx context.Context, id string, success
 }
 
 func (q *quotaManager) Checkin(ctx context.Context, user int64) string {
+	if user <= 0 {
+		return "本群匿名管理员使用群组共享额度。请使用真实账号签到获取个人积分。"
+	}
 	s, e := q.cfg.AssistantSettings()
 	if e != nil || !s.CheckinEnabled {
 		return "签到暂不可用。"
