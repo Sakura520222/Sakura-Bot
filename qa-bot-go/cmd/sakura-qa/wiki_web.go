@@ -232,7 +232,8 @@ func (s *wikiWeb) article(ctx context.Context, article *webArticle) (string, err
 	var body strings.Builder
 	claims, _ := page["claims"].([]any)
 	selected := strings.TrimSpace(article.Selected)
-	found := selected == ""
+	title, _ := page["title"].(string)
+	found := selected == "" || strings.Contains(normalizeSelection(title), normalizeSelection(selected))
 	for _, claim := range claims {
 		if fact, ok := claim.(map[string]any); ok {
 			text, _ := fact["text"].(string)

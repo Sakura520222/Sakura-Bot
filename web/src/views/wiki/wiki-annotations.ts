@@ -59,7 +59,7 @@ export function excerptOccurrence(root: HTMLElement, range: Range, excerpt: stri
 }
 
 export function renderAnnotations(
-  root: DocumentFragment, notes: WikiAnnotation[], render: (text: string) => DocumentFragment,
+  root: DocumentFragment, notes: WikiAnnotation[], render: (text: string) => DocumentFragment, unanchoredTag = "aside",
 ) {
   const { text, positions } = renderedText(root);
   const highlights = new Map<Text, Set<number>>();
@@ -79,7 +79,7 @@ export function renderAnnotations(
       offsets.add(position.offset);
       highlights.set(position.node, offsets);
     }
-    const aside = document.createElement(last ? "span" : "aside");
+    const aside = document.createElement(last ? "span" : unanchoredTag);
     aside.className = last ? "wiki-inline-note wiki-inline-caption" : "wiki-inline-note wiki-note-unanchored";
     const author = note.contributor;
     const byline = author ? `${author.display_name}${author.username ? ` @${author.username}` : ""}` : "匿名贡献者";
@@ -110,7 +110,7 @@ export function renderAnnotations(
     aside.setAttribute("aria-label", `${aside.textContent} · ${byline}`);
     aside.append(tooltip);
     if (note.sources.length) {
-      const sources = document.createElement("div");
+      const sources = document.createElement(unanchoredTag === "span" ? "span" : "div");
       sources.className = "wiki-inline-note-sources";
       for (const [i, source] of note.sources.entries()) {
         let url: URL;

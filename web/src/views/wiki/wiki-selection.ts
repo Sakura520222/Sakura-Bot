@@ -1,13 +1,17 @@
 export interface WikiPassage {
-  claim: number;
+  claim: number | null;
   excerpt: string;
   excerptOccurrence?: number;
   range?: { start: number; end: number };
 }
 
-export function wikiPassage(claim: number, original: string, excerpt = ""): WikiPassage {
+export function wikiPassage(claim: number | null, original: string, excerpt = "", occurrence?: number): WikiPassage {
   const start = excerpt ? original.indexOf(excerpt) : -1;
-  const range = start >= 0 && original.indexOf(excerpt, start + 1) === -1
+  let offset = start;
+  for (let i = 0; offset >= 0 && i < (occurrence ?? 0); i++) offset = original.indexOf(excerpt, offset + 1);
+  const range = occurrence !== undefined && offset >= 0
+    ? { start: offset, end: offset + excerpt.length }
+    : start >= 0 && original.indexOf(excerpt, start + 1) === -1
     ? { start, end: start + excerpt.length }
     : undefined;
   return { claim, excerpt, range };

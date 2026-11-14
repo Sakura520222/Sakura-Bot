@@ -10,19 +10,22 @@
     <p v-if="message && (!article || sidebar || showList)" role="status">{{ message }}</p>
     <dialog v-if="article" ref="editor" class="proposal-dialog" aria-labelledby="proposal-heading" @close="editing = false">
     <form v-if="editing" @submit.prevent="submit">
-      <h2 id="proposal-heading">{{ kind === 'annotation' ? '添加注解' : '提交修订建议' }}</h2>
+      <h2 id="proposal-heading">{{ titleTarget ? (kind === 'annotation' ? '添加标题注解' : '提交标题修订建议') : (kind === 'annotation' ? '添加注解' : '提交修订建议') }}</h2>
       <blockquote v-if="passage?.excerpt" class="proposal-excerpt">{{ passage.excerpt }}</blockquote>
       <p v-if="message" role="alert">{{ message }}</p>
-      <p><label>类型 <select v-model="kind"><option value="edit">正文修订</option><option value="correction">纠错</option>
+      <p><label>类型 <select v-model="kind"><option value="edit">{{ titleTarget ? '标题修订' : '正文修订' }}</option><option value="correction">纠错</option>
         <template v-if="article.annotations_enabled"><option value="annotation">注解</option><option value="source">补充来源</option>
           <option value="fact_check">事实标注</option><option value="dispute">争议</option><option value="outdated">过期</option></template>
       </select></label></p>
       <p v-if="!passage"><label>段落 <select v-model.number="claim" @change="chooseClaim">
         <option v-for="(item, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ item.text.slice(0, 42) }}</option>
       </select></label></p>
-      <p><label>{{ editingText ? (passage?.range ? '替换选中文字' : '修订后的段落') : '说明' }} <textarea v-model="draft" required maxlength="10000" rows="6" /></label></p>
+      <p><label>{{ editingText ? (passage?.range ? '替换选中文字' : titleTarget ? '修订后的标题' : '修订后的段落') : '说明' }}
+        <input v-if="editingText && titleTarget" v-model="draft" required maxlength="160" />
+        <textarea v-else v-model="draft" required maxlength="10000" rows="6" />
+      </label></p>
       <p><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
-      <details><summary>预览</summary><WikiMarkdown :text="submittedText" :channel="article.channel_id" /></details>
+      <details><summary>预览</summary><p v-if="editingText && titleTarget">{{ submittedText }}</p><WikiMarkdown v-else :text="submittedText" :channel="article.channel_id" /></details>
       <details v-if="editingText && submittedText !== original"><summary>查看差异</summary>
         <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
       </details>
@@ -99,11 +102,12 @@ const editing = ref(false);
 const editor = ref<HTMLDialogElement>();
 const passage = ref<WikiPassage>();
 const kind = ref("edit");
-const claim = ref(0);
+const claim = ref<number | null>(0);
 const draft = ref("");
 const sources = ref("");
 const editingText = computed(() => kind.value === "edit" || kind.value === "correction");
-const original = computed(() => props.article?.claims[claim.value]?.text || "");
+const titleTarget = computed(() => claim.value === null);
+const original = computed(() => (claim.value === null ? props.article?.title : props.article?.claims[claim.value]?.text) || "");
 const submittedText = computed(() => editingText.value && passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
 const contributorOffset = ref(0);
 const contributorsLoading = ref(false);
@@ -169,7 +173,7 @@ function openProposal(mode: "edit" | "annotation", selection?: WikiPassage) {
     if (!props.article || props.article.revision_id !== revision) return;
     if (!user.value) { window.dispatchEvent(new Event(wikiOpenAccount)); return; }
     passage.value = selection;
-    claim.value = selection?.claim ?? 0;
+    claim.value = selection ? selection.claim : 0;
     kind.value = mode;
     chooseClaim(); sources.value = ""; editing.value = true;
     await nextTick();
@@ -240,7 +244,7 @@ function withdraw(id: string) { return loadMine(id); }
 </script>
 
 <style scoped>
-textarea { display: block; width: 100%; box-sizing: border-box; }
+textarea, input { display: block; width: 100%; box-sizing: border-box; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .community-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .community-sidebar { margin-block-start: 16px; }
@@ -275,5 +279,5 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .proposal-dialog::backdrop { background: rgb(0 0 0 / 30%); }
 .proposal-dialog h2 { margin-top: 0; }
 .proposal-excerpt { border-inline-start: 3px solid var(--sb-accent); margin-inline: 0; padding-inline: 10px; overflow-wrap: anywhere; }
-.proposal-dialog textarea { margin-top: 5px; padding: 8px; font: inherit; background: var(--sb-surface); color: inherit; border: 1px solid var(--sb-border); border-radius: 8px; }
+.proposal-dialog :is(textarea, input) { margin-top: 5px; padding: 8px; font: inherit; background: var(--sb-surface); color: inherit; border: 1px solid var(--sb-border); border-radius: 8px; }
 </style>

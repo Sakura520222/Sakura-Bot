@@ -356,6 +356,7 @@ func wikiPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[
 		safeFacts = append(safeFacts, safe)
 	}
 	card["claims"], card["sources"], card["verified_at"] = safeFacts, sourceList, document["verified_at"]
+	card["title_notes"] = wikiPublicNotes(map[string]any{"community_notes": document["title_notes"]}, -1, attributions)
 	return card, nil
 }
 

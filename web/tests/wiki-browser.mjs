@@ -713,6 +713,29 @@ try {
   await edit.waitFor({ state: "hidden" });
   await accountPage.getByRole("status").filter({ hasText: "已提交，等待管理员审核。" }).waitFor();
   assert.equal(submittedProposal.text, claims[0].text.replace("Sakura", "Saku🟢a"));
+  const articleTitle = accountPage.locator("h1[data-claim='title']");
+  const title = await articleTitle.textContent();
+  await articleTitle.click({ button: "right" });
+  await accountPage.getByRole("menuitem", { name: "添加注解", exact: true }).click();
+  const titleNote = accountPage.getByRole("dialog", { name: "添加标题注解" });
+  await titleNote.getByRole("textbox", { name: "说明" }).fill("标题注解");
+  await titleNote.getByRole("button", { name: "提交审核" }).click();
+  await titleNote.waitFor({ state: "hidden" });
+  assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.excerpt], [null, "annotation", title]);
+  const selectionText = await articleTitle.evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.firstChild, 0); range.setEnd(element.firstChild, 2);
+    const selection = window.getSelection();
+    selection.removeAllRanges(); selection.addRange(range);
+    return range.toString();
+  });
+  await tools.getByRole("button", { name: "建议修订" }).click();
+  const titleEdit = accountPage.getByRole("dialog", { name: "提交标题修订建议" });
+  await titleEdit.getByRole("textbox", { name: "替换选中文字" }).fill("更新");
+  await titleEdit.getByRole("button", { name: "提交审核" }).click();
+  await titleEdit.waitFor({ state: "hidden" });
+  assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.excerpt, submittedProposal.text],
+    [null, "edit", selectionText, "更新" + title.slice(2)]);
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();

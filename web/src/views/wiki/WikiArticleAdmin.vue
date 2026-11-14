@@ -1,6 +1,6 @@
 <template>
   <dialog ref="dialog" class="article-management" aria-labelledby="article-management-title">
-    <header class="management-toolbar management-header"><h2 id="article-management-title">{{ editOnly ? '修订正文' : '管理本词条' }}</h2><button type="button" @click="dialog?.close()">关闭</button></header>
+    <header class="management-toolbar management-header"><h2 id="article-management-title">{{ editOnly ? (ordinal === null ? '修订标题' : '修订正文') : '管理本词条' }}</h2><button type="button" @click="dialog?.close()">关闭</button></header>
     <div class="management-body">
       <p v-if="notice || actionStatus" role="status" class="management-feedback">{{ notice || actionStatus }}</p>
       <p v-if="error" role="alert" class="management-feedback">{{ error }} <button v-if="!page" type="button" @click="loadState">重试</button></p>
@@ -21,7 +21,10 @@
             <label v-if="!passage">段落 <select v-model.number="ordinal" @change="fillText">
               <option v-for="(claim, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ plainWikiText(claim.text).slice(0, 42) }}</option>
             </select></label>
-            <label>{{ passage?.range ? '替换选中文字' : '正文' }} <textarea v-model="draft" required maxlength="14000" rows="5" /></label>
+             <label>{{ passage?.range ? '替换选中文字' : ordinal === null ? '标题' : '正文' }}
+               <input v-if="ordinal === null" v-model="draft" required maxlength="160" />
+               <textarea v-else v-model="draft" required maxlength="14000" rows="5" />
+             </label>
             <details v-if="submittedText !== original"><summary>查看差异</summary>
               <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
             </details>
@@ -78,9 +81,9 @@ const actionMessages: Record<string, string> = {
   publish: "正在发布…", rollback: "正在回滚…",
 };
 const actionStatus = computed(() => actionMessages[pending.value]);
-const ordinal = ref(0);
+const ordinal = ref<number | null>(0);
 const draft = ref("");
-const original = computed(() => props.article?.claims[ordinal.value]?.text || "");
+const original = computed(() => (ordinal.value === null ? props.article?.title : props.article?.claims[ordinal.value]?.text) || "");
 const submittedText = computed(() => passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
 const versions = ref<Choice[]>();
 const root = computed(() => `/channels/${encodeURIComponent(props.channel)}`);
@@ -104,7 +107,7 @@ function loadState() {
 function open(selection?: WikiPassage, editing = false) {
   passage.value = selection;
   editOnly.value = editing;
-  ordinal.value = selection?.claim ?? 0;
+  ordinal.value = selection ? selection.claim : 0;
   fillText();
   if (!dialog.value?.open) dialog.value?.showModal();
   if (!page.value) void loadState();
@@ -166,8 +169,9 @@ summary { padding: 12px 16px; cursor: pointer; font-weight: 650; }
 .management-section summary { padding: 0; }
 .management-section h3, .management-feedback { margin: 0; font-size: 15px; }
 .management-section label { display: grid; gap: 4px; min-width: 0; }
-.management-section select, textarea { width: 100%; }
-textarea { min-height: 110px; padding: 9px 10px; resize: vertical; font: inherit; color: var(--sb-text); background: var(--sb-surface); border: 1px solid var(--sb-border); border-radius: 8px; }
+.management-section :is(select, textarea, input) { width: 100%; }
+:is(textarea, input) { padding: 9px 10px; font: inherit; color: var(--sb-text); background: var(--sb-surface); border: 1px solid var(--sb-border); border-radius: 8px; }
+textarea { min-height: 110px; resize: vertical; }
 .management-feedback { padding: 8px 10px; border-radius: 8px; background: var(--sb-surface-2); }
 .management-versions { margin: 0; padding: 0; list-style: none; }
 .management-versions li { padding-block: 5px; }

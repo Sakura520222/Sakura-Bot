@@ -16,7 +16,7 @@
       <header class="wiki-reader-header">
         <span class="wiki-tag">{{ data.topic }}</span>
         <div class="wiki-reader-title">
-          <h1>{{ data.title }}</h1>
+          <WikiMarkdown heading :text="data.title" :annotations="data.title_notes" />
           <div class="wiki-reader-actions" role="group" aria-label="文章操作">
             <button type="button" class="wiki-header-icon" :aria-pressed="saved"
               :disabled="bookmarkBusy" :aria-label="bookmarkLabel" :title="bookmarkLabel" @click="toggleSaved">
@@ -169,24 +169,30 @@ type Anchor = { x: number; y: number; below?: number };
 const selection = shallowRef<{ passage: WikiPassage; anchor: Anchor }>();
 const menu = shallowRef<{ passage?: WikiPassage; anchor: Anchor }>();
 type Action = { id: string; label: string; icon: "edit" | "note" | "ask" | "manage" | "history" | "copy" };
-const selectionItems = computed(() => passageActions(true));
+const selectionItems = computed(() => passageActions(true, selection.value?.passage));
 const menuItems = computed<Action[]>(() => [
-  ...passageActions(!!menu.value?.passage?.excerpt),
+  ...passageActions(!!menu.value?.passage?.excerpt, menu.value?.passage),
   ...(canAdmin.value && !selectedRevision.value ? [{ id: "manage", label: "管理本词条", icon: "manage" } as const] : []),
   { id: "history", label: "修订历史", icon: "history" },
   { id: "copy", label: "复制链接", icon: "copy" },
 ]);
 const popupActive = () => !!document.querySelector(".wiki-shell dialog[open]");
-function passageActions(selected: boolean): Action[] {
+function passageActions(selected: boolean, passage?: WikiPassage): Action[] {
   const items: Action[] = [];
   if (selectedRevision.value) return items;
   if (data.value?.proposals_enabled) {
     if (data.value.annotations_enabled) items.push({ id: "note", label: "添加注解", icon: "note" });
     items.push({ id: "suggest", label: "建议修订", icon: "edit" });
   }
-  if (canAdmin.value) items.push({ id: "edit", label: "修订正文", icon: "edit" });
+  if (canAdmin.value) items.push({ id: "edit", label: passage?.claim === null ? "修订标题" : "修订正文", icon: "edit" });
   if (assistantEnabled.value) items.push({ id: "ask", label: selected ? "问小妲" : "询问当前词条", icon: "ask" });
   return items;
+}
+function passageAt(block?: HTMLElement | null) {
+  if (!block || !data.value) return undefined;
+  const claim = block.dataset.claim === "title" ? null : Number(block.dataset.claim);
+  const original = claim === null ? data.value.title : data.value.claims[claim]?.text;
+  return original === undefined ? undefined : { claim, original };
 }
 function readSelection() {
   const selected = document.getSelection();
@@ -196,17 +202,17 @@ function readSelection() {
     selection.value = undefined;
     return;
   }
-  const claim = Number(block.dataset.claim);
-  const original = data.value.claims[claim]?.text;
-  if (original === undefined) return;
+  const target = passageAt(block);
+  if (!target) { selection.value = undefined; return; }
   const range = selected.getRangeAt(0);
   if ([...block.querySelectorAll(".wiki-inline-note")].some((note) => range.intersectsNode(note))) {
     selection.value = undefined;
     return;
   }
   const rect = range.getBoundingClientRect();
-  const passage = wikiPassage(claim, original, text);
-  if (data.value.annotations_enabled) passage.excerptOccurrence = excerptOccurrence(block, range, text);
+  const occurrence = excerptOccurrence(block, range, text);
+  const passage = wikiPassage(target.claim, target.original, text, target.claim === null ? occurrence : undefined);
+  if (data.value.annotations_enabled) passage.excerptOccurrence = occurrence;
   selection.value = rect.bottom > 0 && rect.top < innerHeight ? { passage, anchor: { x: rect.left + rect.width / 2, y: rect.top, below: rect.bottom } } : undefined;
 }
 let selectionTimer: ReturnType<typeof setTimeout>;
@@ -220,9 +226,9 @@ function contextMenu(event: MouseEvent) {
   if (!data.value || !(event.target instanceof Element) || !event.target.closest(".wiki-article") || event.target.closest("a, button, input, textarea, select, summary, dialog")) return;
   const block = event.target.closest(".wiki-inline-note") ? null : event.target.closest<HTMLElement>(".wiki-markdown[data-claim]");
   readSelection();
-  const claim = Number(block?.dataset.claim);
-  const original = data.value.claims[claim]?.text;
-  const passage = original === undefined ? undefined : selection.value?.passage.claim === claim ? selection.value.passage : wikiPassage(claim, original);
+  const target = passageAt(block);
+  const passage = !target ? undefined : selection.value?.passage.claim === target.claim
+    ? selection.value.passage : wikiPassage(target.claim, target.original, target.claim === null ? target.original : "");
   event.preventDefault();
   event.stopPropagation();
   const rect = event.target.getBoundingClientRect();

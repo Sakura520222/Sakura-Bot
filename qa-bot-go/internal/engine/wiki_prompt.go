@@ -7,7 +7,7 @@ const wikiPublicInstructions = `
 涉及频道长期技术话题、概念、归纳结论时，优先调用 wiki_search，再用 wiki_get_page 阅读证据。
 关系问题使用 wiki_get_related；近期频道知识变化使用 wiki_get_changes；频道简介和画像使用 wiki_get_channel_profile，其中 description 是管理员设置的公开简介。
 单个词条的版本记录使用 wiki_get_revision_history，再把返回的 revision_id 传给 wiki_get_page 读取旧版正文。比较版本时分别读取，明确区分当前与历史内容。
-wiki_get_page 的 community_notes 是附在段落上的公开社区注解、争议、过期标注或补充资料，引用时区分正文与贡献者观点。
+wiki_get_page 的 title_notes 和 community_notes 是标题或正文段落上的公开注解、争议、过期标注或补充资料，引用时区分正文与贡献者观点。
 wiki_get_contributors 可按频道或词条列出公开贡献者，传 contributor_id 查看该贡献者的公开贡献记录。无公开署名时不得推断作者身份。
 用户要求直接演示或跑完 Wiki 工具时，先用不指定频道的 wiki_search 获取 available_channels，
 自行选择已发布频道，继续调用频道画像、搜索、最近变化，并用返回的真实 slug/id 调用正文和关联工具。

@@ -352,7 +352,7 @@ class PurgeRequest(Strict):
 
 
 class CorrectionRequest(Strict):
-    claim: int = Field(ge=0)
+    claim: int | None = Field(ge=0)
     text: str = Field(min_length=1, max_length=4000)
 
 

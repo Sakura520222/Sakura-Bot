@@ -16,6 +16,15 @@ class PageEditConflict(ValueError):
     pass
 
 
+class PublicationAccessUnverified(ValueError):
+    pass
+
+
+def validate_title_correction(text):
+    if not text.strip() or len(text.strip()) > 160 or len(text.splitlines()) != 1 or "\x00" in text:
+        raise ValueError("词条标题必须为 1 至 160 个字符且只能有一行")
+
+
 class Knowledge:
     def __init__(self, store):
         self.store = store
@@ -595,7 +604,17 @@ class Knowledge:
         await cur.execute(
             "UPDATE wiki_publications SET content_hash=%s WHERE id=%s", (fingerprint, publication)
         )
-        await cur.execute("UPDATE wiki_pages SET locked=TRUE WHERE id=%s", (page,))
+        await cur.execute(
+            """UPDATE wiki_pages p
+            JOIN wiki_page_revisions r ON r.id=%s
+            LEFT JOIN wiki_page_revisions base ON base.id=%s
+            SET p.locked=TRUE,p.title=CASE
+                WHEN CAST(r.document->>'$.title' AS BINARY) <> CAST(base.document->>'$.title' AS BINARY)
+                THEN r.document->>'$.title'
+                ELSE p.title END
+            WHERE p.id=%s""",
+            (revision, manifest["base_revision"], page),
+        )
         await cur.execute(
             "UPDATE wiki_channels SET published_revision=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
             (publication, channel),
@@ -622,14 +641,16 @@ class Knowledge:
         async with self.store.transaction() as cur:
             await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
             ch = await cur.fetchone()
+            if not ch or not ch["enabled"]:
+                raise PublicationAccessUnverified("频道 Wiki 已停用，无法发布")
             if (
-                not ch
-                or not ch["enabled"]
-                or not ch["access_verified"]
+                not ch["access_verified"]
                 or not ch["verified_until"]
-                or ch["verified_until"] < utc()
+                or ch["verified_until"] <= utc()
             ):
-                raise ValueError("Channel is disabled or its public access is unverified")
+                raise PublicationAccessUnverified(
+                    "暂无法核实频道的 Telegram 公开状态。草稿已保留，核实后可重试发布。"
+                )
             if running_job:
                 await self.store.fence(cur, running_job)
             if job_id:
@@ -887,15 +908,24 @@ class Knowledge:
                 *document.get("community_contributions", []),
                 proposal_id,
             ]
-        if not 0 <= ordinal < len(document["claims"]):
-            raise ValueError("Unknown claim")
-        if annotation:
+        if ordinal is None:
+            if annotation:
+                document["title_notes"] = [*document.get("title_notes", []), annotation]
+            if replace_text:
+                validate_title_correction(text)
+                document["title"] = text.strip()
+        else:
+            if not 0 <= ordinal < len(document["claims"]):
+                raise ValueError("Unknown claim")
             claim = document["claims"][ordinal]
-            claim["community_notes"] = [*claim.get("community_notes", []), annotation]
-            if annotation["kind"] in {"dispute", "outdated"}:
-                claim["status"] = "disputed" if annotation["kind"] == "dispute" else "superseded"
-        if replace_text:
-            document["claims"][ordinal]["text"] = text
+            if annotation:
+                claim["community_notes"] = [*claim.get("community_notes", []), annotation]
+                if annotation["kind"] in {"dispute", "outdated"}:
+                    claim["status"] = (
+                        "disputed" if annotation["kind"] == "dispute" else "superseded"
+                    )
+            if replace_text:
+                claim["text"] = text
         document["verified_at"] = utc().isoformat()
         await cur.execute(
             """INSERT INTO wiki_page_revisions

@@ -12,7 +12,7 @@ from .accounts import WikiAccounts
 from .collector import SourceCollector
 from .community import Community
 from .engine import BudgetExceeded, WikiEngine, WikiResponseError
-from .knowledge import PageEditConflict
+from .knowledge import PageEditConflict, PublicationAccessUnverified
 from .models import SKIPPED_AI_REVIEW, WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
@@ -338,6 +338,10 @@ class WikiRuntime:
             job["progress"]["error_detail"] = str(error)
             job["progress"]["activity"] = "任务预算不足，已保留当前进度"
             await self.store.finish(job, "paused", "token_budget_reached")
+        except PublicationAccessUnverified as error:
+            detail = str(error)
+            job["progress"].update(error_detail=detail, activity=detail, active_requests={})
+            await self.store.finish(job, "failed", "publication_access_unverified")
         except Exception as error:
             if isinstance(error, (WikiResponseError, PageEditConflict)):
                 detail = str(error)

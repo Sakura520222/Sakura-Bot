@@ -1,5 +1,6 @@
 <template>
-  <div class="wiki-markdown" :data-claim="claimIndex" @click="previewImage" v-html="html" />
+  <component :is="heading ? 'h1' : 'div'" class="wiki-markdown"
+    :data-claim="heading ? 'title' : claimIndex" @click="previewImage" v-html="html" />
   <dialog v-if="preview" ref="lightbox" class="wiki-lightbox" aria-label="图片预览" @close="preview = undefined">
     <button autofocus @click="lightbox?.close()">关闭图片预览</button>
     <img v-if="!imageFailed" :src="preview.url" :alt="preview.label" referrerpolicy="no-referrer"
@@ -13,7 +14,7 @@ import { marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
 import type { WikiAnnotation } from "../../api/wiki";
 import { renderAnnotations } from "./wiki-annotations";
-const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number; annotations?: WikiAnnotation[] }>();
+const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number; annotations?: WikiAnnotation[]; heading?: boolean }>();
 const renderer = new Renderer();
 const renderedImages = new Map<string, string>();
 renderer.image = ({ href, text }) => {
@@ -59,6 +60,18 @@ const options = {
 };
 const html = computed(() => {
   renderedImages.clear();
+  if (props.heading) {
+    const root = document.createDocumentFragment();
+    root.append(document.createTextNode(props.text));
+    renderAnnotations(root, props.annotations ?? [], (text) => {
+      const note = document.createDocumentFragment();
+      note.append(document.createTextNode(text));
+      return note;
+    }, "span");
+    const rendered = document.createElement("div");
+    rendered.append(root);
+    return rendered.innerHTML;
+  }
   const source = renderMarkdown(props.text, renderer);
   if (!props.annotations?.length) return DOMPurify.sanitize(source, options);
   const root = DOMPurify.sanitize(source, { ...options, RETURN_DOM_FRAGMENT: true });
@@ -150,6 +163,7 @@ const html = computed(() => {
   font-size: .875em;
 }
 .wiki-markdown :deep(.wiki-inline-note q) { display: block; color: var(--sb-text-2); }
+h1.wiki-markdown :deep(.wiki-inline-note) { font-size: .56em; font-weight: 400; }
 .wiki-markdown :deep(.wiki-inline-note p) { margin: 0; }
 .wiki-markdown :deep(.wiki-inline-note-sources) { display: flex; flex-wrap: wrap; gap: .75em; }
 .wiki-markdown :deep(.wiki-note-credit) {

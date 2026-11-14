@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
+from .knowledge import validate_title_correction
 from .models import Strict
 from .reader import VISIBLE
 from .schema import REVISION_VISIBLE
@@ -30,7 +31,7 @@ IN_PUBLISHED_REVISION = """(r.id=e.revision_id OR
 class Proposal(Strict):
     revision: str = Field(pattern=r"^[a-f0-9]{32}$")
     kind: Literal["edit", "correction", "annotation", "source", "dispute", "outdated", "fact_check"]
-    claim: int = Field(ge=0, le=10000, strict=True)
+    claim: int | None = Field(ge=0, le=10000, strict=True)
     text: str = Field(min_length=1, max_length=10000)
     sources: list[str] = Field(default_factory=list, max_length=5)
     excerpt: str = Field(default="", max_length=500)
@@ -58,6 +59,13 @@ def selection_text(value):
     )
     value = re.sub(r"[`*_~]", "", html.unescape(value))
     return " ".join(value.split())
+
+
+def proposal_original(document, claim):
+    if claim is None:
+        return document.get("title")
+    claims = document.get("claims", [])
+    return claims[claim]["text"] if 0 <= claim < len(claims) else None
 
 
 class Community:
@@ -96,14 +104,17 @@ class Community:
             current = await cur.fetchone()
             if not current:
                 raise ValueError("当前版本已变化或不可读取")
-            claims = decode(current["document"])["claims"]
-            if proposal.claim >= len(claims):
+            document = decode(current["document"])
+            original = proposal_original(document, proposal.claim)
+            if original is None:
                 raise ValueError("找不到所选段落")
-            original = claims[proposal.claim]["text"]
             if proposal.excerpt:
-                excerpt = selection_text(proposal.excerpt)
-                if not excerpt or excerpt not in selection_text(original):
-                    raise ValueError("所选正文与当前版本不一致，请重新划选")
+                normalize = selection_text if proposal.claim is not None else str.strip
+                excerpt = normalize(proposal.excerpt)
+                if not excerpt or excerpt not in normalize(original):
+                    raise ValueError("所选文字与当前版本不一致，请重新划选")
+            if proposal.claim is None and proposal.kind in {"edit", "correction"}:
+                validate_title_correction(proposal.text)
             if proposal.kind in {"edit", "correction"} and proposal.text == original:
                 raise ValueError("修订内容没有变化")
             changes = (
@@ -343,9 +354,9 @@ class Community:
         for row in rows:
             row["payload"] = decode(row["payload"])
             if review:
-                claims = decode(row.pop("base_document")).get("claims", [])
-                claim = row["payload"]["claim"]
-                row["original"] = claims[claim]["text"] if 0 <= claim < len(claims) else None
+                row["original"] = proposal_original(
+                    decode(row.pop("base_document")), row["payload"]["claim"]
+                )
         return rows
 
     async def contributions(self, *, channel=None, page=None, user=None, offset=0, history=False):

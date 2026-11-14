@@ -131,6 +131,7 @@ export interface WikiArticle extends WikiCard {
   current_revision_id?: string;
   verified_at: string;
   claims: Claim[];
+  title_notes?: WikiAnnotation[];
   proposals_enabled?: boolean;
   annotations_enabled?: boolean;
   history_total?: number;

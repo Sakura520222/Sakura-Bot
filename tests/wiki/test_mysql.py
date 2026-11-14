@@ -411,6 +411,81 @@ async def published(store, *, image=False, channel_id=12345):
     return ch, source, page, revision, publication
 
 
+async def test_publication_recovers_with_active_telegram_username(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    entity = SimpleNamespace(
+        id=int(channel_id),
+        title=ch["title"],
+        username=None,
+        usernames=[SimpleNamespace(username="inactive_name", active=False)],
+        broadcast=True,
+        restricted=False,
+        noforwards=False,
+    )
+    current = await store.register_channel(entity, channel_id)
+    assert not current["access_verified"] and current["verified_until"] is None
+    assert await PublicReader(store).page(channel_id, page["slug"]) is None
+    entity.usernames.append(SimpleNamespace(username="public_alias", active=True))
+    current = await store.register_channel(entity, channel_id)
+    assert current["access_verified"] and current["username"] == "public_alias"
+    assert (await store.channel("@public_alias"))["id"] == channel_id
+    assert (await PublicReader(store).page(channel_id, page["slug"]))["revision_id"] == revision
+    entity.noforwards = True
+    assert not (await store.register_channel(entity, channel_id))["access_verified"]
+
+
+async def test_community_title_note_and_correction_publish_as_revisions(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    config = ch["config"].model_copy(
+        update={"proposals_enabled": True, "annotations_enabled": True, "publication_mode": "auto"}
+    )
+    await store.configure(channel_id, config, "test")
+    service = WikiRuntime(store, None, None)
+    service.engine = WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model"))
+    service.community = Community(store, service.engine.knowledge)
+    await service.accounts.login(
+        (987654321, b"title-contributor", "标题贡献者", None, None), (None, None), None, None
+    )
+    user = (await store.one("SELECT id FROM wiki_users"))["id"]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
+    initial = await service.reader.page(channel_id, page["slug"])
+    proposal = Proposal(
+        revision=revision, kind="annotation", claim=None, text="标题说明", excerpt=initial["title"]
+    )
+    proposal_id, _ = await service.community.submit(user, channel_id, page["id"], proposal)
+    [review] = await service.community.proposals(identifier=proposal_id, review=True)
+    assert review["original"] == initial["title"]
+    await service.community.decide(proposal_id, "approved", "test")
+    await service.run_job(await store.claim_job())
+    annotated = await service.reader.page(channel_id, page["slug"])
+    [note] = annotated["title_notes"]
+    assert note["text"] == "标题说明" and note["contributor"]["display_name"] == "标题贡献者"
+    assert [
+        {key: value for key, value in claim.items() if key != "fact_check"}
+        for claim in annotated["claims"]
+    ] == [
+        {key: value for key, value in claim.items() if key != "fact_check"}
+        for claim in initial["claims"]
+    ]
+
+    correction = Proposal(
+        revision=annotated["revision_id"], kind="edit", claim=None, text="修订后的标题"
+    )
+    proposal_id, _ = await service.community.submit(user, channel_id, page["id"], correction)
+    await service.community.decide(proposal_id, "approved", "test")
+    await service.run_job(await store.claim_job())
+    renamed = await service.reader.page(channel_id, page["slug"])
+    assert renamed["title"] == "修订后的标题" and renamed["title_notes"] == [note]
+    previous = await service.reader.page(channel_id, page["slug"], revision=revision)
+    assert previous["title"] == initial["title"] and not previous["title_notes"]
+    comparison = await service.reader.page(
+        channel_id, page["slug"], compare=(revision, renamed["revision_id"])
+    )
+    assert {"before": initial["title"], "after": renamed["title"]} in comparison["changes"]
+
+
 async def test_atomic_publication_visibility_revocation_and_rollback(store):
     ch, source, page, revision, publication = await published(store)
     reader = PublicReader(store)

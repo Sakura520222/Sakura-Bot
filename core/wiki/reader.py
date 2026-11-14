@@ -56,9 +56,15 @@ def like(value):
 def revision_changes(previous, current):
     def blocks(document):
         result = [document[key] for key in ("title", "topic") if key in document]
-        for claim in document.get("claims", []):
-            result.append(claim["text"])
-            for note in claim.get("community_notes", []):
+        entries = [(None, document.get("title_notes", []))]
+        entries.extend(
+            (claim["text"], claim.get("community_notes", []))
+            for claim in document.get("claims", [])
+        )
+        for text, notes in entries:
+            if text is not None:
+                result.append(text)
+            for note in notes:
                 excerpt = f"「{note['excerpt']}」" if note.get("excerpt") else ""
                 result.append("\n".join([f"注解{excerpt}　{note['text']}", *note["sources"]]))
         return result
@@ -398,6 +404,8 @@ class PublicReader:
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
+        title_notes = doc.get("title_notes", [])
+        result["title_notes"] = public_notes(title_notes)
         if row["username"] and config.get("show_telegram_links") and part != "references":
             album_groups = {
                 fact["media_group"] for fact in doc["claims"] if fact.get("media_group")
@@ -424,7 +432,19 @@ class PublicReader:
                 result["album_links"] = links
         if part != "references" and doc.get("community_contributions"):
             await self.credit_annotations(
-                row["id"], doc["community_contributions"], doc["claims"], result["claims"]
+                row["id"],
+                doc["community_contributions"],
+                [
+                    (None, title_notes, result["title_notes"]),
+                    *(
+                        (
+                            ordinal,
+                            fact.get("community_notes", []),
+                            result["claims"][ordinal]["community_notes"],
+                        )
+                        for ordinal, fact in enumerate(doc["claims"])
+                    ),
+                ],
             )
         review = (
             await self.store.one(
@@ -502,8 +522,8 @@ class PublicReader:
             }
         return result
 
-    async def credit_annotations(self, page_id, proposal_ids, raw_claims, claims):
-        if not any(claim["community_notes"] for claim in claims):
+    async def credit_annotations(self, page_id, proposal_ids, passages):
+        if not any(notes for _, notes, _ in passages):
             return
         marks = ",".join(["%s"] * len(proposal_ids))
         rows = await self.store.query(
@@ -521,11 +541,7 @@ class PublicReader:
         # Older annotations recorded only their text. Resolve a legacy match only if it is unique,
         # including anonymous proposals in the match so a public author cannot inherit their credit.
         legacy = []
-        if any(
-            not note.get("proposal_id")
-            for claim in raw_claims
-            for note in claim.get("community_notes", [])
-        ):
+        if any(not note.get("proposal_id") for _, notes, _ in passages for note in notes):
             legacy = await self.store.query(
                 f"""SELECT id,kind,payload FROM wiki_edit_proposals
                 WHERE page_id=%s AND id IN ({marks}) AND status='approved'""",
@@ -534,12 +550,8 @@ class PublicReader:
             )
             for entry in legacy:
                 entry["payload"] = decode(entry["payload"])
-        for ordinal, claim in enumerate(claims):
-            for note, public_note in zip(
-                raw_claims[ordinal].get("community_notes", []),
-                claim["community_notes"],
-                strict=True,
-            ):
+        for ordinal, raw_notes, notes in passages:
+            for note, public_note in zip(raw_notes, notes, strict=True):
                 proposal = note.get("proposal_id")
                 if not proposal:
                     matches = [
@@ -1022,16 +1034,20 @@ def source_card(source, username, config):
     }
 
 
+def public_notes(notes):
+    return [
+        {
+            key: note[key]
+            for key in ("kind", "text", "sources", "excerpt", "excerpt_occurrence")
+            if key in note
+        }
+        for note in notes
+    ]
+
+
 def public_claim(fact, sources, username, config):
     return {
-        "community_notes": [
-            {
-                key: note[key]
-                for key in ("kind", "text", "sources", "excerpt", "excerpt_occurrence")
-                if key in note
-            }
-            for note in fact.get("community_notes", [])
-        ],
+        "community_notes": public_notes(fact.get("community_notes", [])),
         **{
             key: fact.get(key)
             for key in (

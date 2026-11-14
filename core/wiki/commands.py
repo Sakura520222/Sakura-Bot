@@ -21,9 +21,10 @@ def proposal_summary(proposal):
     def excerpt(value, limit=500):
         return value[:limit] + ("…" if len(value) > limit else "")
 
+    target = "词条标题" if payload["claim"] is None else f"第 {payload['claim'] + 1} 段"
     lines = [
         f"Wiki 待审 · {PROPOSAL_LABELS[kind]}",
-        f"{excerpt(proposal['channel_title'], 100)} / {excerpt(proposal['title'], 160)} · 第 {payload['claim'] + 1} 段",
+        f"{excerpt(proposal['channel_title'], 100)} / {excerpt(proposal['title'], 160)} · {target}",
     ]
     if kind in {"edit", "correction"}:
         changes = [

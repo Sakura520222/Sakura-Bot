@@ -181,7 +181,15 @@ class WikiStore:
 
     async def register_channel(self, entity, configured_alias):
         channel = canonical_id(entity.id)
-        username = getattr(entity, "username", None)
+        # Telegram can place all public handles in Channel.usernames without setting username.
+        username = getattr(entity, "username", None) or next(
+            (
+                item.username
+                for item in getattr(entity, "usernames", None) or ()
+                if item.active and item.username
+            ),
+            None,
+        )
         access_verified = bool(
             username
             and getattr(entity, "broadcast", False)
@@ -200,7 +208,7 @@ class WikiStore:
                     getattr(entity, "title", channel),
                     username,
                     access_verified,
-                    utc() + timedelta(minutes=3),
+                    utc() + timedelta(minutes=3) if access_verified else None,
                     encode(WikiConfig().model_dump(mode="json")),
                     encode({"status": "unavailable", "reason": "not_scanned"}),
                 ),

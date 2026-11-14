@@ -58,7 +58,7 @@ const props = defineProps<{ page?: string; identifier?: string }>();
 defineEmits<{ back: [] }>();
 type Proposal = { id: string; kind: string; title: string; channel_id: string; channel_title: string; status: string; note?: string;
   revision_id?: string; created_at: string; original?: string | null; review_job_id?: string; review_job_status?: string; review_complete?: boolean; review_skipped?: boolean;
-  payload: { claim: number; text: string; diff: string; sources: string[]; excerpt?: string } };
+  payload: { claim: number | null; text: string; diff: string; sources: string[]; excerpt?: string } };
 const labels: Record<string, string> = { edit: "正文修订", correction: "纠错", annotation: "注解", source: "补充来源", dispute: "争议标注", outdated: "过期标注", fact_check: "事实核查" };
 const decisionLabels: Record<string, string> = { approved: "已批准", returned: "已退回", rejected: "已拒绝", withdrawn: "已撤回" };
 const kindLabel = (kind: string) => labels[kind] ?? kind;
