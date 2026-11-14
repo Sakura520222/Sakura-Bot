@@ -362,6 +362,10 @@
             :disabled="busy || !channel.enabled"
             @click="enqueue('reindex')"
             >重建索引</n-button
+          ><n-button
+            :disabled="busy || !channel.enabled || !!channel.active_job"
+            @click="enqueue('albums')"
+            >合并历史相册</n-button
           ><n-button :disabled="busy" @click="refreshData"
             >刷新状态</n-button
           ></n-space
@@ -923,6 +927,7 @@ const jobLabels: Record<string, string> = {
   update: "增量更新",
   reconcile: "历史核对",
   reindex: "重建索引",
+  albums: "合并历史相册",
   page_edit: "词条修订",
   page: "页面重生成",
 };

@@ -16,6 +16,7 @@ import aiomysql
 
 from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
 from .schema import (
+    ALBUMS_TABLE,
     CHANNEL_COVERS_TABLE,
     DIRTY_PAGES_TABLE,
     REVISION_REVIEWS_TABLE,
@@ -138,6 +139,17 @@ class WikiStore:
                         raise
             await self.query(DIRTY_PAGES_TABLE)
             await self.query(CHANNEL_COVERS_TABLE)
+            await self.query(ALBUMS_TABLE)
+            if not await self.one(
+                "SHOW INDEX FROM wiki_sources WHERE Key_name='wiki_source_album'"
+            ):
+                try:
+                    await self.query(
+                        "ALTER TABLE wiki_sources ADD INDEX wiki_source_album(channel_id,media_group,source_type,message_id)"
+                    )
+                except aiomysql.OperationalError as error:
+                    if error.args[0] != 1061:
+                        raise
             for statement in (*WIKI_ACCOUNT_TABLES, *WIKI_COMMUNITY_TABLES):
                 await self.query(statement)
             await self.query(REVISION_REVIEWS_TABLE)
@@ -237,6 +249,9 @@ class WikiStore:
             )
             if rebuild:
                 await self.invalidate_channel_policy(cur, channel, config)
+                await cur.execute(
+                    "UPDATE wiki_albums SET pending=TRUE WHERE channel_id=%s", (channel,)
+                )
             await self.audit(cur, channel, "configure", channel, actor, snapshot)
             if not config.enabled or config.paused:
                 await cur.execute(
@@ -324,6 +339,7 @@ class WikiStore:
         media_key=None,
     ):
         source_id = digest(channel, source_type, str(external_id))
+        media_group = media_group or None
         content_hash = digest(body, media_key)
         changed_at = utc(edited_at or created_at)
         async with self.transaction() as cur:
@@ -345,6 +361,7 @@ class WikiStore:
                 and bool(old["verified"]) == verified
                 and bool(old["excluded"]) == excluded
                 and old["category"] == category
+                and (old["media_group"] or None) == media_group
             ):
                 if verified:
                     await cur.execute(
@@ -385,6 +402,8 @@ class WikiStore:
                     (id,source_id,content_hash,start_offset,end_offset) VALUES (%s,%s,%s,%s,%s)""",
                     (chunk["id"], source_id, content_hash, chunk["start"], chunk["end"]),
                 )
+            for group in {media_group, old["media_group"] if old else None} - {None, ""}:
+                await self.mark_album(cur, channel, group)
             if not excluded or (old and not old["excluded"]):
                 await cur.execute(
                     """UPDATE wiki_channels SET source_generation=source_generation+1,
@@ -392,6 +411,31 @@ class WikiStore:
                     (channel,),
                 )
         return source_id
+
+    @staticmethod
+    async def mark_album(cur, channel, group):
+        await cur.execute(
+            """INSERT INTO wiki_albums (channel_id,media_group) VALUES (%s,%s)
+            ON DUPLICATE KEY UPDATE pending=TRUE""",
+            (channel, group),
+        )
+
+    async def album_sources(self, channel, group, cur=None):
+        sql = """SELECT s.id,s.source_type,s.body,s.content_hash,s.message_id,s.created_at
+            FROM wiki_sources s WHERE s.channel_id=%s AND s.media_group=%s
+            AND s.source_type IN ('message','image')
+            AND s.verified=TRUE AND s.deleted=FALSE AND s.hidden=FALSE AND s.excluded=FALSE
+            AND (s.source_type='message' OR EXISTS (
+                SELECT 1 FROM wiki_sources parent WHERE parent.channel_id=s.channel_id
+                AND parent.source_type='message' AND parent.message_id=s.message_id
+                AND parent.media_key=s.media_key AND parent.verified=TRUE
+                AND parent.deleted=FALSE AND parent.hidden=FALSE AND parent.excluded=FALSE))
+            ORDER BY s.message_id,s.source_type DESC,s.id"""
+        args = (channel, group)
+        if cur:
+            await cur.execute(sql, args)
+            return list(await cur.fetchall())
+        return await self.query(sql, args, fetch=True)
 
     async def revoke(
         self, channel, *, source_id=None, message_ids=None, actor="telegram", deleted=False
@@ -423,6 +467,17 @@ class WikiStore:
             if not changed:
                 return
             await cur.execute(
+                """UPDATE wiki_albums a JOIN wiki_sources s ON s.channel_id=a.channel_id
+                AND s.media_group=a.media_group SET a.pending=TRUE
+                WHERE s.channel_id=%s AND """
+                + (
+                    "s.id=%s"
+                    if source_id
+                    else "s.message_id IN (" + ",".join(["%s"] * len(message_ids)) + ")"
+                ),
+                (channel, source_id) if source_id else (channel, *message_ids),
+            )
+            await cur.execute(
                 "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
                 (channel,),
             )
@@ -453,7 +508,7 @@ class WikiStore:
             )
 
     async def enqueue(self, channel, kind="update", actor="scheduler", page_id=None, *, cur=None):
-        if kind not in {"backfill", "update", "reconcile", "reindex", "page", "proposal"}:
+        if kind not in {"backfill", "update", "reconcile", "reindex", "page", "proposal", "albums"}:
             raise ValueError("Unknown Wiki job kind")
         if cur is None:
             async with self.transaction() as transaction:

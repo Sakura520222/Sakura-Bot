@@ -377,6 +377,30 @@ class PublicReader:
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
         ]
+        if row["username"] and config.get("show_telegram_links") and part != "references":
+            album_groups = {
+                fact["media_group"] for fact in doc["claims"] if fact.get("media_group")
+            }
+            if album_groups:
+                links = []
+                for group in sorted(album_groups):
+                    members = await self.store.album_sources(row["channel_id"], group)
+                    published_ids = {
+                        message_id
+                        for claim in doc["claims"]
+                        if claim.get("media_group") == group
+                        for message_id in claim.get("album_messages", [])
+                    }
+                    links.extend(
+                        {
+                            "message_id": member["message_id"],
+                            "url": f"https://t.me/{row['username']}/{member['message_id']}",
+                        }
+                        for member in members
+                        if member["source_type"] == "message"
+                        and member["message_id"] in published_ids
+                    )
+                result["album_links"] = links
         if part != "references" and doc.get("community_contributions"):
             await self.credit_annotations(
                 row["id"], doc["community_contributions"], doc["claims"], result["claims"]

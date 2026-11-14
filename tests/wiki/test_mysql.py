@@ -1133,6 +1133,83 @@ async def page_of_message(store, channel_id, message_id):
     return row["page_id"]
 
 
+async def test_grouped_telegram_album_replaces_split_pages_and_preserves_sources(store):
+    ch, fake, runtime = await build_and_publish(
+        store, texts=("第一条相册配文", "第二条图片识别"), stable=True
+    )
+    channel_id = ch["id"]
+    caption_page = await page_of_message(store, channel_id, 1)
+    image_page = await page_of_message(store, channel_id, 2)
+    assert caption_page != image_page
+    date = datetime(2020, 1, 2)
+    await store.query(
+        """UPDATE wiki_sources SET media_group='album-1',category='image',media_key='photo:2'
+        WHERE channel_id=%s AND message_id=2""",
+        (channel_id,),
+    )
+    await store.query(
+        "UPDATE wiki_sources SET media_group='album-1',category='image' WHERE channel_id=%s AND message_id=1",
+        (channel_id,),
+    )
+    # The image data already exists on disk; no Telegram backfill is needed for grouping.
+    await store.put_source(
+        channel_id,
+        "image",
+        2,
+        "第二张图中出现二维码",
+        date,
+        verified=True,
+        media_group="album-1",
+        message_id=2,
+        category="image",
+        media_key="photo:2",
+    )
+    member = await store.put_source(
+        channel_id,
+        "message",
+        3,
+        "",
+        date,
+        verified=True,
+        media_group="album-1",
+        message_id=3,
+        category="image",
+        media_key="photo:3",
+    )
+    album_inputs = []
+
+    async def request(job, config, generator, system, payload, **options):
+        if "album" in payload:
+            album_inputs.append(payload["album"])
+            return "## [0] 频道资料 / 测试相册\n\n相册包含配文和二维码。"
+        return await original_request(job, config, generator, system, payload, **options)
+
+    original_request = runtime.engine.request
+    runtime.engine.request = request
+    await store.enqueue(channel_id, "albums")
+    await runtime.run_job(await store.claim_job())
+    reader = runtime.reader
+    article = await reader.page(channel_id, caption_page)
+    assert article and await reader.page(channel_id, image_page) is None
+    assert len(album_inputs) == 1
+    assert any(x["text"] == "第一条相册配文" for x in album_inputs[0])
+    assert any(
+        x["text"] == "第二张图中出现二维码" and x["type"] == "图片识别" for x in album_inputs[0]
+    )
+    assert {link["message_id"] for link in article["album_links"]} == {1, 2, 3}
+    assert {item["type"] for item in article["sources"]} == {"image", "message"}
+    await store.revoke(channel_id, source_id=member)
+    assert {
+        item["message_id"] for item in (await reader.page(channel_id, caption_page))["album_links"]
+    } == {1, 2}
+    await store.revoke(channel_id, message_ids=[2], deleted=True)
+    assert await reader.page(channel_id, caption_page) is None
+    await store.enqueue(channel_id, "albums")
+    await runtime.run_job(await store.claim_job())
+    repaired = await reader.page(channel_id, caption_page)
+    assert repaired and [item["message_id"] for item in repaired["album_links"]] == [1]
+
+
 async def test_generation_review_graph_cache_and_incremental_publication(store):
     ch = await channel(store)
     await store.configure(

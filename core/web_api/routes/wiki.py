@@ -323,7 +323,7 @@ async def sitemap(page: int = Query(1, ge=1, le=10000)):
 
 
 class JobRequest(Strict):
-    kind: Literal["backfill", "update", "reconcile", "reindex", "page"] = "update"
+    kind: Literal["backfill", "update", "reconcile", "reindex", "page", "albums"] = "update"
     page_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
@@ -865,6 +865,7 @@ async def purge(channel: str, body: PurgeRequest, actor=ADMIN_AUTH):
             "DELETE FROM wiki_sources WHERE channel_id=%s AND deleted=FALSE AND hidden=FALSE",
             (ch["id"],),
         )
+        await cur.execute("DELETE FROM wiki_albums WHERE channel_id=%s", (ch["id"],))
         await cur.execute("UPDATE wiki_sources SET body='' WHERE channel_id=%s", (ch["id"],))
         await service.store.audit(cur, ch["id"], "purge", ch["id"], actor)
     return {"success": True}

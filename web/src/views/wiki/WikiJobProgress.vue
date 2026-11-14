@@ -58,6 +58,7 @@
         {{ number(p.completed_batches) }} / {{ number(p.cache_hits) }}
       </n-statistic>
       <n-statistic v-if="job.kind !== 'page_edit'" label="已整理文章">{{ number(p.pages) }}</n-statistic>
+      <n-statistic v-if="p.processed_albums" label="已处理 Telegram 相册">{{ number(p.processed_albums) }}</n-statistic>
     </div>
     <n-text v-if="requests.length" depth="3"
       >Token 用量在每次模型请求结束后结算，接收进度实时更新。</n-text
@@ -88,6 +89,9 @@
     </n-alert>
     <n-alert v-if="p.review_rejections" type="warning" :show-icon="false">
       {{ p.review_rejections }} 个修订未通过来源审校。可在草稿中查看理由、修正或重新审校。
+    </n-alert>
+    <n-alert v-if="p.album_rejections" type="warning" :show-icon="false">
+      模型拒绝处理 {{ p.album_rejections }} 组相册，已保留原有内容。
     </n-alert>
     <n-text v-if="p.review_fallback" depth="3">未单独配置审校模型，本次通过生成模型发起独立审校请求。</n-text>
     <n-text v-if="p.review_skipped" depth="3">此任务已跳过 AI 来源审校。</n-text>
@@ -172,6 +176,12 @@ const portion = computed(() => {
       label: "整理文章",
       done: Number(p.value.assembled_pages || 0),
       total: Number(p.value.page_total || 0),
+    };
+  if (stage === "albums")
+    return {
+      label: "已处理 Telegram 相册",
+      done: p.value.processed_albums || 0,
+      total: p.value.album_total || 0,
     };
   if (stage === "review")
     return {

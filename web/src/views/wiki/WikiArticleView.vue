@@ -41,6 +41,11 @@
         </p>
         <details class="wiki-reader-inline"><summary>本页目录</summary><WikiReaderToc :headings="headings" :active="activeClaim" @navigate="jump" /></details>
       </header>
+      <nav v-if="data.album_links?.length" class="wiki-claim album-links" aria-label="Telegram 相册">
+        <strong>Telegram 相册</strong>
+        <a v-for="(item, index) in data.album_links" :key="item.message_id" :href="item.url"
+          target="_blank" rel="noopener noreferrer">原帖 {{ index + 1 }}</a>
+      </nav>
       <Teleport defer to="#wiki-reader-context">
         <WikiReaderToc :headings="headings" :active="activeClaim" @navigate="jump" />
       </Teleport>
@@ -392,5 +397,6 @@ onUnmounted(() => {
 });
 </script>
 <style scoped>
+.album-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: .875rem; }
 .wiki-version-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--sb-border); border-radius: 8px; background: var(--sb-surface-2); font-size: .875rem; }
 </style>

@@ -5,6 +5,12 @@
 """Additive, idempotent MySQL migration. Wiki owns all wiki_* tables."""
 
 SCHEMA_VERSION = 1
+ALBUMS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_albums (
+    channel_id VARCHAR(32) NOT NULL, media_group VARCHAR(64) NOT NULL,
+    page_id CHAR(32), pending BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY(channel_id,media_group), INDEX wiki_pending_albums(channel_id,pending,media_group),
+    FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 WIKI_COMMUNITY_TABLES = (
     """CREATE TABLE IF NOT EXISTS wiki_search_cache (
         cache_key CHAR(64) PRIMARY KEY, result JSON NOT NULL, expires_at DATETIME(6) NOT NULL,
@@ -121,6 +127,7 @@ SCHEMA = (
         UNIQUE KEY wiki_source_identity(channel_id,source_type,external_id),
         INDEX wiki_source_message(channel_id,source_type,message_id),
         INDEX wiki_source_scan(channel_id,id), INDEX wiki_source_time(channel_id,created_at),
+        INDEX wiki_source_album(channel_id,media_group,source_type,message_id),
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS wiki_chunks (
@@ -249,6 +256,7 @@ SCHEMA = (
     # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
     # 增量装配只重建这些页面而不是遍历全部历史页面。
     DIRTY_PAGES_TABLE,
+    ALBUMS_TABLE,
     *WIKI_ACCOUNT_TABLES,
     *WIKI_COMMUNITY_TABLES,
 )

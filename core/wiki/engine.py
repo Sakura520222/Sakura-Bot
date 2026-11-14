@@ -583,11 +583,17 @@ class WikiEngine:
         await self.store.checkpoint(job)
 
     # 日常增量任务只处理未应用来源；显式重建（backfill/reindex/page）仍全量遍历
-    INCREMENTAL_KINDS = {"update", "reconcile", "proposal"}
+    INCREMENTAL_KINDS = {"update", "reconcile", "proposal", "albums"}
 
     def _source_conditions(self, job):
         """待处理来源的共享谓词；增量任务额外要求当前内容版本尚有未应用 chunk。"""
-        conditions = ["s.channel_id=%s", "s.deleted=FALSE", "s.hidden=FALSE", "s.excluded=FALSE"]
+        conditions = [
+            "s.channel_id=%s",
+            "s.deleted=FALSE",
+            "s.hidden=FALSE",
+            "s.excluded=FALSE",
+            "(s.media_group IS NULL OR s.media_group='')",
+        ]
         args = []
         if job["kind"] == "page":
             conditions.append(
@@ -628,6 +634,11 @@ class WikiEngine:
             await self.store.checkpoint(job, "assemble")
             return
         generator, _ = self.client("wiki")
+        if job["kind"] == "albums":
+            await self.generate_albums(job, channel, generator)
+            job["progress"].update(generation_complete=True, review_complete=False)
+            await self.store.checkpoint(job, "assemble")
+            return
         progress = job["progress"]
         progress.update(active_requests={}, error_detail="", review_rejections=0)
         if job["cursor"].get("batch_pipeline") != "markdown-2":
@@ -653,6 +664,7 @@ class WikiEngine:
             )
         if not job["cursor"].get("planning_done") and job["kind"] != "page":
             await self.plan_topics(job, channel, generator)
+        await self.generate_albums(job, channel, generator)
         progress["source_total"] = await self.pending_total(job, channel)
         await self.store.report(job, "正在批量整理频道内容", stage="extract")
         # Keep enough batches queued so one slow request does not idle the other workers.
@@ -718,6 +730,145 @@ class WikiEngine:
                 logger.warning("Wiki prune deferred (%s): %s", type(error).__name__, error)
         await self.store.report(job, "来源处理完成，正在整理文章", stage="assemble")
         await self.store.checkpoint(job, "assemble")
+
+    async def generate_albums(self, job, channel, generator):
+        channel_id = channel["id"]
+        if job["kind"] != "page" and not job["cursor"].get("albums_seeded"):
+            # Include stored albums processed before grouped generation was introduced.
+            await self.store.query(
+                """INSERT IGNORE INTO wiki_albums (channel_id,media_group)
+                SELECT DISTINCT channel_id,media_group FROM wiki_sources
+                WHERE channel_id=%s AND source_type IN ('message','image')
+                AND media_group IS NOT NULL AND media_group<>'' AND verified=TRUE AND deleted=FALSE""",
+                (channel_id,),
+            )
+            job["cursor"]["albums_seeded"] = True
+            await self.store.checkpoint(job)
+        condition = "pending=TRUE" if job["kind"] in self.INCREMENTAL_KINDS else "TRUE"
+        args = [channel_id]
+        if job["kind"] == "page":
+            condition = "page_id=%s"
+            args.append(job["cursor"]["page_id"])
+        after = job["cursor"].get("album_after", "")
+        total = await self.store.one(
+            f"SELECT COUNT(*) total FROM wiki_albums WHERE channel_id=%s AND {condition} AND media_group>%s",
+            (*args, after),
+        )
+        job["progress"]["album_total"] = job["progress"].get("processed_albums", 0) + total["total"]
+        semaphore = asyncio.Semaphore(channel["config"].concurrency)
+        while True:
+            albums = await self.store.query(
+                f"""SELECT media_group FROM wiki_albums WHERE channel_id=%s
+                AND {condition} AND media_group>%s ORDER BY media_group LIMIT 32""",
+                (*args, after),
+                fetch=True,
+            )
+            if not albums:
+                return
+            await self.store.report(job, "正在合并 Telegram 相册", stage="albums")
+
+            async def process(group):
+                async with semaphore:
+                    await self.generate_album(job, channel["config"], generator, group)
+
+            await self.extract_batch([process(album["media_group"]) for album in albums])
+            job["progress"]["processed_albums"] = job["progress"].get("processed_albums", 0) + len(
+                albums
+            )
+            after = albums[-1]["media_group"]
+            job["cursor"]["album_after"] = after
+            await self.store.checkpoint(job)
+
+    async def generate_album(self, job, config, generator, group):
+        channel = job["channel_id"]
+        sources = await self.store.album_sources(channel, group)
+        title, topic, facts, relations = "", "", [], []
+        material = [source for source in sources if source["body"].strip()]
+        if material:
+            # Each input excerpt uses a real stored chunk with verifiable offsets.
+            parts = [next(chunks(s["id"], s["body"], s["content_hash"])) for s in material[:20]]
+            excerpts = [part["text"][:1800] for part in parts]
+            key = digest(
+                "wiki-album-1",
+                channel,
+                group,
+                config.language,
+                generator[1],
+                str(getattr(generator[0], "base_url", "")),
+                [part["id"] for part in parts],
+            )
+            cached = await self.store.one(
+                "SELECT narrative FROM wiki_profile_cache WHERE cache_key=%s", (key,)
+            )
+            if cached:
+                text = decode(cached["narrative"])["text"]
+            else:
+                try:
+                    text = await self.request(
+                        job,
+                        config,
+                        generator,
+                        SYSTEM
+                        + "\n这些配文和图片识别结果属于同一个 Telegram 相册。结合配文和图像顺序写成一篇完整词条。"
+                        "标题依据整篇内容，避免按图片拆分。第一行使用 ## [0] 分类 / 词条名称，随后直接写 Markdown 正文。",
+                        {
+                            "language": config.language,
+                            "album": [
+                                {
+                                    "message": source["message_id"],
+                                    "type": "配文"
+                                    if source["source_type"] == "message"
+                                    else "图片识别",
+                                    "text": excerpt,
+                                }
+                                for source, excerpt in zip(material[:20], excerpts, strict=True)
+                            ],
+                        },
+                        stage="整理 Telegram 相册",
+                        max_output=8192,
+                    )
+                except Exception as error:
+                    if not content_refused(error):
+                        raise
+                    # A rejected batch must leave the old facts untouched.
+                    job["progress"]["album_rejections"] = (
+                        job["progress"].get("album_rejections", 0) + 1
+                    )
+                    return
+                await self.store.query(
+                    "INSERT IGNORE INTO wiki_profile_cache VALUES (%s,%s,%s,%s,UTC_TIMESTAMP(6))",
+                    (key, channel, encode({"text": text}), encode({"mode": "telegram_album"})),
+                )
+            sections = self.markdown_sections(text)
+            title_line, body = sections.get(0, ("", text))
+            if len(sections) > 1:
+                body = "\n\n".join(sections[index][1] for index in sorted(sections))
+            result = self.markdown_extraction(parts[0], title_line, body)
+            if result.facts:
+                title, topic = result.facts[0].entity, result.facts[0].topic
+                relations = result.relations
+            evidence = [
+                Citation(
+                    source_id=p["source_id"],
+                    chunk_id=p["id"],
+                    quote=excerpt,
+                    start=p["start"],
+                    end=min(p["end"], p["start"] + 1800),
+                ).model_dump()
+                for p, excerpt in zip(parts, excerpts, strict=True)
+            ]
+            for index, fact in enumerate(result.facts):
+                facts.append(
+                    {
+                        **fact.model_dump(mode="json"),
+                        "key": f"md:album:{index:05}",
+                        "evidence": evidence,
+                        "source_created_at": material[0]["created_at"].isoformat(),
+                        "media_group": group,
+                        "album_messages": list(dict.fromkeys(s["message_id"] for s in sources)),
+                    }
+                )
+        await self.knowledge.apply_album(job, group, sources, title, topic, facts, relations)
 
     async def extract_batch(self, pending):
         results = await asyncio.gather(*pending, return_exceptions=True)
@@ -836,7 +987,7 @@ class WikiEngine:
                     sources[(item["chunk_id"], item["start"], item["end"])]
                     for item in fact["evidence"]
                 )
-            )[:3]
+            )[: 20 if fact.get("media_group") else 3]
             claims.append(
                 {
                     "index": index,
@@ -1102,7 +1253,11 @@ class WikiEngine:
         for start in range(0, len(candidates), 64):
             await self.extract_batch([check(*item) for item in candidates[start : start + 64]])
         progress["review_complete"] = not progress["review_rejections"]
-        if job["kind"] != "page_edit" and progress["review_complete"] and progress.get("pages"):
+        if (
+            job["kind"] not in {"page_edit", "albums"}
+            and progress["review_complete"]
+            and progress.get("pages")
+        ):
             await self.describe_channel(job, channel)
         await self.store.checkpoint(job, "ready")
 

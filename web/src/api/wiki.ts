@@ -28,6 +28,9 @@ export interface WikiJob {
     error_detail?: string;
     review_complete?: boolean;
     review_skipped?: boolean;
+    processed_albums?: number;
+    album_total?: number;
+    album_rejections?: number;
     review_version?: string;
     review_fallback?: boolean;
     review_rejections?: number;
@@ -123,6 +126,7 @@ export interface WikiAnnotation {
   contributor?: { id: string; display_name: string; username?: string | null; avatar: boolean };
 }
 export interface WikiArticle extends WikiCard {
+  album_links?: { message_id: number; url: string }[];
   current_revision_id?: string;
   verified_at: string;
   claims: Claim[];

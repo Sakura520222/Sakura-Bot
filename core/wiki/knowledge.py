@@ -155,6 +155,133 @@ class Knowledge:
                     (job["channel_id"], page_id),
                 )
 
+    async def apply_album(self, job, group, sources, title, topic, facts, relations):
+        channel = job["channel_id"]
+        async with self.store.transaction() as cur:
+            await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            await self.store.fence(cur, job)
+            current = await self.store.album_sources(channel, group, cur=cur)
+            if [(s["id"], s["content_hash"]) for s in current] != [
+                (s["id"], s["content_hash"]) for s in sources
+            ]:
+                return
+            await cur.execute(
+                """SELECT DISTINCT p.id,p.locked,p.hidden
+                FROM wiki_sources s JOIN wiki_chunks c ON c.source_id=s.id
+                JOIN wiki_facts f ON f.chunk_id=c.id JOIN wiki_pages p ON p.id=f.page_id
+                WHERE s.channel_id=%s AND s.media_group=%s""",
+                (channel, group),
+            )
+            old_pages = await cur.fetchall()
+            affected = {p["id"] for p in old_pages if not p["locked"]}
+            await cur.execute(
+                """SELECT a.page_id,p.locked,p.hidden,p.override_json FROM wiki_albums a
+                LEFT JOIN wiki_pages p ON p.id=a.page_id WHERE a.channel_id=%s AND a.media_group=%s""",
+                (channel, group),
+            )
+            album = await cur.fetchone()
+            page = album["page_id"]
+            if album["locked"] or album["hidden"] or (
+                not page and any(p["hidden"] or p["locked"] for p in old_pages)
+            ):
+                await cur.execute(
+                    "UPDATE wiki_albums SET pending=FALSE WHERE channel_id=%s AND media_group=%s",
+                    (channel, group),
+                )
+                return
+            if facts and not page:
+                # Reuse the caption page when it belongs exclusively to this album.
+                await cur.execute(
+                    """SELECT p.id,p.override_json FROM wiki_pages p
+                    JOIN wiki_facts f ON f.page_id=p.id JOIN wiki_chunks c ON c.id=f.chunk_id
+                    JOIN wiki_sources s ON s.id=c.source_id
+                    WHERE s.channel_id=%s AND s.media_group=%s AND s.source_type='message'
+                    AND p.locked=FALSE AND p.hidden=FALSE
+                    AND NOT EXISTS (SELECT 1 FROM wiki_facts other
+                        JOIN wiki_chunks oc ON oc.id=other.chunk_id JOIN wiki_sources os ON os.id=oc.source_id
+                        WHERE other.page_id=p.id AND NOT (os.media_group <=> %s))
+                    ORDER BY s.message_id,p.id LIMIT 1""",
+                    (channel, group, group),
+                )
+                caption = await cur.fetchone()
+                page = caption["id"] if caption else digest(channel, "album", group)[:32]
+                album["override_json"] = caption["override_json"] if caption else None
+                await cur.execute(
+                    """INSERT IGNORE INTO wiki_pages
+                    (id,channel_id,entity_key,title,slug,kind,topic,updated_at)
+                    VALUES (%s,%s,%s,%s,%s,'Topic',%s,UTC_TIMESTAMP(6))""",
+                    (page, channel, digest("album", group), title, page, topic),
+                )
+            await cur.execute(
+                """DELETE f FROM wiki_sources s JOIN wiki_chunks c ON c.source_id=s.id
+                JOIN wiki_facts f ON f.chunk_id=c.id JOIN wiki_pages p ON p.id=f.page_id
+                WHERE s.channel_id=%s AND s.media_group=%s AND p.locked=FALSE""",
+                (channel, group),
+            )
+            if page:
+                await cur.execute(
+                    """DELETE FROM wiki_facts WHERE channel_id=%s AND page_id=%s
+                    AND JSON_UNQUOTE(JSON_EXTRACT(fact,'$.media_group'))=%s""",
+                    (channel, page, group),
+                )
+                affected.add(page)
+            await cur.execute(
+                """UPDATE wiki_edges e JOIN wiki_chunks c ON c.id=e.chunk_id
+                JOIN wiki_sources s ON s.id=c.source_id JOIN wiki_pages p ON p.id=e.source_page
+                SET e.active=FALSE WHERE s.channel_id=%s AND s.media_group=%s AND p.locked=FALSE""",
+                (channel, group),
+            )
+            if facts:
+                if not decode(album["override_json"]).get("title"):
+                    await cur.execute(
+                        "UPDATE wiki_pages SET title=%s,topic=%s WHERE id=%s", (title, topic, page)
+                    )
+                by_id = {s["id"]: s for s in sources}
+                for fact in facts:
+                    anchor = fact["evidence"][0]
+                    source = by_id[anchor["source_id"]]
+                    await cur.execute(
+                        """INSERT INTO wiki_facts VALUES (%s,%s,%s,%s,%s,%s)""",
+                        (
+                            digest(page, fact["key"]),
+                            channel,
+                            page,
+                            anchor["chunk_id"],
+                            source["content_hash"],
+                            encode(fact),
+                        ),
+                    )
+                anchor = facts[0]["evidence"][0]
+                source_hash = by_id[anchor["source_id"]]["content_hash"]
+                for relation in relations:
+                    target = await self.entity(cur, channel, relation.target)
+                    if target == page:
+                        continue
+                    await cur.execute(
+                        """INSERT INTO wiki_edges
+                        (id,channel_id,chunk_id,source_hash,source_page,target_page,kind,relation_json)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE active=TRUE""",
+                        (
+                            digest("album", page, target, anchor["chunk_id"], relation.kind),
+                            channel,
+                            anchor["chunk_id"],
+                            source_hash,
+                            page,
+                            target,
+                            relation.kind,
+                            encode(relation.model_dump(mode="json")),
+                        ),
+                    )
+            if affected:
+                await cur.executemany(
+                    "INSERT IGNORE INTO wiki_dirty_pages VALUES (%s,%s)",
+                    [(channel, page_id) for page_id in affected],
+                )
+            await cur.execute(
+                "UPDATE wiki_albums SET page_id=%s,pending=FALSE WHERE channel_id=%s AND media_group=%s",
+                (page, channel, group),
+            )
+
     async def build_page(self, job, page):
         rows = await self.store.query(
             """SELECT f.fact FROM wiki_facts f
@@ -549,7 +676,15 @@ class Knowledge:
                     return await self.publish_page_edit(
                         cur, ch, job, manifest, progress, publication_id, actor
                     )
-                if job["kind"] in {"update", "reconcile", "proposal"}:
+                if job["kind"] == "albums" and ch["published_revision"]:
+                    await cur.execute(
+                        "SELECT profile FROM wiki_publications WHERE id=%s",
+                        (ch["published_revision"],),
+                    )
+                    previous_profile = decode((await cur.fetchone())["profile"])
+                    manifest["profile_narrative"] = previous_profile.get("narrative", {})
+                    manifest["profile_generation"] = previous_profile.get("source_generation")
+                if job["kind"] in {"update", "reconcile", "proposal", "albums"}:
                     # 增量任务只携带增量修订：与基线快照合并得到完整发布清单
                     revisions = await self.expand_revisions(cur, ch, manifest)
                 else:
