@@ -53,6 +53,11 @@ def name_key(value) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def strip_empty_title_category(title: str) -> str:
+    """Remove a category separator whose category is missing."""
+    return re.sub(r"^[/／]\s+(?=\S)", "", title, count=1)
+
+
 def utc(value=None):
     if value is None:
         return datetime.now(UTC).replace(tzinfo=None)

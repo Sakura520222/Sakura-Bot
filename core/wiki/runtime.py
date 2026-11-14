@@ -76,6 +76,7 @@ class WikiRuntime:
 
     async def start(self, bot_client=None):
         await self.store.initialize()
+        await self.engine.knowledge.repair_generated_title_separators()
         if not self._outbox_restored:
             self.recovery_keys.update(await asyncio.to_thread(self.outbox.keys))
             self._outbox_restored = True

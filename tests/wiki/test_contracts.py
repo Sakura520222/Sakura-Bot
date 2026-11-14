@@ -21,6 +21,7 @@ from core.web_api.middleware import AuthMiddleware, _wiki_buckets
 from core.web_api.routes import wiki
 from core.wiki import commands
 from core.wiki.avatars import STALE_AFTER_SECONDS, WikiAvatarService, sniff_media_type
+from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import merge_facts
 from core.wiki.models import (
     Extraction,
@@ -34,6 +35,22 @@ from core.wiki.models import (
 from core.wiki.runtime import schedule_due
 from core.wiki.schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from core.wiki.store import WikiSchemaError, WikiStore
+
+
+@pytest.mark.parametrize(
+    ("heading", "topic", "title"),
+    [
+        ("/ GPT-6.1 Terra", "频道资料", "GPT-6.1 Terra"),
+        ("／\u3000标题 / 副标题", "频道资料", "标题 / 副标题"),
+        ("系统 / /etc 配置", "系统", "/etc 配置"),
+        ("/help 命令", "频道资料", "/help 命令"),
+    ],
+)
+def test_markdown_title_separator(heading, topic, title):
+    source = "来源文本"
+    chunk = next(chunks(digest("sample"), source, digest(source)))
+    [fact] = WikiEngine.markdown_extraction(chunk, heading, "生成正文").facts
+    assert (fact.topic, fact.entity) == (topic, title)
 
 
 @pytest.mark.asyncio

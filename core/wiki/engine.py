@@ -24,6 +24,7 @@ from .models import (
     Review,
     chunks,
     digest,
+    strip_empty_title_category,
     utc,
     validate_extraction,
 )
@@ -321,7 +322,12 @@ class WikiEngine:
                 text = "\n".join(lines).strip()
             else:
                 title = chunk["text"].strip().splitlines()[0]
-        topic, name = title.split(" / ", 1) if " / " in title else ("频道资料", title)
+        title = title.strip()
+        cleaned = strip_empty_title_category(title)
+        if cleaned != title:
+            topic, name = "频道资料", cleaned
+        else:
+            topic, name = title.split(" / ", 1) if " / " in title else ("频道资料", title)
         name, topic = name.strip()[:160] or "频道资料", topic.strip()[:160] or "频道资料"
         if not text:
             return Extraction()
@@ -430,6 +436,17 @@ class WikiEngine:
                 )
             if cached:
                 result = Extraction.model_validate(decode(cached["result"]))
+                # Previously cached drafts can contain the malformed title too.
+                normalized = {
+                    fact.entity: strip_empty_title_category(fact.entity)
+                    for fact in result.facts
+                    if fact.topic == "频道资料"
+                }
+                for fact in result.facts:
+                    fact.entity = normalized.get(fact.entity, fact.entity)
+                for relation in result.relations:
+                    relation.source = normalized.get(relation.source, relation.source)
+                    relation.target = normalized.get(relation.target, relation.target)
                 validate_extraction(result, chunk)
                 records[chunk["id"]] = result
                 job["progress"]["cache_hits"] += 1
@@ -455,7 +472,7 @@ class WikiEngine:
                     config,
                     generator,
                     SYSTEM
-                    + "\n按来源分段。每段第一行严格使用：## [来源序号] 分类 / 词条名称，随后写该来源的 Markdown 内容。例如：## [0] 软件工具 / 工具名称。每个输入来源都要有一段，不要合并不同来源。无内容也保留其序号并写“无可整理内容”。",
+                    + "\n按来源分段。每段第一行严格使用：## [来源序号] 分类 / 词条名称，随后写该来源的 Markdown 内容。例如：## [0] 软件工具 / 工具名称。分类不明时填“频道资料”。每个输入来源都要有一段，不要合并不同来源。无内容也保留其序号并写“无可整理内容”。",
                     {
                         "language": config.language,
                         "topics": job["cursor"].get("summary_topics", []),
@@ -816,7 +833,7 @@ class WikiEngine:
                         generator,
                         SYSTEM
                         + f"\n这些配文和图片识别结果属于{context}。以配文为主，结合图片内容和顺序写成一篇完整词条。"
-                        "标题依据整篇内容，避免按图片拆分。第一行使用 ## [0] 分类 / 词条名称，随后直接写 Markdown 正文。",
+                        "标题依据整篇内容，避免按图片拆分。第一行使用 ## [0] 分类 / 词条名称，分类不明时填“频道资料”，随后直接写 Markdown 正文。",
                         {
                             "language": config.language,
                             "album": [

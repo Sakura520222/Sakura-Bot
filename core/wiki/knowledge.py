@@ -7,7 +7,15 @@
 import uuid
 from collections import defaultdict
 
-from .models import MANUAL_REVIEW_POLICY, SKIPPED_AI_REVIEW, Extraction, digest, name_key, utc
+from .models import (
+    MANUAL_REVIEW_POLICY,
+    SKIPPED_AI_REVIEW,
+    Extraction,
+    digest,
+    name_key,
+    strip_empty_title_category,
+    utc,
+)
 from .schema import REVISION_EVIDENCE, REVISION_VISIBLE
 from .store import decode, encode
 
@@ -28,6 +36,88 @@ def validate_title_correction(text):
 class Knowledge:
     def __init__(self, store):
         self.store = store
+
+    async def repair_generated_title_separators(self):
+        candidates = await self.store.query(
+            """SELECT id,channel_id FROM wiki_pages
+            WHERE topic='频道资料' AND locked=FALSE
+            AND JSON_EXTRACT(override_json,'$.title') IS NULL
+            AND title REGEXP '^[/／][[:space:]]+' ORDER BY channel_id,id""",
+            fetch=True,
+        )
+        for candidate in candidates:
+            await self.repair_page_title_separator(candidate["channel_id"], candidate["id"])
+
+    async def repair_page_title_separator(self, channel, page_id):
+        # This is a format repair of generated data. Keep revision and publication identities.
+        async with self.store.transaction() as cur:
+            await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            await cur.execute(
+                """SELECT title FROM wiki_pages WHERE id=%s AND channel_id=%s AND topic='频道资料'
+                AND locked=FALSE AND JSON_EXTRACT(override_json,'$.title') IS NULL""",
+                (page_id, channel),
+            )
+            page = await cur.fetchone()
+            if not page:
+                return
+            title = strip_empty_title_category(page["title"])
+            if title == page["title"]:
+                return
+            await cur.execute(
+                """SELECT id,document,search_text FROM wiki_page_revisions
+                WHERE page_id=%s AND channel_id=%s AND BINARY (document->>'$.title')=BINARY %s
+                AND document->>'$.claims[0].key' LIKE 'md:%%'
+                AND NOT COALESCE(JSON_EXTRACT(document,'$.standalone_edit')=TRUE,FALSE)""",
+                (page_id, channel, page["title"]),
+            )
+            revisions = await cur.fetchall()
+            if not revisions:
+                return
+            await cur.execute("UPDATE wiki_pages SET title=%s WHERE id=%s", (title, page_id))
+            await cur.execute(
+                """INSERT IGNORE INTO wiki_entity_aliases
+                (channel_id,alias_key,name,page_id,`manual`) VALUES (%s,%s,%s,%s,FALSE)""",
+                (channel, digest(name_key(title)), title, page_id),
+            )
+            for revision in revisions:
+                document = decode(revision["document"])
+                await cur.execute(
+                    """SELECT source_id,source_hash,chunk_id,start_offset,end_offset FROM wiki_evidence
+                    WHERE revision_id=%s ORDER BY chunk_id,start_offset,end_offset""",
+                    (revision["id"],),
+                )
+                evidence = list(await cur.fetchall())
+                old_hash = digest(document, evidence)
+                document["title"] = title
+                search = revision["search_text"]
+                previous_title, newline, remainder = search.partition("\n")
+                if previous_title == page["title"]:
+                    search = title + newline + remainder
+                await cur.execute(
+                    """UPDATE wiki_page_revisions SET document=%s,content_hash=%s,search_text=%s
+                    WHERE id=%s""",
+                    (
+                        encode(document),
+                        digest(
+                            {key: value for key, value in document.items() if key != "verified_at"}
+                        ),
+                        search,
+                        revision["id"],
+                    ),
+                )
+                await cur.execute(
+                    """UPDATE IGNORE wiki_revision_reviews SET subject_hash=%s
+                    WHERE revision_id=%s AND subject_hash=%s""",
+                    (digest(document, evidence), revision["id"], old_hash),
+                )
+            await self.store.audit(
+                cur,
+                channel,
+                "repair_title_separator",
+                page_id,
+                "wiki",
+                {"from": page["title"], "to": title, "revisions": len(revisions)},
+            )
 
     async def entity(self, cur, channel, name, kind="Entity", topic="其他", aliases=()):
         key = digest(name_key(name))

@@ -418,9 +418,6 @@ try {
   for (let batch=1;batch<12;batch++) {
     const prev = feeds;
     await page.evaluate(()=>window.scrollTo(0, document.documentElement.scrollHeight));
-    if (batch > 8) {
-      await page.getByRole("button",{name:"加载更多",exact:true}).click();
-    }
     await page.waitForFunction(value=>document.querySelector(".wiki-feed-end button")?.textContent?.trim() !== "加载中…" &&
       !!Array.from(document.querySelectorAll(".wiki-feed-card h2")).find(el=>el.textContent?.trim() === "Sakura Wiki 知识条目 "+value),batch*20+1);
     assert.equal(feeds,prev+1);
@@ -834,6 +831,13 @@ try {
   await contributorRow.click();
   await desktop.getByRole("heading", { name: "Cherry" }).waitFor();
   await desktop.getByRole("list", { name: "贡献记录" }).getByText(/注解/).waitFor();
+  const contribution = desktop.getByRole("list", { name: "贡献记录" }).getByRole("link").first();
+  assert.equal(new URL(await contribution.getAttribute("href"), url).hash, "");
+  await contribution.click();
+  await desktop.locator(".wiki-article h1").waitFor();
+  assert.equal(new URL(desktop.url()).hash, "");
+  assert.equal(await desktop.getByRole("dialog", { name: "修订历史" }).count(), 0);
+  await desktop.goBack();
   await desktop.getByRole("link", { name: "查看贡献者" }).click();
   await contributorRow.waitFor();
   await desktop.goto(url + "/wiki/123/page/article-1");

@@ -14,7 +14,7 @@
       <WikiState v-else-if="!history.length" title="暂无公开贡献。" />
       <ol v-else class="contribution-history" aria-label="贡献记录">
         <li v-for="entry in history" :key="entry.revision_id">
-          <RouterLink :to="`/wiki/${entry.channel_id}/page/${entry.slug}#history`">
+          <RouterLink :to="{ name: 'WikiArticle', params: { channel: entry.channel_id, slug: entry.slug } }">
             <strong>{{ entry.title }}</strong>
             <span class="wiki-meta">{{ labels[entry.kind] ?? '修订' }} · {{ formatDate(entry.created_at) }}</span>
           </RouterLink>

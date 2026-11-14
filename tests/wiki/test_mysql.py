@@ -448,6 +448,52 @@ async def test_publication_recovers_with_active_telegram_username(store, monkeyp
     assert not (await store.channel(channel_id))["access_verified"]
 
 
+async def test_repairs_generated_title_without_rewriting_history_ids(store):
+    ch, _, page, revision, publication = await published(store)
+    channel_id, page_id = ch["id"], page["id"]
+    knowledge = Knowledge(store)
+    original = await store.one("SELECT document FROM wiki_page_revisions WHERE id=%s", (revision,))
+    document = decode(original["document"])
+    title = document["title"]
+    document["title"] = "/ " + title
+    document["claims"][0]["key"] = "md:generated"
+    async with store.transaction() as cur:
+        await cur.execute(
+            "UPDATE wiki_pages SET title=%s,topic='频道资料' WHERE id=%s",
+            (document["title"], page_id),
+        )
+        await cur.execute(
+            "UPDATE wiki_page_revisions SET document=%s,search_text=%s WHERE id=%s",
+            (json.dumps(document), document["title"] + "\n正文链接 /help", revision),
+        )
+        _, subject_hash, _ = await knowledge.review_subject(cur, channel_id, page_id, revision)
+        await cur.execute(
+            "UPDATE wiki_revision_reviews SET subject_hash=%s WHERE revision_id=%s",
+            (subject_hash, revision),
+        )
+    await knowledge.repair_generated_title_separators()
+    await knowledge.repair_generated_title_separators()
+    article = await PublicReader(store).page(channel_id, page_id)
+    assert (article["title"], article["revision_id"], article["publication_id"]) == (
+        title,
+        revision,
+        publication,
+    )
+    search = await store.one("SELECT search_text FROM wiki_page_revisions WHERE id=%s", (revision,))
+    assert search["search_text"] == title + "\n正文链接 /help"
+    async with store.transaction() as cur:
+        _, repaired_hash, _ = await knowledge.review_subject(cur, channel_id, page_id, revision)
+        await cur.execute(
+            "SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s AND subject_hash=%s",
+            (revision, repaired_hash),
+        )
+        assert (await cur.fetchone())["approved"]
+    audit = await store.one(
+        "SELECT COUNT(*) total FROM wiki_review_actions WHERE action='repair_title_separator'"
+    )
+    assert audit["total"] == 1
+
+
 async def test_community_title_note_and_correction_publish_as_revisions(store, monkeypatch):
     ch, _, page, revision, publication = await published(store)
     channel_id = ch["id"]
