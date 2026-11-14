@@ -465,9 +465,23 @@
                     <n-button size="small" :disabled="busy">草稿操作</n-button>
                   </n-dropdown>
                 </header>
-                <n-alert v-if="preview.review && !preview.review.approved" type="warning" title="来源审校未通过">
+                <n-alert v-if="previewRow?.manually_approved" type="success" title="已人工通过" />
+                <n-alert v-else-if="preview.review && !preview.review.approved" type="warning" title="来源审校未通过">
                   <p v-for="reason in reviewReasons" :key="reason">{{ reason }}</p>
-                  <n-button size="small" :disabled="busy" @click="retryRevisionReview(preview.id)">重新审校</n-button>
+                  <n-space v-if="!previewRow?.rejected">
+                    <n-popconfirm
+                      v-if="canManuallyApprove"
+                      positive-text="确认通过"
+                      negative-text="取消"
+                      @positive-click="approveRevision(preview!.id)"
+                    >
+                      <template #trigger>
+                        <n-button size="small" type="primary" :disabled="busy">人工通过</n-button>
+                      </template>
+                      此修订将按频道的发布设置进入发布流程。
+                    </n-popconfirm>
+                    <n-button size="small" :disabled="busy" @click="retryRevisionReview(preview.id)">重新审校</n-button>
+                  </n-space>
                 </n-alert>
                 <n-tabs v-model:value="draftReaderTab" type="line" aria-label="草稿详情">
                   <n-tab name="text">正文</n-tab>
@@ -611,6 +625,7 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
+import { NPopconfirm } from "naive-ui";
 import { useRoute, useRouter } from "vue-router";
 import {
   wikiAdmin,
@@ -694,6 +709,7 @@ interface Revision {
   created_at: string;
   excerpt?: string;
   review_result?: boolean | number | null;
+  manually_approved?: boolean | number;
 }
 const route = useRoute();
 const router = useRouter();
@@ -755,11 +771,16 @@ const draftStatusOptions = [
 ];
 function revisionStatus(row: Revision) {
   if (row.rejected) return { type: "error", label: "已拒绝" } as const;
+  if (row.manually_approved) return { type: "success", label: "人工通过" } as const;
   if (row.review_result === false || row.review_result === 0) return { type: "warning", label: "审校未通过" } as const;
   if (row.approved) return { type: "success", label: "已准予发布" } as const;
   if (row.review_result) return { type: "success", label: "审校通过" } as const;
   return { type: "default", label: "待审校" } as const;
 }
+const canManuallyApprove = computed(() => {
+  const row = previewRow.value;
+  return row && !row.rejected && !row.hidden && !row.approved && !row.review_result && !row.manually_approved;
+});
 const draftActions = computed(() => {
   const row = previewRow.value;
   return row ? [
@@ -1136,6 +1157,9 @@ function publish(job_id: string) {
 }
 function retryRevisionReview(id: string) {
   return perform(() => wikiAdmin(`${root()}/revisions/${id}/review/retry`, "POST"), "已安排重新审校");
+}
+function approveRevision(id: string) {
+  return perform(() => wikiAdmin(`${root()}/revisions/${id}/review/approve`, "POST"), "修订已人工通过");
 }
 function rollback(publication_id: string) {
   return perform(

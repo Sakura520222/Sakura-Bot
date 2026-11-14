@@ -1350,6 +1350,82 @@ async def test_failed_review_preserves_existing_publication(store, monkeypatch, 
         assert generator.calls == generation_calls + 1  # Only the channel introduction.
 
 
+@pytest.mark.parametrize("legacy_job", [False, True])
+async def test_admin_manually_approves_failed_drafts_without_rerunning_review(
+    store, monkeypatch, legacy_job
+):
+    ch, _, runtime = await build_and_publish(store)
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status="unsupported")
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (FakeAI(), "fixture-model")
+    )
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert saved["status"] == "completed"
+    cursor = decode(saved["cursor"])
+    rejected = cursor["review_rejected_revisions"]
+    assert rejected
+    if legacy_job:
+        cursor.pop("review_rejected_revisions")
+        await store.query(
+            "UPDATE wiki_jobs SET `cursor`=%s WHERE id=%s", (json.dumps(cursor), job_id)
+        )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    runtime.ready = True
+    other_job_id = await store.enqueue(ch["id"], "update")
+    calls = reviewer.review_calls
+    for revision in rejected:
+        await wiki.manually_approve_revision(ch["id"], revision, "test")
+        await wiki.manually_approve_revision(ch["id"], revision, "test")
+    assert reviewer.review_calls == calls
+    assert (await store.channel(ch["id"]))["active_job"] == other_job_id
+    saved = await store.one("SELECT progress FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert decode(saved["progress"])["review_complete"]
+    assert not await wiki.revisions(ch["id"], page=1, q="", status="failed", job_id=job_id)
+    passed = await wiki.revisions(ch["id"], page=1, q="", status="passed", job_id=job_id)
+    assert set(rejected) <= {item["id"] for item in passed if item["manually_approved"]}
+    audit = await store.one(
+        "SELECT COUNT(*) AS n FROM wiki_review_actions WHERE action='manually_approve_revision'"
+    )
+    assert audit["n"] == len(rejected)
+    for revision in rejected:
+        detail = await wiki.revision_detail(ch["id"], revision, job_id=job_id)
+        assert not detail["review"]["approved"]
+    assert await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+
+
+async def test_manual_approval_during_channel_review_is_used_for_autopublish(store, monkeypatch):
+    ch, generator, runtime = await build_and_publish(store)
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status="unsupported")
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (generator, "fixture-model")
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    runtime.ready = True
+    job_id = await store.enqueue(ch["id"], "reindex")
+    review_revision = runtime.engine.review_revision
+
+    async def approve_after_ai(job, config, model, policy, page_id, revision_id, search):
+        approved = await review_revision(job, config, model, policy, page_id, revision_id, search)
+        if not approved:
+            await wiki.manually_approve_revision(ch["id"], revision_id, "test")
+        return approved
+
+    monkeypatch.setattr(runtime.engine, "review_revision", approve_after_ai)
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT status,progress FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert reviewer.review_calls > 0
+    assert saved["status"] == "published"
+    assert decode(saved["progress"])["review_rejections"] == 0
+
+
 async def test_disabled_ai_review_allows_page_edit_without_model_and_rechecks_policy(store):
     ch, _, page, revision, _ = await published(store)
     channel_id = ch["id"]

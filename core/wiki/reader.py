@@ -10,7 +10,7 @@ from functools import wraps
 from itertools import zip_longest
 
 from .cursor import read_cursor, scope_key, write_cursor
-from .models import utc
+from .models import MANUAL_REVIEW_POLICY, utc
 from .schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from .store import decode
 
@@ -429,8 +429,8 @@ class PublicReader:
         review = (
             await self.store.one(
                 """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
-                ORDER BY created_at DESC LIMIT 1""",
-                (row["revision_id"],),
+                AND policy_key<>%s ORDER BY created_at DESC LIMIT 1""",
+                (row["revision_id"], MANUAL_REVIEW_POLICY),
             )
             if part != "references"
             else None

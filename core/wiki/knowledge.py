@@ -7,7 +7,7 @@
 import uuid
 from collections import defaultdict
 
-from .models import SKIPPED_AI_REVIEW, Extraction, digest, name_key, utc
+from .models import MANUAL_REVIEW_POLICY, SKIPPED_AI_REVIEW, Extraction, digest, name_key, utc
 from .schema import REVISION_EVIDENCE, REVISION_VISIBLE
 from .store import decode, encode
 
@@ -521,17 +521,30 @@ class Knowledge:
         else:
             _, subject_hash, _ = await self.review_subject(cur, channel, page, revision)
             await cur.execute(
-                """SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s
-            AND policy_key=%s AND subject_hash=%s""",
-                (revision, policy, subject_hash),
+                """SELECT 1 FROM wiki_revision_reviews WHERE revision_id=%s
+                AND policy_key IN (%s,%s) AND subject_hash=%s AND approved=TRUE LIMIT 1""",
+                (revision, policy, MANUAL_REVIEW_POLICY, subject_hash),
             )
-            review = await cur.fetchone()
-            if not review or not review["approved"]:
+            if not await cur.fetchone():
                 raise ValueError("Publication requires independent review of each new revision")
         await cur.execute(
             "UPDATE wiki_page_revisions SET approved=TRUE WHERE id=%s AND approved=FALSE",
             (revision,),
         )
+
+    async def manually_approve_revision(self, cur, channel, page, revision, actor):
+        _, subject_hash, _ = await self.review_subject(cur, channel, page, revision)
+        await cur.execute(
+            """INSERT INTO wiki_revision_reviews
+            (revision_id,policy_key,subject_hash,approved,result,created_at)
+            VALUES (%s,%s,%s,TRUE,%s,UTC_TIMESTAMP(6))
+            ON DUPLICATE KEY UPDATE result=wiki_revision_reviews.result""",
+            (revision, MANUAL_REVIEW_POLICY, subject_hash, encode({"manual": True})),
+        )
+        if cur.rowcount:
+            await self.store.audit(
+                cur, channel, "manually_approve_revision", revision, actor, {"page_id": page}
+            )
 
     async def publish_page_edit(self, cur, ch, job, manifest, progress, publication, actor):
         channel, previous = ch["id"], ch["published_revision"]

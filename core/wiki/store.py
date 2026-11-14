@@ -14,7 +14,7 @@ from datetime import timedelta
 
 import aiomysql
 
-from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
+from .models import MANUAL_REVIEW_POLICY, WikiConfig, alias_key, canonical_id, chunks, digest, utc
 from .schema import (
     ALBUMS_TABLE,
     CHANNEL_COVERS_TABLE,
@@ -662,8 +662,43 @@ class WikiStore:
         "profile_generation",
         "review_policy",
         "review_revisions",
+        "review_rejected_revisions",
         "summary_topics",
     )
+
+    async def reconcile_manual_reviews(self, cur, cursor, progress):
+        remaining = progress.get("review_rejections", 0)
+        if not remaining:
+            return False
+        rejected = cursor.get("review_rejected_revisions")
+        if rejected is None:
+            revisions = cursor.get("review_revisions", cursor.get("revisions", {}))
+            # Completed jobs from previous versions did not retain the rejected IDs.
+            await cur.execute(
+                """SELECT rv.revision_id FROM wiki_revision_reviews rv
+                JOIN JSON_TABLE(%s,'$[*]' COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) ids
+                ON ids.id=rv.revision_id WHERE rv.policy_key=%s
+                GROUP BY rv.revision_id HAVING MAX(rv.approved)=FALSE""",
+                (encode(list(revisions.values())), cursor.get("review_policy")),
+            )
+            rejected = [row["revision_id"] for row in await cur.fetchall()]
+            if len(rejected) != remaining:
+                return False
+        await cur.execute(
+            """SELECT DISTINCT rv.revision_id FROM wiki_revision_reviews rv
+            JOIN JSON_TABLE(%s,'$[*]' COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) ids
+            ON ids.id=rv.revision_id WHERE rv.policy_key=%s AND rv.approved=TRUE""",
+            (encode(rejected), MANUAL_REVIEW_POLICY),
+        )
+        approved = {row["revision_id"] for row in await cur.fetchall()}
+        if not approved:
+            return False
+        rejected = [revision for revision in rejected if revision not in approved]
+        cursor["review_rejected_revisions"] = rejected
+        progress.update(review_complete=not rejected, review_rejections=len(rejected))
+        if not rejected:
+            progress["activity"] = "审校已完成，等待发布"
+        return True
 
     async def finish(self, job, status="completed", error=None, delay=0):
         async with self.transaction() as cur:
@@ -672,6 +707,8 @@ class WikiStore:
             )
             await self.fence(cur, job)
             cursor = job["cursor"]
+            if status == "completed" and job["phase"] == "ready":
+                await self.reconcile_manual_reviews(cur, cursor, job["progress"])
             if status in {"completed", "published"}:
                 cursor = {key: cursor[key] for key in self.TERMINAL_CURSOR_KEYS if key in cursor}
             await cur.execute(

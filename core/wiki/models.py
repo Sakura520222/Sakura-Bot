@@ -66,6 +66,7 @@ class Strict(BaseModel):
 
 
 SKIPPED_AI_REVIEW = "ai-review-disabled"
+MANUAL_REVIEW_POLICY = "manual-review"
 
 
 class WikiConfig(Strict):

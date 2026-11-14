@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from .knowledge import Knowledge
 from .models import (
+    MANUAL_REVIEW_POLICY,
     SKIPPED_AI_REVIEW,
     Citation,
     Extraction,
@@ -959,13 +960,16 @@ class WikiEngine:
                 cur, job["channel_id"], page_id, revision_id
             )
             await cur.execute(
-                """SELECT approved,created_at FROM wiki_revision_reviews WHERE revision_id=%s
-                AND policy_key=%s AND subject_hash=%s""",
-                (revision_id, policy, subject_hash),
+                """SELECT approved,created_at,policy_key FROM wiki_revision_reviews
+                WHERE revision_id=%s AND policy_key IN (%s,%s) AND subject_hash=%s
+                ORDER BY (policy_key=%s) DESC LIMIT 1""",
+                (revision_id, policy, MANUAL_REVIEW_POLICY, subject_hash, MANUAL_REVIEW_POLICY),
             )
             cached = await cur.fetchone()
             if cached is not None and (
-                not search or utc() - cached["created_at"] < timedelta(hours=search.ttl_hours)
+                cached["policy_key"] == MANUAL_REVIEW_POLICY
+                or not search
+                or utc() - cached["created_at"] < timedelta(hours=search.ttl_hours)
             ):
                 return bool(cached["approved"])
             await cur.execute(
@@ -1220,6 +1224,7 @@ class WikiEngine:
         )
         cursor, progress = job["cursor"], job["progress"]
         cursor["review_policy"] = policy
+        rejected = cursor["review_rejected_revisions"] = []
         progress.update(
             review_complete=False,
             review_skipped=False,
@@ -1249,7 +1254,8 @@ class WikiEngine:
                 if not await self.review_revision(
                     job, channel["config"], reviewer, policy, page_id, revision_id, search
                 ):
-                    progress["review_rejections"] += 1
+                    rejected.append(revision_id)
+                    progress["review_rejections"] = len(rejected)
                 progress["reviewed_pages"] += 1
 
         candidates = list(revisions.items())
@@ -1257,6 +1263,9 @@ class WikiEngine:
         for start in range(0, len(candidates), 64):
             await self.extract_batch([check(*item) for item in candidates[start : start + 64]])
         progress["review_complete"] = not progress["review_rejections"]
+        if rejected:
+            async with self.store.transaction() as cur:
+                await self.store.reconcile_manual_reviews(cur, cursor, progress)
         if (
             job["kind"] not in {"page_edit", "albums"}
             and progress["review_complete"]
