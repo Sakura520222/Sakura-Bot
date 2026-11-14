@@ -181,8 +181,10 @@ class Knowledge:
             )
             album = await cur.fetchone()
             page = album["page_id"]
-            if album["locked"] or album["hidden"] or (
-                not page and any(p["hidden"] or p["locked"] for p in old_pages)
+            if (
+                album["locked"]
+                or album["hidden"]
+                or (not page and any(p["hidden"] or p["locked"] for p in old_pages))
             ):
                 await cur.execute(
                     "UPDATE wiki_albums SET pending=FALSE WHERE channel_id=%s AND media_group=%s",
