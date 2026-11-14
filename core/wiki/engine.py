@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from .knowledge import Knowledge
 from .models import (
+    SKIPPED_AI_REVIEW,
     Citation,
     Extraction,
     Fact,
@@ -56,6 +57,22 @@ class BudgetExceeded(RuntimeError):
 
 class WikiResponseError(ValueError):
     pass
+
+
+def content_refused(error):
+    if getattr(error, "status_code", None) not in {400, 403, 422}:
+        return False
+    reason = str(getattr(error, "body", None) or error).lower()
+    return any(
+        marker in reason
+        for marker in (
+            "content_filter",
+            "content_policy",
+            "data_inspection_failed",
+            "法律法规",
+            "内容审核",
+        )
+    )
 
 
 def parse_json(raw):
@@ -110,11 +127,15 @@ class WikiEngine:
         fallback = purpose == "wiki_review" and not has_wiki_review_route(parse_ai_profiles(raw))
         return get_async_ai_runtime(purpose, config=config), fallback
 
-    async def request(self, job, config, runtime, system, payload, *, stage=None, count=1):
+    async def request(
+        self, job, config, runtime, system, payload, *, stage=None, count=1, max_output=None
+    ):
         client, model = runtime
         stage = stage or "生成知识"
         text = encode(payload)
-        output_limit = config.max_output_tokens
+        output_limit = (
+            min(config.max_output_tokens, max_output) if max_output else config.max_output_tokens
+        )
         reserve = len(text.encode("utf-8")) + len(system.encode("utf-8")) + output_limit
         progress = job["progress"]
         used = (
@@ -359,18 +380,7 @@ class WikiEngine:
         try:
             result = await self._extract_many(job, config, batch, generator)
         except Exception as error:
-            reason = str(getattr(error, "body", None) or error).lower()
-            refused = getattr(error, "status_code", None) in {400, 403, 422} and any(
-                marker in reason
-                for marker in (
-                    "content_filter",
-                    "content_policy",
-                    "data_inspection_failed",
-                    "法律法规",
-                    "内容审核",
-                )
-            )
-            if not refused:
+            if not content_refused(error):
                 raise
             if len(batch) > 1:
                 middle = len(batch) // 2
@@ -891,21 +901,42 @@ class WikiEngine:
                         ]
                     except SearchUnavailable:
                         external[item["index"]] = []
-            raw = await self.request(
-                job,
-                config,
-                reviewer,
-                REVIEW_SYSTEM + (FACT_SYSTEM if search else ""),
-                {
-                    "title": document["title"],
-                    "topic": document["topic"],
-                    "claims": batch,
-                    "evidence": {i: excerpts[i] for claim in batch for i in claim["sources"]},
-                    **({"external_evidence": external} if search else {}),
-                },
-                stage="独立来源审校",
-                count=len(batch),
-            )
+            try:
+                raw = await self.request(
+                    job,
+                    config,
+                    reviewer,
+                    REVIEW_SYSTEM + (FACT_SYSTEM if search else ""),
+                    {
+                        "title": document["title"],
+                        "topic": document["topic"],
+                        "claims": batch,
+                        "evidence": {i: excerpts[i] for claim in batch for i in claim["sources"]},
+                        **({"external_evidence": external} if search else {}),
+                    },
+                    stage="独立来源审校",
+                    count=len(batch),
+                    max_output=4096,
+                )
+            except Exception as error:
+                if not content_refused(error):
+                    if getattr(error, "status_code", None) == 400:
+                        raise WikiResponseError(
+                            f"审校模型 {reviewer[1]} 返回 HTTP 400，请检查模型绑定或请求参数"
+                        ) from error
+                    raise
+                reason = "审校模型拒绝处理这批内容，请核对引用原文或更换模型"
+                decisions.append(
+                    Review(
+                        approved=False,
+                        reason=reason,
+                        claims=[
+                            {"index": item["index"], "status": "unsupported", "reason": reason}
+                            for item in batch
+                        ],
+                    )
+                )
+                continue
             try:
                 decision = Review.model_validate(parse_json(raw))
                 if sorted(item.index for item in decision.claims) != [
@@ -1005,6 +1036,21 @@ class WikiEngine:
         return approved
 
     async def review(self, job, channel):
+        channel = await self.store.channel(channel["id"])
+        if not channel["config"].ai_review_enabled:
+            job["cursor"]["review_policy"] = SKIPPED_AI_REVIEW
+            job["progress"].update(
+                review_complete=True,
+                review_version=REVIEW_VERSION,
+                review_skipped=True,
+                review_fallback=False,
+                review_rejections=0,
+                reviewed_pages=0,
+                review_total=0,
+                activity="已跳过 AI 来源审校",
+            )
+            await self.store.checkpoint(job, "ready")
+            return
         reviewer, fallback = self.client("wiki_review")
         search = None
         if self.research and (
@@ -1025,6 +1071,7 @@ class WikiEngine:
         cursor["review_policy"] = policy
         progress.update(
             review_complete=False,
+            review_skipped=False,
             review_version=REVIEW_VERSION,
             review_fallback=fallback,
             review_rejections=0,
@@ -1037,8 +1084,6 @@ class WikiEngine:
             )
         await self.store.report(job, "正在独立审校文章", stage="review")
         revisions = dict(cursor.get("revisions", {}))
-        if job["kind"] in self.INCREMENTAL_KINDS:
-            channel = await self.store.channel(channel["id"])
         if job["kind"] in self.INCREMENTAL_KINDS and not channel["published_revision"]:
             async with self.store.transaction() as cur:
                 revisions = await self.knowledge.expand_revisions(cur, channel, cursor)

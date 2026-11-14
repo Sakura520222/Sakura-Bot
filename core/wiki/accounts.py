@@ -185,16 +185,43 @@ class WikiAccounts:
                 "DELETE FROM wiki_login_flows WHERE browser_hash=UNHEX(%s)", (token_hash(browser),)
             )
 
+    @staticmethod
+    async def lock_session(cur, session, access):
+        await WikiAccounts.lock_user(cur, session["id"])
+        await cur.execute(
+            """SELECT id FROM wiki_sessions WHERE id=%s AND user_id=%s AND access_hash=UNHEX(%s)
+            AND access_until>UTC_TIMESTAMP(6) AND refresh_until>UTC_TIMESTAMP(6) FOR UPDATE""",
+            (session["session_id"], session["id"], token_hash(access)),
+        )
+        if not await cur.fetchone():
+            raise AccountDenied("Wiki session expired")
+
+    async def bookmarks(self, user_id):
+        rows = await self.store.query(
+            "SELECT page_id FROM wiki_bookmarks WHERE user_id=%s ORDER BY created_at DESC,page_id",
+            (user_id,),
+            fetch=True,
+        )
+        return [row["page_id"] for row in rows]
+
+    async def update_bookmarks(self, session, access, *, add=(), remove=None):
+        async with self.store.transaction() as cur:
+            await self.lock_session(cur, session, access)
+            if add:
+                await cur.executemany(
+                    """INSERT INTO wiki_bookmarks (user_id,page_id,created_at)
+                    VALUES (%s,%s,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE page_id=wiki_bookmarks.page_id""",
+                    [(session["id"], page) for page in dict.fromkeys(add)],
+                )
+            if remove:
+                await cur.execute(
+                    "DELETE FROM wiki_bookmarks WHERE user_id=%s AND page_id=%s",
+                    (session["id"], remove),
+                )
+
     async def privacy(self, session, access, preferences):
         async with self.store.transaction() as cur:
-            await self.lock_user(cur, session["id"])
-            await cur.execute(
-                """SELECT id FROM wiki_sessions WHERE id=%s AND access_hash=UNHEX(%s)
-                AND access_until>UTC_TIMESTAMP(6) FOR UPDATE""",
-                (session["session_id"], token_hash(access)),
-            )
-            if not await cur.fetchone():
-                raise AccountDenied("Wiki session expired")
+            await self.lock_session(cur, session, access)
             await cur.execute(
                 """UPDATE wiki_users SET show_avatar=%s,show_username=%s,anonymous_contributions=%s
                 WHERE id=%s""",

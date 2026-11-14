@@ -60,6 +60,13 @@ WIKI_ACCOUNT_TABLES = (
         signature BINARY(32) PRIMARY KEY, expires_at DATETIME(6) NOT NULL,
         INDEX wiki_legacy_login_expiry(expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_bookmarks (
+        user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        page_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY(user_id,page_id), INDEX wiki_bookmark_order(user_id,created_at,page_id),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 )
 # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
 # 增量装配只重建这些页面而不是遍历全部历史页面。

@@ -24,7 +24,24 @@
       </div>
       <n-divider title-placement="left">请求设置</n-divider>
       <div class="settings-grid">
-        <n-form-item label="服务优先顺序" class="wide"><n-select v-model:value="settings.order" multiple :options="providerOptions" /></n-form-item>
+        <n-form-item label="服务优先顺序" class="wide">
+          <div class="provider-order">
+            <div class="order-items" role="list" aria-label="服务优先顺序">
+              <div v-for="(name, index) in settings.order" :key="name" role="listitem" class="order-item"
+                :class="{ dragging: dragged === name, 'drop-before': target?.name === name && !target.after, 'drop-after': target?.name === name && target.after }"
+                :data-provider="name"
+                @dragover.prevent="dragOver($event, name)" @drop.prevent="drop(name)">
+                <button type="button" class="order-grip" :draggable="!saving" :disabled="saving"
+                  :aria-label="`调整 ${providerNames[name]} 的顺序`" title="拖拽排序，也可使用左右方向键"
+                  @dragstart="startDrag($event, name)" @dragend="resetDrag"
+                  @keydown.left.prevent="move(name, index - 1)" @keydown.right.prevent="move(name, index + 1)">⠿</button>
+                <n-tag closable :disabled="saving" @close="settings.order = settings.order.filter(item => item !== name)">{{ providerNames[name] }}</n-tag>
+              </div>
+            </div>
+            <n-select v-if="availableProviders.length" :value="null" placeholder="添加搜索源" :options="availableProviders" @update:value="addProvider" />
+            <n-text v-if="settings.order.length > 1" depth="3">拖动手柄调整顺序，保存后生效。助手会先查通用搜索源。</n-text>
+          </div>
+        </n-form-item>
         <n-form-item label="返回结果数"><n-input-number v-model:value="settings.result_limit" :min="1" :max="10" /></n-form-item>
         <n-form-item label="超时（秒）"><n-input-number v-model:value="settings.timeout" :min="2" :max="30" /></n-form-item>
         <n-form-item label="并发"><n-input-number v-model:value="settings.concurrency" :min="1" :max="12" /></n-form-item>
@@ -64,6 +81,44 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref("");
 const saved = ref(false);
+const dragged = ref<Provider>();
+const target = ref<{ name: Provider; after: boolean }>();
+const availableProviders = computed(() => providerOptions.filter(({ value }) => !settings.value?.order.includes(value)));
+
+function addProvider(name: Provider) {
+  const order = settings.value?.order;
+  if (order && !order.includes(name)) order.push(name);
+}
+function move(name: Provider, destination: number) {
+  const order = settings.value?.order;
+  if (!order || saving.value || destination < 0 || destination >= order.length) return;
+  const index = order.indexOf(name);
+  if (index < 0 || index === destination) return;
+  order.splice(index, 1);
+  order.splice(destination, 0, name);
+  saved.value = false;
+}
+function startDrag(event: DragEvent, name: Provider) {
+  if (!event.dataTransfer || saving.value) return;
+  dragged.value = name;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", name);
+}
+function dragOver(event: DragEvent, name: Provider) {
+  if (!dragged.value || dragged.value === name) { target.value = undefined; return; }
+  const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  target.value = { name, after: event.clientX >= box.left + box.width / 2 };
+}
+function drop(name: Provider) {
+  const order = settings.value?.order;
+  const source = dragged.value;
+  if (order && source && source !== name && target.value?.name === name) {
+    const position = order.indexOf(name);
+    move(source, position + Number(target.value.after) - Number(order.indexOf(source) < position));
+  }
+  resetDrag();
+}
+function resetDrag() { dragged.value = undefined; target.value = undefined; }
 
 function toggleProvider(name: Provider, enabled: boolean) {
   const current = settings.value;
@@ -109,4 +164,13 @@ onMounted(load);
 .key-field { margin-top: 12px; }
 .wide { grid-column: 1 / -1; }
 .n-input-number { width: 100%; }
+.provider-order { display: grid; gap: 8px; width: 100%; }
+.order-items { display: flex; flex-wrap: wrap; gap: 8px; }
+.order-items:empty { display: none; }
+.order-item { display: inline-flex; align-items: center; gap: 2px; position: relative; }
+.order-item.dragging { opacity: .45; }
+.order-item:is(.drop-before,.drop-after)::after { position: absolute; content: ""; inset-block: 0; width: 2px; background: var(--sb-accent); }
+.drop-before::after { inset-inline-start: -4px; }
+.drop-after::after { inset-inline-end: -4px; }
+.order-grip { border: 0; background: none; color: var(--sb-text-2); font-size: 18px; cursor: grab; padding: 0 4px; line-height: 1.4; }
 </style>

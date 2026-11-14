@@ -306,7 +306,8 @@ class Community:
             args.append(identifier)
         review_fields = (
             """,c.title channel_title,j.id review_job_id,j.status review_job_status,
-            JSON_EXTRACT(j.progress,'$.review_complete')=TRUE review_complete,base.document base_document"""
+            JSON_EXTRACT(j.progress,'$.review_complete')=TRUE review_complete,
+            JSON_EXTRACT(j.progress,'$.review_skipped')=TRUE review_skipped,base.document base_document"""
             if review
             else ""
         )

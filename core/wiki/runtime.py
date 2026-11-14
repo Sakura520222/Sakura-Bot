@@ -13,7 +13,7 @@ from .collector import SourceCollector
 from .community import Community
 from .engine import BudgetExceeded, WikiEngine, WikiResponseError
 from .knowledge import PageEditConflict
-from .models import WikiConfig, alias_key, canonical_id, utc
+from .models import SKIPPED_AI_REVIEW, WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
 from .store import LeaseLost, WikiSchemaError, WikiStore, decode
@@ -262,7 +262,14 @@ class WikiRuntime:
                 await self.store.checkpoint(job, "extract")
             if job["phase"] == "extract":
                 await self.engine.generate(job, channel)
-            if job["phase"] == "ready" and not job["cursor"].get("review_policy"):
+            previous_policy = job["cursor"].get("review_policy")
+            if job["phase"] == "ready" and (
+                not previous_policy
+                or (previous_policy == SKIPPED_AI_REVIEW and channel["config"].ai_review_enabled)
+                or (
+                    previous_policy != SKIPPED_AI_REVIEW and not channel["config"].ai_review_enabled
+                )
+            ):
                 # An unfinished pre-upgrade job may have reached ready using the old flags.
                 await self.store.checkpoint(job, "review")
             if job["phase"] == "assemble":
@@ -307,6 +314,8 @@ class WikiRuntime:
                     )
                 elif job["progress"].get("review_rejections"):
                     job["progress"]["activity"] = "部分修订未通过来源审校，请在草稿中处理"
+                elif page_edit and job["progress"].get("review_skipped"):
+                    job["progress"]["activity"] = "词条修订等待发布"
                 else:
                     job["progress"]["activity"] = (
                         "词条修订已通过审校，等待发布" if page_edit else "构建完成"
@@ -380,7 +389,10 @@ class WikiRuntime:
                     )
                     await self.store.checkpoint(job, "assemble")
                     delay = 1
-                if str(error) == "Publication requires independent review of each new revision":
+                if str(error) in {
+                    "Publication requires independent review of each new revision",
+                    "已重新启用 AI 来源审校，请重新审校后发布",
+                }:
                     job["progress"]["review_complete"] = False
                     await self.store.checkpoint(job, "review")
                 if job["phase"] == "collect":

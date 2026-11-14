@@ -248,6 +248,19 @@ async def test_oidc_cookie_flow_isolated_from_webui_and_replay(store, monkeypatc
         assert (
             await client.put(f"{account}/privacy", headers=headers, json=preferences)
         ).json() == preferences
+        bookmark = "a" * 32
+        bookmarks = f"{account}/bookmarks"
+        assert (await other.get(bookmarks)).status_code == 401
+        assert (await client.post(bookmarks, json={"add": [bookmark]})).status_code == 403
+        for _ in range(2):
+            assert (
+                await client.post(bookmarks, headers=headers, json={"add": [bookmark]})
+            ).status_code == 204
+        assert (await client.get(bookmarks)).json() == {"ids": [bookmark]}
+        assert (
+            await client.post(bookmarks, headers=headers, json={"remove": bookmark})
+        ).status_code == 204
+        assert (await client.get(bookmarks)).json() == {"ids": []}
         old_refresh = client.cookies.get(wiki_account.REFRESH)
         old_access = client.cookies.get(wiki_account.ACCESS)
         session = await service.accounts.session(old_access)
@@ -1236,6 +1249,31 @@ async def test_failed_review_preserves_existing_publication(store, monkeypatch, 
         saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
         assert saved["status"] == "published", saved
         assert generator.calls == generation_calls + 1  # Only the channel introduction.
+
+
+async def test_disabled_ai_review_allows_page_edit_without_model_and_rechecks_policy(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    config = (await store.channel(channel_id))["config"]
+    await store.configure(
+        channel_id, config.model_copy(update={"ai_review_enabled": False}), "test"
+    )
+    service = WikiRuntime(store, None, None)
+    service.engine.client = lambda _: pytest.fail("Skipped review called a model")
+    replacement, job_id = await service.engine.knowledge.correct_page(
+        channel_id, revision, 0, "人工修订。", "test"
+    )
+    job = await store.claim_job()
+    await service.run_job(job)
+    assert job["progress"]["review_skipped"] and job["progress"]["review_complete"]
+    await store.configure(channel_id, config, "test")
+    with pytest.raises(ValueError, match="重新启用"):
+        await service.engine.knowledge.publish(channel_id, job_id, "test")
+    await store.configure(
+        channel_id, config.model_copy(update={"ai_review_enabled": False}), "test"
+    )
+    await service.engine.knowledge.publish(channel_id, job_id, "test")
+    assert (await service.reader.page(channel_id, page["slug"]))["revision_id"] == replacement
 
 
 async def test_publish_requires_review_of_exact_document(store):

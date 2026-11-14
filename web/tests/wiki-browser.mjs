@@ -37,6 +37,7 @@ let coverUrl;
 let uploadedCover;
 let accountEnabled = false;
 let accountUser = null;
+const accountBookmarks = new Map();
 let assistantEnabled = false;
 let assistantCheckedIn = false;
 let articleHidden = false;
@@ -57,6 +58,22 @@ const server = http.createServer(async (req,res) => {
       config: { enabled: true, public: true, hidden_topics: [], public_base_url: "", columns: ["pages"] },
     };
     if (endpoint === "/api/wiki/account/session") out = { enabled: accountEnabled, user: accountUser, can_refresh: false, assistant_enabled: assistantEnabled };
+    else if (endpoint === "/api/wiki/account/bookmarks") {
+      if (!accountUser) { res.writeHead(401); return res.end(); }
+      const saved = accountBookmarks.get(accountUser.id) ?? new Set();
+      accountBookmarks.set(accountUser.id, saved);
+      if (req.method === "POST") {
+        assert.equal(req.headers["x-wiki-request"], "1");
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const { add, remove } = JSON.parse(Buffer.concat(chunks));
+        for (const id of add || []) saved.add(id);
+        if (remove) saved.delete(remove);
+        res.writeHead(204);
+        return res.end();
+      }
+      out = { ids: [...saved].reverse() };
+    }
     else if (endpoint === "/api/wiki/admin/account-settings") {
       let enabled = false;
       if (req.method === "PUT") {
@@ -481,8 +498,22 @@ try {
   accountUser = { id: "public-fixture", display_name: "Wiki 测试用户", username: null, avatar: true,
     privacy: { show_avatar: false, show_username: false, anonymous_contributions: true } };
   assistantEnabled = true;
+  await accountPage.evaluate((id) => localStorage.setItem("sakura-wiki-saved:" + id, String(Date.now())), cards[1].id);
   await accountPage.goto(url + "/wiki/123/page/article-0");
   await accountTrigger.locator("img").waitFor();
+  await accountPage.getByRole("button", { name: "收藏到账号", exact: true }).click();
+  await accountPage.getByRole("button", { name: "取消收藏", exact: true }).waitFor();
+  assert.ok(accountBookmarks.get(accountUser.id).has(cards[0].id));
+  assert.ok(accountBookmarks.get(accountUser.id).has(cards[1].id));
+  assert.equal(await accountPage.evaluate((id) => localStorage.getItem("sakura-wiki-saved:" + id), cards[1].id), null);
+  const otherDevice = await browser.newPage();
+  await otherDevice.goto(url + "/wiki/123/page/article-0");
+  await otherDevice.getByRole("button", { name: "取消收藏", exact: true }).waitFor();
+  await otherDevice.close();
+  await accountPage.reload();
+  await accountPage.getByRole("button", { name: "取消收藏", exact: true }).click();
+  await accountPage.getByRole("button", { name: "收藏到账号", exact: true }).waitFor();
+  assert.ok(!accountBookmarks.get(accountUser.id).has(cards[0].id));
   assert.equal(await accountTrigger.locator("img").getAttribute("src"), "/api/wiki/account/avatar");
   await accountPage.getByRole("button", { name: "更多词条操作" }).click();
   await accountPage.getByRole("menuitem", { name: "询问当前词条" }).click();
@@ -568,11 +599,12 @@ try {
   await desktop.getByText("没有待审修订建议", { exact: true }).waitFor();
   assert.equal(await desktop.getByText("每日成本上限", { exact: true }).count(), 0);
   await desktop.getByRole("switch", { name: "启用 Mwmbl" }).click();
+  await desktop.getByRole("button", { name: "调整 Mwmbl 的顺序" }).dragTo(desktop.locator('[data-provider="langsearch"]'), { targetPosition: { x: 5, y: 10 } });
   await desktop.getByRole("button", { name: "保存联网设置" }).click();
   await desktop.getByText("联网设置已保存。", { exact: true }).waitFor();
   assert.deepEqual(researchSaved.providers.deepseek, { enabled: false });
   assert.deepEqual(researchSaved.providers.mwmbl, { enabled: true });
-  assert.equal(researchSaved.order[researchSaved.order.length - 1], "mwmbl");
+  assert.deepEqual(researchSaved.order.slice(0, 2), ["mwmbl", "langsearch"]);
   assert.equal(researchSaved.daily_calls, undefined);
   if (output) await desktop.screenshot({path:path.join(output,"wiki-search-settings.png")});
   await desktop.getByText("设置", { exact: true }).click();
@@ -661,7 +693,7 @@ try {
   await desktop.getByText("所选测试片段", { exact: true }).waitFor();
   await desktop.getByText("新的说明", { exact: true }).waitFor();
   await desktop.getByRole("button", { name: "批准", exact: true }).click();
-  await desktop.getByText("已批准，已提交词条审校。", { exact: true }).waitFor();
+  await desktop.getByText("已批准，已排入词条处理队列。", { exact: true }).waitFor();
   assert.match(await desktop.getByRole("link", { name: "查看词条任务" }).getAttribute("href"), /#job-b{32}$/);
   await desktop.goto(url + "/wiki/123/graph");
   await desktop.locator(".wiki-graph-list button").first().waitFor();

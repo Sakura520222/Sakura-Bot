@@ -76,6 +76,17 @@ export async function logoutWiki() {
   if (!response.ok) throw new Error("退出失败，请重试");
 }
 
+export async function readAccountBookmarks() {
+  const response = await accountRequest("/bookmarks");
+  if (!response.ok) throw new Error("无法读取账户收藏，请重试。");
+  return (await response.json() as { ids: string[] }).ids;
+}
+
+export async function updateAccountBookmarks(update: { add?: string[]; remove?: string }) {
+  const response = await accountRequest("/bookmarks", "POST", update);
+  if (!response.ok) throw new Error("收藏同步失败，请确认登录状态后重试。");
+}
+
 export async function canManageWiki() {
   const token = localStorage.getItem("sakura_bot_token");
   if (!token) return false;

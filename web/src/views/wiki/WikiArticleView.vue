@@ -19,7 +19,7 @@
           <h1>{{ data.title }}</h1>
           <div class="wiki-reader-actions" role="group" aria-label="文章操作">
             <button type="button" class="wiki-header-icon" :aria-pressed="saved"
-              :aria-label="saved ? '取消收藏' : '收藏到本机'" :title="saved ? '取消收藏' : '收藏到本机'" @click="toggleSaved">
+              :disabled="bookmarkBusy" :aria-label="bookmarkLabel" :title="bookmarkLabel" @click="toggleSaved">
               <svg viewBox="0 0 24 24" :fill="saved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
                 <path d="M6 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4-6 4z" />
               </svg>
@@ -295,8 +295,9 @@ const loadingReferences = ref(false);
 const referenceError = ref("");
 const sourceLimit = ref(20);
 const copyStatus = ref("");
-const { ids: bookmarkedIds, error: bookmarkError, setBookmarked } = useWikiBookmarks();
+const { ids: bookmarkedIds, error: bookmarkError, account: bookmarkAccount, busy: bookmarkBusy, setBookmarked } = useWikiBookmarks();
 const saved = computed(() => !!data.value && bookmarkedIds.value.includes(data.value.id));
+const bookmarkLabel = computed(() => saved.value ? "取消收藏" : bookmarkAccount.value ? "收藏到账号" : "收藏到本机");
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
 let observer: IntersectionObserver | undefined;
 

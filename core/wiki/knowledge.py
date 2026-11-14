@@ -7,7 +7,7 @@
 import uuid
 from collections import defaultdict
 
-from .models import Extraction, digest, name_key, utc
+from .models import SKIPPED_AI_REVIEW, Extraction, digest, name_key, utc
 from .schema import REVISION_EVIDENCE, REVISION_VISIBLE
 from .store import decode, encode
 
@@ -381,15 +381,24 @@ class Knowledge:
         return row["revision_id"] if row else None
 
     async def approve_revision(self, cur, channel, page, revision, policy):
-        _, subject_hash, _ = await self.review_subject(cur, channel, page, revision)
-        await cur.execute(
-            """SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s
+        if policy == SKIPPED_AI_REVIEW:
+            await cur.execute(
+                f"""SELECT r.id FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+                WHERE r.id=%s AND r.channel_id=%s AND p.id=%s AND {REVISION_EVIDENCE}""",
+                (revision, channel, page),
+            )
+            if not await cur.fetchone():
+                raise ValueError("Publication includes revoked, rejected or hidden evidence")
+        else:
+            _, subject_hash, _ = await self.review_subject(cur, channel, page, revision)
+            await cur.execute(
+                """SELECT approved FROM wiki_revision_reviews WHERE revision_id=%s
             AND policy_key=%s AND subject_hash=%s""",
-            (revision, policy, subject_hash),
-        )
-        review = await cur.fetchone()
-        if not review or not review["approved"]:
-            raise ValueError("Publication requires independent review of each new revision")
+                (revision, policy, subject_hash),
+            )
+            review = await cur.fetchone()
+            if not review or not review["approved"]:
+                raise ValueError("Publication requires independent review of each new revision")
         await cur.execute(
             "UPDATE wiki_page_revisions SET approved=TRUE WHERE id=%s AND approved=FALSE",
             (revision,),
@@ -532,6 +541,10 @@ class Knowledge:
                 policy = manifest.get("review_policy")
                 if not policy:
                     raise ValueError("Job predates independent review; rebuild before publishing")
+                if policy == SKIPPED_AI_REVIEW and decode(ch["config"]).get(
+                    "ai_review_enabled", True
+                ):
+                    raise ValueError("已重新启用 AI 来源审校，请重新审校后发布")
                 if job["kind"] == "page_edit":
                     return await self.publish_page_edit(
                         cur, ch, job, manifest, progress, publication_id, actor

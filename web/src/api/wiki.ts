@@ -27,6 +27,7 @@ export interface WikiJob {
     stage?: string;
     error_detail?: string;
     review_complete?: boolean;
+    review_skipped?: boolean;
     review_version?: string;
     review_fallback?: boolean;
     review_rejections?: number;

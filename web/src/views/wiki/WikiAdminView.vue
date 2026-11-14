@@ -245,8 +245,14 @@
         <n-card title="生成设置" size="small">
           <n-form label-placement="top" :show-feedback="false" :disabled="busy">
             <div class="settings-grid">
-              <n-form-item label="自动联网核查"><n-switch :value="!!draft.fact_check" @update:value="draft.fact_check = $event" /></n-form-item>
-              <n-form-item label="仅发布已获外部证据核实的修订"><n-switch :value="!!draft.fact_check_required" @update:value="draft.fact_check_required = $event" /></n-form-item>
+              <n-form-item label="AI 来源审校">
+                <div class="wiki-option">
+                  <n-switch :value="draft.ai_review_enabled !== false" aria-label="AI 来源审校" @update:value="setAIReview" />
+                  <n-text depth="3">关闭后跳过 AI 审校与联网核查。发布仍检查引用来源的可用性。</n-text>
+                </div>
+              </n-form-item>
+              <n-form-item label="自动联网核查"><n-switch :value="!!draft.fact_check && draft.ai_review_enabled !== false" :disabled="draft.ai_review_enabled === false" @update:value="draft.fact_check = $event" /></n-form-item>
+              <n-form-item label="仅发布已获外部证据核实的修订"><n-switch :value="!!draft.fact_check_required" :disabled="draft.ai_review_enabled === false" @update:value="draft.fact_check_required = $event" /></n-form-item>
               <n-form-item label="温度"
                 ><n-input-number
                   v-model:value="draft.temperature"
@@ -621,6 +627,7 @@ interface Config {
   publication_mode: string;
   fact_check?: boolean;
   fact_check_required?: boolean;
+  ai_review_enabled?: boolean;
   proposals_enabled?: boolean;
   annotations_enabled?: boolean;
   proposal_notifications?: boolean;
@@ -1026,6 +1033,11 @@ async function refreshData() {
       audit.value = actions;
     }
   }
+}
+function setAIReview(enabled: boolean) {
+  if (!draft.value) return;
+  draft.value.ai_review_enabled = enabled;
+  if (!enabled) draft.value.fact_check_required = false;
 }
 async function saveConfig(showNotice = true) {
   const saved = await autosave.value?.flush(true);

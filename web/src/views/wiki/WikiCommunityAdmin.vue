@@ -57,7 +57,7 @@ import ProposalChanges from "./WikiProposalChanges.vue";
 const props = defineProps<{ page?: string; identifier?: string }>();
 defineEmits<{ back: [] }>();
 type Proposal = { id: string; kind: string; title: string; channel_id: string; channel_title: string; status: string; note?: string;
-  revision_id?: string; created_at: string; original?: string | null; review_job_id?: string; review_job_status?: string; review_complete?: boolean;
+  revision_id?: string; created_at: string; original?: string | null; review_job_id?: string; review_job_status?: string; review_complete?: boolean; review_skipped?: boolean;
   payload: { claim: number; text: string; diff: string; sources: string[]; excerpt?: string } };
 const labels: Record<string, string> = { edit: "正文修订", correction: "纠错", annotation: "注解", source: "补充来源", dispute: "争议标注", outdated: "过期标注", fact_check: "事实核查" };
 const decisionLabels: Record<string, string> = { approved: "已批准", returned: "已退回", rejected: "已拒绝", withdrawn: "已撤回" };
@@ -69,11 +69,11 @@ function proposalStatus(item: Proposal) {
   if (item.status !== "approved") return decisionLabels[item.status] || item.status;
   switch (item.review_job_status) {
     case "published": return "词条修订已发布";
-    case "completed": return item.review_complete ? "词条修订已通过审校，等待发布" : "词条修订未通过审校";
+    case "completed": return item.review_skipped ? "词条修订等待发布" : item.review_complete ? "词条修订已通过审校，等待发布" : "词条修订未通过审校";
     case "failed": return "词条修订处理失败";
     case "paused": return "词条修订已暂停";
-    case "running": return "正在审校词条修订";
-    default: return item.revision_id && !item.review_job_id ? "已批准" : "已批准，等待词条审校";
+    case "running": return "正在处理词条修订";
+    default: return item.revision_id && !item.review_job_id ? "已批准" : "已批准，等待后台处理";
   }
 }
 const items = ref<Proposal[]>([]);
@@ -101,7 +101,7 @@ function decide(id: string, action: string) { return run(async () => {
   const item = items.value.find((item) => item.id === id);
   const result = await wikiAdmin<{ job_id?: string }>(`/proposals/${id}`, "POST", { action, note: notes.value[id] || "" });
   items.value = items.value.filter((item) => item.id !== id);
-  message.value = action === "approved" ? "已批准，已提交词条审校。" : "修订建议已处理。";
+  message.value = action === "approved" ? "已批准，已排入词条处理队列。" : "修订建议已处理。";
   if (item && result.job_id) reviewJob.value = jobLink(item.channel_id, result.job_id);
   await readQueue();
 }); }

@@ -217,43 +217,56 @@ class WikiStore:
 
     async def configure(self, channel, config: WikiConfig, actor):
         async with self.transaction() as cur:
-            await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
-            if not await cur.fetchone():
+            await cur.execute("SELECT config FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            previous = await cur.fetchone()
+            if not previous:
                 raise ValueError("Unknown channel")
+            snapshot = config.model_dump(mode="json")
+            old = WikiConfig.model_validate(decode(previous["config"])).model_dump(mode="json")
+            ignored = {"ai_review_enabled"}
+            if not config.ai_review_enabled:
+                ignored.update({"fact_check", "fact_check_required"})
+            rebuild = any(
+                old[key] != value for key, value in snapshot.items() if key not in ignored
+            )
             await cur.execute(
                 """UPDATE wiki_channels SET config=%s,enabled=%s,public=%s,
-                updated_at=UTC_TIMESTAMP(6),dirty_at=UTC_TIMESTAMP(6),source_generation=source_generation+1 WHERE id=%s""",
-                (encode(config.model_dump(mode="json")), config.enabled, config.public, channel),
+                updated_at=UTC_TIMESTAMP(6),dirty_at=IF(%s,UTC_TIMESTAMP(6),dirty_at),
+                source_generation=source_generation+%s WHERE id=%s""",
+                (encode(snapshot), config.enabled, config.public, rebuild, int(rebuild), channel),
             )
-            # Policy changes invalidate evidence immediately, including past snapshots.
-            await cur.execute(
-                """UPDATE wiki_sources SET excluded=(excluded OR
-                (source_type='summary' AND %s=FALSE) OR (source_type='image' AND %s=FALSE)
-                OR (source_type='message' AND NOT JSON_CONTAINS(%s,JSON_QUOTE(category)))
-                OR (%s IS NOT NULL AND created_at<%s)) WHERE channel_id=%s""",
-                (
-                    config.include_summaries,
-                    config.include_images,
-                    encode(config.message_types),
-                    config.history_since,
-                    utc(config.history_since) if config.history_since else None,
-                    channel,
-                ),
-            )
-            # 策略翻转可能影响任意来源的可见性：保守登记全部页面待局部重建
-            await cur.execute(
-                "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s",
-                (channel, channel),
-            )
-            await self.audit(
-                cur, channel, "configure", channel, actor, config.model_dump(mode="json")
-            )
+            if rebuild:
+                await self.invalidate_channel_policy(cur, channel, config)
+            await self.audit(cur, channel, "configure", channel, actor, snapshot)
             if not config.enabled or config.paused:
                 await cur.execute(
                     """UPDATE wiki_jobs SET status='paused',lease_token=NULL,lease_until=NULL
                     WHERE channel_id=%s AND kind<>'page_edit' AND status IN ('running','pending','partial')""",
                     (channel,),
                 )
+
+    @staticmethod
+    async def invalidate_channel_policy(cur, channel, config):
+        # Policy changes invalidate evidence immediately, including past snapshots.
+        await cur.execute(
+            """UPDATE wiki_sources SET excluded=(excluded OR
+                (source_type='summary' AND %s=FALSE) OR (source_type='image' AND %s=FALSE)
+                OR (source_type='message' AND NOT JSON_CONTAINS(%s,JSON_QUOTE(category)))
+                OR (%s IS NOT NULL AND created_at<%s)) WHERE channel_id=%s""",
+            (
+                config.include_summaries,
+                config.include_images,
+                encode(config.message_types),
+                config.history_since,
+                utc(config.history_since) if config.history_since else None,
+                channel,
+            ),
+        )
+        # 策略翻转可能影响任意来源的可见性：保守登记全部页面待局部重建
+        await cur.execute(
+            "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s",
+            (channel, channel),
+        )
 
     async def set_cover(self, channel, digest, image, actor):
         async with self.transaction() as cur:

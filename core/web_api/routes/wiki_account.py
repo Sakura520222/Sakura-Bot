@@ -35,6 +35,8 @@ METHODS = {
     ("POST", f"{ACCOUNT_PATH}/logout"),
     ("PUT", f"{ACCOUNT_PATH}/privacy"),
     ("GET", f"{ACCOUNT_PATH}/avatar"),
+    ("GET", f"{ACCOUNT_PATH}/bookmarks"),
+    ("POST", f"{ACCOUNT_PATH}/bookmarks"),
 }
 router = APIRouter()
 admin = APIRouter(dependencies=[ADMIN_AUTH])
@@ -56,6 +58,15 @@ class Privacy(BaseModel):
 class AccountBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     blocked: bool
+
+
+BookmarkID = Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
+
+
+class BookmarkUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    add: list[BookmarkID] = Field(default_factory=list, max_length=100)
+    remove: BookmarkID | None = None
 
 
 class AccountSettings(BaseModel):
@@ -323,6 +334,21 @@ async def avatar(user: WikiUser):
     if not row or not row["avatar"]:
         raise HTTPException(404)
     return Response(row["avatar"], media_type=row["avatar_type"])
+
+
+@router.get("/bookmarks")
+async def bookmarks(user: WikiUser):
+    return {"ids": await runtime().accounts.bookmarks(user["id"])}
+
+
+@router.post("/bookmarks", status_code=204, dependencies=[Depends(same_origin)])
+async def update_bookmarks(body: BookmarkUpdate, request: Request, user: WikiUser):
+    try:
+        await runtime().accounts.update_bookmarks(
+            user, request.cookies.get(ACCESS), add=body.add, remove=body.remove
+        )
+    except AccountDenied as error:
+        raise HTTPException(401, "Wiki 会话已失效") from error
 
 
 @admin.get("/accounts")

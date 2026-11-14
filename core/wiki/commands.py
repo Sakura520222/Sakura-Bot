@@ -7,7 +7,7 @@
 import asyncio
 import logging
 
-from telethon import Button, events
+from telethon import Button, errors, events
 
 from .community import PROPOSAL_LABELS
 
@@ -50,8 +50,6 @@ def proposal_summary(proposal):
 
 
 async def notify_proposal(runtime, identifier):
-    from .telegram_login import wiki_login_settings
-
     if not runtime.bot_client:
         return
     try:
@@ -62,13 +60,11 @@ async def notify_proposal(runtime, identifier):
     if not rows:
         return
     summary = proposal_summary(rows[0])
-    base = wiki_login_settings().origin.rstrip("/")
     buttons = [
         Button.inline("批准", f"wpr:a:{identifier}"),
         Button.inline("拒绝", f"wpr:r:{identifier}"),
+        *proposal_details_button(identifier),
     ]
-    if base.startswith("https://"):
-        buttons.append(Button.url("查看详情", base + f"/wiki/admin?proposal={identifier}"))
     from core.config import ADMIN_LIST
 
     for admin in (value for value in ADMIN_LIST if isinstance(value, int) and value > 0):
@@ -87,13 +83,34 @@ async def notify_proposal(runtime, identifier):
             logger.info("Wiki 投稿通知发送失败: %s", type(error).__name__)
 
 
+def proposal_details_button(identifier):
+    from .telegram_login import wiki_login_settings
+
+    base = wiki_login_settings().origin.rstrip("/")
+    return (
+        [Button.url("查看详情", f"{base}/wiki/admin?proposal={identifier}")]
+        if base.startswith("https://")
+        else []
+    )
+
+
+async def proposal_feedback(event, message, *, alert=False):
+    try:
+        await event.answer(message, alert=alert, cache_time=0)
+    except errors.RPCError:
+        try:
+            await event.respond(message, parse_mode=None)
+        except errors.RPCError as error:
+            logger.info("Wiki 审批反馈发送失败: %s", type(error).__name__)
+
+
 def register_wiki_commands(client, runtime):
     @client.on(events.CallbackQuery(pattern=rb"^wpr:([ar]):([a-f0-9]{32})$"))
     async def review_proposal(event):
-        from core.infrastructure.utils.auth import is_admin
+        from core.config import ADMIN_LIST
 
-        if not is_admin(event.sender_id):
-            await event.answer("仅管理员可审核", alert=True)
+        if event.sender_id not in ADMIN_LIST:
+            await proposal_feedback(event, "仅管理员可审核", alert=True)
             return
         action, identifier = (part.decode("ascii") for part in event.pattern_match.groups())
         try:
@@ -104,12 +121,26 @@ def register_wiki_commands(client, runtime):
                 telegram=True,
             )
         except ValueError as error:
-            await event.answer(str(error), alert=True)
+            await proposal_feedback(event, str(error), alert=True)
             return
-        runtime.wake()
-        await event.answer(
-            "已批准，已提交词条审校" if result["status"] == "approved" else "投稿已处理"
-        )
+        except Exception:
+            logger.exception("Wiki Telegram 审批失败 proposal=%s", identifier)
+            await proposal_feedback(event, "审批暂时失败，请重试或在 WebUI 查看状态", alert=True)
+            return
+        message = "已批准，已排入词条处理队列" if result["status"] == "approved" else "已拒绝投稿"
+        await proposal_feedback(event, message)
+        try:
+            original = await event.get_message()
+            await event.edit(
+                f"{getattr(original, 'raw_text', '')}\n\n{message}".strip(),
+                buttons=proposal_details_button(identifier),
+                parse_mode=None,
+                link_preview=False,
+            )
+        except Exception as error:
+            logger.info("Wiki 投稿通知更新失败: %s", type(error).__name__)
+        finally:
+            runtime.wake()
 
     @client.on(events.NewMessage(pattern=r"^/wiki_(status|build|pause)(?:@\w+)?(?:\s+(\S+))?\s*$"))
     async def handle(event):

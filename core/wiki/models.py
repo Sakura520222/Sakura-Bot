@@ -65,11 +65,15 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+SKIPPED_AI_REVIEW = "ai-review-disabled"
+
+
 class WikiConfig(Strict):
     enabled: bool = False
     public: bool = False
     paused: bool = False
     publication_mode: Literal["review", "auto"] = "review"
+    ai_review_enabled: bool = True
     fact_check: bool = False
     fact_check_required: bool = False
     proposals_enabled: bool = False
@@ -105,6 +109,12 @@ class WikiConfig(Strict):
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
     debounce_seconds: int = Field(default=120, ge=10, le=86400)
+
+    @model_validator(mode="after")
+    def validate_review_policy(self):
+        if self.fact_check_required and not self.ai_review_enabled:
+            raise ValueError("要求外部证据核实时须启用 AI 来源审校")
+        return self
 
     @field_validator("timezone")
     @classmethod

@@ -1,9 +1,10 @@
 <template>
   <div class="wiki-view">
     <header class="wiki-page-heading"><h1>收藏</h1></header>
-    <p class="wiki-muted">收藏保存在此浏览器。</p>
-    <p v-if="storageError" class="wiki-error" role="alert">{{ storageError }}</p>
-    <WikiState v-if="!ids.length && !storageError" variant="empty" title="还没有收藏">
+    <p class="wiki-muted">{{ account ? "收藏已同步到 Wiki 账号。" : "访客收藏保存在此浏览器，登录后可跨设备查看。" }}</p>
+    <p v-if="storageError" class="wiki-error" role="alert">{{ storageError }} <button type="button" @click="syncBookmarks()">重试</button></p>
+    <WikiSkeleton v-if="bookmarkBusy && !ids.length" variant="rows" />
+    <WikiState v-else-if="!ids.length && !storageError" variant="empty" title="还没有收藏">
       <RouterLink to="/wiki">浏览知识条目</RouterLink>
     </WikiState>
     <template v-else-if="ids.length">
@@ -13,7 +14,7 @@
         <div v-for="{ id, card } in rows" :key="id" class="wiki-bookmark-row">
           <WikiFeedCard v-if="card" :item="card" />
           <p v-else class="wiki-muted">条目已撤回或不可访问</p>
-          <button type="button" @click="setBookmarked(id, false)"
+          <button type="button" :disabled="bookmarkBusy" @click="setBookmarked(id, false)"
             :aria-label="card ? `取消收藏 ${card.title}` : '移除不可访问的收藏'">
             移除
           </button>
@@ -40,7 +41,7 @@ import WikiState from "./WikiState.vue";
 
 const route = useRoute();
 const router = useRouter();
-const { ids, error: storageError, setBookmarked } = useWikiBookmarks();
+const { ids, error: storageError, account, busy: bookmarkBusy, setBookmarked, syncBookmarks } = useWikiBookmarks();
 const pageSize = 50;
 const pageCount = computed(() => Math.max(1, Math.ceil(ids.value.length / pageSize)));
 const page = computed(() => Math.max(1, Math.min(pageCount.value, Math.trunc(Number(route.query.page) || 1))));

@@ -90,6 +90,7 @@
       {{ p.review_rejections }} 个修订未通过来源审校。可在草稿中查看理由、修正或重新审校。
     </n-alert>
     <n-text v-if="p.review_fallback" depth="3">未单独配置审校模型，本次通过生成模型发起独立审校请求。</n-text>
+    <n-text v-if="p.review_skipped" depth="3">此任务已跳过 AI 来源审校。</n-text>
     <div v-if="events.length" class="events">
       <div v-for="(event, index) in events" :key="index">
         <span>{{ time(event.time) }}</span
