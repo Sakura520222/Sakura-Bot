@@ -500,6 +500,10 @@ try {
   const desktop = await browser.newPage({viewport:{width:1440,height:900}});
   await desktop.goto(url + "/wiki");
   await desktop.locator(".wiki-feed-card").first().waitFor();
+  const firstFeedMeta = desktop.locator(".wiki-feed-card").first().locator(".wiki-feed-meta");
+  assert.equal(await firstFeedMeta.getByText("主题", { exact: true }).count(), 0);
+  await firstFeedMeta.getByRole("link", { name: cards[0].topic, exact: true }).waitFor();
+  await firstFeedMeta.getByRole("link", { name: /d+ 个来源/ }).waitFor();
   assert.equal(await desktop.getByRole("navigation", { name: "站点导航" }).getByRole("link", { name: "收藏", exact: true }).getAttribute("href"), "/wiki/bookmarks");
   const tabs = desktop.getByRole("navigation", { name: "首页栏目" });
   assert.deepEqual(await tabs.getByRole("link").allTextContents(), ["推荐", "最新"]);
