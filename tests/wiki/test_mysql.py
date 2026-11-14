@@ -411,7 +411,9 @@ async def published(store, *, image=False, channel_id=12345):
     return ch, source, page, revision, publication
 
 
-async def test_publication_recovers_with_active_telegram_username(store):
+async def test_publication_recovers_with_active_telegram_username(store, monkeypatch):
+    import core.config as config_module
+
     ch, _, page, revision, _ = await published(store)
     channel_id = ch["id"]
     entity = SimpleNamespace(
@@ -423,16 +425,22 @@ async def test_publication_recovers_with_active_telegram_username(store):
         restricted=False,
         noforwards=False,
     )
-    current = await store.register_channel(entity, channel_id)
+    monkeypatch.setattr(config_module, "CHANNELS", [])
+    client = SimpleNamespace(is_connected=lambda: True, get_entity=AsyncMock(return_value=entity))
+    runtime = WikiRuntime(store, client, None)
+    await runtime.refresh_channels()
+    current = await store.channel(channel_id)
     assert not current["access_verified"] and current["verified_until"] is None
     assert await PublicReader(store).page(channel_id, page["slug"]) is None
     entity.usernames.append(SimpleNamespace(username="public_alias", active=True))
-    current = await store.register_channel(entity, channel_id)
+    await runtime.refresh_channels()
+    current = await store.channel(channel_id)
     assert current["access_verified"] and current["username"] == "public_alias"
     assert (await store.channel("@public_alias"))["id"] == channel_id
     assert (await PublicReader(store).page(channel_id, page["slug"]))["revision_id"] == revision
     entity.noforwards = True
-    assert not (await store.register_channel(entity, channel_id))["access_verified"]
+    await runtime.refresh_channels()
+    assert not (await store.channel(channel_id))["access_verified"]
 
 
 async def test_community_title_note_and_correction_publish_as_revisions(store):

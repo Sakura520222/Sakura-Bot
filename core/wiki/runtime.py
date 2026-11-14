@@ -130,12 +130,21 @@ class WikiRuntime:
         import core.config as config_module
 
         allowed = set()
-        for configured in config_module.CHANNELS:
+        verified = set()
+        wiki_channels = await self.store.query(
+            "SELECT id FROM wiki_channels WHERE enabled=TRUE", fetch=True
+        )
+        configured_channels = dict.fromkeys(
+            [*config_module.CHANNELS, *(row["id"] for row in wiki_channels)]
+        )
+        for configured in configured_channels:
             old = None
             try:
                 key = alias_key(configured)
                 old = await self.store.channel(key)
                 if old:
+                    if old["id"] in verified and key == old["id"]:
+                        continue
                     allowed.add(old["id"])
                 if self.client and self.client.is_connected():
                     from telethon.tl.types import PeerChannel
@@ -145,6 +154,7 @@ class WikiRuntime:
                         entity = await self.client.get_entity(target)
                     channel = await self.store.register_channel(entity, configured)
                     allowed.add(channel["id"])
+                    verified.add(channel["id"])
             except Exception as error:
                 logger.info("Wiki channel verification deferred: %s", type(error).__name__)
                 if old:
