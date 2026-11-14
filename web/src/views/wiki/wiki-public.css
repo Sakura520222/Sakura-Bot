@@ -1,4 +1,9 @@
 /* Public shell and shared feed */
+@media (min-width: 721px) {
+  html:has(.wiki-shell .wiki-columns) {
+    scrollbar-gutter: stable both-edges;
+  }
+}
 .wiki-shell {
   --wiki-motion-fast: 150ms;
   --wiki-motion-panel: 220ms;

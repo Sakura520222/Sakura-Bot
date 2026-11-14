@@ -44,6 +44,8 @@ let articleHidden = false;
 let researchSaved;
 let submittedProposal;
 const reviewProposalId = "d".repeat(32);
+const contributor = {id:"e".repeat(32), display_name:"Cherry", username:"cherry", avatar:true, total:2, annotations:1, edits:1, sources:0};
+const wikiEntrypoints = ["/wiki", "/wiki/search", "/wiki?tab=channels", "/wiki/bookmarks", "/wiki/contributors"];
 let reviewProposalStatus = "pending";
 const server = http.createServer(async (req,res) => {
   const parsed = new URL(req.url,"http://localhost");
@@ -89,7 +91,11 @@ const server = http.createServer(async (req,res) => {
       submittedProposal = JSON.parse(Buffer.concat(chunks));
       out = { id: "fixture-proposal", status: "pending" };
     }
-    else if (endpoint === "/api/wiki/community/contributors") out = [];
+    else if (endpoint === "/api/wiki/community/contributors") out = q.has("page") ? [] : [contributor];
+    else if (endpoint === `/api/wiki/community/contributors/${contributor.id}`) out = [{ ...contributor,
+      title: cards[0].title, slug: cards[0].slug, kind: "annotation", created_at: channel.updated_at,
+      revision_id: cards[0].revision_id, channel_id: channel.id }];
+    else if (endpoint === "/api/wiki/community/proposals" && req.method === "GET") out = [];
     else if (endpoint === "/api/wiki/admin/proposals" || /^\/api\/wiki\/admin\/pages\/[^/]+\/proposals$/.test(endpoint)) out = [];
     else if (endpoint === `/api/wiki/admin/proposals/${reviewProposalId}`) {
       if (req.method === "POST") {
@@ -309,6 +315,37 @@ try {
       }
     }
   }
+  const desktopChrome = await chromium.launch({
+    ...(chrome ? { executablePath: chrome } : {}),
+    args: ["--disable-features=OverlayScrollbar"],
+    ignoreDefaultArgs: ["--hide-scrollbars"],
+  });
+  const layout = await desktopChrome.newPage({viewport:{width:1250,height:750}});
+  try {
+    let expectedColumns;
+    for (const entrypoint of wikiEntrypoints) {
+      await layout.goto(url + entrypoint);
+      await layout.locator(".wiki-view h1").first().waitFor();
+      const dimensions = await layout.locator(".wiki-columns").evaluate((shell) => {
+        const read = () => ["navigation", "main", "context"].map(name => {
+          const { x, width } = shell.querySelector(".wiki-" + name).getBoundingClientRect();
+          return [x, width];
+        });
+        const root = document.documentElement;
+        root.style.overflowY = "scroll";
+        const withScrollbar = read();
+        root.style.overflowY = "hidden";
+        const withoutScrollbar = read();
+        root.style.removeProperty("overflow-y");
+        return { withScrollbar, withoutScrollbar };
+      });
+      assert.deepEqual(dimensions.withScrollbar, dimensions.withoutScrollbar, entrypoint);
+      expectedColumns ??= dimensions.withScrollbar;
+      assert.deepEqual(dimensions.withScrollbar, expectedColumns, entrypoint);
+    }
+  } finally {
+    await desktopChrome.close();
+  }
   console.log("mobile flow");
   const page = await browser.newPage({...devices["Pixel 7"], reducedMotion:"reduce", colorScheme:"light"});
   const errors = [];
@@ -501,6 +538,9 @@ try {
   await accountPage.evaluate((id) => localStorage.setItem("sakura-wiki-saved:" + id, String(Date.now())), cards[1].id);
   await accountPage.goto(url + "/wiki/123/page/article-0");
   await accountTrigger.locator("img").waitFor();
+  await accountPage.getByRole("button", { name: "社区贡献", exact: true }).click();
+  await accountPage.getByText("暂无公开贡献。", { exact: true }).waitFor();
+  assert.equal(await accountPage.getByText("我的修订建议", { exact: true }).count(), 0);
   await accountPage.getByRole("button", { name: "收藏到账号", exact: true }).click();
   await accountPage.getByRole("button", { name: "取消收藏", exact: true }).waitFor();
   assert.ok(accountBookmarks.get(accountUser.id).has(cards[0].id));
@@ -514,6 +554,13 @@ try {
   await accountPage.getByRole("button", { name: "取消收藏", exact: true }).click();
   await accountPage.getByRole("button", { name: "收藏到账号", exact: true }).waitFor();
   assert.ok(!accountBookmarks.get(accountUser.id).has(cards[0].id));
+  await accountPage.goto(url + "/wiki/contributors");
+  await accountPage.getByRole("link", { name: "我的修订建议", exact: true }).click();
+  await accountPage.getByText("暂无修订建议。", { exact: true }).waitFor();
+  assert.equal(await accountPage.getByRole("list", { name: "公开贡献者" }).count(), 0);
+  await accountPage.getByRole("link", { name: "贡献者", exact: true }).click();
+  await accountPage.getByRole("list", { name: "公开贡献者" }).getByText("Cherry", { exact: true }).waitFor();
+  await accountPage.goto(url + "/wiki/123/page/article-0");
   assert.equal(await accountTrigger.locator("img").getAttribute("src"), "/api/wiki/account/avatar");
   await accountPage.getByRole("button", { name: "更多词条操作" }).click();
   await accountPage.getByRole("menuitem", { name: "询问当前词条" }).click();
@@ -629,7 +676,15 @@ try {
   await assertCentered(desktop.locator(".n-modal").filter({ hasText: "未纳入知识生成的消息" }));
   await desktop.keyboard.press("Escape");
   await desktop.goto(url + "/wiki/contributors");
-  await desktop.getByText("暂无公开贡献。", { exact: true }).waitFor();
+  const contributorList = desktop.getByRole("list", { name: "公开贡献者" });
+  const contributorRow = contributorList.getByRole("link", { name: /Cherry/ });
+  await contributorRow.locator("img").waitFor();
+  assert.equal(await contributorRow.evaluate(row => row.getBoundingClientRect().width), await contributorList.evaluate(list => list.getBoundingClientRect().width));
+  await contributorRow.click();
+  await desktop.getByRole("heading", { name: "Cherry" }).waitFor();
+  await desktop.getByRole("list", { name: "贡献记录" }).getByText(/注解/).waitFor();
+  await desktop.getByRole("link", { name: "查看贡献者" }).click();
+  await contributorRow.waitFor();
   await desktop.goto(url + "/wiki/123/page/article-1");
   await desktop.locator(".wiki-context #wiki-article-contributors").getByRole("heading", { name: "社区贡献" }).waitFor();
   assert.equal(await desktop.locator("article").getByRole("heading", { name: "社区贡献" }).count(), 0);
