@@ -293,7 +293,7 @@
     "type": "function",
     "function": {
       "name": "wiki_get_page",
-      "description": "读取同一发布快照的知识文章、断言、时效、争议与可公开来源；仅使用返回的链接引用。",
+      "description": "读取 Wiki 词条正文、公开来源与段落社区注解。可传入已发布历史修订 ID 读取该版本。引用仅使用返回的链接。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -316,6 +316,11 @@
           },
           "slug": {
             "type": "string"
+          },
+          "revision_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "description": "从 wiki_get_revision_history 获取的 revision_id；省略时读取当前版本"
           }
         },
         "required": [
@@ -405,7 +410,7 @@
     "type": "function",
     "function": {
       "name": "wiki_get_channel_profile",
-      "description": "读取公开频道画像与实际消息统计，包含覆盖范围，不能据此推断个人画像。",
+      "description": "读取管理员设置的公开频道简介（description）、公开频道画像及已验证的消息统计。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -430,6 +435,82 @@
         "required": [
           "channel_id"
         ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wiki_get_revision_history",
+      "description": "列出词条的已发布且仍可公开读取的历史版本，包含版本 ID、日期和链接。用 wiki_get_page 读取指定版本正文。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "频道数字 ID、@username 或 t.me 链接；仅返回公开且已发布的内容"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "default": 1
+          },
+          "slug": {
+            "type": "string",
+            "description": "wiki_search 返回的词条 slug 或 id"
+          }
+        },
+        "required": [
+          "channel_id",
+          "slug"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wiki_get_contributors",
+      "description": "列出 Wiki 公开贡献者和贡献数，可按频道或词条筛选。传公开 contributor_id 查看该贡献者的公开贡献记录。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "频道数字 ID、@username 或 t.me 链接；仅返回公开且已发布的内容"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "default": 1
+          },
+          "slug": {
+            "type": "string",
+            "description": "词条 slug 或 id，使用时须同时提供 channel_id"
+          },
+          "contributor_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "description": "本工具列表或注解返回的公开贡献者 ID"
+          }
+        },
+        "required": []
       }
     }
   }

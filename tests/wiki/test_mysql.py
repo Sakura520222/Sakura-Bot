@@ -947,14 +947,66 @@ async def test_public_profile_counts_real_text_and_config_revocation(store):
 
 
 async def test_go_reads_identical_publication_and_revocation(store):
-    ch, source, page, _, pub = await published(store)
+    ch, source, page, original, _ = await published(store)
+    config = ch["config"].model_copy(
+        update={
+            "proposals_enabled": True,
+            "annotations_enabled": True,
+            "description": "管理员设置的公开频道简介",
+        }
+    )
+    await store.configure(ch["id"], config, "test")
+    service = WikiRuntime(store, None, None)
+    service.engine = WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model"))
+    service.community = Community(store, service.engine.knowledge)
+    await service.accounts.login(
+        (987654321, b"wiki-go-test", "公开贡献者", "hidden_name", None), (None, None), None, None
+    )
+    user = (await store.one("SELECT id FROM wiki_users"))["id"]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
+    proposal = Proposal(
+        revision=original,
+        kind="annotation",
+        claim=0,
+        text="段落补充说明",
+        excerpt="中文检索",
+        sources=["https://example.org/reference"],
+    )
+    proposal_id, _ = await service.community.submit(user, ch["id"], page["id"], proposal)
+    await service.community.decide(proposal_id, "approved", "test")
+    job = await store.claim_job()
+    await service.run_job(job)
+    pub = await service.engine.knowledge.publish(ch["id"], job["id"], "test")
+    article = await service.reader.page(ch["id"], page["slug"])
+    anonymous, _ = await service.community.submit(
+        user, ch["id"], page["id"], proposal.model_copy(update={"revision": article["revision_id"]})
+    )
+    await service.community.decide(anonymous, "approved", "test")
+    draft = (
+        await store.one("SELECT revision_id FROM wiki_edit_proposals WHERE id=%s", (anonymous,))
+    )["revision_id"]
     env = dict(
         os.environ,
         **GO_TEST_ENV,
         WIKI_MYSQL_DSN=f"root@tcp(127.0.0.1:{TEST_PORT})/{store.test_database}?parseTime=true",
         WIKI_EXPECTED_PUBLICATION=pub,
         WIKI_EXPECTED_PAGE=page["slug"],
+        WIKI_OLD_REVISION=original,
+        WIKI_DRAFT_REVISION=draft,
+        WIKI_CONTRIBUTOR=user,
     )
+    result = await asyncio.to_thread(
+        subprocess.run,
+        ["go", "test", "./internal/db", "-run", "TestWikiSharedMySQL", "-count=1"],
+        cwd=Path(__file__).parents[2] / "qa-bot-go",
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    await store.query("UPDATE wiki_users SET anonymous_contributions=TRUE WHERE id=%s", (user,))
+    env["WIKI_EXPECT_ANONYMOUS"] = "1"
     result = await asyncio.to_thread(
         subprocess.run,
         ["go", "test", "./internal/db", "-run", "TestWikiSharedMySQL", "-count=1"],
@@ -1222,7 +1274,9 @@ async def test_grouped_telegram_album_replaces_split_pages_and_preserves_sources
 async def test_generation_review_graph_cache_and_incremental_publication(store):
     ch = await channel(store)
     await store.configure(
-        ch["id"], ch["config"].model_copy(update={"publication_mode": "auto"}), "test"
+        ch["id"],
+        ch["config"].model_copy(update={"publication_mode": "auto", "max_output_tokens": 65536}),
+        "test",
     )
     await store.put_source(
         ch["id"],
@@ -1234,12 +1288,20 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
         message_id=1,
     )
     fake = FakeAI()
-    reviewer = FakeAI()
+
+    class Reviewer(FakeAI):
+        async def create(self, **request):
+            assert request["max_completion_tokens"] == 65536
+            return await super().create(**request)
+
+    reviewer = Reviewer()
     runtime = WikiRuntime(store, None, None)
     runtime.engine = WikiEngine(
         store,
         runtime=lambda purpose: (
-            (reviewer, "fixture-review") if purpose == "wiki_review" else (fake, "fixture-model")
+            (reviewer, "spark-fixture-review")
+            if purpose == "wiki_review"
+            else (fake, "fixture-model")
         ),
     )
     first_id = await store.enqueue(ch["id"], "reindex")
@@ -1250,7 +1312,7 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     assert reviewer.review_calls > 0 and reviewer.calls == fake.review_calls == 0
     reviews = await store.query("SELECT * FROM wiki_revision_reviews", fetch=True)
     assert len(reviews) == 2 and all(row["approved"] for row in reviews)
-    assert {decode(row["result"])["model"] for row in reviews} == {"fixture-review"}
+    assert {decode(row["result"])["model"] for row in reviews} == {"spark-fixture-review"}
     publication = (await store.channel(ch["id"]))["published_revision"]
     graph = await runtime.reader.graph(ch["id"], limit=3)
     assert len(graph["nodes"]) == 2 and graph["edges"]

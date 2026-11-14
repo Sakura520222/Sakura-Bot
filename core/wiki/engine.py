@@ -128,15 +128,11 @@ class WikiEngine:
         fallback = purpose == "wiki_review" and not has_wiki_review_route(parse_ai_profiles(raw))
         return get_async_ai_runtime(purpose, config=config), fallback
 
-    async def request(
-        self, job, config, runtime, system, payload, *, stage=None, count=1, max_output=None
-    ):
+    async def request(self, job, config, runtime, system, payload, *, stage=None, count=1):
         client, model = runtime
         stage = stage or "生成知识"
         text = encode(payload)
-        output_limit = (
-            min(config.max_output_tokens, max_output) if max_output else config.max_output_tokens
-        )
+        output_limit = config.max_output_tokens
         reserve = len(text.encode("utf-8")) + len(system.encode("utf-8")) + output_limit
         progress = job["progress"]
         used = (
@@ -826,7 +822,6 @@ class WikiEngine:
                             ],
                         },
                         stage="整理 Telegram 相册",
-                        max_output=8192,
                     )
                 except Exception as error:
                     if not content_refused(error):
@@ -1071,7 +1066,6 @@ class WikiEngine:
                     },
                     stage="独立来源审校",
                     count=len(batch),
-                    max_output=4096,
                 )
             except Exception as error:
                 if not content_refused(error):

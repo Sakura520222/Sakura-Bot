@@ -223,7 +223,9 @@ func (s *wikiWeb) article(ctx context.Context, article *webArticle) (string, err
 		return "", errors.New("词条参数无效")
 	}
 	repository := db.WikiRepository{DB: s.quota.db.DB}
-	page, err := repository.ReadWiki(ctx, "wiki_get_page", contracts.WikiOptions{Channel: article.Channel, Slug: article.Page})
+	page, err := repository.ReadWiki(ctx, "wiki_get_page", contracts.WikiOptions{
+		Channel: article.Channel, Slug: article.Page, RevisionID: article.Revision,
+	})
 	if err != nil || page["revision_id"] != article.Revision || page["id"] != article.Page {
 		return "", errors.New("词条已更新或不可读取，请刷新页面")
 	}

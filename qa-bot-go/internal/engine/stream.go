@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/contracts"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/db"
 	"github.com/Sakura520222/Sakura-Bot/qa-bot-go/internal/llm"
 )
@@ -149,7 +150,7 @@ func (e *Engine) agenticStream(
 				messages = append(messages, llm.Message{Role: "tool", ToolCallID: call.ID, Content: llm.Str(research(ctx, name, value))})
 				continue
 			}
-			if Scope(ctx) == WikiWebScope && !wikiPublicTool(name) {
+			if Scope(ctx) == WikiWebScope && !contracts.WikiPublicTool(name) {
 				messages = append(messages, llm.Message{Role: "tool", ToolCallID: call.ID, Content: llm.Str(`{"error":"网页助手仅可检索公开 Wiki"}`)})
 				continue
 			}
@@ -204,14 +205,6 @@ func appendWebSchemas(raw json.RawMessage) json.RawMessage {
 	return encoded
 }
 
-func wikiPublicTool(name string) bool {
-	switch name {
-	case "wiki_search", "wiki_get_page", "wiki_get_related", "wiki_get_changes", "wiki_get_channel_profile":
-		return true
-	}
-	return false
-}
-
 func wikiWebSchemas(raw json.RawMessage) json.RawMessage {
 	var schemas []json.RawMessage
 	if json.Unmarshal(raw, &schemas) != nil {
@@ -224,7 +217,7 @@ func wikiWebSchemas(raw json.RawMessage) json.RawMessage {
 				Name string `json:"name"`
 			} `json:"function"`
 		}
-		if json.Unmarshal(schema, &tool) == nil && wikiPublicTool(tool.Function.Name) {
+		if json.Unmarshal(schema, &tool) == nil && contracts.WikiPublicTool(tool.Function.Name) {
 			allowed = append(allowed, schema)
 		}
 	}
