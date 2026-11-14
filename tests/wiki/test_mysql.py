@@ -467,6 +467,8 @@ async def test_community_contributions_follow_publication_and_privacy(store, mon
     await store.control_job(ch["id"], current_job, "pause", "test")
     before = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,))
     approved = await service.community.decide(identifier, "approved", "test")
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert not own["published"] and not own["currently_public"]
     assert not approved["queued"] and approved["job_id"] != current_job
     assert not await service.community.dispatch_approved(ch["id"])
     assert (await store.channel(ch["id"]))["active_job"] == current_job
@@ -479,6 +481,8 @@ async def test_community_contributions_follow_publication_and_privacy(store, mon
     await service.run_job(job)
     assert job["progress"]["reviewed_pages"] == job["progress"]["review_total"] == 1
     await service.engine.knowledge.publish(ch["id"], job["id"], "test")
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert own["published"] and own["currently_public"]
     assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before
     assert (await store.channel(ch["id"]))["active_job"] == current_job
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
@@ -547,6 +551,8 @@ async def test_community_contributions_follow_publication_and_privacy(store, mon
         response = await client.get(article_path, params={"revision": detail["revision_id"]})
         assert response.status_code == 404
     await service.engine.knowledge.publish(ch["id"], None, "test", rollback=original)
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert own["published"] and not own["currently_public"]
     assert not await service.community.contributions()
     assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
     assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before

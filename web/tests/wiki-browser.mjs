@@ -45,6 +45,7 @@ let researchSaved;
 let submittedProposal;
 const reviewProposalId = "d".repeat(32);
 const contributor = {id:"e".repeat(32), display_name:"Cherry", username:"cherry", avatar:true, total:2, annotations:1, edits:1, sources:0};
+let visibilityVersion = "v1:1";
 const wikiEntrypoints = ["/wiki", "/wiki/search", "/wiki?tab=channels", "/wiki/bookmarks", "/wiki/contributors"];
 let reviewProposalStatus = "pending";
 const server = http.createServer(async (req,res) => {
@@ -95,7 +96,11 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === `/api/wiki/community/contributors/${contributor.id}`) out = [{ ...contributor,
       title: cards[0].title, slug: cards[0].slug, kind: "annotation", created_at: channel.updated_at,
       revision_id: cards[0].revision_id, channel_id: channel.id }];
-    else if (endpoint === "/api/wiki/community/proposals" && req.method === "GET") out = [];
+    else if (endpoint === "/api/wiki/community/proposals" && req.method === "GET") out = [
+      { id: "live", title: "当前版本里的建议", status: "approved", published: true, currently_public: true },
+      { id: "old", title: "旧版本里的建议", status: "approved", published: true, currently_public: false },
+      { id: "pending-publication", title: "等待发布的建议", status: "approved", published: false, currently_public: false },
+    ];
     else if (endpoint === "/api/wiki/admin/proposals" || /^\/api\/wiki\/admin\/pages\/[^/]+\/proposals$/.test(endpoint)) out = [];
     else if (endpoint === `/api/wiki/admin/proposals/${reviewProposalId}`) {
       if (req.method === "POST") {
@@ -189,7 +194,7 @@ const server = http.createServer(async (req,res) => {
       res.writeHead(200, { "content-type": "image/png" });
       return res.end(uploadedCover.image);
     }
-    else if (endpoint === "visibility") out = {"123":"v1:1"};
+    else if (endpoint === "visibility") out = {"123":visibilityVersion};
     else if (endpoint === "bookmarks") {
       out = { items: q.getAll("id").map((id) => cards.find((card) => card.id === id)).filter(Boolean) };
     }
@@ -499,6 +504,31 @@ try {
   const tabs = desktop.getByRole("navigation", { name: "首页栏目" });
   assert.deepEqual(await tabs.getByRole("link").allTextContents(), ["推荐", "最新"]);
   await assertHomeTabAlignment(desktop);
+  const firstRecommendation = request => {
+    const target = new URL(request.url());
+    return target.pathname === "/api/public/wiki/feed" && target.searchParams.get("mode") === "recommended" && !target.searchParams.has("cursor");
+  };
+  let recommendationRequests = 0;
+  const observeRecommendation = request => { if (firstRecommendation(request)) recommendationRequests++; };
+  desktop.on("request", observeRecommendation);
+  const visibility = desktop.waitForResponse(response => response.url().endsWith("/api/public/wiki/visibility"));
+  visibilityVersion = "v2:2";
+  await desktop.clock.setFixedTime(new Date(Date.now() + 31_000));
+  await desktop.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await visibility;
+  await desktop.getByRole("link", { name: "贡献", exact: true }).click();
+  await desktop.getByRole("heading", { name: "社区贡献" }).waitFor();
+  await desktop.getByRole("link", { name: "首页", exact: true }).click();
+  await desktop.locator(".wiki-feed-card").first().waitFor();
+  assert.equal(recommendationRequests, 0);
+  const changed = desktop.waitForRequest(firstRecommendation);
+  await desktop.getByRole("button", { name: "换一批", exact: true }).click();
+  assert.ok(new URL((await changed).url()).searchParams.has("refresh"));
+  await desktop.locator(".wiki-feed-card").first().waitFor();
+  const reloaded = desktop.waitForRequest(firstRecommendation);
+  await desktop.reload();
+  await reloaded;
+  desktop.off("request", observeRecommendation);
   const brand = desktop.getByRole("link",{name:"Sakura Wiki",exact:true});
   assert.equal(await brand.textContent(), "Sakura Wiki");
   const desktopTools = desktop.getByRole("group",{name:"Wiki 工具"});
@@ -574,7 +604,9 @@ try {
   assert.ok(!accountBookmarks.get(accountUser.id).has(cards[0].id));
   await accountPage.goto(url + "/wiki/contributors");
   await accountPage.getByRole("link", { name: "我的修订建议", exact: true }).click();
-  await accountPage.getByText("暂无修订建议。", { exact: true }).waitFor();
+  for (const [title, status] of [["当前版本里的建议", "已发布"], ["旧版本里的建议", "当前未公开"], ["等待发布的建议", "已批准"]]) {
+    await accountPage.getByRole("listitem").filter({ hasText: title }).getByText(status, { exact: true }).waitFor();
+  }
   assert.equal(await accountPage.getByRole("list", { name: "公开贡献者" }).count(), 0);
   await accountPage.getByRole("link", { name: "贡献者", exact: true }).click();
   await accountPage.getByRole("list", { name: "公开贡献者" }).getByText("Cherry", { exact: true }).waitFor();

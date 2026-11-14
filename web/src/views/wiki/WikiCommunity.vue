@@ -66,7 +66,7 @@
       <li v-for="entry in mine" :key="entry.id" class="proposal-row">
         <div class="contributor-copy">
           <strong>{{ entry.title }}</strong>
-          <span class="contributor-meta">{{ proposalStates[entry.status] || entry.status }}<span v-if="entry.published"> · 曾发布</span></span>
+          <span class="contributor-meta">{{ proposalStatus(entry) }}</span>
           <span v-if="entry.note">{{ entry.note }}</span>
         </div>
         <button v-if="['pending', 'returned'].includes(entry.status)" type="button" :disabled="mineLoading" @click="withdraw(entry.id)">撤回投稿</button>
@@ -109,9 +109,17 @@ const contributorsLoading = ref(false);
 const contributorsError = ref("");
 let contributorsRequest: AbortController | undefined;
 const contributors = ref<{ id: string; display_name: string; username?: string; avatar: boolean; total: number; edits: number; annotations: number; sources: number }[]>();
-const mine = ref<{ id: string; title: string; status: string; note?: string; published: boolean }[]>();
+interface OwnProposal {
+  id: string; title: string; status: string; note?: string; published: boolean; currently_public: boolean;
+}
+const mine = ref<OwnProposal[]>();
 const mineLoading = ref(false);
 const proposalStates: Record<string, string> = { pending: "待审", approved: "已批准", rejected: "已拒绝", returned: "已退回", withdrawn: "已撤回" };
+function proposalStatus(entry: OwnProposal) {
+  if (entry.currently_public) return "已发布";
+  if (entry.published) return "当前未公开";
+  return proposalStates[entry.status] || entry.status;
+}
 
 async function request(path: string, method = "GET", payload?: unknown, signal?: AbortSignal) {
   const result = await fetch(root + path, { method, cache: "no-store", credentials: "same-origin",

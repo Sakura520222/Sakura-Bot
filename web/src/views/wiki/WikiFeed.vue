@@ -38,6 +38,7 @@ const props = withDefaults(defineProps<{
   emptyTitle?: string;
   skeleton?: "rows" | "timeline";
   channel?: string;
+  manualRefresh?: boolean;
 }>(), { emptyTitle: "暂无匹配内容", skeleton: "rows" });
 
 const pages = shallowRef<T[][]>([]);
@@ -70,7 +71,8 @@ async function read(url: string, first: boolean) {
   loading.value = true;
   error.value = "";
   try {
-    const batch = await loadWiki(url, publicWikiUrl<WikiBatch<T>>, first ? 30_000 : 0);
+    const ttl = first ? (props.manualRefresh ? Infinity : 30_000) : 0;
+    const batch = await loadWiki(url, publicWikiUrl<WikiBatch<T>>, ttl);
     if (request !== generation) return;
     if (first) {
       seen.clear();
@@ -140,12 +142,12 @@ watch(sentinel, (element) => {
 watch(() => props.url, () => { if (active) void reset(); }, { immediate: true });
 
 function revalidate() {
-  if (!active || document.hidden || !checkedAt || Date.now() - checkedAt < 30_000) return;
+  if (props.manualRefresh || !active || document.hidden || !checkedAt || Date.now() - checkedAt < 30_000) return;
   if (pages.value.length <= 1) void read(props.url, true);
 }
 let lastUrl = props.url;
 const stopChannelChanges = onWikiChannelChange((channels) => {
-  if (props.channel && !channels.includes(props.channel)) return;
+  if (props.manualRefresh || (props.channel && !channels.includes(props.channel))) return;
   generation++;
   invalidated = true;
   pages.value = [];

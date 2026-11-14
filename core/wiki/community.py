@@ -22,6 +22,10 @@ PROPOSAL_LABELS = {
     "fact_check": "事实核查",
 }
 
+# A contribution can remain in a newer revision without that revision sharing its ID.
+IN_PUBLISHED_REVISION = """(r.id=e.revision_id OR
+    JSON_CONTAINS(JSON_EXTRACT(r.document,'$.community_contributions'),JSON_QUOTE(e.id)))"""
+
 
 class Proposal(Strict):
     revision: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -319,9 +323,17 @@ class Community:
             if review
             else ""
         )
+        public_status = (
+            f""", EXISTS(SELECT 1 FROM wiki_channels c
+                JOIN wiki_publication_pages pp ON pp.publication_id=c.published_revision AND pp.page_id=p.id
+                JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.page_id=p.id AND r.channel_id=c.id
+                WHERE c.id=e.channel_id AND {VISIBLE} AND {IN_PUBLISHED_REVISION}) currently_public"""
+            if user
+            else ""
+        )
         rows = await self.store.query(
             f"""SELECT e.id,e.channel_id,e.page_id,e.base_revision,e.revision_id,e.kind,e.payload,e.status,e.note,
-            e.created_at,p.title,EXISTS(SELECT 1 FROM wiki_contributions x WHERE x.proposal_id=e.id) published{review_fields}
+            e.created_at,p.title,EXISTS(SELECT 1 FROM wiki_contributions x WHERE x.proposal_id=e.id) published{public_status}{review_fields}
             FROM wiki_edit_proposals e JOIN wiki_pages p ON p.id=e.page_id
             {review_joins}
             WHERE {" AND ".join(where)} ORDER BY e.created_at DESC,e.id LIMIT 30 OFFSET %s""",
@@ -357,8 +369,7 @@ class Community:
             JOIN wiki_edit_proposals e ON e.id=x.proposal_id JOIN wiki_users u ON u.id=e.user_id
             JOIN wiki_channels c ON c.id=e.channel_id JOIN wiki_pages p ON p.id=e.page_id
             JOIN wiki_publication_pages pp ON pp.publication_id=c.published_revision AND pp.page_id=p.id
-            JOIN wiki_page_revisions r ON r.id=pp.revision_id
-                AND (r.id=x.revision_id OR JSON_CONTAINS(JSON_EXTRACT(r.document,'$.community_contributions'),JSON_QUOTE(e.id)))
+            JOIN wiki_page_revisions r ON r.id=pp.revision_id AND {IN_PUBLISHED_REVISION}
             WHERE {" AND ".join(conditions)} {group} ORDER BY {order} LIMIT 30 OFFSET %s""",
             (*args, offset),
             fetch=True,
