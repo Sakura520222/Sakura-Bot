@@ -662,6 +662,9 @@ async def test_fact_check_requires_real_evidence_and_reuses_cached_claims(store,
     article = await service.reader.page(ch["id"], page["id"])
     assert article["claims"][0]["fact_check"]["status"] == "verified"
     assert len(article["claims"][0]["fact_check"]["sources"]) == 2
+    check = article["claims"][0]["fact_check"]
+    assert set(check) == {"status", "checked_at", "sources"}
+    assert all(set(source) == {"title", "url"} for source in check["sources"])
     charged = research.await_count
     await store.enqueue(ch["id"], "reindex")
     await service.run_job(await store.claim_job())

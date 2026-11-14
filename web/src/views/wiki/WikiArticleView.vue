@@ -14,7 +14,7 @@
     </div>
     <article v-else-if="data" class="wiki-article">
       <header class="wiki-reader-header">
-        <RouterLink class="wiki-tag" :to="topicLink">{{ data.topic }}</RouterLink>
+        <span class="wiki-tag">{{ data.topic }}</span>
         <div class="wiki-reader-title">
           <h1>{{ data.title }}</h1>
           <div class="wiki-reader-actions" role="group" aria-label="文章操作">
@@ -30,7 +30,10 @@
             </button>
           </div>
         </div>
-        <p class="wiki-meta">{{ data.evidence_count }} 个来源 · 修订于 {{ formatDay(data.verified_at) }} · 发布于 {{ formatDay(data.updated_at) }}</p>
+        <p class="wiki-meta">
+          <a v-if="sourceEntries.length" href="#sources" @click.prevent="jump('sources')">{{ sourceEntries.length }} 个来源</a>
+          <span v-if="sourceEntries.length"> · </span>发布于 {{ formatDay(data.updated_at) }}
+        </p>
         <div v-if="historical" class="wiki-version-notice" role="status">
           <span>正在查看 {{ formatDate(data.updated_at) }} 的历史版本</span>
           <button type="button" @click="switchVersion()">返回最新版</button>
@@ -39,15 +42,10 @@
         <p v-if="copyStatus === '复制失败，重试' || bookmarkError" class="wiki-meta" role="alert">
           {{ bookmarkError || copyStatus }}
         </p>
-        <details class="wiki-reader-inline"><summary>本页目录</summary><WikiReaderToc :headings="headings" :active="activeClaim" @navigate="jump" /></details>
+        <details v-if="headings.length > 1" class="wiki-reader-inline"><summary>本页目录</summary><WikiReaderToc :headings="headings" :active="activeClaim" :has-sources="sourceEntries.length > 0" @navigate="jump" /></details>
       </header>
-      <nav v-if="data.album_links?.length" class="wiki-claim album-links" aria-label="Telegram 相册">
-        <strong>Telegram 相册</strong>
-        <a v-for="(item, index) in data.album_links" :key="item.message_id" :href="item.url"
-          target="_blank" rel="noopener noreferrer">原帖 {{ index + 1 }}</a>
-      </nav>
-      <Teleport defer to="#wiki-reader-context">
-        <WikiReaderToc :headings="headings" :active="activeClaim" @navigate="jump" />
+      <Teleport v-if="headings.length > 1" defer to="#wiki-reader-context">
+        <WikiReaderToc :headings="headings" :active="activeClaim" :has-sources="sourceEntries.length > 0" @navigate="jump" />
       </Teleport>
       <section v-for="(claim, index) in visibleClaims" :id="`claim-${index}`"
         :key="index" class="wiki-claim wiki-claim-section">
@@ -56,64 +54,46 @@
         <span v-if="claim.occurred_at" class="wiki-meta">发生于 {{ formatDay(claim.occurred_at) }}</span>
         <WikiMarkdown :text="claim.text" :channel="data.channel_id" :claim-index="index"
           :annotations="claim.community_notes" image-preview />
-        <details v-if="claim.fact_check" class="wiki-evidence-card">
-          <summary>{{ factLabels[claim.fact_check.status] || "待核实" }}</summary>
-          <p>{{ claim.fact_check.reason }}<span v-if="claim.fact_check.checked_at"> · {{ claim.fact_check.model }} · {{ formatDay(claim.fact_check.checked_at) }}</span></p>
-          <ul><li v-for="source in claim.fact_check.sources" :key="source.url"><a :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.title || source.url }}</a></li></ul>
-        </details>
-        <span v-else class="wiki-meta">待核实</span>
-        <span v-if="claim.valid_until" class="wiki-meta">有效至 {{ formatDay(claim.valid_until) }}</span>
-        <details v-if="claim.evidence.length" class="wiki-evidence-card">
-          <summary>{{ claim.evidence.length }} 条引用证据</summary>
-          <div v-for="(entry, i) in claim.evidence" :key="i">
-            <blockquote v-if="entry.quote">{{ entry.quote }}</blockquote>
-            <a v-if="entry.url" :href="entry.url" target="_blank" rel="noopener noreferrer">来源 {{ i + 1 }}</a>
-            <span v-else class="wiki-meta">来源记录 {{ i + 1 }}</span>
-          </div>
-        </details>
+        <div v-if="claim.fact_check || claim.valid_until || claimReferences[index]?.length" class="claim-meta wiki-meta">
+          <span v-if="claim.fact_check">{{ factLabels[claim.fact_check.status] || "未获外部证据" }}</span>
+          <span v-if="claim.valid_until">有效至 {{ formatDay(claim.valid_until) }}</span>
+          <a v-for="number in claimReferences[index]" :key="number" :href="`#source-${number}`"
+            :aria-label="`查看来源 ${number}`" @click.prevent="jump(`source-${number}`)">[{{ number }}]</a>
+        </div>
       </section>
       <button v-if="visibleCount < data.claims.length" @click="visibleCount += 8">继续阅读</button>
       <Teleport defer to="#wiki-article-contributors" :disabled="!hasSidebar">
         <WikiCommunity ref="community" :article="data" :sidebar="hasSidebar" />
       </Teleport>
-      <section id="sources" class="wiki-claim">
+      <section v-if="sourceEntries.length" id="sources" class="wiki-claim article-sources">
         <h2>参考来源</h2>
-        <details @toggle="openReferences">
-          <summary>查看来源</summary>
-          <p v-if="loadingReferences" role="status">正在加载…</p>
-          <p v-if="referenceError" role="alert">{{ referenceError }} <button @click="readReferences">重试</button></p>
-          <template v-if="references">
-            <p class="wiki-meta">{{ references.sources_total ?? references.sources.length }} 个来源</p>
-            <ol>
-              <li v-for="source in references.sources.slice(0, sourceLimit)" :key="source.id">
-                <a v-if="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.type === "image" ? "图片证据" : "频道原帖" }}</a>
-                <span v-else>来源记录</span> · {{ formatDate(source.created_at) }}
-              </li>
-            </ol>
-            <button v-if="sourceLimit < references.sources.length" @click="sourceLimit += 20">查看更多来源</button>
-          </template>
-        </details>
+        <ol>
+          <li v-for="(source, index) in sourceEntries.slice(0, sourceLimit)" :id="`source-${index + 1}`" :key="index" tabindex="-1">
+            <a v-if="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.title }}</a>
+            <span v-else>{{ source.title }}</span>
+            <time v-if="source.createdAt" :datetime="source.createdAt" class="wiki-meta"> · {{ formatDate(source.createdAt) }}</time>
+            <span v-if="source.image" class="wiki-meta"> · 含图片资料</span>
+            <blockquote v-if="source.quotes.length">{{ source.quotes.join("\n\n") }}</blockquote>
+          </li>
+        </ol>
+        <button v-if="sourceLimit < sourceEntries.length" @click="sourceLimit += 20">查看更多来源</button>
       </section>
       <WikiRevisionHistory ref="historyPanel" :key="data.revision_id + data.publication_id"
         :path="apiPath" :current="data.current_revision_id ?? data.revision_id" :viewing="data.revision_id"
         :total="references?.history_total ?? data.history_total ?? 1" :history="references?.history"
         :loading="loadingReferences" :error="referenceError" @load="readReferences" @switch-version="switchVersion" />
-      <nav class="wiki-reader-links" aria-label="继续探索">
-        <RouterLink :to="topicLink">同主题条目</RouterLink>
-        <RouterLink :to="{ path: channelBase + '/graph', query: { node: data.id } }">在知识地图中查看</RouterLink>
+      <nav id="related" class="wiki-claim article-related" aria-labelledby="related-title">
+        <h2 id="related-title">相关条目</h2>
+        <p v-if="relatedError" role="alert">{{ relatedError }} <button @click="reloadRelated()">重试</button></p>
+        <div v-if="related?.previous || related?.next" class="related-neighbors">
+          <RouterLink v-if="related.previous" :to="related.previous.url"><small>较早</small>{{ related.previous.title }}</RouterLink>
+          <RouterLink v-if="related.next" :to="related.next.url"><small>较新</small>{{ related.next.title }}</RouterLink>
+        </div>
+        <div class="related-links">
+          <RouterLink :to="topicLink">浏览同主题条目</RouterLink>
+          <RouterLink :to="{ path: channelBase + '/graph', query: { node: data.id } }">在知识地图中定位此条目</RouterLink>
+        </div>
       </nav>
-      <details @toggle="showRelated = ($event.target as HTMLDetailsElement).open">
-        <summary>同主题的前后条目</summary>
-        <p v-if="relatedLoading" role="status">正在加载…</p>
-        <p v-else-if="relatedError" role="alert">{{ relatedError }} <button @click="reloadRelated()">重试</button></p>
-        <template v-else-if="related">
-          <ul v-if="related.next || related.previous">
-            <li v-if="related.previous"><RouterLink :to="related.previous.url">较早 · {{ related.previous.title }}</RouterLink></li>
-            <li v-if="related.next"><RouterLink :to="related.next.url">较新 · {{ related.next.title }}</RouterLink></li>
-          </ul>
-          <p v-else>暂无其他同主题条目</p>
-        </template>
-      </details>
     </article>
   </div>
 </template>
@@ -137,6 +117,7 @@ import { excerptOccurrence } from "./wiki-annotations";
 import WikiSkeleton from "./WikiSkeleton.vue";
 import WikiState from "./WikiState.vue";
 import { wikiAskArticle, wikiAssistantEnabled } from "../../api/wiki-assistant";
+import { articleSources } from "./wiki-article-sources";
 
 const route = useRoute();
 const sidebarMedia = window.matchMedia("(min-width: 1151px)");
@@ -146,7 +127,7 @@ const canAdmin = ref(false);
 const hiddenByAdmin = ref(false);
 const managementReady = ref(false);
 onMounted(async () => { canAdmin.value = await canManageWiki(); });
-const factLabels: Record<string, string> = { verified: "外部证据已核实", partial: "外部证据部分支持", disputed: "存在争议", unverified: "待核实", outdated: "已过期", rejected: "已驳回" };
+const factLabels: Record<string, string> = { verified: "外部来源已核实", partial: "外部来源部分支持", disputed: "存在争议", unverified: "未获外部证据", outdated: "已过期", rejected: "核查未通过" };
 const router = useRouter();
 const channelBase = computed(() => `/wiki/${route.params.channel}`);
 const apiPath = computed(() => `/channels/${encodeURIComponent(String(route.params.channel))}/pages/${encodeURIComponent(String(route.params.slug))}`);
@@ -175,7 +156,7 @@ const topicLink = computed(() => ({ path: channelBase.value + "/search", query: 
 const visibleCount = ref(8);
 const visibleClaims = computed(() => data.value?.claims.slice(0, visibleCount.value) ?? []);
 const headings = computed(() => (data.value?.claims ?? []).map((claim) =>
-  claim.key.startsWith("md:") ? plainWikiText(claim.text.split("\n")[0]).slice(0, 60) || "正文" : claim.key,
+  claim.key.startsWith("md:") ? plainWikiText(claim.text.split("\n")[0]).slice(0, 28) || "正文" : claim.key,
 ));
 const activeClaim = ref("");
 const assistantEnabled = inject(wikiAssistantEnabled, ref(false));
@@ -289,11 +270,16 @@ onUnmounted(() => {
 });
 watch([apiPath, () => data.value?.revision_id], () => { menu.value = undefined; selection.value = undefined; });
 const references = shallowRef<WikiReferences>();
+const articleEvidence = computed(() => {
+  const article = data.value;
+  return article ? articleSources(article, article.sources ?? references.value?.sources ?? []) : undefined;
+});
+const sourceEntries = computed(() => articleEvidence.value?.entries ?? []);
+const claimReferences = computed(() => articleEvidence.value?.citations ?? []);
 const historyPanel = ref<InstanceType<typeof WikiRevisionHistory>>();
-const showRelated = ref(false);
-const { data: related, error: relatedError, loading: relatedLoading, reload: reloadRelated } =
+const { data: related, error: relatedError, reload: reloadRelated } =
   useWikiResource<{ next: WikiNode | null; previous: WikiNode | null }>(
-    () => showRelated.value && data.value ? wikiUrl(apiPath.value, { part: "related" }) : null,
+    () => data.value ? wikiUrl(apiPath.value, { part: "related" }) : null,
     publicWikiUrl, { ttlMs: 30_000 },
   );
 const loadingReferences = ref(false);
@@ -341,8 +327,14 @@ async function showSection(id: string) {
   if (claim && Number(claim[1]) < (data.value?.claims.length ?? 0)) {
     visibleCount.value = Math.max(visibleCount.value, Number(claim[1]) + 1);
   }
+  const source = /^source-(\d+)$/.exec(id);
+  if (source && Number(source[1]) <= sourceEntries.value.length) {
+    sourceLimit.value = Math.max(sourceLimit.value, Number(source[1]));
+  }
   await nextTick();
-  document.getElementById(id)?.scrollIntoView({ block: "start" });
+  const target = document.getElementById(id);
+  if (source) target?.focus({ preventScroll: true });
+  target?.scrollIntoView({ block: "start" });
 }
 function jump(id: string) {
   if (route.hash === "#" + id) void showSection(id);
@@ -367,9 +359,6 @@ async function readReferences() {
   } finally {
     if (path === apiPath.value && selected === selectedRevision.value) loadingReferences.value = false;
   }
-}
-function openReferences(event: Event) {
-  if ((event.target as HTMLDetailsElement).open && !references.value) void readReferences();
 }
 async function share() {
   const article = data.value;
@@ -397,6 +386,15 @@ onUnmounted(() => {
 });
 </script>
 <style scoped>
-.album-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: .875rem; }
+.claim-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; font-size: 13px; }
+.article-sources ol { margin-block: 10px; }
+.article-sources li { margin-block: 8px; overflow-wrap: anywhere; scroll-margin-top: calc(var(--wiki-masthead) + var(--wiki-article-toolbar-height, 0px) + 12px); }
+.article-sources li:target, .article-sources li:focus { background: var(--sb-accent-soft); }
+.article-sources blockquote { margin: 6px 0; }
+.related-neighbors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 8px; }
+.wiki-shell .related-neighbors a { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--sb-border); border-radius: 8px; color: var(--sb-text); overflow-wrap: anywhere; }
+.wiki-shell .related-neighbors a:hover { background: var(--sb-surface-2); }
+.related-neighbors small { color: var(--sb-text-2); }
+.related-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 13px; }
 .wiki-version-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--sb-border); border-radius: 8px; background: var(--sb-surface-2); font-size: .875rem; }
 </style>

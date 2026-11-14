@@ -405,15 +405,29 @@ class PublicReader:
             await self.credit_annotations(
                 row["id"], doc["community_contributions"], doc["claims"], result["claims"]
             )
-        review = await self.store.one(
-            """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
-            ORDER BY created_at DESC LIMIT 1""",
-            (row["revision_id"],),
+        review = (
+            await self.store.one(
+                """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
+                ORDER BY created_at DESC LIMIT 1""",
+                (row["revision_id"],),
+            )
+            if part != "references"
+            else None
         )
         if review:
             for check in decode(review["result"]).get("fact_checks", []):
                 if 0 <= check["index"] < len(result["claims"]):
-                    result["claims"][check["index"]]["fact_check"] = check
+                    result["claims"][check["index"]]["fact_check"] = {
+                        "status": check["status"],
+                        "checked_at": check.get("checked_at"),
+                        "sources": [
+                            {"title": source.get("title", ""), "url": source["url"]}
+                            for source in check.get("sources", [])
+                        ],
+                    }
+        result["sources"] = [
+            source_card(source, row["username"], config) for source in evidence_rows
+        ]
         if part == "article":
             return result
         sources_total = len(evidence_rows)
@@ -424,9 +438,6 @@ class PublicReader:
                 (row["revision_id"],),
             )
             sources_total = total["total"]
-        result["sources"] = [
-            source_card(source, row["username"], config) for source in evidence_rows
-        ]
         # 总量独立于上方 500 条截断，前端据此提示"未全部展示"。
         result["sources_total"] = sources_total
         # Historical metadata is restricted to revisions that were actually published.

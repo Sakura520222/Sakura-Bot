@@ -4,11 +4,11 @@
     <a v-for="(title, i) in headings" :key="i" :href="`#claim-${i}`"
       :aria-current="active === `claim-${i}` ? 'location' : undefined"
       @click.prevent="$emit('navigate', `claim-${i}`)">{{ title }}</a>
-    <a href="#sources" :aria-current="active === 'sources' ? 'location' : undefined"
+    <a v-if="hasSources" href="#sources" :aria-current="active === 'sources' ? 'location' : undefined"
       @click.prevent="$emit('navigate', 'sources')">参考来源</a>
   </nav>
 </template>
 <script setup lang="ts">
-defineProps<{ headings: string[]; active: string }>();
+defineProps<{ headings: string[]; active: string; hasSources: boolean }>();
 defineEmits<{ navigate: [id: string] }>();
 </script>

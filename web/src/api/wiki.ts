@@ -112,7 +112,7 @@ export interface Claim {
   valid_until?: string;
   source_created_at: string;
   evidence: Evidence[];
-  fact_check?: { status: string; reason: string; checked_at?: string; model?: string; sources: { title: string; url: string; provider: string }[] };
+  fact_check?: { status: string; checked_at?: string | null; sources: { title: string; url: string }[] };
   community_notes?: WikiAnnotation[];
   title?: string;
   url?: string;
@@ -127,6 +127,7 @@ export interface WikiAnnotation {
 }
 export interface WikiArticle extends WikiCard {
   album_links?: { message_id: number; url: string }[];
+  sources?: WikiReferences["sources"];
   current_revision_id?: string;
   verified_at: string;
   claims: Claim[];

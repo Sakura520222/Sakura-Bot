@@ -21,6 +21,8 @@ const cards = Array.from({length: 240}, (_, index) => ({
   excerpt: "公开知识条目摘要。这里记录项目发布、配置与日常使用问题。"
 }));
 const claims = Array.from({length: 18}, (_, index) => ({key:"章节 "+(index+1),text:"**Sakura** 条目正文，包含可核对的来源。" + (index === 0 ? "\n\n![示例](https://example.invalid/image.png)" : ""), status:"current", confidence:.9, source_created_at:channel.updated_at, evidence:[{source_id:"s1",start:0,end:4,url:"https://t.me/sakura_dev/1"}]}));
+claims[0].evidence[0].quote = "原帖片段";
+claims[0].fact_check = { status: "unverified", sources: [{ title: "外部参考", url: "https://example.org/reference" }] };
 const annotatedClaims = [{ ...claims[0], text: "- 词条名称：**护**\n- 画面元素：卡片。\n- 角色形象：护",
   community_notes: [
     { kind: "annotation", excerpt: "护", text: "第一处的注解。", sources: [], contributor: { id: "c".repeat(32), display_name: "注解作者", avatar: false } },
@@ -233,6 +235,7 @@ const server = http.createServer(async (req,res) => {
       const refs = {sources:[{id:"s1",type:"message",url:"https://t.me/sakura_dev/1",created_at:channel.updated_at}],history,sources_total:1,history_total:history.length};
       out = {...card,revision_id:version.revision_id,current_revision_id:card.revision_id,updated_at:version.created_at,verified_at:version.created_at,
         proposals_enabled:!historical,annotations_enabled:!historical,history_total:history.length,
+        sources: refs.sources,
         ...(q.get("part") !== "references" ? {claims:historical ? [{...claims[0], text:"旧版词条正文"}] : card === cards[1] ? annotatedClaims : claims}:{}),
         ...(q.get("part") !== "article" ? refs:{})};
     }
@@ -450,10 +453,16 @@ try {
   await page.route("https://example.invalid/image.png", route => route.fulfill({ contentType: "image/png", body: avatar }));
   await page.goto(url + "/wiki/123/page/article-0#claim-12");
   await page.locator("#claim-12").waitFor();
-  await page.getByText("同主题的前后条目",{exact:true}).click();
-  await page.getByRole("link",{name:/较早/}).waitFor();
-  await page.getByText("查看来源",{exact:true}).click();
-  await page.getByText("频道原帖",{exact:true}).waitFor();
+  const relatedEntries = page.getByRole("navigation", { name: "相关条目" });
+  await relatedEntries.getByRole("link",{name:/较早/}).waitFor();
+  await relatedEntries.getByRole("link", { name: "浏览同主题条目" }).waitFor();
+  await page.locator("#claim-0").getByRole("link", { name: "查看来源 1" }).click();
+  await page.waitForURL("**#source-1");
+  await page.locator("#source-1:focus").waitFor();
+  assert.equal(await page.getByRole("link", { name: "频道原帖", exact: true }).count(), 1);
+  await page.locator("#source-1").getByText("原帖片段", { exact: true }).waitFor();
+  await page.locator("#source-2").getByRole("link", { name: "外部参考" }).waitFor();
+  await page.locator("#claim-0").getByText("未获外部证据", { exact: true }).waitFor();
   await page.getByRole("link",{name:"预览图片 · 示例"}).waitFor();
   await page.getByRole("link",{name:"预览图片 · 示例"}).click();
   await assertCentered(page.getByRole("dialog",{name:"图片预览"}));
@@ -468,7 +477,7 @@ try {
   await actions.getByRole("button", { name: "更多词条操作" }).click();
   await page.getByRole("menuitem", { name: "复制链接" }).click();
   await page.getByText("已复制", { exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), url + "/wiki/123/page/article-0#claim-12");
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), url + "/wiki/123/page/article-0#source-1");
   await actions.getByRole("button",{name:"收藏到本机",exact:true}).click();
   await page.getByRole("button",{name:"取消收藏",exact:true}).waitFor();
   assert.equal(await page.getByRole("button",{name:"返回顶部",exact:true}).count(), 0);
