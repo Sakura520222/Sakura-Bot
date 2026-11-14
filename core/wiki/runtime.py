@@ -209,6 +209,13 @@ class WikiRuntime:
                     await self.community.dispatch_approved(row["id"])
                 if config.paused or row["active_job"]:
                     continue
+                if (
+                    row["published_revision"]
+                    and row["access_verified"]
+                    and await self.store.has_legacy_caption_media(row["id"])
+                ):
+                    await self.store.enqueue(row["id"], "albums", "caption_media_repair")
+                    continue
                 due = schedule_due(config, row.get("scheduled_at"))
                 dirty = row["dirty_at"] and utc() - row["dirty_at"] >= timedelta(
                     seconds=config.debounce_seconds
@@ -470,6 +477,7 @@ class WikiRuntime:
                 "channel_id": cid,
                 "message_id": message.id,
                 "media_key": media_key,
+                "media_group": str(getattr(message, "grouped_id", "") or ""),
                 "category": "image" if media_key else "text",
                 "body": getattr(message, "message", None) or "",
                 "created_at": message.date.isoformat(),
@@ -542,6 +550,7 @@ class WikiRuntime:
                         original_length=len(record["body"]),
                         verified=True,
                         media_key=record.get("media_key"),
+                        media_group=record.get("media_group"),
                         category=record.get("category", "text"),
                     )
                     if not self.client or not self.client.is_connected():

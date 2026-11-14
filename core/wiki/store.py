@@ -27,6 +27,14 @@ from .schema import (
 )
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
+MESSAGE_MEDIA_PREFIX = "message:"
+LEGACY_CAPTION_MEDIA = """FROM wiki_sources m
+    JOIN wiki_sources i ON i.channel_id=m.channel_id AND i.source_type='image'
+        AND i.message_id=m.message_id AND i.media_key=m.media_key
+    WHERE m.channel_id=%s AND m.source_type='message' AND m.media_group IS NULL
+    AND i.media_group IS NULL AND m.verified=TRUE AND i.verified=TRUE
+    AND m.deleted=FALSE AND m.hidden=FALSE AND m.excluded=FALSE
+    AND i.deleted=FALSE AND i.hidden=FALSE AND i.excluded=FALSE AND TRIM(m.body)<>''"""
 
 
 def encode(value):
@@ -364,6 +372,25 @@ class WikiStore:
             ):
                 return source_id
             if (
+                verified
+                and media_key
+                and message_id
+                and source_type == "message"
+                and not media_group
+            ):
+                group = f"{MESSAGE_MEDIA_PREFIX}{message_id}"
+                if (not excluded and body.strip()) or (old and old["media_group"] == group):
+                    media_group = group
+            if media_key and message_id and source_type == "image":
+                await cur.execute(
+                    """SELECT media_group FROM wiki_sources WHERE id=%s AND media_key=%s
+                    AND verified=TRUE AND deleted=FALSE""",
+                    (digest(channel, "message", str(message_id)), media_key),
+                )
+                parent = await cur.fetchone()
+                if parent and parent["media_group"]:
+                    media_group = parent["media_group"]
+            if (
                 old
                 and old["content_hash"] == content_hash
                 and bool(old["verified"]) == verified
@@ -404,6 +431,21 @@ class WikiStore:
                     exclusion_reason or "",
                 ),
             )
+            if source_type == "message" and media_group:
+                # OCR can finish before a caption edit or a history recheck links the post.
+                await cur.execute(
+                    """SELECT id,media_group FROM wiki_sources WHERE channel_id=%s
+                    AND message_id=%s AND source_type='image' AND media_key=%s
+                    AND NOT (media_group <=> %s)""",
+                    (channel, message_id, media_key, media_group),
+                )
+                for image in await cur.fetchall():
+                    await cur.execute(
+                        "UPDATE wiki_sources SET media_group=%s WHERE id=%s",
+                        (media_group, image["id"]),
+                    )
+                    if image["media_group"]:
+                        await self.mark_album(cur, channel, image["media_group"])
             for chunk in chunks(source_id, body, content_hash):
                 await cur.execute(
                     """INSERT IGNORE INTO wiki_chunks
@@ -427,6 +469,31 @@ class WikiStore:
             ON DUPLICATE KEY UPDATE pending=TRUE""",
             (channel, group),
         )
+
+    async def has_legacy_caption_media(self, channel):
+        return bool(await self.one(f"SELECT 1 {LEGACY_CAPTION_MEDIA} LIMIT 1", (channel,)))
+
+    async def group_legacy_caption_media(self, job):
+        channel = job["channel_id"]
+        while True:
+            async with self.transaction() as cur:
+                await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+                await self.fence(cur, job)
+                await cur.execute(
+                    f"""SELECT m.id caption,i.id image,m.message_id {LEGACY_CAPTION_MEDIA}
+                    ORDER BY m.message_id LIMIT 200""",
+                    (channel,),
+                )
+                pairs = await cur.fetchall()
+                if not pairs:
+                    return
+                for pair in pairs:
+                    group = f"{MESSAGE_MEDIA_PREFIX}{pair['message_id']}"
+                    await cur.execute(
+                        "UPDATE wiki_sources SET media_group=%s WHERE id IN (%s,%s)",
+                        (group, pair["caption"], pair["image"]),
+                    )
+                    await self.mark_album(cur, channel, group)
 
     async def album_sources(self, channel, group, cur=None):
         sql = """SELECT s.id,s.source_type,s.body,s.content_hash,s.message_id,s.created_at

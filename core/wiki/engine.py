@@ -27,7 +27,7 @@ from .models import (
     utc,
     validate_extraction,
 )
-from .store import LeaseLost, decode, encode
+from .store import MESSAGE_MEDIA_PREFIX, LeaseLost, decode, encode
 
 PROMPT_VERSION = "wiki-2"
 SYSTEM = """把提供的频道原文整理成可长期查阅的百科内容。直接输出简洁的 Markdown 正文，
@@ -730,6 +730,12 @@ class WikiEngine:
 
     async def generate_albums(self, job, channel, generator):
         channel_id = channel["id"]
+        if job["kind"] != "page" and not job["cursor"].get("caption_media_grouped"):
+            await self.store.group_legacy_caption_media(job)
+            # A resumed job may already have passed groups added by this migration.
+            job["cursor"].pop("album_after", None)
+            job["cursor"]["caption_media_grouped"] = True
+            await self.store.checkpoint(job)
         if job["kind"] != "page" and not job["cursor"].get("albums_seeded"):
             # Include stored albums processed before grouped generation was introduced.
             await self.store.query(
@@ -762,7 +768,7 @@ class WikiEngine:
             )
             if not albums:
                 return
-            await self.store.report(job, "正在合并 Telegram 相册", stage="albums")
+            await self.store.report(job, "正在整理 Telegram 图文", stage="albums")
 
             async def process(group):
                 async with semaphore:
@@ -778,15 +784,18 @@ class WikiEngine:
 
     async def generate_album(self, job, config, generator, group):
         channel = job["channel_id"]
+        single = group.startswith(MESSAGE_MEDIA_PREFIX)
+        context = "一条 Telegram 图文消息" if single else "同一个 Telegram 相册"
         sources = await self.store.album_sources(channel, group)
         title, topic, facts, relations = "", "", [], []
         material = [source for source in sources if source["body"].strip()]
         if material:
             # Each input excerpt uses a real stored chunk with verifiable offsets.
             parts = [next(chunks(s["id"], s["body"], s["content_hash"])) for s in material[:20]]
-            excerpts = [part["text"][:1800] for part in parts]
+            excerpt_limit = 4096 if single else 1800
+            excerpts = [part["text"][:excerpt_limit] for part in parts]
             key = digest(
-                "wiki-album-1",
+                "wiki-captioned-message-1" if single else "wiki-album-1",
                 channel,
                 group,
                 config.language,
@@ -806,7 +815,7 @@ class WikiEngine:
                         config,
                         generator,
                         SYSTEM
-                        + "\n这些配文和图片识别结果属于同一个 Telegram 相册。结合配文和图像顺序写成一篇完整词条。"
+                        + f"\n这些配文和图片识别结果属于{context}。以配文为主，结合图片内容和顺序写成一篇完整词条。"
                         "标题依据整篇内容，避免按图片拆分。第一行使用 ## [0] 分类 / 词条名称，随后直接写 Markdown 正文。",
                         {
                             "language": config.language,
@@ -821,7 +830,7 @@ class WikiEngine:
                                 for source, excerpt in zip(material[:20], excerpts, strict=True)
                             ],
                         },
-                        stage="整理 Telegram 相册",
+                        stage="整理 Telegram 图文" if single else "整理 Telegram 相册",
                     )
                 except Exception as error:
                     if not content_refused(error):
@@ -849,7 +858,7 @@ class WikiEngine:
                     chunk_id=p["id"],
                     quote=excerpt,
                     start=p["start"],
-                    end=min(p["end"], p["start"] + 1800),
+                    end=p["start"] + len(excerpt),
                 ).model_dump()
                 for p, excerpt in zip(parts, excerpts, strict=True)
             ]

@@ -397,7 +397,12 @@ async def published(store, *, image=False, channel_id=12345):
     job_id = await store.enqueue(ch["id"], "backfill", "test")
     job = await store.claim_job()
     knowledge = Knowledge(store)
-    await knowledge.apply_extraction(job, chunk, extraction(chunk))
+    fake = FakeAI()
+    engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    if image:
+        await engine.generate_albums(job, ch, (fake, "fixture-model"))
+    else:
+        await knowledge.apply_extraction(job, chunk, extraction(chunk))
     page = await store.one("SELECT * FROM wiki_pages WHERE channel_id=%s", (ch["id"],))
     revision = await knowledge.build_page(job, page)
     job["cursor"]["revisions"] = {page["id"]: revision}
@@ -405,7 +410,7 @@ async def published(store, *, image=False, channel_id=12345):
     job["progress"].update(
         generation_complete=True, pages=1, source_generation=fresh["source_generation"]
     )
-    await WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model")).review(job, fresh)
+    await engine.review(job, fresh)
     await store.finish(job)
     publication = await knowledge.publish(ch["id"], job_id, "test")
     return ch, source, page, revision, publication
@@ -1149,6 +1154,9 @@ class FakeAI:
             )
         elif "summaries" in payload:
             content = "中文检索\nSakura"
+        elif "album" in payload:
+            text = "\n\n".join(item["text"] for item in payload["album"])
+            content = f"## [0] 频道资料 / 图文词条\n\n{text}"
         elif "sources" in payload or "source" in payload:
             sources = payload.get("sources") or [{"source": 0, "text": payload["source"]}]
             sections = []
@@ -1352,6 +1360,37 @@ async def test_grouped_telegram_album_replaces_split_pages_and_preserves_sources
     await runtime.run_job(await store.claim_job())
     repaired = await reader.page(channel_id, caption_page)
     assert repaired and [item["message_id"] for item in repaired["album_links"]] == [1]
+
+
+async def test_legacy_single_photo_and_caption_are_repaired_automatically(store):
+    ch, fake, runtime = await build_and_publish(
+        store, texts=("第一条配文", "第二条识图"), stable=True
+    )
+    channel_id = ch["id"]
+    caption_page = await page_of_message(store, channel_id, 1)
+    image_page = await page_of_message(store, channel_id, 2)
+    await store.query(
+        "UPDATE wiki_sources SET media_key='photo:1' WHERE channel_id=%s AND message_id=1",
+        (channel_id,),
+    )
+    await store.query(
+        """UPDATE wiki_sources SET source_type='image',message_id=1,media_key='photo:1'
+        WHERE channel_id=%s AND message_id=2""",
+        (channel_id,),
+    )
+    assert await store.has_legacy_caption_media(channel_id)
+    runtime.ready = True
+    runtime._last_refresh = runtime._last_account_cleanup = ch["updated_at"]
+    await runtime.tick()
+    await asyncio.gather(*runtime.tasks)
+    article = await runtime.reader.page(channel_id, caption_page)
+    assert not await runtime.reader.page(channel_id, image_page)
+    assert "第一条配文" in article["claims"][0]["text"]
+    assert "第二条识图" in article["claims"][0]["text"]
+    assert not article.get("album_links")
+    assert not await store.has_legacy_caption_media(channel_id)
+    job = await store.one("SELECT status FROM wiki_jobs WHERE kind='albums'")
+    assert job["status"] == "published"
 
 
 async def test_generation_review_graph_cache_and_incremental_publication(store):
@@ -2286,16 +2325,22 @@ async def test_image_description_update_rebuilds_knowledge(store):
             )
         )["progress"]
     )
-    assert progress["processed_chunks"] == 1  # 只有 image 来源需要重新提取
-    assert fake.calls == charged + 2
+    assert progress["processed_chunks"] == 0
+    assert progress["processed_albums"] == 1
+    assert fake.calls > charged
     fact = await store.one(
         """SELECT f.fact FROM wiki_facts f JOIN wiki_chunks ch2 ON ch2.id=f.chunk_id
         JOIN wiki_sources s ON s.id=ch2.source_id
-        WHERE s.channel_id=%s AND s.source_type='image' AND s.message_id=1
+        WHERE s.channel_id=%s AND s.source_type='message' AND s.message_id=1
         AND s.content_hash=ch2.content_hash""",
         (ch["id"],),
     )
-    assert "B" in decode(fact["fact"])["text"]
+    assert "识别文字 B" in decode(fact["fact"])["text"]
+    timeline = await runtime.reader.timeline(ch["id"])
+    assert len(timeline["items"]) == 1
+    assert {ref["url"] for ref in timeline["items"][0]["evidence"]} == {
+        "https://t.me/channel_12345/1"
+    }
     assert (await store.channel(ch["id"]))["published_revision"] != first
 
 

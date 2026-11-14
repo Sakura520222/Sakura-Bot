@@ -86,6 +86,7 @@ class Knowledge:
                 not source
                 or source["deleted"]
                 or source["hidden"]
+                or source["media_group"]
                 or source["content_hash"] != chunk["content_hash"]
             ):
                 return

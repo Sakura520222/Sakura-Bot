@@ -12,7 +12,7 @@ from itertools import zip_longest
 from .cursor import read_cursor, scope_key, write_cursor
 from .models import MANUAL_REVIEW_POLICY, utc
 from .schema import CHANNEL_VISIBLE, REVISION_VISIBLE
-from .store import decode
+from .store import MESSAGE_MEDIA_PREFIX, decode
 
 VISIBLE = f"""{CHANNEL_VISIBLE} AND {REVISION_VISIBLE}
     AND NOT JSON_CONTAINS(JSON_EXTRACT(c.config,'$.hidden_topics'),JSON_QUOTE(p.topic))"""
@@ -408,7 +408,10 @@ class PublicReader:
         result["title_notes"] = public_notes(title_notes)
         if row["username"] and config.get("show_telegram_links") and part != "references":
             album_groups = {
-                fact["media_group"] for fact in doc["claims"] if fact.get("media_group")
+                fact["media_group"]
+                for fact in doc["claims"]
+                if fact.get("media_group")
+                and not fact["media_group"].startswith(MESSAGE_MEDIA_PREFIX)
             }
             if album_groups:
                 links = []
