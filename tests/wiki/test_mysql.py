@@ -1646,6 +1646,68 @@ async def test_admin_manually_approves_failed_drafts_without_rerunning_review(
     assert await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
 
 
+@pytest.mark.parametrize("mode", ["auto", "review"])
+async def test_manually_approved_completed_page_edit_honors_publication_mode(
+    store, monkeypatch, mode
+):
+    ch, _, page, base, publication = await published(store)
+    channel_id = ch["id"]
+    await store.configure(
+        channel_id, ch["config"].model_copy(update={"publication_mode": mode}), "test"
+    )
+    runtime = WikiRuntime(store, None, None)
+    reviewer = FakeAI(review_status="unsupported")
+    runtime.engine = WikiEngine(store, runtime=lambda _: (reviewer, "fixture-review"))
+    runtime.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    channel_job = await store.enqueue(channel_id, "update")
+    await store.control_job(channel_id, channel_job, "pause", "test")
+    knowledge = runtime.engine.knowledge
+    revision, job_id = await knowledge.correct_page(channel_id, base, 0, "人工修订。", "test")
+    await runtime.run_job(await store.claim_job())
+    assert (await store.channel(channel_id))["published_revision"] == publication
+    result = await wiki.manually_approve_revision(channel_id, revision, "test")
+    saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (job_id,))
+    article = await runtime.reader.page(channel_id, page["slug"])
+    assert (await store.channel(channel_id))["active_job"] == channel_job
+    if mode == "auto":
+        assert saved["status"] == "published" and article["revision_id"] == revision
+        assert result["publication_id"] == article["publication_id"]
+    else:
+        assert saved["status"] == "completed" and article["revision_id"] == base
+        assert result["publication_pending"]
+
+
+async def test_cancel_paused_job_releases_channel_and_uses_latest_review_setting(
+    store, monkeypatch
+):
+    ch, _, _, _, publication = await published(store)
+    channel = ch["id"]
+    runtime = WikiRuntime(store, None, None)
+    runtime.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    job_id = await store.enqueue(channel, "update")
+    old = await store.claim_job()
+    await store.checkpoint(old, "review")
+    await store.control_job(channel, job_id, "pause", "test")
+    await store.configure(
+        channel, ch["config"].model_copy(update={"ai_review_enabled": False}), "test"
+    )
+    with pytest.raises(ValueError, match="已暂停"):
+        await store.enqueue(channel, "update", require_new=True)
+    await wiki.control_job(channel, job_id, "cancel", "test")
+    assert (await store.channel(channel))["published_revision"] == publication
+    with pytest.raises(LeaseLost):
+        await store.checkpoint(old)
+    new_id = await store.enqueue(channel, "update", require_new=True)
+    assert new_id != job_id
+    job = await store.claim_job()
+    assert job["id"] == new_id
+    runtime.engine.client = lambda _: pytest.fail("Skipped review called a model")
+    await runtime.engine.review(job, await store.channel(channel))
+    assert job["progress"]["review_skipped"]
+
+
 async def test_manual_approval_during_channel_review_is_used_for_autopublish(store, monkeypatch):
     ch, generator, runtime = await build_and_publish(store)
     await store.put_source(

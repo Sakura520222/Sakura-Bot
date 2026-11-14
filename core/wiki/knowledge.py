@@ -727,21 +727,27 @@ class Knowledge:
         )
         return publication
 
+    @staticmethod
+    def validate_publication_access(ch):
+        if not ch or not ch["enabled"]:
+            raise PublicationAccessUnverified("频道 Wiki 已停用，无法发布")
+        if not ch["access_verified"] or not ch["verified_until"] or ch["verified_until"] <= utc():
+            raise PublicationAccessUnverified(
+                "暂无法核实频道的 Telegram 公开状态。草稿已保留，核实后可重试发布。"
+            )
+
+    async def publish_approved_edit(self, cur, ch, job, manifest, progress, actor):
+        self.validate_publication_access(ch)
+        return await self.publish_page_edit(
+            cur, ch, job, manifest, progress, uuid.uuid4().hex, actor
+        )
+
     async def publish(self, channel, job_id, actor, *, rollback=None, running_job=None):
         publication_id = uuid.uuid4().hex
         async with self.store.transaction() as cur:
             await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
             ch = await cur.fetchone()
-            if not ch or not ch["enabled"]:
-                raise PublicationAccessUnverified("频道 Wiki 已停用，无法发布")
-            if (
-                not ch["access_verified"]
-                or not ch["verified_until"]
-                or ch["verified_until"] <= utc()
-            ):
-                raise PublicationAccessUnverified(
-                    "暂无法核实频道的 Telegram 公开状态。草稿已保留，核实后可重试发布。"
-                )
+            self.validate_publication_access(ch)
             if running_job:
                 await self.store.fence(cur, running_job)
             if job_id:

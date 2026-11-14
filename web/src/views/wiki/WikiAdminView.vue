@@ -404,6 +404,14 @@
                 v-if="job.status === 'paused'"
                 @click="jobControl(job.id, 'resume')"
                 >恢复</n-button
+              ><n-popconfirm
+                v-if="job.status === 'paused' && job.kind !== 'page_edit'"
+                positive-text="取消任务" negative-text="返回"
+                @positive-click="jobControl(job.id, 'cancel')"
+              >
+                <template #trigger><n-button :disabled="busy">取消任务</n-button></template>
+                取消后可以启动新任务。已发布的内容和已采集的来源会保留。
+              </n-popconfirm
               ><n-button
                 v-if="['failed', 'partial'].includes(job.status)"
                 @click="jobControl(job.id, 'retry')"
@@ -465,7 +473,7 @@
                     <n-button size="small" :disabled="busy">草稿操作</n-button>
                   </n-dropdown>
                 </header>
-                <n-alert v-if="previewRow?.manually_approved" type="success" title="已人工通过" />
+                <n-alert v-if="previewRow?.manually_approved" type="success" :title="previewRow.approved ? '已人工通过并准予发布' : '已人工通过，待发布'" />
                 <n-alert v-else-if="preview.review && !preview.review.approved" type="warning" title="来源审校未通过">
                   <p v-for="reason in reviewReasons" :key="reason">{{ reason }}</p>
                   <n-space v-if="!previewRow?.rejected">
@@ -1015,6 +1023,7 @@ const stateLabels: Record<string, string> = {
   running: "处理中",
   partial: "等待续跑",
   paused: "已暂停",
+  cancelled: "已取消",
   failed: "失败",
   completed: "已生成待发布",
   published: "已发布",
@@ -1025,13 +1034,13 @@ function root() {
 function problem(err: unknown) {
   return saveError(err);
 }
-async function perform(fn: () => Promise<unknown>, message = "操作完成") {
+async function perform(fn: () => Promise<unknown>, message: string | (() => string) = "操作完成") {
   if (busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     await fn();
-    notice.value = message;
+    notice.value = typeof message === "string" ? message : message();
     if (tab.value !== "config") await refreshData();
   } catch (err) {
     error.value = problem(err);
@@ -1146,8 +1155,8 @@ async function startBuild() {
   if (!error.value) tab.value = "jobs";
 }
 async function jobControl(id: string, action: string) {
-  if (action !== "pause" && !(await saveConfig(false))) return;
-  return perform(() => wikiAdmin(`${root()}/jobs/${id}/${action}`, "POST"));
+  if (["resume", "retry"].includes(action) && !(await saveConfig(false))) return;
+  return perform(() => wikiAdmin(`${root()}/jobs/${id}/${action}`, "POST"), action === "cancel" ? "已取消任务，可以启动新任务" : "操作完成");
 }
 function publish(job_id: string) {
   return perform(
@@ -1159,7 +1168,17 @@ function retryRevisionReview(id: string) {
   return perform(() => wikiAdmin(`${root()}/revisions/${id}/review/retry`, "POST"), "已安排重新审校");
 }
 function approveRevision(id: string) {
-  return perform(() => wikiAdmin(`${root()}/revisions/${id}/review/approve`, "POST"), "修订已人工通过");
+  let message = "修订已人工通过";
+  return perform(async () => {
+    const result = await wikiAdmin<{ publication_id?: string; publication_error?: string; publication_pending?: boolean }>(
+      `${root()}/revisions/${id}/review/approve`, "POST",
+    );
+    if (result.publication_id) message = "修订已人工通过并发布";
+    else if (result.publication_error) {
+      message = "修订已人工通过";
+      error.value = result.publication_error;
+    } else if (result.publication_pending) message = "修订已人工通过，等待发布";
+  }, () => message);
 }
 function rollback(publication_id: string) {
   return perform(

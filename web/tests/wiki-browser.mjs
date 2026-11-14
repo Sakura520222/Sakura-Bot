@@ -47,6 +47,7 @@ let researchSaved;
 let submittedProposal;
 const reviewProposalId = "d".repeat(32);
 const draftJobId = "a".repeat(32);
+let draftJobStatus = "paused";
 const snapshotID = "9".repeat(32);
 let draftApproved = false;
 const failedDraft = { id: "b".repeat(32), page_id: "c".repeat(32), title: "审校未通过的测试词条",
@@ -194,9 +195,14 @@ const server = http.createServer(async (req,res) => {
     }
     else if (endpoint === "/api/wiki/admin/channels/123/rollback") assert.fail("preview must not roll back");
     else if (endpoint === "/api/wiki/admin/channels/123/jobs") out = [{
-      id: draftJobId, kind: "update", status: "running", phase: "review", created_at: channel.updated_at, updated_at: channel.updated_at,
+      id: draftJobId, kind: "update", status: draftJobStatus, phase: "review", created_at: channel.updated_at, updated_at: channel.updated_at,
       progress: { review_rejections: 1 },
     }];
+    else if (endpoint === `/api/wiki/admin/channels/123/jobs/${draftJobId}/cancel`) {
+      assert.equal(req.method, "POST");
+      draftJobStatus = "cancelled";
+      out = { success: true };
+    }
     else if (endpoint === "/api/wiki/admin/channels/123/revisions") {
       assert.equal(q.get("status"), "failed");
       assert.equal(q.get("job_id"), draftJobId);
@@ -206,7 +212,7 @@ const server = http.createServer(async (req,res) => {
       assert.equal(req.method, "POST");
       assert.equal(req.headers.authorization, "Bearer wiki-test-token");
       draftApproved = true;
-      out = { success: true };
+      out = { success: true, publication_id: snapshotID };
     }
     else if (endpoint === `/api/wiki/admin/channels/123/revisions/${failedDraft.id}`) {
       assert.equal(q.get("job_id"), draftJobId);
@@ -820,9 +826,14 @@ try {
   await draftReader.getByRole("button", { name: "人工通过", exact: true }).click();
   assert.equal(draftApproved, false);
   await desktop.getByRole("button", { name: "确认通过", exact: true }).click();
-  await desktop.getByText("修订已人工通过", { exact: true }).waitFor();
+  await desktop.getByText("修订已人工通过并发布", { exact: true }).waitFor();
   await desktop.getByRole("button", { name: /审校未通过的测试词条/ }).waitFor({ state: "hidden" });
   assert.equal(draftApproved, true);
+  await desktop.getByText("任务", { exact: true }).click();
+  await desktop.getByRole("button", { name: "取消任务", exact: true }).click();
+  await desktop.getByRole("button", { name: "取消任务", exact: true }).last().click();
+  await desktop.getByText("已取消任务，可以启动新任务", { exact: true }).waitFor();
+  assert.equal(draftJobStatus, "cancelled");
   await desktop.goto(url + "/wiki/contributors");
   const contributorList = desktop.getByRole("list", { name: "公开贡献者" });
   const contributorRow = contributorList.getByRole("link", { name: /Cherry/ });

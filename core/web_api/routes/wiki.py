@@ -19,6 +19,7 @@ from pydantic import Field
 from core.media.image_validation import MAX_IMAGE_BYTES, ImageInputError, validate_image
 from core.wiki.avatars import sniff_media_type
 from core.wiki.cursor import InvalidCursor
+from core.wiki.knowledge import PageEditConflict, PublicationAccessUnverified
 from core.wiki.models import MANUAL_REVIEW_POLICY, Strict, WikiConfig
 from core.wiki.reader import public_notes, revision_changes
 from core.wiki.runtime import get_wiki_runtime
@@ -532,7 +533,9 @@ async def delete_cover(channel: str, actor=ADMIN_AUTH):
 async def create_job(channel: str, body: JobRequest, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
     try:
-        job_id = await service.store.enqueue(ch["id"], body.kind, actor, body.page_id)
+        job_id = await service.store.enqueue(
+            ch["id"], body.kind, actor, body.page_id, require_new=True
+        )
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
     service.wake()
@@ -554,12 +557,15 @@ async def jobs(channel: str, page: int = Query(1, ge=1, le=10000)):
 
 @admin.post("/channels/{channel}/jobs/{job_id}/{action}")
 async def control_job(
-    channel: str, job_id: str, action: Literal["pause", "resume", "retry"], actor=ADMIN_AUTH
+    channel: str,
+    job_id: str,
+    action: Literal["pause", "resume", "retry", "cancel"],
+    actor=ADMIN_AUTH,
 ):
     service, ch = await managed(channel)
     try:
         await service.store.control_job(ch["id"], job_id, action, actor)
-        if action != "pause":
+        if action in {"resume", "retry"}:
             service.wake()
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
@@ -701,21 +707,26 @@ async def revision_detail(
 async def manually_approve_revision(channel: str, revision_id: str, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
     channel_id = ch["id"]
+    publication_id = None
+    publication_error = ""
+    publication_pending = False
+    knowledge = service.engine.knowledge
     async with service.store.transaction() as cur:
-        await cur.execute("SELECT config FROM wiki_channels WHERE id=%s FOR UPDATE", (channel_id,))
+        await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel_id,))
         current = await cur.fetchone()
         await cur.execute(
-            """SELECT r.page_id,p.topic FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+            """SELECT r.page_id,r.job_id,p.topic FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
             WHERE r.id=%s AND r.channel_id=%s""",
             (revision_id, channel_id),
         )
         row = await cur.fetchone()
         if not current or not row:
             raise HTTPException(404, "找不到该修订")
-        if row["topic"] in decode(current["config"]).get("hidden_topics", []):
+        config = WikiConfig.model_validate(decode(current["config"]))
+        if row["topic"] in config.hidden_topics:
             raise HTTPException(409, "该主题已隐藏")
         try:
-            await service.engine.knowledge.manually_approve_revision(
+            await knowledge.manually_approve_revision(
                 cur, channel_id, row["page_id"], revision_id, actor
             )
         except ValueError:
@@ -736,7 +747,45 @@ async def manually_approve_revision(channel: str, revision_id: str, actor=ADMIN_
                     "UPDATE wiki_jobs SET `cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
                     (encode(manifest), encode(progress), job["id"]),
                 )
-    return {"success": True}
+        await cur.execute(
+            "SELECT * FROM wiki_jobs WHERE id=%s AND channel_id=%s AND kind='page_edit' FOR UPDATE",
+            (row["job_id"], channel_id),
+        )
+        edit = await cur.fetchone()
+        if edit:
+            manifest, progress = decode(edit["cursor"]), decode(edit["progress"])
+            if (
+                await knowledge.published_page(cur, current["published_revision"], row["page_id"])
+                == revision_id
+            ):
+                publication_id = current["published_revision"]
+            elif (
+                edit["status"] == "completed"
+                and edit["phase"] == "ready"
+                and progress.get("generation_complete")
+                and progress.get("review_complete")
+                and config.publication_mode == "auto"
+                and manifest.get("revisions", {}).get(row["page_id"]) == revision_id
+            ):
+                try:
+                    publication_id = await knowledge.publish_approved_edit(
+                        cur,
+                        current,
+                        edit,
+                        {**manifest, "review_policy": MANUAL_REVIEW_POLICY},
+                        progress,
+                        actor,
+                    )
+                except (PageEditConflict, PublicationAccessUnverified) as error:
+                    publication_error = str(error)
+            else:
+                publication_pending = True
+    return {
+        "success": True,
+        "publication_id": publication_id,
+        "publication_error": publication_error,
+        "publication_pending": publication_pending,
+    }
 
 
 @admin.post("/channels/{channel}/revisions/{revision_id}/reject")

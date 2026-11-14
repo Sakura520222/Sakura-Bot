@@ -582,12 +582,23 @@ class WikiStore:
                 {"messages": message_ids or []},
             )
 
-    async def enqueue(self, channel, kind="update", actor="scheduler", page_id=None, *, cur=None):
+    async def enqueue(
+        self,
+        channel,
+        kind="update",
+        actor="scheduler",
+        page_id=None,
+        *,
+        cur=None,
+        require_new=False,
+    ):
         if kind not in {"backfill", "update", "reconcile", "reindex", "page", "proposal", "albums"}:
             raise ValueError("Unknown Wiki job kind")
         if cur is None:
             async with self.transaction() as transaction:
-                return await self.enqueue(channel, kind, actor, page_id, cur=transaction)
+                return await self.enqueue(
+                    channel, kind, actor, page_id, cur=transaction, require_new=require_new
+                )
         await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
         record = await cur.fetchone()
         if not record or not record["enabled"]:
@@ -599,7 +610,17 @@ class WikiStore:
             if not await cur.fetchone():
                 raise ValueError("A page in this channel is required")
         if record["active_job"]:
+            if require_new:
+                await cur.execute(
+                    "SELECT status FROM wiki_jobs WHERE id=%s", (record["active_job"],)
+                )
+                active = await cur.fetchone()
+                if active and active["status"] == "paused":
+                    raise ValueError("本频道有已暂停的任务。请恢复或取消该任务后再启动新任务。")
+                raise ValueError("本频道已有任务在处理，请在任务列表查看进度。")
             return record["active_job"]
+        if require_new and decode(record["config"]).get("paused"):
+            raise ValueError("频道更新已暂停，请关闭「暂停自动更新」后再启动任务。")
         job_id = uuid.uuid4().hex
         progress = {
             "enumerated": 0,
@@ -783,7 +804,15 @@ class WikiStore:
             await self.fence(cur, job)
             cursor = job["cursor"]
             if status == "completed" and job["phase"] == "ready":
-                await self.reconcile_manual_reviews(cur, cursor, job["progress"])
+                reconciled = await self.reconcile_manual_reviews(cur, cursor, job["progress"])
+                if reconciled and job["kind"] == "page_edit" and job["progress"]["review_complete"]:
+                    await cur.execute(
+                        "SELECT JSON_UNQUOTE(JSON_EXTRACT(config,'$.publication_mode')) mode FROM wiki_channels WHERE id=%s",
+                        (job["channel_id"],),
+                    )
+                    if (await cur.fetchone())["mode"] == "auto":
+                        # Approval arrived after the running worker's publication check.
+                        status = "pending"
             if status in {"completed", "published"}:
                 cursor = {key: cursor[key] for key in self.TERMINAL_CURSOR_KEYS if key in cursor}
             await cur.execute(
@@ -814,7 +843,7 @@ class WikiStore:
                 )
 
     async def control_job(self, channel, job_id, action, actor):
-        if action not in {"pause", "resume", "retry"}:
+        if action not in {"pause", "resume", "retry", "cancel"}:
             raise ValueError("Unknown job action")
         async with self.transaction() as cur:
             await cur.execute(
@@ -829,12 +858,32 @@ class WikiStore:
             if not job or not channel_row:
                 raise ValueError("Unknown job")
             page_edit = job["kind"] == "page_edit"
+            if job["status"] == "cancelled":
+                if action == "cancel":
+                    return
+                raise ValueError("该任务已取消，请启动新任务")
             if not page_edit and channel_row["active_job"] not in (None, job_id):
-                raise ValueError("Another job is active")
+                raise ValueError("本频道已有其他任务")
             if job["status"] in {"completed", "published"}:
-                raise ValueError("Completed jobs are immutable; start a new job")
+                raise ValueError("任务已结束，请启动新任务")
             progress = decode(job["progress"])
             progress["active_requests"] = {}
+            if action == "cancel":
+                if page_edit or job["status"] != "paused":
+                    raise ValueError("仅可取消已暂停的频道任务")
+                progress.update(activity="已取消", error_detail="", reserved_tokens=0)
+                await cur.execute(
+                    """UPDATE wiki_jobs SET status='cancelled',lease_token=NULL,lease_until=NULL,
+                    error_code=NULL,updated_at=UTC_TIMESTAMP(6),progress=%s WHERE id=%s""",
+                    (encode(progress), job_id),
+                )
+                await cur.execute(
+                    """UPDATE wiki_channels SET active_job=NULL,scheduled_at=UTC_TIMESTAMP(6)
+                    WHERE id=%s AND active_job=%s""",
+                    (channel, job_id),
+                )
+                await self.audit(cur, channel, action, job_id, actor)
+                return
             if action != "pause":
                 progress.update(error_detail="", activity="等待后台执行")
             await cur.execute(
