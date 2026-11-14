@@ -65,7 +65,7 @@ export function renderAnnotations(
   const highlights = new Map<Text, Set<number>>();
   const placements = new Map<Text, Map<number, HTMLElement[]>>();
   const unanchored: HTMLElement[] = [];
-  for (const note of notes) {
+  for (const [index, note] of notes.entries()) {
     const excerpt = normalize(note.excerpt || "");
     let start = excerpt ? text.indexOf(excerpt) : -1;
     for (let i = 0; start >= 0 && i < (note.excerpt_occurrence ?? 0); i++) {
@@ -81,6 +81,7 @@ export function renderAnnotations(
     }
     const aside = document.createElement(last ? "span" : unanchoredTag);
     aside.className = last ? "wiki-inline-note wiki-inline-caption" : "wiki-inline-note wiki-note-unanchored";
+    aside.dataset.annotationIndex = String(index);
     const author = note.contributor;
     const byline = author ? `${author.display_name}${author.username ? ` @${author.username}` : ""}` : "匿名贡献者";
     const insideLink = !!last?.node.parentElement?.closest("a");

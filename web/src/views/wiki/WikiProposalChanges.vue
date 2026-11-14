@@ -1,6 +1,6 @@
 <template>
   <div class="proposal-changes">
-    <p class="paragraph">{{ item.payload.claim === null ? '词条标题' : `第 ${item.payload.claim + 1} 段` }}</p>
+    <p class="paragraph">{{ item.payload.claim === null ? '词条标题' : `第 ${item.payload.claim + 1} 段` }}<template v-if="item.payload.annotation_index != null"> · 修改注解</template></p>
     <WikiRevisionDiff v-if="editing" :changes="[{ before: before || null, after: after || null }]" />
     <template v-else>
       <section v-if="item.payload.excerpt || item.original" class="before"><h4>{{ item.payload.excerpt ? "所选原文" : item.payload.claim === null ? "原标题" : "原文段落" }}</h4><pre>{{ item.payload.excerpt || item.original }}</pre></section>
@@ -13,8 +13,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import WikiRevisionDiff from "./WikiRevisionDiff.vue";
-const props = defineProps<{ item: { kind: string; original?: string | null; payload: { claim: number | null; text: string; excerpt?: string; diff: string } } }>();
-const editing = computed(() => ["edit", "correction"].includes(props.item.kind));
+const props = defineProps<{ item: { kind: string; original?: string | null; payload: { claim: number | null; text: string; excerpt?: string; diff: string; annotation_index?: number | null } } }>();
+const editing = computed(() => props.item.payload.annotation_index != null || ["edit", "correction"].includes(props.item.kind));
 const changes = computed(() => (props.item.payload.diff || "").split("\n").slice(2).filter((line) => /^[-+]/.test(line)));
 const before = computed(() => changes.value.length ? changes.value.filter((line) => line.startsWith("-")).map((line) => line.slice(1)).join("\n") : props.item.original);
 const after = computed(() => changes.value.length ? changes.value.filter((line) => line.startsWith("+")).map((line) => line.slice(1)).join("\n") : props.item.payload.text);

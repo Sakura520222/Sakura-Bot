@@ -36,6 +36,7 @@ class Proposal(Strict):
     sources: list[str] = Field(default_factory=list, max_length=5)
     excerpt: str = Field(default="", max_length=500)
     excerpt_occurrence: int | None = Field(default=None, ge=0, le=10000, strict=True)
+    annotation_index: int | None = Field(default=None, ge=0, strict=True)
 
     @field_validator("text")
     @classmethod
@@ -66,6 +67,17 @@ def proposal_original(document, claim):
         return document.get("title")
     claims = document.get("claims", [])
     return claims[claim]["text"] if 0 <= claim < len(claims) else None
+
+
+def find_annotation(document, claim, index):
+    if claim is None:
+        notes = document.get("title_notes", [])
+    else:
+        claims = document.get("claims", [])
+        notes = claims[claim].get("community_notes", []) if 0 <= claim < len(claims) else []
+    if index >= len(notes) or notes[index]["kind"] != "annotation":
+        raise ValueError("找不到所选注解，请刷新词条后重试")
+    return notes[index]
 
 
 class Community:
@@ -108,7 +120,17 @@ class Community:
             original = proposal_original(document, proposal.claim)
             if original is None:
                 raise ValueError("找不到所选段落")
-            if proposal.excerpt:
+            note_index = proposal.annotation_index
+            if note_index is not None:
+                if proposal.kind != "annotation":
+                    raise ValueError("修改注解时请选择注解类型")
+                original_note = find_annotation(document, proposal.claim, note_index)
+                original = original_note["text"]
+                if proposal.text == original and proposal.sources == original_note.get(
+                    "sources", []
+                ):
+                    raise ValueError("注解没有变化")
+            elif proposal.excerpt:
                 normalize = selection_text if proposal.claim is not None else str.strip
                 excerpt = normalize(proposal.excerpt)
                 if not excerpt or excerpt not in normalize(original):
@@ -120,14 +142,16 @@ class Community:
             changes = (
                 list(
                     difflib.unified_diff(
-                        original.splitlines(),
-                        proposal.text.splitlines(),
+                        original.splitlines()
+                        + (original_note.get("sources", []) if note_index is not None else []),
+                        proposal.text.splitlines()
+                        + (proposal.sources if note_index is not None else []),
                         fromfile="published",
                         tofile="proposed",
                         lineterm="",
                     )
                 )
-                if proposal.kind in {"edit", "correction"}
+                if proposal.kind in {"edit", "correction"} or note_index is not None
                 else []
             )
             identifier = uuid.uuid4().hex
@@ -239,6 +263,7 @@ class Community:
             data["text"],
             actor,
             annotation=annotation,
+            annotation_index=data.get("annotation_index"),
             proposal_id=proposal["id"],
             replace_text=replace,
             standalone=True,
@@ -354,9 +379,16 @@ class Community:
         for row in rows:
             row["payload"] = decode(row["payload"])
             if review:
-                row["original"] = proposal_original(
-                    decode(row.pop("base_document")), row["payload"]["claim"]
-                )
+                document = decode(row.pop("base_document"))
+                payload = row["payload"]
+                index = payload.get("annotation_index")
+                if index is None:
+                    row["original"] = proposal_original(document, payload["claim"])
+                else:
+                    try:
+                        row["original"] = find_annotation(document, payload["claim"], index)["text"]
+                    except ValueError:
+                        row["original"] = None
         return rows
 
     async def contributions(self, *, channel=None, page=None, user=None, offset=0, history=False):

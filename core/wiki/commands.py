@@ -22,11 +22,13 @@ def proposal_summary(proposal):
         return value[:limit] + ("…" if len(value) > limit else "")
 
     target = "词条标题" if payload["claim"] is None else f"第 {payload['claim'] + 1} 段"
+    annotation_edit = payload.get("annotation_index") is not None
+    label = "修改注解" if annotation_edit else PROPOSAL_LABELS[kind]
     lines = [
-        f"Wiki 待审 · {PROPOSAL_LABELS[kind]}",
+        f"Wiki 待审 · {label}",
         f"{excerpt(proposal['channel_title'], 100)} / {excerpt(proposal['title'], 160)} · {target}",
     ]
-    if kind in {"edit", "correction"}:
+    if kind in {"edit", "correction"} or annotation_edit:
         changes = [
             line for line in payload.get("diff", "").splitlines()[2:] if line.startswith(("-", "+"))
         ]

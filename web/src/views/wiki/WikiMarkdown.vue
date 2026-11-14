@@ -58,6 +58,7 @@ const options = {
   USE_PROFILES: { html: true },
   FORBID_TAGS: ["img", "iframe", "form", "style"],
 };
+const sourceOptions = { ...options, FORBID_ATTR: ["data-annotation-index"] };
 const html = computed(() => {
   renderedImages.clear();
   if (props.heading) {
@@ -73,12 +74,12 @@ const html = computed(() => {
     return rendered.innerHTML;
   }
   const source = renderMarkdown(props.text, renderer);
-  if (!props.annotations?.length) return DOMPurify.sanitize(source, options);
-  const root = DOMPurify.sanitize(source, { ...options, RETURN_DOM_FRAGMENT: true });
+  if (!props.annotations?.length) return DOMPurify.sanitize(source, sourceOptions);
+  const root = DOMPurify.sanitize(source, { ...sourceOptions, RETURN_DOM_FRAGMENT: true });
   const annotationRenderer = new Renderer();
   annotationRenderer.image = () => "";
   renderAnnotations(root, props.annotations, (text) =>
-    DOMPurify.sanitize(renderMarkdown(text, annotationRenderer), { ...options, RETURN_DOM_FRAGMENT: true }),
+    DOMPurify.sanitize(renderMarkdown(text, annotationRenderer), { ...sourceOptions, RETURN_DOM_FRAGMENT: true }),
   );
   const rendered = document.createElement("div");
   rendered.append(root);

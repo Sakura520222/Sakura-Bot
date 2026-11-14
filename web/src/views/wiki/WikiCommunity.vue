@@ -10,10 +10,10 @@
     <p v-if="message && (!article || sidebar || showList)" role="status">{{ message }}</p>
     <dialog v-if="article" ref="editor" class="proposal-dialog" aria-labelledby="proposal-heading" @close="editing = false">
     <form v-if="editing" @submit.prevent="submit">
-      <h2 id="proposal-heading">{{ titleTarget ? (kind === 'annotation' ? '添加标题注解' : '提交标题修订建议') : (kind === 'annotation' ? '添加注解' : '提交修订建议') }}</h2>
+      <h2 id="proposal-heading">{{ annotationIndex !== undefined ? '修改当前注解' : titleTarget ? (kind === 'annotation' ? '添加标题注解' : '提交标题修订建议') : (kind === 'annotation' ? '添加注解' : '提交修订建议') }}</h2>
       <blockquote v-if="passage?.excerpt" class="proposal-excerpt">{{ passage.excerpt }}</blockquote>
       <p v-if="message" role="alert">{{ message }}</p>
-      <p><label>类型 <select v-model="kind"><option value="edit">{{ titleTarget ? '标题修订' : '正文修订' }}</option><option value="correction">纠错</option>
+      <p v-if="annotationIndex === undefined"><label>类型 <select v-model="kind"><option value="edit">{{ titleTarget ? '标题修订' : '正文修订' }}</option><option value="correction">纠错</option>
         <template v-if="article.annotations_enabled"><option value="annotation">注解</option><option value="source">补充来源</option>
           <option value="fact_check">事实标注</option><option value="dispute">争议</option><option value="outdated">过期</option></template>
       </select></label></p>
@@ -27,8 +27,8 @@
       <p v-if="replacingSelection" class="wiki-meta">留空可删除选中文字。</p>
       <p><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
       <details><summary>预览</summary><p v-if="editingText && titleTarget">{{ submittedText }}</p><WikiMarkdown v-else :text="submittedText" :channel="article.channel_id" /></details>
-      <details v-if="editingText && submittedText !== original"><summary>查看差异</summary>
-        <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
+      <details v-if="editingText && submittedText !== original || annotationIndex !== undefined"><summary>查看差异</summary>
+        <WikiRevisionDiff :changes="[{ before: originalNote?.text ?? original, after: submittedText }]" />
       </details>
       <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy || !canSubmit">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
     </form>
@@ -104,6 +104,7 @@ const editor = ref<HTMLDialogElement>();
 const passage = ref<WikiPassage>();
 const kind = ref("edit");
 const claim = ref<number | null>(0);
+const annotationIndex = ref<number>();
 const draft = ref("");
 const sources = ref("");
 const editingText = computed(() => kind.value === "edit" || kind.value === "correction");
@@ -111,7 +112,17 @@ const titleTarget = computed(() => claim.value === null);
 const original = computed(() => (claim.value === null ? props.article?.title : props.article?.claims[claim.value]?.text) || "");
 const submittedText = computed(() => editingText.value && passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
 const replacingSelection = computed(() => editingText.value && !!passage.value?.range);
-const canSubmit = computed(() => !!submittedText.value.trim() && (!editingText.value || submittedText.value.trim() !== original.value.trim()));
+const originalNote = computed(() => {
+  if (annotationIndex.value === undefined) return undefined;
+  const notes = titleTarget.value ? props.article?.title_notes : props.article?.claims[claim.value!]?.community_notes;
+  return notes?.[annotationIndex.value];
+});
+const sourceLinks = computed(() => sources.value.split(/\s+/).filter(Boolean));
+const canSubmit = computed(() => !!submittedText.value.trim() && (
+  originalNote.value ? submittedText.value.trim() !== originalNote.value.text ||
+    JSON.stringify(sourceLinks.value) !== JSON.stringify(originalNote.value.sources) :
+    !editingText.value || submittedText.value.trim() !== original.value.trim()
+));
 const contributorOffset = ref(0);
 const contributorsLoading = ref(false);
 const contributorsError = ref("");
@@ -169,7 +180,7 @@ watch(() => props.article?.revision_id, () => {
   void readContributors(0);
 });
 function chooseClaim() { draft.value = editingText.value ? (passage.value?.range ? passage.value.excerpt : original.value) : ""; }
-function openProposal(mode: "edit" | "annotation", selection?: WikiPassage) {
+function openProposal(mode: "edit" | "annotation", selection?: WikiPassage, noteIndex?: number) {
   void run(async () => {
     const revision = props.article?.revision_id;
     await refreshUser();
@@ -177,14 +188,20 @@ function openProposal(mode: "edit" | "annotation", selection?: WikiPassage) {
     if (!user.value) { window.dispatchEvent(new Event(wikiOpenAccount)); return; }
     passage.value = selection;
     claim.value = selection ? selection.claim : 0;
+    annotationIndex.value = noteIndex;
     kind.value = mode;
-    chooseClaim(); sources.value = ""; editing.value = true;
+    chooseClaim();
+    const note = originalNote.value;
+    if (noteIndex !== undefined && !note) return;
+    if (note) draft.value = note.text;
+    sources.value = note?.sources.join("\n") || "";
+    editing.value = true;
     await nextTick();
     if (!editor.value?.open) editor.value?.showModal();
   });
 }
 defineExpose({ openProposal });
-watch(editingText, chooseClaim);
+watch(editingText, () => { if (annotationIndex.value === undefined) chooseClaim(); });
 async function submit() {
   if (!props.article || busy.value || !canSubmit.value) return;
   busy.value = true;
@@ -194,7 +211,7 @@ async function submit() {
     if (props.article?.revision_id !== article.revision_id || !editing.value) return;
     await request("/proposals", "POST", { channel: article.channel_id, page: article.id, revision: article.revision_id,
       kind: kind.value, claim: claim.value, text: submittedText.value, excerpt: passage.value?.excerpt || "",
-      excerpt_occurrence: passage.value?.excerptOccurrence, sources: sources.value.split(/\s+/).filter(Boolean) });
+      excerpt_occurrence: passage.value?.excerptOccurrence, sources: sourceLinks.value, annotation_index: annotationIndex.value });
     showList.value = true;
     message.value = "已提交，等待管理员审核。"; editor.value?.close();
   }); } finally { busy.value = false; }

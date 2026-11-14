@@ -537,6 +537,28 @@ async def test_community_title_note_and_correction_publish_as_revisions(store, m
     await service.run_job(await store.claim_job())
     renamed = await service.reader.page(channel_id, page["slug"])
     assert renamed["title"] == "修订后的标题" and renamed["title_notes"] == [note]
+    edit_note = Proposal(
+        revision=renamed["revision_id"],
+        kind="annotation",
+        claim=None,
+        annotation_index=0,
+        text="更新后的标题注解",
+    )
+    with pytest.raises(ValueError, match="找不到所选注解"):
+        await service.community.submit(
+            user, channel_id, page["id"], edit_note.model_copy(update={"annotation_index": 10})
+        )
+    edit_id, _ = await service.community.submit(user, channel_id, page["id"], edit_note)
+    [review] = await service.community.proposals(identifier=edit_id, review=True)
+    assert review["original"] == note["text"]
+    assert (await service.reader.page(channel_id, page["slug"]))["title_notes"] == [note]
+    await service.community.decide(edit_id, "approved", "test")
+    await service.run_job(await store.claim_job())
+    updated = await service.reader.page(channel_id, page["slug"])
+    assert updated["title_notes"] == [{**note, "text": "更新后的标题注解"}]
+    assert (await service.reader.page(channel_id, page["slug"], revision=renamed["revision_id"]))[
+        "title_notes"
+    ] == [note]
     previous = await service.reader.page(channel_id, page["slug"], revision=revision)
     assert previous["title"] == initial["title"] and not previous["title_notes"]
     comparison = await service.reader.page(
@@ -549,7 +571,7 @@ async def test_community_title_note_and_correction_publish_as_revisions(store, m
     assert preview["status"] == "available" and not preview["current"]
     assert preview["document"]["title"] == initial["title"]
     assert {"before": renamed["title"], "after": initial["title"]} in preview["changes"]
-    assert (await store.channel(channel_id))["published_revision"] == renamed["publication_id"]
+    assert (await store.channel(channel_id))["published_revision"] == updated["publication_id"]
 
 
 async def test_atomic_publication_visibility_revocation_and_rollback(store, monkeypatch):

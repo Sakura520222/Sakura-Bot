@@ -166,27 +166,38 @@ const menuButton = ref<HTMLButtonElement>();
 const community = ref<InstanceType<typeof WikiCommunity>>();
 const manager = ref<InstanceType<typeof WikiArticleAdmin>>();
 type Anchor = { x: number; y: number; below?: number };
-const selection = shallowRef<{ passage: WikiPassage; anchor: Anchor }>();
-const menu = shallowRef<{ passage?: WikiPassage; anchor: Anchor }>();
+type PassageMenu = { passage?: WikiPassage; annotationIndex?: number; anchor: Anchor };
+const selection = shallowRef<PassageMenu & { passage: WikiPassage }>();
+const menu = shallowRef<PassageMenu>();
 type Action = { id: string; label: string; icon: "edit" | "note" | "ask" | "manage" | "history" | "copy" };
-const selectionItems = computed(() => passageActions(true, selection.value?.passage));
+const selectionItems = computed(() => passageActions(true, selection.value));
 const menuItems = computed<Action[]>(() => [
-  ...passageActions(!!menu.value?.passage?.excerpt, menu.value?.passage),
+  ...passageActions(!!menu.value?.passage?.excerpt, menu.value),
   ...(canAdmin.value && !selectedRevision.value ? [{ id: "manage", label: "管理本词条", icon: "manage" } as const] : []),
   { id: "history", label: "修订历史", icon: "history" },
   { id: "copy", label: "复制链接", icon: "copy" },
 ]);
 const popupActive = () => !!document.querySelector(".wiki-shell dialog[open]");
-function passageActions(selected: boolean, passage?: WikiPassage): Action[] {
+function passageActions(selected: boolean, context?: PassageMenu): Action[] {
   const items: Action[] = [];
   if (selectedRevision.value) return items;
+  const passage = context?.passage;
   if (data.value?.proposals_enabled) {
-    if (data.value.annotations_enabled) items.push({ id: "note", label: "添加注解", icon: "note" });
+    if (data.value.annotations_enabled) {
+      if (context?.annotationIndex !== undefined) items.push({ id: "edit-note", label: "修改当前注解", icon: "edit" });
+      items.push({ id: "note", label: "添加注解", icon: "note" });
+    }
     items.push({ id: "suggest", label: "建议修订", icon: "edit" });
   }
   if (canAdmin.value) items.push({ id: "edit", label: passage?.claim === null ? "修订标题" : "修订正文", icon: "edit" });
   if (assistantEnabled.value) items.push({ id: "ask", label: selected ? "问小妲" : "询问当前词条", icon: "ask" });
   return items;
+}
+function annotationAt(claim: number | null, element: Element | null) {
+  const index = element?.getAttribute("data-annotation-index");
+  if (index == null) return undefined;
+  const notes = claim === null ? data.value?.title_notes : data.value?.claims[claim]?.community_notes;
+  return notes?.[Number(index)]?.kind === "annotation" ? Number(index) : undefined;
 }
 function passageAt(block?: HTMLElement | null) {
   if (!block || !data.value) return undefined;
@@ -213,7 +224,10 @@ function readSelection() {
   const occurrence = excerptOccurrence(block, range, text);
   const passage = wikiPassage(target.claim, target.original, text, target.claim === null ? occurrence : undefined);
   if (data.value.annotations_enabled) passage.excerptOccurrence = occurrence;
-  selection.value = rect.bottom > 0 && rect.top < innerHeight ? { passage, anchor: { x: rect.left + rect.width / 2, y: rect.top, below: rect.bottom } } : undefined;
+  const marks = [...block.querySelectorAll(".wiki-note-anchor > mark")].filter(mark => range.intersectsNode(mark));
+  const markedNotes = marks.flatMap(mark => [...(mark.parentElement?.querySelectorAll(":scope > [data-annotation-index]") ?? [])]);
+  const annotationIndex = markedNotes.length === 1 ? annotationAt(target.claim, markedNotes[0]) : undefined;
+  selection.value = rect.bottom > 0 && rect.top < innerHeight ? { passage, annotationIndex, anchor: { x: rect.left + rect.width / 2, y: rect.top, below: rect.bottom } } : undefined;
 }
 let selectionTimer: ReturnType<typeof setTimeout>;
 function selectionChanged() { clearTimeout(selectionTimer); selectionTimer = setTimeout(readSelection, 100); }
@@ -224,26 +238,32 @@ function openMore() {
 }
 function contextMenu(event: MouseEvent) {
   if (!data.value || !(event.target instanceof Element) || !event.target.closest(".wiki-article") || event.target.closest("a, button, input, textarea, select, summary, dialog")) return;
-  const block = event.target.closest(".wiki-inline-note") ? null : event.target.closest<HTMLElement>(".wiki-markdown[data-claim]");
+  const block = event.target.closest<HTMLElement>(".wiki-markdown[data-claim]");
   readSelection();
   const target = passageAt(block);
+  const nearbyNotes = event.target.closest("mark")?.parentElement?.querySelectorAll(":scope > [data-annotation-index]");
+  const note = event.target.closest("[data-annotation-index]") ?? (nearbyNotes?.length === 1 ? nearbyNotes[0] : null);
+  const annotationIndex = target && note ? annotationAt(target.claim, note) : undefined;
   const passage = !target ? undefined : selection.value?.passage.claim === target.claim
     ? selection.value.passage : wikiPassage(target.claim, target.original, target.claim === null ? target.original : "");
   event.preventDefault();
   event.stopPropagation();
   const rect = event.target.getBoundingClientRect();
-  menu.value = { passage, anchor: { x: event.clientX || rect.left, y: event.clientY || rect.bottom } };
+  menu.value = { passage, annotationIndex, anchor: { x: event.clientX || rect.left, y: event.clientY || rect.bottom } };
 }
 function dismissMenu() { menu.value = undefined; menuButton.value?.focus({ preventScroll: true }); }
 function dismissOutside(event: PointerEvent) {
   if (!(event.target instanceof Element) || !event.target.closest(".article-popup, [aria-haspopup='menu']")) menu.value = undefined;
 }
 function chooseAction(action: string) {
-  const passage = menu.value ? menu.value.passage : selection.value?.passage;
+  const context = menu.value ?? selection.value;
+  const passage = context?.passage;
   menu.value = undefined;
   selection.value = undefined;
   document.getSelection()?.removeAllRanges();
   if (action === "note" || action === "suggest") community.value?.openProposal(action === "note" ? "annotation" : "edit", passage);
+  if (action === "edit-note" && passage && context?.annotationIndex !== undefined)
+    community.value?.openProposal("annotation", passage, context.annotationIndex);
   if (action === "manage" || action === "edit") manager.value?.open(passage, action === "edit");
   if (action === "ask") askArticle(passage?.excerpt);
   if (action === "copy") { void share(); menuButton.value?.focus({ preventScroll: true }); }

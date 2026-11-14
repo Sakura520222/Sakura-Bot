@@ -749,6 +749,18 @@ try {
   await titleEdit.waitFor({ state: "hidden" });
   assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.excerpt, submittedProposal.text],
     [null, "edit", selectionText, title.slice(2)]);
+  await accountPage.goto(url + "/wiki/123/page/article-1");
+  const editableNote = accountPage.locator(".wiki-inline-caption").first();
+  await editableNote.click({ button: "right" });
+  await accountPage.getByRole("menuitem", { name: "修改当前注解", exact: true }).click();
+  const noteEditor = accountPage.getByRole("dialog", { name: "修改当前注解" });
+  const noteText = noteEditor.getByRole("textbox", { name: "说明", exact: true });
+  assert.equal(await noteText.inputValue(), "第一处的注解。");
+  await noteText.fill("更新注解。");
+  await noteEditor.getByRole("button", { name: "提交审核", exact: true }).click();
+  await noteEditor.waitFor({ state: "hidden" });
+  assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.annotation_index, submittedProposal.text],
+    [0, "annotation", 0, "更新注解。"]);
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();

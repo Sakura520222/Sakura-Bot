@@ -984,6 +984,7 @@ class Knowledge:
         actor,
         *,
         annotation=None,
+        annotation_index=None,
         proposal_id=None,
         replace_text=True,
         standalone=False,
@@ -1006,23 +1007,36 @@ class Knowledge:
                 proposal_id,
             ]
         if ordinal is None:
-            if annotation:
-                document["title_notes"] = [*document.get("title_notes", []), annotation]
+            target, notes_key = document, "title_notes"
             if replace_text:
                 validate_title_correction(text)
                 document["title"] = text.strip()
         else:
             if not 0 <= ordinal < len(document["claims"]):
                 raise ValueError("Unknown claim")
-            claim = document["claims"][ordinal]
-            if annotation:
-                claim["community_notes"] = [*claim.get("community_notes", []), annotation]
-                if annotation["kind"] in {"dispute", "outdated"}:
-                    claim["status"] = (
+            target, notes_key = document["claims"][ordinal], "community_notes"
+            if replace_text:
+                target["text"] = text
+        if annotation:
+            notes = target.setdefault(notes_key, [])
+            if annotation_index is None:
+                notes.append(annotation)
+                if ordinal is not None and annotation["kind"] in {"dispute", "outdated"}:
+                    target["status"] = (
                         "disputed" if annotation["kind"] == "dispute" else "superseded"
                     )
-            if replace_text:
-                claim["text"] = text
+            else:
+                if (
+                    not 0 <= annotation_index < len(notes)
+                    or notes[annotation_index]["kind"] != "annotation"
+                ):
+                    raise ValueError("找不到所选注解，请刷新词条后重试")
+                original = notes[annotation_index]
+                notes[annotation_index] = {
+                    **original,
+                    "text": annotation["text"],
+                    "sources": annotation["sources"],
+                }
         document["verified_at"] = utc().isoformat()
         await cur.execute(
             """INSERT INTO wiki_page_revisions
