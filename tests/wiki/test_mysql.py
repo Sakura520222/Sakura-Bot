@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import aiomysql
 import pytest
@@ -21,16 +23,18 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
-from core.web_api.auth import WebUIUser
+from core.web_api.auth import WebUIUser, generate_token
 from core.web_api.middleware import AuthMiddleware, _wiki_buckets
-from core.web_api.routes import wiki
+from core.web_api.routes import auth, wiki, wiki_account
 from core.wiki.collector import SourceCollector
+from core.wiki.community import Community, Proposal
 from core.wiki.engine import WikiEngine
 from core.wiki.knowledge import Knowledge
 from core.wiki.models import WikiConfig, chunks, digest, name_key
 from core.wiki.reader import PublicReader
 from core.wiki.runtime import WikiRuntime
 from core.wiki.store import LeaseLost, WikiStore, decode
+from core.wiki.telegram_login import LoginConfig
 from tests.wiki.test_contracts import extraction
 
 TEST_PORT = int(os.environ.get("WIKI_TEST_PORT", "0"))
@@ -113,6 +117,256 @@ async def channel(store, channel_id=12345, public=True):
     return await store.channel(ch["id"])
 
 
+async def test_oidc_cookie_flow_isolated_from_webui_and_replay(store, monkeypatch):
+    origin = "https://wiki.example.test"
+    headers = {"Origin": origin, "X-Wiki-Request": "1"}
+    account = wiki_account.ACCOUNT_PATH
+    service = WikiRuntime(store, None, None)
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    monkeypatch.setattr(
+        wiki_account.telegram_login, "login_config", lambda: LoginConfig(origin, "123456", "secret")
+    )
+    exchange = AsyncMock(
+        return_value=(987654321, b"opaque-subject", "第一位用户", "private_name", None)
+    )
+    monkeypatch.setattr(wiki_account.telegram_login, "exchange_code", exchange)
+    monkeypatch.setattr(
+        wiki_account.telegram_login,
+        "load_profile_avatar",
+        AsyncMock(return_value=(b"avatar", "image/png")),
+    )
+    monkeypatch.setattr("core.web_api.auth._is_dev_mode_enabled", lambda: True)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(wiki.public, prefix="/api/public/wiki")
+    app.include_router(wiki_account.router, prefix=account)
+    app.include_router(wiki_account.admin, prefix="/api/wiki/admin")
+    transport = ASGITransport(app=app)
+
+    async with (
+        AsyncClient(transport=transport, base_url=origin) as client,
+        AsyncClient(transport=transport, base_url=origin) as other,
+    ):
+        assert (await client.get("/api/public/wiki/channels")).status_code == 200
+        assert (await client.get(f"{account}/session")).json()["user"] is None
+        assert (
+            await client.post(
+                f"{account}/start", json={}, headers={**headers, "Origin": "https://evil.test"}
+            )
+        ).status_code == 403
+        assert (
+            await client.post(f"{account}/start", json={}, headers={**headers, "Host": "evil.test"})
+        ).status_code == 404
+        start = await client.post(
+            f"{account}/start", headers=headers, json={"return_to": "/wiki/123#claim-1"}
+        )
+        assert start.status_code == 200, start.text
+        params = parse_qs(urlsplit(start.json()["authorization_url"]).query)
+        assert "HttpOnly" in start.headers["set-cookie"] and "Secure" in start.headers["set-cookie"]
+        callback_url = f"{account}/callback"
+        expired = await client.post(f"{account}/start", headers=headers, json={})
+        expired_state = parse_qs(urlsplit(expired.json()["authorization_url"]).query)["state"][0]
+        await store.query(
+            "UPDATE wiki_login_flows SET expires_at=UTC_TIMESTAMP(6) WHERE state_hash=UNHEX(%s)",
+            (wiki_account.token_hash(expired_state),),
+        )
+        expired_result = await client.get(
+            callback_url, params={"state": expired_state, "code": "expired-code"}
+        )
+        assert expired_result.headers["location"].endswith("login_error=expired")
+        callback_params = {"state": params["state"][0], "code": "single-use-code"}
+        rejected = await other.get(callback_url, params=callback_params)
+        assert (
+            rejected.headers["location"].endswith("login_error=expired")
+            and not exchange.await_count
+        )
+        accepted = await client.get(callback_url, params=callback_params)
+        assert (
+            accepted.status_code == 303
+            and accepted.headers["location"] == origin + "/wiki/123#claim-1"
+        )
+        assert (
+            accepted.headers["cache-control"] == "no-store"
+            and accepted.headers["referrer-policy"] == "no-referrer"
+        )
+        assert all(
+            "HttpOnly" in cookie and "SameSite=lax" in cookie
+            for cookie in accepted.headers.get_list("set-cookie")
+        )
+        replay = await client.get(callback_url, params=callback_params)
+        assert (
+            replay.headers["location"].endswith("login_error=expired") and exchange.await_count == 1
+        )
+        assert exchange.await_args.args[3] == params["nonce"][0]
+        assert exchange.await_args.args[2] != params["code_challenge"][0]
+
+        state = await client.get(f"{account}/session")
+        user = state.json()["user"]
+        assert user["display_name"] == "第一位用户" and user["username"] == "private_name"
+        assert "987654321" not in state.text and "opaque-subject" not in state.text
+        assert user["privacy"] == {
+            "show_avatar": False,
+            "show_username": False,
+            "anonymous_contributions": True,
+        }
+        assert (await client.get(f"{account}/avatar")).content == b"avatar"
+        assert (await other.get(f"{account}/avatar", params={"id": user["id"]})).status_code == 401
+        admin_url = "/api/wiki/admin/status"
+        assert (await client.get(admin_url)).status_code == 401
+        assert (
+            await client.get(
+                admin_url,
+                headers={"Authorization": f"Bearer {client.cookies.get(wiki_account.ACCESS)}"},
+            )
+        ).status_code == 401
+        assert (
+            await client.get(
+                admin_url, headers={"Authorization": f"Bearer {generate_token('999999')}"}
+            )
+        ).status_code == 403
+        assert (
+            await client.get(
+                admin_url, headers={"Authorization": f"Bearer {generate_token('admin')}"}
+            )
+        ).json() == {"admin": True}
+        assert (
+            await other.get(f"{account}/avatar", headers={"Authorization": "Bearer dev"})
+        ).status_code == 401
+
+        preferences = {
+            "show_avatar": True,
+            "show_username": False,
+            "anonymous_contributions": False,
+        }
+        assert (await client.put(f"{account}/privacy", json=preferences)).status_code == 403
+        assert (
+            await client.put(
+                f"{account}/privacy", headers=headers, json={**preferences, "user_id": "someone"}
+            )
+        ).status_code == 422
+        assert (
+            await client.put(f"{account}/privacy", headers=headers, json=preferences)
+        ).json() == preferences
+        bookmark = "a" * 32
+        bookmarks = f"{account}/bookmarks"
+        assert (await other.get(bookmarks)).status_code == 401
+        assert (await client.post(bookmarks, json={"add": [bookmark]})).status_code == 403
+        for _ in range(2):
+            assert (
+                await client.post(bookmarks, headers=headers, json={"add": [bookmark]})
+            ).status_code == 204
+        assert (await client.get(bookmarks)).json() == {"ids": [bookmark]}
+        assert (
+            await client.post(bookmarks, headers=headers, json={"remove": bookmark})
+        ).status_code == 204
+        assert (await client.get(bookmarks)).json() == {"ids": []}
+        old_refresh = client.cookies.get(wiki_account.REFRESH)
+        old_access = client.cookies.get(wiki_account.ACCESS)
+        session = await service.accounts.session(old_access)
+        await store.query(
+            "UPDATE wiki_sessions SET access_until=UTC_TIMESTAMP(6) WHERE id=%s",
+            (session["session_id"],),
+        )
+        assert (await client.get(f"{account}/session")).json()["can_refresh"] is True
+        assert (await client.post(f"{account}/refresh", headers=headers)).status_code == 204
+        assert client.cookies.get(wiki_account.REFRESH) != old_refresh
+        assert await service.accounts.rotate(old_refresh) is None
+        assert (await client.get(f"{account}/session")).json()["user"]["privacy"] == preferences
+        new_refresh = client.cookies.get(wiki_account.REFRESH)
+        rotations = await asyncio.gather(
+            service.accounts.rotate(new_refresh), service.accounts.rotate(new_refresh)
+        )
+        rotated = [result for result in rotations if result]
+        assert len(rotated) == 1
+        client.cookies.set(wiki_account.ACCESS, rotated[0][0], domain="wiki.example.test", path="/")
+        client.cookies.set(
+            wiki_account.REFRESH, rotated[0][1], domain="wiki.example.test", path="/"
+        )
+
+        profile = await client.post(
+            f"{account}/start", headers=headers, json={"refresh_profile": True}
+        )
+        state = parse_qs(urlsplit(profile.json()["authorization_url"]).query)["state"][0]
+        exchange.return_value = (999999, b"different-account", "其他用户", None, None)
+        wrong_account = await client.get(
+            callback_url, params={"state": state, "code": "wrong-account"}
+        )
+        assert wrong_account.headers["location"].endswith("login_error=unavailable")
+        assert (await client.get(f"{account}/session")).json()["user"]["id"] == user["id"]
+        profile = await client.post(
+            f"{account}/start", headers=headers, json={"refresh_profile": True}
+        )
+        state = parse_qs(urlsplit(profile.json()["authorization_url"]).query)["state"][0]
+        exchange.return_value = (987654321, b"opaque-subject", "新昵称", None, None)
+        await client.get(callback_url, params={"state": state, "code": "profile"})
+        updated = (await client.get(f"{account}/session")).json()["user"]
+        assert (
+            updated["id"] == user["id"]
+            and updated["display_name"] == "新昵称"
+            and updated["privacy"] == preferences
+        )
+
+        admin_headers = {"Authorization": f"Bearer {generate_token('admin')}"}
+        block = f"/api/wiki/admin/accounts/{user['id']}/blocked"
+        assert (await client.put(block, json={"blocked": True})).status_code == 401
+        assert (
+            await client.put(block, headers=admin_headers, json={"blocked": True})
+        ).status_code == 200
+        assert (await client.post(f"{account}/refresh", headers=headers)).status_code == 401
+        assert (await client.get(f"{account}/session")).json()["user"] is None
+        assert not await store.one("SELECT id FROM wiki_sessions")
+        assert (
+            await client.put(block, headers=admin_headers, json={"blocked": False})
+        ).status_code == 200
+        start = await client.post(f"{account}/start", headers=headers, json={})
+        state = parse_qs(urlsplit(start.json()["authorization_url"]).query)["state"][0]
+        assert (
+            await client.get(callback_url, params={"state": state, "code": "login-again"})
+        ).status_code == 303
+        refresh = client.cookies.get(wiki_account.REFRESH)
+        assert refresh
+        assert (await client.post(f"{account}/logout", headers=headers)).status_code == 204
+        assert not client.cookies.get(wiki_account.REFRESH) and not await service.accounts.rotate(
+            refresh
+        )
+
+
+async def test_legacy_admin_widget_preserves_login_with_expiry_and_replay_checks(
+    store, monkeypatch
+):
+    import hashlib
+    import hmac
+    import time
+
+    from core.settings import get_settings
+    from core.web_api import deps
+
+    service = WikiRuntime(store, None, None)
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    monkeypatch.setattr(deps, "check_admin_permission", lambda user_id: user_id == "123456")
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(auth.router, prefix="/api/auth")
+    key = hashlib.sha256(get_settings().telegram.bot_token.encode()).digest()
+
+    def signed(when):
+        data = {"id": 123456, "first_name": "Admin", "auth_date": when}
+        message = "\n".join(f"{name}={value}" for name, value in sorted(data.items()))
+        return {**data, "hash": hmac.new(key, message.encode(), hashlib.sha256).hexdigest()}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://wiki.example.test"
+    ) as client:
+        endpoint = "/api/auth/telegram-callback"
+        now = int(time.time())
+        assert not (await client.post(endpoint, json=signed(now - 301))).json()["success"]
+        response = await client.post(endpoint, json=signed(now))
+        assert response.json()["success"]
+        assert not (await client.post(endpoint, json=signed(now))).json()["success"]
+
+
 async def published(store, *, image=False, channel_id=12345):
     ch = await channel(store, channel_id)
     if image:
@@ -149,9 +403,9 @@ async def published(store, *, image=False, channel_id=12345):
     job["cursor"]["revisions"] = {page["id"]: revision}
     fresh = await store.channel(ch["id"])
     job["progress"].update(
-        generation_complete=True, review_complete=True, source_generation=fresh["source_generation"]
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
     )
-    await store.checkpoint(job, "ready")
+    await WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model")).review(job, fresh)
     await store.finish(job)
     publication = await knowledge.publish(ch["id"], job_id, "test")
     return ch, source, page, revision, publication
@@ -180,6 +434,241 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     with pytest.raises(ValueError, match="revoked"):
         await Knowledge(store).publish(ch["id"], None, "test", rollback=publication)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+
+
+async def test_community_contributions_follow_publication_and_privacy(store, monkeypatch):
+    ch, source, page, revision, original = await published(store)
+    await store.configure(
+        ch["id"],
+        ch["config"].model_copy(update={"proposals_enabled": True, "annotations_enabled": True}),
+        "test",
+    )
+    service = WikiRuntime(store, None, None)
+    fake = FakeAI()
+    service.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    service.community = Community(store, service.engine.knowledge)
+    await service.accounts.login(
+        (987654321, b"test-subject", "测试贡献者", "hidden_name", None), (None, None), None, None
+    )
+    user = (await store.one("SELECT id FROM wiki_users"))["id"]
+    proposal = Proposal(
+        revision=revision,
+        kind="annotation",
+        claim=0,
+        text="社区补充说明",
+        sources=["https://example.org/reference"],
+        excerpt="中文检索",
+        excerpt_occurrence=0,
+    )
+    identifier, notify = await service.community.submit(user, ch["id"], page["id"], proposal)
+    assert not notify and not await service.community.contributions()
+    competing, _ = await service.community.submit(user, ch["id"], page["id"], proposal)
+    current_job = await store.enqueue(ch["id"], "update")
+    await store.control_job(ch["id"], current_job, "pause", "test")
+    before = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,))
+    approved = await service.community.decide(identifier, "approved", "test")
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert not own["published"] and not own["currently_public"]
+    assert not approved["queued"] and approved["job_id"] != current_job
+    assert not await service.community.dispatch_approved(ch["id"])
+    assert (await store.channel(ch["id"]))["active_job"] == current_job
+    [detail] = await service.community.proposals(identifier=identifier, review=True)
+    assert detail["original"] and detail["review_job_id"] == approved["job_id"]
+    assert detail["review_job_status"] == "pending"
+    assert not await service.community.contributions()
+    job = await store.claim_job()
+    assert job["kind"] == "page_edit" and job["id"] == approved["job_id"]
+    await service.run_job(job)
+    assert job["progress"]["reviewed_pages"] == job["progress"]["review_total"] == 1
+    await service.engine.knowledge.publish(ch["id"], job["id"], "test")
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert own["published"] and own["currently_public"]
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before
+    assert (await store.channel(ch["id"]))["active_job"] == current_job
+    assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
+    assert not await service.community.contributions()  # Anonymous by default.
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
+    contributors = await service.community.contributions(channel=ch["id"])
+    assert contributors[0]["total"] == 1 and contributors[0]["username"] is None
+    article = await service.reader.page(ch["id"], page["slug"])
+    assert article["claims"][0]["community_notes"][0]["text"] == "社区补充说明"
+    assert article["claims"][0]["community_notes"][0]["excerpt_occurrence"] == 0
+    assert article["claims"][0]["community_notes"][0]["contributor"] == {
+        "id": user,
+        "display_name": "测试贡献者",
+        "username": None,
+        "avatar": False,
+    }
+    assert "proposal_id" not in article["claims"][0]["community_notes"][0]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=TRUE WHERE id=%s", (user,))
+    anonymous = await service.reader.page(ch["id"], page["slug"], part="article")
+    assert "contributor" not in anonymous["claims"][0]["community_notes"][0]
+    await store.query("UPDATE wiki_users SET anonymous_contributions=FALSE WHERE id=%s", (user,))
+    comparison = await service.reader.page(
+        ch["id"], page["slug"], compare=(revision, article["revision_id"])
+    )
+    assert comparison["changes"] == [
+        {"before": None, "after": "注解「中文检索」　社区补充说明\nhttps://example.org/reference"}
+    ]
+    with pytest.raises(ValueError, match="基线"):
+        await service.community.decide(competing, "approved", "test")
+    # Simulate an approval queued by the previous version, while the channel job is still paused.
+    legacy, _ = await service.community.submit(
+        user, ch["id"], page["id"], proposal.model_copy(update={"revision": article["revision_id"]})
+    )
+    await store.query("UPDATE wiki_edit_proposals SET status='approved' WHERE id=%s", (legacy,))
+    assert await service.community.dispatch_approved(ch["id"])
+    [detail] = await service.community.proposals(identifier=legacy, review=True)
+    assert detail["review_job_status"] == "pending"
+    assert (await store.claim_job())["id"] == detail["review_job_id"]
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(wiki.public, prefix="/api/public/wiki")
+    compare_path = f"/api/public/wiki/channels/{ch['id']}/pages/{page['slug']}/compare"
+    article_path = compare_path.removesuffix("/compare")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            compare_path, params={"before": revision, "after": article["revision_id"]}
+        )
+        assert response.status_code == 200 and response.json()["changes"] == comparison["changes"]
+        response = await client.get(
+            compare_path, params={"before": revision, "after": detail["revision_id"]}
+        )
+        assert response.status_code == 404
+        response = await client.get(article_path, params={"part": "article", "revision": revision})
+        assert response.status_code == 200
+        previous = response.json()
+        assert previous["revision_id"] == revision
+        assert previous["current_revision_id"] == article["revision_id"]
+        assert previous["claims"][0]["community_notes"] == []
+        assert not previous["proposals_enabled"] and not previous["annotations_enabled"]
+        response = await client.get(
+            article_path, params={"part": "references", "revision": revision}
+        )
+        assert response.status_code == 200 and response.json()["revision_id"] == revision
+        response = await client.get(article_path, params={"revision": detail["revision_id"]})
+        assert response.status_code == 404
+    await service.engine.knowledge.publish(ch["id"], None, "test", rollback=original)
+    own = (await service.community.proposals(user=user, identifier=identifier))[0]
+    assert own["published"] and not own["currently_public"]
+    assert not await service.community.contributions()
+    assert (await store.one("SELECT COUNT(*) total FROM wiki_contributions"))["total"] == 1
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (current_job,)) == before
+
+
+async def test_page_edit_publishes_while_channel_paused_and_survives_stale_manifest(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    service = WikiRuntime(store, None, None)
+    service.engine = WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model"))
+    knowledge = service.engine.knowledge
+    channel_job_id = await store.enqueue(channel_id, "reindex")
+    channel_job = await store.claim_job()
+    channel_job["cursor"]["revisions"] = {page["id"]: revision}
+    fresh = await store.channel(channel_id)
+    channel_job["progress"].update(
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
+    )
+    await service.engine.review(channel_job, fresh)
+    await store.configure(
+        channel_id,
+        fresh["config"].model_copy(update={"paused": True, "publication_mode": "auto"}),
+        "test",
+    )
+    before = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (channel_job_id,))
+    assert before["status"] == "paused"
+    corrected, edit_id = await knowledge.correct_page(channel_id, revision, 0, "人工核对。", "test")
+    _, stale_id = await knowledge.correct_page(channel_id, revision, 0, "另一版改动。", "test")
+    edit = await store.claim_job()
+    assert edit["id"] == edit_id and await store.claim_job() is None
+    await service.run_job(edit)
+    assert edit["progress"]["review_total"] == 1 and edit["progress"]["published"]
+    await service.run_job(await store.claim_job())
+    assert (await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (stale_id,)))[
+        "status"
+    ] == "failed"
+    assert await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (channel_job_id,)) == before
+    article = await service.reader.page(channel_id, page["slug"])
+    assert article["revision_id"] == corrected and article["claims"][0]["text"] == "人工核对。"
+    await store.configure(channel_id, fresh["config"], "test")
+    await store.control_job(channel_id, channel_job_id, "resume", "test")
+    await service.run_job(await store.claim_job())
+    await knowledge.publish(channel_id, channel_job_id, "test")
+    assert (await service.reader.page(channel_id, page["slug"]))["revision_id"] == corrected
+
+
+async def test_fact_check_requires_real_evidence_and_reuses_cached_claims(store, monkeypatch):
+    from core.wiki import web_research
+
+    ch = await channel(store)
+    await store.configure(
+        ch["id"],
+        ch["config"].model_copy(update={"fact_check": True, "fact_check_required": True}),
+        "test",
+    )
+    await store.put_source(
+        ch["id"],
+        "message",
+        1,
+        "Sakura 支持中文检索。",
+        datetime(2020, 1, 1),
+        verified=True,
+        message_id=1,
+    )
+    settings = web_research.SearchSettings(enabled=True)
+    monkeypatch.setattr(web_research, "search_settings", lambda: settings)
+    results = web_research.normalized_results(
+        "deepseek",
+        {
+            "results": [
+                {
+                    "url": "https://example.org/project",
+                    "title": "Project docs",
+                    "content": "Supports Chinese",
+                },
+                {
+                    "url": "https://example.net/release",
+                    "title": "Release notes",
+                    "content": "Supports Chinese",
+                },
+            ]
+        },
+        3,
+    )
+    service = WikiRuntime(store, None, None)
+    research = AsyncMock(return_value={"results": results})
+
+    class Reviewer(FakeAI):
+        async def create(self, **request):
+            response = await super().create(**request)
+            payload = json.loads(request["messages"][1]["content"])
+            if "external_evidence" in payload:
+                message = response.choices[0].message
+                verdict = json.loads(message.content)
+                for fact in verdict["claims"]:
+                    fact.update(fact_status="verified", citations=[0, 1, 999])
+                message.content = json.dumps(verdict)
+            return response
+
+    fake = Reviewer()
+    service.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    service.engine.research = SimpleNamespace(search=research)
+    job = await store.enqueue(ch["id"], "reindex")
+    await service.run_job(await store.claim_job())
+    await service.engine.knowledge.publish(ch["id"], job, "test")
+    page = await store.one("SELECT id FROM wiki_pages WHERE title='Sakura'")
+    article = await service.reader.page(ch["id"], page["id"])
+    assert article["claims"][0]["fact_check"]["status"] == "verified"
+    assert len(article["claims"][0]["fact_check"]["sources"]) == 2
+    check = article["claims"][0]["fact_check"]
+    assert set(check) == {"status", "checked_at", "sources"}
+    assert all(set(source) == {"title", "url"} for source in check["sources"])
+    charged = research.await_count
+    await store.enqueue(ch["id"], "reindex")
+    await service.run_job(await store.claim_job())
+    assert research.await_count == charged
 
 
 async def test_page_additive_counts_match_true_totals(store):
@@ -270,7 +759,7 @@ async def test_article_parts_and_timeline_cursor_share_publication_gate(store):
     reader = PublicReader(store)
     article = await reader.page(ch["id"], page["slug"], part="article")
     refs = await reader.page(ch["id"], page["slug"], part="references")
-    assert article["claims"] and "history" not in article
+    assert article["claims"] and "history" not in article and article["history_total"] == 1
     assert refs["publication_id"] == publication and refs["revision_id"] == revision
     assert refs["sources_total"] == 1 and "claims" not in refs
     assert await reader.related(ch["id"], page["slug"]) == {"next": None, "previous": None}
@@ -292,6 +781,8 @@ async def test_article_parts_and_timeline_cursor_share_publication_gate(store):
     await store.revoke(ch["id"], source_id=source["id"], actor="test")
     assert (await reader.visibility())[ch["id"]] != before[ch["id"]]
     assert await reader.page(ch["id"], page["slug"], part="references") is None
+    assert await reader.page(ch["id"], page["slug"], compare=(revision, revision)) is None
+    assert await reader.page(ch["id"], page["slug"], revision=revision) is None
     assert await reader.related(ch["id"], page["slug"]) is None
     assert not (await reader.timeline(ch["id"], cursor_mode=True))["items"]
 
@@ -488,14 +979,13 @@ async def test_go_reads_identical_publication_and_revocation(store):
 
 
 class FakeAI:
-    """按 wiki-2 markdown 管线契约返回：分批 Markdown、主题行、纯文本简介。
+    """模拟生成模型与来源审校模型的响应。"""
 
-    1aafed9 起引擎不再发送 JSON schema / 独立审核请求，直接按负载形状分发。
-    """
-
-    def __init__(self, *, incomplete=False, stable=False):
+    def __init__(self, *, incomplete=False, stable=False, review_status="supported"):
         self.calls = 0
+        self.review_calls = 0
         self.incomplete = incomplete
+        self.review_status = review_status
         # stable：按消息内容前缀决定词条归属。默认按批次下标奇偶（既有测试契
         # 约）；source id 是哈希，批次构成在编辑/删除后会变，增量测试必须用
         # stable 才能得到确定的页面归属。
@@ -507,9 +997,22 @@ class FakeAI:
         return self
 
     async def create(self, **request):
-        self.calls += 1
         payload = json.loads(request["messages"][1]["content"])
-        if "summaries" in payload:
+        if "claims" in payload:
+            self.review_calls += 1
+            content = json.dumps(
+                {
+                    "approved": self.review_status == "supported",
+                    "reason": "审校结论",
+                    "claims": [
+                        {"index": item["index"], "status": self.review_status, "reason": "来源审校"}
+                        for item in payload["claims"]
+                    ]
+                    if self.review_status != "missing"
+                    else [],
+                }
+            )
+        elif "summaries" in payload:
             content = "中文检索\nSakura"
         elif "sources" in payload or "source" in payload:
             sources = payload.get("sources") or [{"source": 0, "text": payload["source"]}]
@@ -533,6 +1036,7 @@ class FakeAI:
             content = "频道以中文检索与技术说明为主，长期保持稳定的更新节奏。"
         else:
             raise AssertionError(f"未知的生成请求负载：{sorted(payload)}")
+        self.calls += int("claims" not in payload)
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -638,6 +1142,83 @@ async def page_of_message(store, channel_id, message_id):
     return row["page_id"]
 
 
+async def test_grouped_telegram_album_replaces_split_pages_and_preserves_sources(store):
+    ch, fake, runtime = await build_and_publish(
+        store, texts=("第一条相册配文", "第二条图片识别"), stable=True
+    )
+    channel_id = ch["id"]
+    caption_page = await page_of_message(store, channel_id, 1)
+    image_page = await page_of_message(store, channel_id, 2)
+    assert caption_page != image_page
+    date = datetime(2020, 1, 2)
+    await store.query(
+        """UPDATE wiki_sources SET media_group='album-1',category='image',media_key='photo:2'
+        WHERE channel_id=%s AND message_id=2""",
+        (channel_id,),
+    )
+    await store.query(
+        "UPDATE wiki_sources SET media_group='album-1',category='image' WHERE channel_id=%s AND message_id=1",
+        (channel_id,),
+    )
+    # The image data already exists on disk; no Telegram backfill is needed for grouping.
+    await store.put_source(
+        channel_id,
+        "image",
+        2,
+        "第二张图中出现二维码",
+        date,
+        verified=True,
+        media_group="album-1",
+        message_id=2,
+        category="image",
+        media_key="photo:2",
+    )
+    member = await store.put_source(
+        channel_id,
+        "message",
+        3,
+        "",
+        date,
+        verified=True,
+        media_group="album-1",
+        message_id=3,
+        category="image",
+        media_key="photo:3",
+    )
+    album_inputs = []
+
+    async def request(job, config, generator, system, payload, **options):
+        if "album" in payload:
+            album_inputs.append(payload["album"])
+            return "## [0] 频道资料 / 测试相册\n\n相册包含配文和二维码。"
+        return await original_request(job, config, generator, system, payload, **options)
+
+    original_request = runtime.engine.request
+    runtime.engine.request = request
+    await store.enqueue(channel_id, "albums")
+    await runtime.run_job(await store.claim_job())
+    reader = runtime.reader
+    article = await reader.page(channel_id, caption_page)
+    assert article and await reader.page(channel_id, image_page) is None
+    assert len(album_inputs) == 1
+    assert any(x["text"] == "第一条相册配文" for x in album_inputs[0])
+    assert any(
+        x["text"] == "第二张图中出现二维码" and x["type"] == "图片识别" for x in album_inputs[0]
+    )
+    assert {link["message_id"] for link in article["album_links"]} == {1, 2, 3}
+    assert {item["type"] for item in article["sources"]} == {"image", "message"}
+    await store.revoke(channel_id, source_id=member)
+    assert {
+        item["message_id"] for item in (await reader.page(channel_id, caption_page))["album_links"]
+    } == {1, 2}
+    await store.revoke(channel_id, message_ids=[2], deleted=True)
+    assert await reader.page(channel_id, caption_page) is None
+    await store.enqueue(channel_id, "albums")
+    await runtime.run_job(await store.claim_job())
+    repaired = await reader.page(channel_id, caption_page)
+    assert repaired and [item["message_id"] for item in repaired["album_links"]] == [1]
+
+
 async def test_generation_review_graph_cache_and_incremental_publication(store):
     ch = await channel(store)
     await store.configure(
@@ -653,13 +1234,23 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
         message_id=1,
     )
     fake = FakeAI()
+    reviewer = FakeAI()
     runtime = WikiRuntime(store, None, None)
-    runtime.engine = WikiEngine(store, runtime=lambda _: (fake, "fixture-model"))
+    runtime.engine = WikiEngine(
+        store,
+        runtime=lambda purpose: (
+            (reviewer, "fixture-review") if purpose == "wiki_review" else (fake, "fixture-model")
+        ),
+    )
     first_id = await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     first = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (first_id,))
     assert first["status"] == "published", first
-    assert fake.calls == 3  # 两个提取批次 + 一次频道简介；独立审核已随管线移除
+    assert fake.calls == 3  # 两个提取批次 + 一次频道简介
+    assert reviewer.review_calls > 0 and reviewer.calls == fake.review_calls == 0
+    reviews = await store.query("SELECT * FROM wiki_revision_reviews", fetch=True)
+    assert len(reviews) == 2 and all(row["approved"] for row in reviews)
+    assert {decode(row["result"])["model"] for row in reviews} == {"fixture-review"}
     publication = (await store.channel(ch["id"]))["published_revision"]
     graph = await runtime.reader.graph(ch["id"], limit=3)
     assert len(graph["nodes"]) == 2 and graph["edges"]
@@ -683,9 +1274,11 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     timeline = await runtime.reader.timeline(ch["id"], page_size=1)
     assert len(timeline["items"]) == 1 and timeline["total_pages"] >= 2
     charged = fake.calls
+    reviewed = reviewer.review_calls
     await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     assert fake.calls == charged
+    assert reviewer.review_calls == reviewed
     # 内容未变化：不创建重复 publication，沿用当前发布快照
     assert (await store.channel(ch["id"]))["published_revision"] == publication
     assert (await store.one("SELECT COUNT(*) n FROM wiki_publications"))["n"] == 1
@@ -694,6 +1287,200 @@ async def test_generation_review_graph_cache_and_incremental_publication(store):
     assert not (await runtime.reader.graph(ch["id"]))["nodes"]
     assert not (await runtime.reader.browse_graph(ch["id"]))["nodes"]
     assert await runtime.reader.browse_graph(ch["id"], root) is None
+
+
+@pytest.mark.parametrize("review_status", ["unsupported", "missing"])
+async def test_failed_review_preserves_existing_publication(store, monkeypatch, review_status):
+    ch, _, runtime = await build_and_publish(store)
+    publication = (await store.channel(ch["id"]))["published_revision"]
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status=review_status)
+    generator = FakeAI()
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (generator, "fixture-model")
+    )
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    progress = decode(saved["progress"])
+    assert not progress["review_complete"]
+    assert reviewer.review_calls > 0
+    assert (await store.channel(ch["id"]))["published_revision"] == publication
+    if review_status == "unsupported":
+        assert saved["status"] == "completed" and progress["review_rejections"] > 0
+        rejected = await store.one(
+            "SELECT revision_id FROM wiki_revision_reviews WHERE approved=FALSE"
+        )
+        assert rejected
+        monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+        runtime.ready = True
+        manifest = decode(saved["cursor"])["revisions"]
+        await store.query(
+            "UPDATE wiki_page_revisions SET job_id=NULL WHERE id=%s", (rejected["revision_id"],)
+        )
+        failed = await wiki.revisions(ch["id"], page=1, q="", status="failed", job_id=job_id)
+        assert rejected["revision_id"] in {item["id"] for item in failed}
+        assert all(
+            item["id"] in manifest.values() and item["review_result"] == 0 for item in failed
+        )
+        assert not await wiki.revisions(ch["id"], page=1, q="no matching title", job_id=job_id)
+        detail = await wiki.revision_detail(ch["id"], rejected["revision_id"], job_id=job_id)
+        assert detail["review"]["approved"] == 0
+        assert "changes" in detail and "changes_truncated" in detail
+        retry = await wiki.retry_revision_review(ch["id"], rejected["revision_id"], "test")
+        audit = await store.one(
+            "SELECT details FROM wiki_review_actions WHERE action='retry_revision_review'"
+        )
+        assert decode(audit["details"])["previous_reviews"]
+        reviewer.review_status = "supported"
+        await runtime.run_job(await store.claim_job())
+        saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (retry["job_id"],))
+        assert saved["status"] == "published"
+    else:
+        assert saved["status"] == "partial" and saved["phase"] == "review"
+        assert saved["error_code"] == "WikiResponseError"
+        await store.control_job(ch["id"], job_id, "retry", "test")
+        reviewer.review_status = "supported"
+        generation_calls = generator.calls
+        await runtime.run_job(await store.claim_job())
+        saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+        assert saved["status"] == "published", saved
+        assert generator.calls == generation_calls + 1  # Only the channel introduction.
+
+
+@pytest.mark.parametrize("legacy_job", [False, True])
+async def test_admin_manually_approves_failed_drafts_without_rerunning_review(
+    store, monkeypatch, legacy_job
+):
+    ch, _, runtime = await build_and_publish(store)
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status="unsupported")
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (FakeAI(), "fixture-model")
+    )
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert saved["status"] == "completed"
+    cursor = decode(saved["cursor"])
+    rejected = cursor["review_rejected_revisions"]
+    assert rejected
+    if legacy_job:
+        cursor.pop("review_rejected_revisions")
+        await store.query(
+            "UPDATE wiki_jobs SET `cursor`=%s WHERE id=%s", (json.dumps(cursor), job_id)
+        )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    runtime.ready = True
+    other_job_id = await store.enqueue(ch["id"], "update")
+    calls = reviewer.review_calls
+    for revision in rejected:
+        await wiki.manually_approve_revision(ch["id"], revision, "test")
+        await wiki.manually_approve_revision(ch["id"], revision, "test")
+    assert reviewer.review_calls == calls
+    assert (await store.channel(ch["id"]))["active_job"] == other_job_id
+    saved = await store.one("SELECT progress FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert decode(saved["progress"])["review_complete"]
+    assert not await wiki.revisions(ch["id"], page=1, q="", status="failed", job_id=job_id)
+    passed = await wiki.revisions(ch["id"], page=1, q="", status="passed", job_id=job_id)
+    assert set(rejected) <= {item["id"] for item in passed if item["manually_approved"]}
+    audit = await store.one(
+        "SELECT COUNT(*) AS n FROM wiki_review_actions WHERE action='manually_approve_revision'"
+    )
+    assert audit["n"] == len(rejected)
+    for revision in rejected:
+        detail = await wiki.revision_detail(ch["id"], revision, job_id=job_id)
+        assert not detail["review"]["approved"]
+    assert await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+
+
+async def test_manual_approval_during_channel_review_is_used_for_autopublish(store, monkeypatch):
+    ch, generator, runtime = await build_and_publish(store)
+    await store.put_source(
+        ch["id"], "message", 2, "新来源", datetime(2020, 1, 2), verified=True, message_id=2
+    )
+    reviewer = FakeAI(review_status="unsupported")
+    runtime.engine.runtime = lambda purpose: (
+        (reviewer, "review-rejection") if purpose == "wiki_review" else (generator, "fixture-model")
+    )
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
+    runtime.ready = True
+    job_id = await store.enqueue(ch["id"], "reindex")
+    review_revision = runtime.engine.review_revision
+
+    async def approve_after_ai(job, config, model, policy, page_id, revision_id, search):
+        approved = await review_revision(job, config, model, policy, page_id, revision_id, search)
+        if not approved:
+            await wiki.manually_approve_revision(ch["id"], revision_id, "test")
+        return approved
+
+    monkeypatch.setattr(runtime.engine, "review_revision", approve_after_ai)
+    await runtime.run_job(await store.claim_job())
+    saved = await store.one("SELECT status,progress FROM wiki_jobs WHERE id=%s", (job_id,))
+    assert reviewer.review_calls > 0
+    assert saved["status"] == "published"
+    assert decode(saved["progress"])["review_rejections"] == 0
+
+
+async def test_disabled_ai_review_allows_page_edit_without_model_and_rechecks_policy(store):
+    ch, _, page, revision, _ = await published(store)
+    channel_id = ch["id"]
+    config = (await store.channel(channel_id))["config"]
+    await store.configure(
+        channel_id, config.model_copy(update={"ai_review_enabled": False}), "test"
+    )
+    service = WikiRuntime(store, None, None)
+    service.engine.client = lambda _: pytest.fail("Skipped review called a model")
+    replacement, job_id = await service.engine.knowledge.correct_page(
+        channel_id, revision, 0, "人工修订。", "test"
+    )
+    job = await store.claim_job()
+    await service.run_job(job)
+    assert job["progress"]["review_skipped"] and job["progress"]["review_complete"]
+    await store.configure(channel_id, config, "test")
+    with pytest.raises(ValueError, match="重新启用"):
+        await service.engine.knowledge.publish(channel_id, job_id, "test")
+    await store.configure(
+        channel_id, config.model_copy(update={"ai_review_enabled": False}), "test"
+    )
+    await service.engine.knowledge.publish(channel_id, job_id, "test")
+    assert (await service.reader.page(channel_id, page["slug"]))["revision_id"] == replacement
+
+
+async def test_publish_requires_review_of_exact_document(store):
+    ch = await channel(store)
+    await store.put_source(
+        ch["id"], "message", 1, "原始消息", datetime(2020, 1, 1), verified=True, message_id=1
+    )
+    runtime = WikiRuntime(store, None, None)
+    ai = FakeAI()
+    runtime.engine = WikiEngine(store, runtime=lambda _: (ai, "fixture-model"))
+    job_id = await store.enqueue(ch["id"], "reindex")
+    await runtime.run_job(await store.claim_job())
+    row = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
+    cursor = decode(row["cursor"])
+    revision_id = next(iter(cursor["revisions"].values()))
+    assert decode(row["progress"])["review_complete"]
+    assert not (
+        await store.one("SELECT approved FROM wiki_page_revisions WHERE id=%s", (revision_id,))
+    )["approved"]
+    await store.query(
+        "UPDATE wiki_page_revisions SET document=JSON_SET(document,'$.title','审校后更改') WHERE id=%s",
+        (revision_id,),
+    )
+    with pytest.raises(ValueError, match="independent review"):
+        await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+    await store.query(
+        "UPDATE wiki_jobs SET `cursor`=JSON_REMOVE(`cursor`,'$.review_policy') WHERE id=%s",
+        (job_id,),
+    )
+    with pytest.raises(ValueError, match="predates independent review"):
+        await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
+    assert not (await store.channel(ch["id"]))["published_revision"]
 
 
 async def test_manual_mode_and_budget_pause_do_not_publish(store):
@@ -712,7 +1499,7 @@ async def test_manual_mode_and_budget_pause_do_not_publish(store):
     job_id = await store.enqueue(ch["id"], "reindex")
     await runtime.run_job(await store.claim_job())
     job = await store.one("SELECT * FROM wiki_jobs WHERE id=%s", (job_id,))
-    # 审核门已随 markdown 管线移除（review_complete 恒为 True）；非 auto 发布模式下仍不发布
+    # 手动发布模式先完成独立审校，再等待管理员发布。
     assert job["status"] == "completed", job
     assert decode(job["progress"])["review_complete"]
     assert (await store.channel(ch["id"]))["published_revision"] is None
@@ -1408,11 +2195,9 @@ async def test_prune_keeps_evidence_referenced_chunks(store):
     job["cursor"]["revisions"] = {page["id"]: revision}
     fresh = await store.channel(ch["id"])
     job["progress"].update(
-        generation_complete=True,
-        review_complete=True,
-        source_generation=fresh["source_generation"],
+        generation_complete=True, pages=1, source_generation=fresh["source_generation"]
     )
-    await store.checkpoint(job, "ready")
+    await WikiEngine(store, runtime=lambda _: (FakeAI(), "fixture-model")).review(job, fresh)
     await store.finish(job)
     await knowledge.publish(ch["id"], job["id"], "test")
     await store.put_source(

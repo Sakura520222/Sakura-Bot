@@ -175,8 +175,21 @@ def verify_telegram_auth(auth_data: dict[str, Any]) -> bool:
         return False
 
     # 提取 hash 并排序其余字段
+    from time import time
+
+    if not isinstance(auth_data, dict):
+        return False
     check_hash = auth_data.get("hash", "")
-    if not check_hash:
+    if not isinstance(check_hash, str) or len(check_hash) != 64 or not check_hash.isascii():
+        return False
+    auth_date = auth_data.get("auth_date")
+    if (
+        not isinstance(auth_date, (int, str))
+        or not str(auth_date).isascii()
+        or not str(auth_date).isdigit()
+    ):
+        return False
+    if len(str(auth_date)) > 12 or not -30 <= time() - int(auth_date) <= 300:
         return False
 
     # 按 key 字母序排列其余字段，生成 check_string

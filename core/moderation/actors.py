@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 
 from telethon import utils
-from telethon.tl.types import PeerChannel, PeerUser
+from telethon.tl.types import Message, PeerChannel, PeerUser
 
 ANONYMOUS_ADMIN_NAME = "本群匿名管理员（真实身份不可见）"
 
@@ -38,6 +38,16 @@ def message_actor(message, chat_id, *, allow_edited=False):
     destination = getattr(message, "peer_id", None)
     if destination is not None and utils.get_peer_id(destination) != chat_id:
         return None
+    sender_id = getattr(message, "sender_id", None)
+    implicit_sender = (
+        peer is None
+        and isinstance(message, Message)
+        and isinstance(destination, PeerChannel)
+        and sender_id in (None, chat_id)
+    )
+    if implicit_sender:
+        # MTProto 省略 from_id 时，TDLib 使用消息所在 peer 作为发件人。
+        peer = destination
     if isinstance(peer, PeerChannel):
         if (
             utils.get_peer_id(peer) != chat_id
@@ -50,9 +60,8 @@ def message_actor(message, chat_id, *, allow_edited=False):
             chat_id,
             getattr(message, "id", None),
             None,
-            "telegram:peer_channel",
+            "telegram:peer_id" if implicit_sender else "telegram:peer_channel",
         )
-    sender_id = getattr(message, "sender_id", None)
     if isinstance(peer, PeerUser):
         if sender_id is not None and sender_id != peer.user_id:
             return None

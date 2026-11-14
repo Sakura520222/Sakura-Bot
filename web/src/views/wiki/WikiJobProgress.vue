@@ -47,7 +47,7 @@
       {{ duration(Number(p.ai_elapsed_seconds)) }}
     </n-text>
     <div class="job-counts">
-      <n-statistic label="已处理来源 / 总来源">
+      <n-statistic v-if="job.kind !== 'page_edit'" label="已处理来源 / 总来源">
         {{ number(p.processed) }} /
         {{ p.source_total == null ? "统计中" : number(p.source_total) }}
       </n-statistic>
@@ -57,7 +57,8 @@
       <n-statistic label="完成批次 / 缓存命中">
         {{ number(p.completed_batches) }} / {{ number(p.cache_hits) }}
       </n-statistic>
-      <n-statistic label="已整理文章">{{ number(p.pages) }}</n-statistic>
+      <n-statistic v-if="job.kind !== 'page_edit'" label="已整理文章">{{ number(p.pages) }}</n-statistic>
+      <n-statistic v-if="p.processed_albums" label="已处理 Telegram 相册">{{ number(p.processed_albums) }}</n-statistic>
     </div>
     <n-text v-if="requests.length" depth="3"
       >Token 用量在每次模型请求结束后结算，接收进度实时更新。</n-text
@@ -86,6 +87,15 @@
         </p>
       </details>
     </n-alert>
+    <n-alert v-if="p.review_rejections" type="warning" :show-icon="false">
+      {{ p.review_rejections }} 个修订未通过来源审校。
+      <n-button text type="primary" @click="$emit('review-failures')">查看未通过的草稿</n-button>
+    </n-alert>
+    <n-alert v-if="p.album_rejections" type="warning" :show-icon="false">
+      模型拒绝处理 {{ p.album_rejections }} 组相册，已保留原有内容。
+    </n-alert>
+    <n-text v-if="p.review_fallback" depth="3">未单独配置审校模型，本次通过生成模型发起独立审校请求。</n-text>
+    <n-text v-if="p.review_skipped" depth="3">此任务已跳过 AI 来源审校。</n-text>
     <div v-if="events.length" class="events">
       <div v-for="(event, index) in events" :key="index">
         <span>{{ time(event.time) }}</span
@@ -109,6 +119,7 @@ import {
 } from "../../api/wiki";
 
 const props = defineProps<{ job: WikiJob }>();
+defineEmits<{ "review-failures": [] }>();
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval>;
 onMounted(() => {
@@ -122,6 +133,7 @@ const phaseNames: Record<string, string> = {
   collect: "采集历史",
   extract: "生成知识",
   assemble: "整理文章",
+  review: "来源审校",
   ready: "准备发布",
 };
 const errorNames: Record<string, string> = {
@@ -166,6 +178,18 @@ const portion = computed(() => {
       label: "整理文章",
       done: Number(p.value.assembled_pages || 0),
       total: Number(p.value.page_total || 0),
+    };
+  if (stage === "albums")
+    return {
+      label: "已处理 Telegram 相册",
+      done: p.value.processed_albums || 0,
+      total: p.value.album_total || 0,
+    };
+  if (stage === "review")
+    return {
+      label: "已审校文章",
+      done: p.value.reviewed_pages || 0,
+      total: p.value.review_total || 0,
     };
   return {
     label: "生成来源",

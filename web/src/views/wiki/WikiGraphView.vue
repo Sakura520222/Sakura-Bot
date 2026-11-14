@@ -481,11 +481,7 @@ onUnmounted(() => {
   background: var(--sb-surface);
 }
 .wiki-graph-dialog {
-  position: fixed;
-  inset: 0;
-  margin: auto;
   width: min(480px, calc(100% - 32px));
-  max-height: calc(100dvh - 32px);
   padding: 20px;
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius);

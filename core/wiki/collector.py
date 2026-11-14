@@ -204,8 +204,10 @@ class SourceCollector:
             not row
             or not original
             or original["deleted"]
+            or original["hidden"]
             or original["excluded"]
             or not original["verified"]
+            or original["media_key"] != row["media_id"]
         ):
             return
         await self.store.put_source(
@@ -219,7 +221,7 @@ class SourceCollector:
             message_id=message_id,
             excluded=not channel["config"].include_images,
             exclusion_reason="images_disabled" if not channel["config"].include_images else "",
-            media_group=row.get("grouped_id"),
+            media_group=original["media_group"] or row.get("grouped_id"),
             category="image",
             media_key=row["media_id"],
         )

@@ -10,7 +10,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from core.web_api.auth import WebUIUser
 from core.web_api.middleware import AuthMiddleware, _wiki_buckets
 from core.web_api.routes import wiki
+from core.wiki import commands
 from core.wiki.avatars import STALE_AFTER_SECONDS, WikiAvatarService, sniff_media_type
 from core.wiki.knowledge import merge_facts
 from core.wiki.models import (
@@ -33,6 +34,30 @@ from core.wiki.models import (
 from core.wiki.runtime import schedule_due
 from core.wiki.schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from core.wiki.store import WikiSchemaError, WikiStore
+
+
+@pytest.mark.asyncio
+async def test_telegram_wiki_approval_confirms_and_updates_original_notification(monkeypatch):
+    monkeypatch.setattr("core.config.ADMIN_LIST", [123])
+    monkeypatch.setattr(commands, "proposal_details_button", lambda _: [])
+    handlers = []
+    client = SimpleNamespace(on=lambda _: lambda handler: handlers.append(handler))
+    decide = AsyncMock(return_value={"status": "approved"})
+    runtime = SimpleNamespace(community=SimpleNamespace(decide=decide), wake=Mock())
+    commands.register_wiki_commands(client, runtime)
+    event = SimpleNamespace(
+        sender_id=123,
+        pattern_match=re.fullmatch(rb"wpr:([ar]):([a-f0-9]{32})", b"wpr:a:" + b"a" * 32),
+        get_message=AsyncMock(return_value=SimpleNamespace(raw_text="Wiki 待审")),
+        answer=AsyncMock(),
+        edit=AsyncMock(),
+    )
+    await handlers[0](event)
+    decide.assert_awaited_once_with("a" * 32, "approved", 123, telegram=True)
+    event.answer.assert_awaited_once()
+    assert "已批准" in event.edit.call_args.args[0]
+    assert event.edit.call_args.kwargs["buttons"] == []
+    runtime.wake.assert_called_once()
 
 
 def extraction(chunk, text="项目支持中文检索"):

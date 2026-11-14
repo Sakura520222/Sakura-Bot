@@ -1,5 +1,5 @@
 <template>
-  <div class="wiki-markdown" @click="previewImage" v-html="html" />
+  <div class="wiki-markdown" :data-claim="claimIndex" @click="previewImage" v-html="html" />
   <dialog v-if="preview" ref="lightbox" class="wiki-lightbox" aria-label="图片预览" @close="preview = undefined">
     <button autofocus @click="lightbox?.close()">关闭图片预览</button>
     <img v-if="!imageFailed" :src="preview.url" :alt="preview.label" referrerpolicy="no-referrer"
@@ -11,7 +11,9 @@
 import { computed, nextTick, ref } from "vue";
 import { marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
-const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean }>();
+import type { WikiAnnotation } from "../../api/wiki";
+import { renderAnnotations } from "./wiki-annotations";
+const props = defineProps<{ text: string; channel?: string; imagePreview?: boolean; claimIndex?: number; annotations?: WikiAnnotation[] }>();
 const renderer = new Renderer();
 const renderedImages = new Map<string, string>();
 renderer.image = ({ href, text }) => {
@@ -43,20 +45,31 @@ async function previewImage(event: MouseEvent) {
   await nextTick();
   lightbox.value?.showModal();
 }
-const html = computed(() => {
-  renderedImages.clear();
-  const text = props.text.replace(
+function renderMarkdown(source: string, renderer: Renderer) {
+  const text = source.replace(
     /\[\[([^\]\n]+)\]\]/g,
     (_, title: string) =>
       `[${title}](/wiki/${encodeURIComponent(props.channel || "")}/search?q=${encodeURIComponent(title)})`,
   );
-  return DOMPurify.sanitize(
-    marked.parse(text, { async: false, breaks: true, renderer }),
-    {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ["img", "iframe", "form", "style"],
-    },
+  return marked.parse(text, { async: false, breaks: true, renderer });
+}
+const options = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["img", "iframe", "form", "style"],
+};
+const html = computed(() => {
+  renderedImages.clear();
+  const source = renderMarkdown(props.text, renderer);
+  if (!props.annotations?.length) return DOMPurify.sanitize(source, options);
+  const root = DOMPurify.sanitize(source, { ...options, RETURN_DOM_FRAGMENT: true });
+  const annotationRenderer = new Renderer();
+  annotationRenderer.image = () => "";
+  renderAnnotations(root, props.annotations, (text) =>
+    DOMPurify.sanitize(renderMarkdown(text, annotationRenderer), { ...options, RETURN_DOM_FRAGMENT: true }),
   );
+  const rendered = document.createElement("div");
+  rendered.append(root);
+  return DOMPurify.sanitize(rendered.innerHTML, { ...options, FORBID_TAGS: ["iframe", "form", "style"] });
 });
 </script>
 <style scoped>
@@ -100,5 +113,68 @@ const html = computed(() => {
 .wiki-markdown :deep(td) {
   border: 1px solid var(--sb-border);
   padding: 8px 12px;
+}
+.wiki-markdown :deep(.wiki-annotation-mark) {
+  background: var(--wiki-note-highlight, #fff1aa);
+  color: inherit;
+  box-decoration-break: clone;
+  border-radius: 2px;
+}
+.wiki-markdown :deep(.wiki-note-anchor) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: start;
+  vertical-align: top;
+  max-width: 100%;
+}
+.wiki-markdown :deep(.wiki-inline-caption) {
+  display: block;
+  position: relative;
+  max-width: min(21em, 80vw);
+  font-size: .75em;
+  line-height: 1.4;
+  padding: 0 .2em;
+  border-radius: 2px;
+  background: var(--wiki-note-surface, #fffae6);
+  color: var(--sb-text);
+}
+.wiki-markdown :deep(.wiki-note-unanchored) {
+  position: relative;
+  display: block;
+  margin: .4rem 0 .65rem;
+  padding: .4rem .7rem;
+  border-inline-start: 3px solid var(--wiki-note-border, #d5a633);
+  border-radius: 0 4px 4px 0;
+  background: var(--wiki-note-surface, #fffae6);
+  color: var(--sb-text);
+  font-size: .875em;
+}
+.wiki-markdown :deep(.wiki-inline-note q) { display: block; color: var(--sb-text-2); }
+.wiki-markdown :deep(.wiki-inline-note p) { margin: 0; }
+.wiki-markdown :deep(.wiki-inline-note-sources) { display: flex; flex-wrap: wrap; gap: .75em; }
+.wiki-markdown :deep(.wiki-note-credit) {
+  display: none;
+  position: absolute;
+  z-index: 12;
+  inset-inline-start: 0;
+  bottom: 100%;
+  width: max-content;
+  max-width: min(18rem, 75vw);
+  align-items: center;
+  gap: .45em;
+  padding: .4rem .55rem;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  border: 1px solid var(--sb-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 15%);
+}
+.wiki-markdown :deep(.wiki-inline-note:hover > .wiki-note-credit),
+.wiki-markdown :deep(.wiki-inline-note:focus-within > .wiki-note-credit) { display: flex; }
+.wiki-markdown :deep(.wiki-note-credit img) { width: 1.5rem; height: 1.5rem; border-radius: 50%; object-fit: cover; }
+:global(html.dark .wiki-markdown) {
+  --wiki-note-highlight: #68531b;
+  --wiki-note-surface: #342b16;
+  --wiki-note-border: #b79445;
 }
 </style>

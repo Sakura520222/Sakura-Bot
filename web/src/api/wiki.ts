@@ -27,6 +27,15 @@ export interface WikiJob {
     stage?: string;
     error_detail?: string;
     review_complete?: boolean;
+    review_skipped?: boolean;
+    processed_albums?: number;
+    album_total?: number;
+    album_rejections?: number;
+    review_version?: string;
+    review_fallback?: boolean;
+    review_rejections?: number;
+    reviewed_pages?: number;
+    review_total?: number;
     published?: boolean;
     active_requests?: Record<string, WikiRequestProgress>;
     generation_failures?: {
@@ -103,15 +112,38 @@ export interface Claim {
   valid_until?: string;
   source_created_at: string;
   evidence: Evidence[];
+  fact_check?: { status: string; checked_at?: string | null; sources: { title: string; url: string }[] };
+  community_notes?: WikiAnnotation[];
   title?: string;
   url?: string;
 }
+export interface WikiAnnotation {
+  kind: string;
+  text: string;
+  sources: string[];
+  excerpt?: string;
+  excerpt_occurrence?: number;
+  contributor?: { id: string; display_name: string; username?: string | null; avatar: boolean };
+}
 export interface WikiArticle extends WikiCard {
+  album_links?: { message_id: number; url: string }[];
+  sources?: WikiReferences["sources"];
+  current_revision_id?: string;
   verified_at: string;
   claims: Claim[];
+  proposals_enabled?: boolean;
+  annotations_enabled?: boolean;
+  history_total?: number;
+}
+export interface WikiRevisionComparison {
+  before: { id: string; created_at: string };
+  after: { id: string; created_at: string };
+  changes: { before: string | null; after: string | null }[];
+  truncated: boolean;
 }
 export interface WikiReferences {
   revision_id: string;
+  current_revision_id?: string;
   publication_id: string;
   sources: { id: string; type: string; created_at: string; url?: string }[];
   history: { revision_id: string; created_at: string }[];

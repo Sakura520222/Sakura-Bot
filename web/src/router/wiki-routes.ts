@@ -19,6 +19,12 @@ export const wikiRoutes: RouteRecordRaw = {
   component: () => import("../views/wiki/PublicWikiLayout.vue"),
   children: [
     {
+      path: "contributors/:contributor?",
+      name: "WikiContributors",
+      component: () => import("../views/wiki/WikiContributorsView.vue"),
+      meta: { public: true },
+    },
+    {
       path: "",
       name: "WikiHome",
       props: routeProps,

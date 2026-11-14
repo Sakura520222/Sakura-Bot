@@ -5,6 +5,75 @@
 """Additive, idempotent MySQL migration. Wiki owns all wiki_* tables."""
 
 SCHEMA_VERSION = 1
+ALBUMS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_albums (
+    channel_id VARCHAR(32) NOT NULL, media_group VARCHAR(64) NOT NULL,
+    page_id CHAR(32), pending BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY(channel_id,media_group), INDEX wiki_pending_albums(channel_id,pending,media_group),
+    FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+WIKI_COMMUNITY_TABLES = (
+    """CREATE TABLE IF NOT EXISTS wiki_search_cache (
+        cache_key CHAR(64) PRIMARY KEY, result JSON NOT NULL, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_search_expiry(expires_at)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_search_usage (
+        day DATE NOT NULL, provider VARCHAR(16) NOT NULL, calls INT NOT NULL DEFAULT 0,
+        cost_units BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(day,provider)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_fact_checks (
+        cache_key CHAR(64) PRIMARY KEY, result JSON NOT NULL, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_fact_expiry(expires_at)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS wiki_edit_proposals (
+        id CHAR(32) PRIMARY KEY, user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        channel_id VARCHAR(32) NOT NULL, page_id CHAR(32) NOT NULL, base_revision CHAR(32) NOT NULL,
+        revision_id CHAR(32), kind VARCHAR(24) NOT NULL, payload JSON NOT NULL, status VARCHAR(16) NOT NULL,
+        actor VARCHAR(128), note VARCHAR(1000), created_at DATETIME(6) NOT NULL, updated_at DATETIME(6) NOT NULL,
+        INDEX wiki_proposal_queue(status,created_at), INDEX wiki_proposal_user(user_id,created_at),
+        UNIQUE KEY wiki_proposal_revision(revision_id),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE,
+        FOREIGN KEY(page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_contributions (
+        proposal_id CHAR(32) PRIMARY KEY, revision_id CHAR(32) NOT NULL, publication_id CHAR(32) NOT NULL,
+        created_at DATETIME(6) NOT NULL, INDEX wiki_contribution_revision(revision_id),
+        FOREIGN KEY(proposal_id) REFERENCES wiki_edit_proposals(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+)
+WIKI_ACCOUNT_TABLES = (
+    """CREATE TABLE IF NOT EXISTS wiki_users (
+        id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+        telegram_id BIGINT UNSIGNED NOT NULL UNIQUE,
+        telegram_subject VARBINARY(255) NOT NULL UNIQUE,
+        display_name VARCHAR(160) NOT NULL, username VARCHAR(64),
+        avatar MEDIUMBLOB, avatar_type VARCHAR(16),
+        show_avatar BOOLEAN NOT NULL DEFAULT FALSE, show_username BOOLEAN NOT NULL DEFAULT FALSE,
+        anonymous_contributions BOOLEAN NOT NULL DEFAULT TRUE, blocked BOOLEAN NOT NULL DEFAULT FALSE,
+        profile_at DATETIME(6) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_login_flows (
+        state_hash BINARY(32) PRIMARY KEY, browser_hash BINARY(32) NOT NULL,
+        nonce CHAR(43) NOT NULL, verifier CHAR(43) NOT NULL,
+        redirect_path VARCHAR(2048) NOT NULL, refresh_session CHAR(32) CHARACTER SET ascii COLLATE ascii_bin,
+        client_id VARCHAR(19) NOT NULL, origin VARCHAR(255) NOT NULL,
+        expires_at DATETIME(6) NOT NULL, INDEX wiki_flow_expiry(expires_at), INDEX wiki_flow_browser(browser_hash)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_sessions (
+        id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+        user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        access_hash BINARY(32) NOT NULL UNIQUE, refresh_hash BINARY(32) NOT NULL UNIQUE,
+        logout_hash BINARY(32) NOT NULL UNIQUE,
+        access_until DATETIME(6) NOT NULL, refresh_until DATETIME(6) NOT NULL,
+        INDEX wiki_session_expiry(refresh_until),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_legacy_login_replays (
+        signature BINARY(32) PRIMARY KEY, expires_at DATETIME(6) NOT NULL,
+        INDEX wiki_legacy_login_expiry(expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS wiki_bookmarks (
+        user_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        page_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY(user_id,page_id), INDEX wiki_bookmark_order(user_id,created_at,page_id),
+        FOREIGN KEY(user_id) REFERENCES wiki_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+)
 # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
 # 增量装配只重建这些页面而不是遍历全部历史页面。
 DIRTY_PAGES_TABLE = """CREATE TABLE IF NOT EXISTS wiki_dirty_pages (
@@ -18,6 +87,12 @@ CHANNEL_COVERS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_channel_covers (
     digest CHAR(64) NOT NULL,
     image MEDIUMBLOB NOT NULL,
     FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+REVISION_REVIEWS_TABLE = """CREATE TABLE IF NOT EXISTS wiki_revision_reviews (
+    revision_id CHAR(32) NOT NULL, policy_key CHAR(64) NOT NULL, subject_hash CHAR(64) NOT NULL,
+    approved BOOLEAN NOT NULL, result JSON NOT NULL, created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY(revision_id,policy_key,subject_hash),
+    FOREIGN KEY(revision_id) REFERENCES wiki_page_revisions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS wiki_schema (
@@ -52,6 +127,7 @@ SCHEMA = (
         UNIQUE KEY wiki_source_identity(channel_id,source_type,external_id),
         INDEX wiki_source_message(channel_id,source_type,message_id),
         INDEX wiki_source_scan(channel_id,id), INDEX wiki_source_time(channel_id,created_at),
+        INDEX wiki_source_album(channel_id,media_group,source_type,message_id),
         FOREIGN KEY(channel_id) REFERENCES wiki_channels(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS wiki_chunks (
@@ -109,6 +185,7 @@ SCHEMA = (
         INDEX wiki_revision_page(page_id,created_at), INDEX wiki_revision_job(job_id),
         INDEX wiki_feed_latest(created_at DESC,page_id DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    REVISION_REVIEWS_TABLE,
     """CREATE TABLE IF NOT EXISTS wiki_evidence (
         revision_id CHAR(32) NOT NULL, source_id CHAR(64) NOT NULL,
         source_hash CHAR(64) NOT NULL, chunk_id CHAR(64) NOT NULL,
@@ -179,13 +256,16 @@ SCHEMA = (
     # 页面失效队列：来源删除/隐藏、策略翻转与人工修订把受影响页面登记到这里，
     # 增量装配只重建这些页面而不是遍历全部历史页面。
     DIRTY_PAGES_TABLE,
+    ALBUMS_TABLE,
+    *WIKI_ACCOUNT_TABLES,
+    *WIKI_COMMUNITY_TABLES,
 )
 
 # Shared with Go (contract-tested). No snapshot, rollback or index bypasses this gate.
 CHANNEL_VISIBLE = """c.enabled=TRUE AND c.public=TRUE AND c.access_verified=TRUE
     AND c.username IS NOT NULL AND c.verified_until>UTC_TIMESTAMP(6)
     AND c.published_revision IS NOT NULL"""
-REVISION_VISIBLE = """r.approved=TRUE AND r.rejected=FALSE AND p.hidden=FALSE
+REVISION_EVIDENCE = """r.rejected=FALSE AND p.hidden=FALSE
     AND EXISTS (SELECT 1 FROM wiki_evidence ev WHERE ev.revision_id=r.id)
     AND NOT EXISTS (SELECT 1 FROM wiki_evidence ev JOIN wiki_sources s ON s.id=ev.source_id
         WHERE ev.revision_id=r.id AND (s.channel_id<>r.channel_id OR s.deleted=TRUE
@@ -194,3 +274,4 @@ REVISION_VISIBLE = """r.approved=TRUE AND r.rejected=FALSE AND p.hidden=FALSE
             WHERE parent.channel_id=s.channel_id AND parent.source_type='message'
             AND parent.message_id=s.message_id AND parent.media_key=s.media_key
             AND parent.deleted=FALSE AND parent.hidden=FALSE AND parent.excluded=FALSE AND parent.verified=TRUE))))"""
+REVISION_VISIBLE = f"r.approved=TRUE AND {REVISION_EVIDENCE}"

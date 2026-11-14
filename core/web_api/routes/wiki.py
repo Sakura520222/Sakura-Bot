@@ -19,14 +19,16 @@ from pydantic import Field
 from core.media.image_validation import MAX_IMAGE_BYTES, ImageInputError, validate_image
 from core.wiki.avatars import sniff_media_type
 from core.wiki.cursor import InvalidCursor
-from core.wiki.models import Strict, WikiConfig
+from core.wiki.models import MANUAL_REVIEW_POLICY, Strict, WikiConfig
+from core.wiki.reader import revision_changes
 from core.wiki.runtime import get_wiki_runtime
 from core.wiki.schema import CHANNEL_VISIBLE
 from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
 PUBLIC_WIKI_ROUTE = re.compile(
-    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|bookmarks|channels/{CHANNEL}(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{{1,180}}))?)"
+    rf"/api/public/wiki/(?:channels|visibility|feed|search|sitemap|bookmarks|channels/{CHANNEL}"
+    r"(?:/(?:profile|timeline|graph|changes|avatar|cover|pages/[A-Za-z0-9_-]{1,180}(?:/compare)?))?)"
 )
 # avatar 是固定字面量；publish 等动态段与 ../admin/config 探测都不会命中。
 WIKI_AVATAR_ROUTE = re.compile(rf"/api/public/wiki/channels/{CHANNEL}/avatar")
@@ -128,16 +130,31 @@ async def channel_home(channel: str, summary: bool = False):
 
 @public.api_route("/channels/{channel}/pages/{slug}", methods=["GET", "HEAD"])
 async def page(
-    channel: str, slug: str, part: Literal["full", "article", "references", "related"] = "full"
+    channel: str,
+    slug: str,
+    part: Literal["full", "article", "references", "related"] = "full",
+    revision: str | None = Query(default=None, pattern=r"^[a-f0-9]{32}$"),
 ):
     reader = runtime().reader
     if part == "related":
         return found(await reader.related(channel, slug))
+    if revision:
+        return found(await reader.page(channel, slug, part=part, revision=revision))
     return found(
         await (
             reader.page(channel, slug) if part == "full" else reader.page(channel, slug, part=part)
         )
     )
+
+
+@public.api_route("/channels/{channel}/pages/{slug}/compare", methods=["GET", "HEAD"])
+async def compare_page_revisions(
+    channel: str,
+    slug: str,
+    before: str = Query(pattern=r"^[a-f0-9]{32}$"),
+    after: str = Query(pattern=r"^[a-f0-9]{32}$"),
+):
+    return found(await runtime().reader.page(channel, slug, compare=(before, after)))
 
 
 @public.api_route("/channels/{channel}/avatar", methods=["GET", "HEAD"])
@@ -307,7 +324,7 @@ async def sitemap(page: int = Query(1, ge=1, le=10000)):
 
 
 class JobRequest(Strict):
-    kind: Literal["backfill", "update", "reconcile", "reindex", "page"] = "update"
+    kind: Literal["backfill", "update", "reconcile", "reindex", "page", "albums"] = "update"
     page_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
@@ -550,19 +567,87 @@ async def control_job(
 
 
 @admin.get("/channels/{channel}/revisions")
-async def revisions(channel: str, page: int = Query(1, ge=1, le=10000)):
+async def revisions(
+    channel: str,
+    page: int = Query(1, ge=1, le=10000),
+    q: str = Query("", max_length=160),
+    status: Literal["all", "pending", "failed", "passed", "rejected"] = "all",
+    job_id: str | None = Query(None, pattern=r"^[a-f0-9]{32}$"),
+):
     service, ch = await managed(channel)
+    conditions = ["r.channel_id=%s"]
+    args = [ch["id"]]
+    policy = None
+    if job_id:
+        job = await service.store.one(
+            "SELECT kind,`cursor` FROM wiki_jobs WHERE channel_id=%s AND id=%s", (ch["id"], job_id)
+        )
+        if not job:
+            raise HTTPException(404, "找不到该频道的任务")
+        manifest = decode(job["cursor"])
+        policy = manifest.get("review_policy")
+        candidates = manifest.get("review_revisions", manifest.get("revisions"))
+        if candidates is not None:
+            if (
+                "review_revisions" not in manifest
+                and policy
+                and not ch["published_revision"]
+                and job["kind"] in service.engine.INCREMENTAL_KINDS
+            ):
+                # Older running jobs did not persist the expanded review list for the first publication.
+                candidates = await service.engine.knowledge.expand_revisions(None, ch, manifest)
+            if candidates:
+                conditions.append(
+                    "r.id IN (SELECT candidate.id FROM JSON_TABLE(%s, '$[*]' "
+                    "COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) AS candidate)"
+                )
+                args.append(encode(list(candidates.values())))
+            else:
+                conditions.append("FALSE")
+        else:
+            conditions.append("r.job_id=%s")
+            args.append(job_id)
+    if q.strip():
+        term = "%" + q.strip().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        conditions.append("(p.title LIKE %s ESCAPE '!' OR r.search_text LIKE %s ESCAPE '!')")
+        args.extend((term, term))
+    review_filter = "AND rr.policy_key IN (%s,%s)" if policy else ""
+    status_filters = {
+        "pending": "rejected=FALSE AND approved=FALSE AND review_result IS NULL",
+        "failed": "rejected=FALSE AND review_result=FALSE",
+        "passed": "rejected=FALSE AND (review_result=TRUE OR (review_result IS NULL AND approved=TRUE))",
+        "rejected": "rejected=TRUE",
+    }
+    status_filter = status_filters.get(status, "1=1")
     return await service.store.query(
-        """SELECT r.id,r.page_id,r.job_id,r.approved,r.rejected,r.created_at,
-        p.title,p.slug,p.locked,p.hidden FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
-        WHERE r.channel_id=%s ORDER BY r.created_at DESC LIMIT 50 OFFSET %s""",
-        (ch["id"], (page - 1) * 50),
+        f"""SELECT * FROM (
+        SELECT r.id,r.page_id,r.job_id,r.approved,r.rejected,r.created_at,
+        p.title,p.slug,p.locked,p.hidden,
+        LEFT(JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.claims[0].text')),200) excerpt,
+        (SELECT rr.approved FROM wiki_revision_reviews rr WHERE rr.revision_id=r.id {review_filter}
+        ORDER BY (rr.policy_key=%s) DESC,rr.created_at DESC,rr.policy_key,rr.subject_hash LIMIT 1) review_result,
+        EXISTS (SELECT 1 FROM wiki_revision_reviews rr WHERE rr.revision_id=r.id
+        AND rr.policy_key=%s AND rr.approved=TRUE) manually_approved
+        FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+        WHERE {" AND ".join(conditions)}) listed
+        WHERE {status_filter} ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET %s""",
+        (
+            *([policy, MANUAL_REVIEW_POLICY] if policy else []),
+            MANUAL_REVIEW_POLICY,
+            MANUAL_REVIEW_POLICY,
+            *args,
+            (page - 1) * 50,
+        ),
         fetch=True,
     )
 
 
 @admin.get("/channels/{channel}/revisions/{revision_id}")
-async def revision_detail(channel: str, revision_id: str):
+async def revision_detail(
+    channel: str,
+    revision_id: str,
+    job_id: str | None = Query(None, pattern=r"^[a-f0-9]{32}$"),
+):
     service, ch = await managed(channel)
     row = await service.store.one(
         "SELECT * FROM wiki_page_revisions WHERE id=%s AND channel_id=%s", (revision_id, ch["id"])
@@ -574,9 +659,11 @@ async def revision_detail(channel: str, revision_id: str):
         (row["page_id"], row["created_at"]),
     )
     document = decode(row["document"])
+    previous = decode(old["document"]) if old else {}
+    changes, truncated = revision_changes(previous, document)
     diff = "\n".join(
         difflib.unified_diff(
-            encode(decode(old["document"]) if old else {}).splitlines(),
+            encode(previous).splitlines(),
             encode(document).splitlines(),
             fromfile="previous",
             tofile="draft",
@@ -589,7 +676,67 @@ async def revision_detail(channel: str, revision_id: str):
         (revision_id,),
         fetch=True,
     )
-    return {"id": revision_id, "document": document, "diff": diff, "evidence": evidence}
+    review = await service.store.one(
+        """SELECT rr.approved,rr.result,rr.created_at FROM wiki_revision_reviews rr
+        WHERE rr.revision_id=%s AND rr.policy_key<>%s AND (%s IS NULL OR rr.policy_key=(
+            SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(j.`cursor`,'$.review_policy')) AS CHAR CHARACTER SET ascii)
+            FROM wiki_jobs j WHERE j.channel_id=%s AND j.id=%s))
+        ORDER BY rr.created_at DESC,rr.policy_key,rr.subject_hash LIMIT 1""",
+        (revision_id, MANUAL_REVIEW_POLICY, job_id, ch["id"], job_id),
+    )
+    if review:
+        review["result"] = decode(review["result"])
+    return {
+        "id": revision_id,
+        "document": document,
+        "diff": diff,
+        "changes": changes,
+        "changes_truncated": truncated,
+        "evidence": evidence,
+        "review": review,
+    }
+
+
+@admin.post("/channels/{channel}/revisions/{revision_id}/review/approve")
+async def manually_approve_revision(channel: str, revision_id: str, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    channel_id = ch["id"]
+    async with service.store.transaction() as cur:
+        await cur.execute("SELECT config FROM wiki_channels WHERE id=%s FOR UPDATE", (channel_id,))
+        current = await cur.fetchone()
+        await cur.execute(
+            """SELECT r.page_id,p.topic FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+            WHERE r.id=%s AND r.channel_id=%s""",
+            (revision_id, channel_id),
+        )
+        row = await cur.fetchone()
+        if not current or not row:
+            raise HTTPException(404, "找不到该修订")
+        if row["topic"] in decode(current["config"]).get("hidden_topics", []):
+            raise HTTPException(409, "该主题已隐藏")
+        try:
+            await service.engine.knowledge.manually_approve_revision(
+                cur, channel_id, row["page_id"], revision_id, actor
+            )
+        except ValueError:
+            raise HTTPException(409, "该修订已拒绝、已隐藏或引用来源已失效") from None
+        await cur.execute(
+            """SELECT id,`cursor`,progress FROM wiki_jobs WHERE channel_id=%s
+            AND status='completed' AND phase='ready'
+            AND JSON_EXTRACT(progress,'$.review_rejections')>0
+            AND JSON_SEARCH(COALESCE(JSON_EXTRACT(`cursor`,'$.review_rejected_revisions'),
+                JSON_EXTRACT(`cursor`,'$.review_revisions'),JSON_EXTRACT(`cursor`,'$.revisions')),
+                'one',%s) IS NOT NULL FOR UPDATE""",
+            (channel_id, revision_id),
+        )
+        for job in await cur.fetchall():
+            manifest, progress = decode(job["cursor"]), decode(job["progress"])
+            if await service.store.reconcile_manual_reviews(cur, manifest, progress):
+                await cur.execute(
+                    "UPDATE wiki_jobs SET `cursor`=%s,progress=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s",
+                    (encode(manifest), encode(progress), job["id"]),
+                )
+    return {"success": True}
 
 
 @admin.post("/channels/{channel}/revisions/{revision_id}/reject")
@@ -618,13 +765,65 @@ async def reject(channel: str, revision_id: str, actor=ADMIN_AUTH):
 async def correct(channel: str, revision_id: str, body: CorrectionRequest, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
     try:
-        new_id = await service.engine.knowledge.correct(
+        new_id, job_id = await service.engine.knowledge.correct_page(
             ch["id"], revision_id, body.claim, body.text, actor
         )
-        job_id = await service.store.enqueue(ch["id"], "reindex", actor)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
+    service.wake()
     return {"revision_id": new_id, "job_id": job_id}
+
+
+@admin.post("/channels/{channel}/revisions/{revision_id}/review/retry", status_code=202)
+async def retry_revision_review(channel: str, revision_id: str, actor=ADMIN_AUTH):
+    service, ch = await managed(channel)
+    async with service.store.transaction() as cur:
+        await cur.execute(
+            "SELECT active_job FROM wiki_channels WHERE id=%s FOR UPDATE", (ch["id"],)
+        )
+        channel_row = await cur.fetchone()
+        await cur.execute(
+            """SELECT j.id,j.`cursor`,j.status,j.phase FROM wiki_jobs j
+            JOIN wiki_page_revisions r ON r.job_id=j.id
+            WHERE r.id=%s AND r.channel_id=%s AND j.kind='page_edit' FOR UPDATE""",
+            (revision_id, ch["id"]),
+        )
+        edit_job = await cur.fetchone()
+        if edit_job:
+            if edit_job["status"] not in {"completed", "failed"}:
+                raise HTTPException(409, "该词条修订仍在处理中")
+        elif channel_row["active_job"]:
+            raise HTTPException(409, "请等待当前 Wiki 任务结束")
+        await cur.execute(
+            """SELECT rv.policy_key,rv.subject_hash,rv.result,rv.created_at FROM wiki_revision_reviews rv
+            JOIN wiki_page_revisions r ON r.id=rv.revision_id
+            WHERE r.id=%s AND r.channel_id=%s AND r.rejected=FALSE AND rv.approved=FALSE""",
+            (revision_id, ch["id"]),
+        )
+        previous = await cur.fetchall()
+        if not previous:
+            raise HTTPException(404, "没有可重试的审校结果")
+        await cur.execute(
+            "DELETE FROM wiki_revision_reviews WHERE revision_id=%s AND approved=FALSE",
+            (revision_id,),
+        )
+        await service.store.audit(
+            cur,
+            ch["id"],
+            "retry_revision_review",
+            revision_id,
+            actor,
+            {"previous_reviews": [{**row, "result": decode(row["result"])} for row in previous]},
+        )
+        if edit_job:
+            manifest = decode(edit_job["cursor"])
+            job_id = await service.store.enqueue_page_edit(
+                cur, ch["id"], manifest["page_id"], revision_id, manifest["base_revision"], actor
+            )
+        else:
+            job_id = await service.store.enqueue(ch["id"], "reindex", actor, cur=cur)
+    service.wake()
+    return {"job_id": job_id}
 
 
 @admin.post("/channels/{channel}/publish")
@@ -666,6 +865,7 @@ async def quarantined_extractions(channel: str, page: int = Query(1, ge=1, le=10
         """SELECT e.cache_key,e.review,e.result,e.created_at,s.source_type
         FROM wiki_extractions e JOIN wiki_chunks chunk ON chunk.id=e.chunk_id
         JOIN wiki_sources s ON s.id=chunk.source_id WHERE e.channel_id=%s AND e.approved=FALSE
+        AND NOT (JSON_EXTRACT(e.review,'$.mode') <=> 'draft')
         AND s.content_hash=chunk.content_hash AND s.hidden=FALSE AND s.deleted=FALSE
         ORDER BY e.created_at DESC LIMIT 50 OFFSET %s""",
         (ch["id"], (page - 1) * 50),
@@ -711,6 +911,20 @@ async def hide_source(channel: str, body: SourceRequest, actor=ADMIN_AUTH):
     service, ch = await managed(channel)
     await service.store.revoke(ch["id"], source_id=body.source_id, actor=actor)
     return {"success": True}
+
+
+@admin.get("/channels/{channel}/pages/{page_id}")
+async def page_state(channel: str, page_id: str):
+    service, ch = await managed(channel)
+    row = await service.store.one(
+        """SELECT p.id,p.title,p.locked,p.hidden FROM wiki_pages p WHERE p.channel_id=%s
+        AND (p.id=%s OR p.slug=%s OR EXISTS (SELECT 1 FROM wiki_slug_aliases a
+            WHERE a.channel_id=p.channel_id AND a.page_id=p.id AND a.slug=%s))""",
+        (ch["id"], page_id, page_id, page_id),
+    )
+    if row is None:
+        raise HTTPException(404, "词条不存在")
+    return {**row, "locked": bool(row["locked"]), "hidden": bool(row["hidden"])}
 
 
 @admin.post("/channels/{channel}/pages/{page_id}")
@@ -769,6 +983,7 @@ async def purge(channel: str, body: PurgeRequest, actor=ADMIN_AUTH):
             "DELETE FROM wiki_sources WHERE channel_id=%s AND deleted=FALSE AND hidden=FALSE",
             (ch["id"],),
         )
+        await cur.execute("DELETE FROM wiki_albums WHERE channel_id=%s", (ch["id"],))
         await cur.execute("UPDATE wiki_sources SET body='' WHERE channel_id=%s", (ch["id"],))
         await service.store.audit(cur, ch["id"], "purge", ch["id"], actor)
     return {"success": True}

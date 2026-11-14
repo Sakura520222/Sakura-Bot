@@ -5,10 +5,12 @@
 """Public read model. Never serialize database rows directly to anonymous callers."""
 
 from datetime import timedelta
+from difflib import SequenceMatcher
 from functools import wraps
+from itertools import zip_longest
 
 from .cursor import read_cursor, scope_key, write_cursor
-from .models import utc
+from .models import MANUAL_REVIEW_POLICY, utc
 from .schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from .store import decode
 
@@ -40,10 +42,36 @@ PUBLICATION_FEED_JOIN = """FROM wiki_channels c
     STRAIGHT_JOIN wiki_publication_pages pp ON pp.publication_id=pub.id
     STRAIGHT_JOIN wiki_pages p ON p.id=pp.page_id AND p.channel_id=c.id
     STRAIGHT_JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.channel_id=c.id"""
+PUBLISHED_HISTORY = f"""FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+    WHERE p.id=%s AND r.channel_id=p.channel_id AND {REVISION_VISIBLE}
+    AND EXISTS (SELECT 1 FROM wiki_publication_pages pp
+        JOIN wiki_publications pub ON pub.id=pp.publication_id
+        WHERE pp.page_id=p.id AND pp.revision_id=r.id AND pub.channel_id=p.channel_id)"""
 
 
 def like(value):
     return "%" + value.replace("=", "==").replace("%", "=%").replace("_", "=_") + "%"
+
+
+def revision_changes(previous, current):
+    def blocks(document):
+        result = [document[key] for key in ("title", "topic") if key in document]
+        for claim in document.get("claims", []):
+            result.append(claim["text"])
+            for note in claim.get("community_notes", []):
+                excerpt = f"「{note['excerpt']}」" if note.get("excerpt") else ""
+                result.append("\n".join([f"注解{excerpt}　{note['text']}", *note["sources"]]))
+        return result
+
+    old, new = blocks(previous), blocks(current)
+    changes = []
+    for tag, start, end, new_start, new_end in SequenceMatcher(None, old, new).get_opcodes():
+        if tag != "equal":
+            for removed, added in zip_longest(old[start:end], new[new_start:new_end]):
+                if len(changes) == 100:
+                    return changes, True
+                changes.append({"before": removed, "after": added})
+    return changes, False
 
 
 def consistent_read(method):
@@ -324,7 +352,7 @@ class PublicReader:
         )
 
     @consistent_read
-    async def page(self, channel, slug, *, part="full"):
+    async def page(self, channel, slug, *, part="full", compare=None, revision=None):
         ch = await self.store.channel(channel)
         if not ch:
             return None
@@ -337,6 +365,18 @@ class PublicReader:
         )
         if not row:
             return None
+        if compare:
+            return await self.compare_revisions(row["id"], *compare)
+        current_revision = row["revision_id"]
+        historical = bool(revision and revision != current_revision)
+        if historical:
+            version = await self.store.one(
+                f"SELECT r.id revision_id,r.created_at,r.document {PUBLISHED_HISTORY} AND r.id=%s",
+                (row["id"], revision),
+            )
+            if not version:
+                return None
+            row.update(version)
         config = decode(row["config"])
         evidence_rows = await self.store.query(
             """SELECT DISTINCT s.id,s.source_type,s.message_id,s.created_at,s.edited_at
@@ -349,8 +389,65 @@ class PublicReader:
         result = page_card(row)
         doc = decode(row["document"])
         result["verified_at"] = doc["verified_at"]
+        result["current_revision_id"] = current_revision
+        result["proposals_enabled"] = not historical and bool(config.get("proposals_enabled"))
+        result["annotations_enabled"] = not historical and bool(config.get("annotations_enabled"))
+        if part == "article":
+            total = await self.store.one(f"SELECT COUNT(*) total {PUBLISHED_HISTORY}", (row["id"],))
+            result["history_total"] = total["total"]
         result["claims"] = [
             public_claim(fact, evidence, row["username"], config) for fact in doc["claims"]
+        ]
+        if row["username"] and config.get("show_telegram_links") and part != "references":
+            album_groups = {
+                fact["media_group"] for fact in doc["claims"] if fact.get("media_group")
+            }
+            if album_groups:
+                links = []
+                for group in sorted(album_groups):
+                    members = await self.store.album_sources(row["channel_id"], group)
+                    published_ids = {
+                        message_id
+                        for claim in doc["claims"]
+                        if claim.get("media_group") == group
+                        for message_id in claim.get("album_messages", [])
+                    }
+                    links.extend(
+                        {
+                            "message_id": member["message_id"],
+                            "url": f"https://t.me/{row['username']}/{member['message_id']}",
+                        }
+                        for member in members
+                        if member["source_type"] == "message"
+                        and member["message_id"] in published_ids
+                    )
+                result["album_links"] = links
+        if part != "references" and doc.get("community_contributions"):
+            await self.credit_annotations(
+                row["id"], doc["community_contributions"], doc["claims"], result["claims"]
+            )
+        review = (
+            await self.store.one(
+                """SELECT result FROM wiki_revision_reviews WHERE revision_id=%s AND approved=TRUE
+                AND policy_key<>%s ORDER BY created_at DESC LIMIT 1""",
+                (row["revision_id"], MANUAL_REVIEW_POLICY),
+            )
+            if part != "references"
+            else None
+        )
+        if review:
+            for check in decode(review["result"]).get("fact_checks", []):
+                if 0 <= check["index"] < len(result["claims"]):
+                    result["claims"][check["index"]]["fact_check"] = {
+                        "status": check["status"],
+                        "checked_at": check.get("checked_at"),
+                        "sources": [
+                            {"title": source.get("title", ""), "url": source["url"]}
+                            for source in check.get("sources", [])
+                        ],
+                    }
+        result["sources"] = [
+            source_card(source, row["username"], config) for source in evidence_rows
         ]
         if part == "article":
             return result
@@ -362,25 +459,19 @@ class PublicReader:
                 (row["revision_id"],),
             )
             sources_total = total["total"]
-        result["sources"] = [
-            source_card(source, row["username"], config) for source in evidence_rows
-        ]
         # 总量独立于上方 500 条截断，前端据此提示"未全部展示"。
         result["sources_total"] = sources_total
         # Historical metadata is restricted to revisions that were actually published.
         history = await self.store.query(
-            f"""SELECT DISTINCT r.id,r.created_at FROM wiki_page_revisions r
-            JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
-            WHERE p.id=%s AND {REVISION_VISIBLE} ORDER BY r.created_at DESC LIMIT 50""",
-            (row["id"],),
+            f"""SELECT r.id,r.created_at {PUBLISHED_HISTORY}
+            ORDER BY r.id=%s DESC,r.created_at DESC,r.id DESC LIMIT 50""",
+            (row["id"], current_revision),
             fetch=True,
         )
         history_total = len(history)
         if len(history) == 50:
             total = await self.store.one(
-                f"""SELECT COUNT(DISTINCT r.id) total FROM wiki_page_revisions r
-                JOIN wiki_pages p ON p.id=r.page_id JOIN wiki_publication_pages pp ON pp.revision_id=r.id
-                WHERE p.id=%s AND {REVISION_VISIBLE}""",
+                f"SELECT COUNT(*) total {PUBLISHED_HISTORY}",
                 (row["id"],),
             )
             history_total = total["total"]
@@ -392,7 +483,7 @@ class PublicReader:
         valid = await self.store.one(
             f"""SELECT r.id {PAGE_JOIN} WHERE c.id=%s AND c.published_revision=%s
             AND r.id=%s AND {VISIBLE}""",
-            (ch["id"], row["published_revision"], row["revision_id"]),
+            (ch["id"], row["published_revision"], current_revision),
         )
         if not valid:
             return None
@@ -401,6 +492,7 @@ class PublicReader:
                 key: result[key]
                 for key in (
                     "revision_id",
+                    "current_revision_id",
                     "publication_id",
                     "sources",
                     "sources_total",
@@ -409,6 +501,87 @@ class PublicReader:
                 )
             }
         return result
+
+    async def credit_annotations(self, page_id, proposal_ids, raw_claims, claims):
+        if not any(claim["community_notes"] for claim in claims):
+            return
+        marks = ",".join(["%s"] * len(proposal_ids))
+        rows = await self.store.query(
+            f"""SELECT e.id,u.id contributor_id,u.display_name,
+            IF(u.show_username,u.username,NULL) username,
+            (u.show_avatar AND u.avatar IS NOT NULL) avatar
+            FROM wiki_contributions x JOIN wiki_edit_proposals e ON e.id=x.proposal_id
+            JOIN wiki_users u ON u.id=e.user_id
+            WHERE e.page_id=%s AND e.id IN ({marks}) AND e.status='approved'
+            AND u.blocked=FALSE AND u.anonymous_contributions=FALSE""",
+            (page_id, *proposal_ids),
+            fetch=True,
+        )
+        by_id = {row["id"]: row for row in rows}
+        # Older annotations recorded only their text. Resolve a legacy match only if it is unique,
+        # including anonymous proposals in the match so a public author cannot inherit their credit.
+        legacy = []
+        if any(
+            not note.get("proposal_id")
+            for claim in raw_claims
+            for note in claim.get("community_notes", [])
+        ):
+            legacy = await self.store.query(
+                f"""SELECT id,kind,payload FROM wiki_edit_proposals
+                WHERE page_id=%s AND id IN ({marks}) AND status='approved'""",
+                (page_id, *proposal_ids),
+                fetch=True,
+            )
+            for entry in legacy:
+                entry["payload"] = decode(entry["payload"])
+        for ordinal, claim in enumerate(claims):
+            for note, public_note in zip(
+                raw_claims[ordinal].get("community_notes", []),
+                claim["community_notes"],
+                strict=True,
+            ):
+                proposal = note.get("proposal_id")
+                if not proposal:
+                    matches = [
+                        entry["id"]
+                        for entry in legacy
+                        if entry["kind"] == note["kind"]
+                        and entry["payload"].get("claim") == ordinal
+                        and all(
+                            entry["payload"].get(key) == note.get(key)
+                            for key in ("text", "sources")
+                        )
+                        and (entry["payload"].get("excerpt") or "") == (note.get("excerpt") or "")
+                    ]
+                    proposal = matches[0] if len(matches) == 1 else None
+                row = by_id.get(proposal)
+                if row:
+                    public_note["contributor"] = {
+                        "id": row["contributor_id"],
+                        "display_name": row["display_name"],
+                        "username": row["username"],
+                        "avatar": bool(row["avatar"]),
+                    }
+
+    async def compare_revisions(self, page_id, before, after):
+        rows = await self.store.query(
+            f"SELECT r.id,r.created_at,r.document {PUBLISHED_HISTORY} AND r.id IN (%s,%s)",
+            (page_id, before, after),
+            fetch=True,
+        )
+        versions = {row["id"]: row for row in rows}
+        if before not in versions or after not in versions:
+            return None
+
+        changes, truncated = revision_changes(
+            decode(versions[before]["document"]), decode(versions[after]["document"])
+        )
+        return {
+            "before": {key: versions[before][key] for key in ("id", "created_at")},
+            "after": {key: versions[after][key] for key in ("id", "created_at")},
+            "changes": changes,
+            "truncated": truncated,
+        }
 
     @consistent_read
     async def related(self, channel, slug):
@@ -851,6 +1024,14 @@ def source_card(source, username, config):
 
 def public_claim(fact, sources, username, config):
     return {
+        "community_notes": [
+            {
+                key: note[key]
+                for key in ("kind", "text", "sources", "excerpt", "excerpt_occurrence")
+                if key in note
+            }
+            for note in fact.get("community_notes", [])
+        ],
         **{
             key: fact.get(key)
             for key in (

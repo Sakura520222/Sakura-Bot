@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 import pytest
 from telethon import events
 from telethon.errors import ChatForwardsRestrictedError, MessageIdInvalidError
-from telethon.tl.custom import Message
 from telethon.tl.functions.messages import ForwardMessagesRequest
 from telethon.tl.types import (
     InputMessageEntityMentionName,
     InputPeerChannel,
     InputPeerUser,
+    Message,
     MessageEntityTextUrl,
     MessageReplyHeader,
     PeerChannel,
@@ -208,13 +208,14 @@ async def test_confirmed_current_group_anonymous_admin_can_report(guard, store):
     assert f"tg://user?id={CHAT}" not in notification_text(case, link_profile=True)
 
 
-async def test_native_telethon_anonymous_message_is_accepted(guard, store):
+@pytest.mark.parametrize("explicit_sender", [True, False])
+async def test_native_telethon_anonymous_message_is_accepted(guard, store, explicit_sender):
     event = report_event(guard)
     event.sender_id = CHAT
     event.message = Message(
         id=142,
         peer_id=PeerChannel(1234567890),
-        from_id=PeerChannel(1234567890),
+        from_id=PeerChannel(1234567890) if explicit_sender else None,
         message="@admin 举报",
         reply_to=MessageReplyHeader(reply_to_msg_id=42),
     )

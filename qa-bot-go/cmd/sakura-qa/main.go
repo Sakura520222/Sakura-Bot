@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 
@@ -232,13 +233,24 @@ func run() int {
 	aiPool.InboxCapacity = assistantSettings.InboxCapacity
 	aiPool.PerUser = assistantSettings.PerUserConcurrency
 	community := &handlers.Community{Config: cfg, DB: dbMgr, TG: tgClient}
+	queryStream := withResearch(token, cfg.Env.GetDefault("WEBUI_PORT", "8080"), qaEngine.ProcessQueryStream)
+	if webui, assistant := cfg.Env.Get("WEBUI_ENABLED"), cfg.Env.Get("WIKI_ASSISTANT_ENABLED"); strings.EqualFold(webui, "true") || webui == "1" || strings.EqualFold(assistant, "true") || assistant == "1" {
+		address := "127.0.0.1:" + cfg.Env.GetDefault("WIKI_ASSISTANT_PORT", "8091")
+		closeWeb, err := startWikiWeb(ctx, address, token, &wikiWeb{quota: quota, pool: aiPool,
+			stream: queryStream, subscription: community.WebSubscription, log: logger})
+		if err != nil {
+			logger.Error("Wiki 助手桥接未启动", "error", err)
+		} else {
+			defer closeWeb()
+		}
+	}
 	commands := handlers.NewCommands(handlers.CommandsDeps{
 		Pool: aiPool, Access: community.Access, Community: community,
 		TG:          tgClient,
 		Users:       users,
 		Quota:       quota,
 		Sessions:    conversations,
-		Engine:      qaEngine,
+		Engine:      researchEngine{stream: queryStream},
 		Persona:     cfg,
 		Submissions: submissionHandler,
 		Log:         slogBridge{logger},

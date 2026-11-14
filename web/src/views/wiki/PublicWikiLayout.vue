@@ -15,6 +15,8 @@
         </nav>
       </header>
       <div class="wiki-header-actions" role="group" aria-label="Wiki 工具">
+        <WikiAccountMenu />
+        <WikiAssistant @enabled="assistantEnabled = $event" />
         <button type="button" class="wiki-header-icon" :aria-label="themeAction" :title="themeAction" @click="toggleTheme">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
             <template v-if="isDark">
@@ -24,7 +26,7 @@
             <path v-else d="M20.9 13.2A9 9 0 0 1 10.8 3.1 9 9 0 1 0 20.9 13.2Z" />
           </svg>
         </button>
-        <RouterLink class="wiki-header-icon" to="/wiki/admin" aria-label="管理 Wiki" title="管理 Wiki">
+        <RouterLink v-if="showAdmin" class="wiki-header-icon" to="/wiki/admin" aria-label="管理 Wiki" title="管理 Wiki">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
             <path d="m9.7 3-.6 2.2c-.6.2-1.2.5-1.7 1l-2.2-.6L3 9.4l1.6 1.6a8 8 0 0 0 0 2L3 14.6l2.2 3.8 2.2-.6c.5.5 1.1.8 1.7 1l.6 2.2h4.6l.6-2.2c.6-.2 1.2-.5 1.7-1l2.2.6 2.2-3.8-1.6-1.6a8 8 0 0 0 0-2L21 9.4l-2.2-3.8-2.2.6c-.5-.5-1.1-.8-1.7-1L14.3 3Z" />
             <circle cx="12" cy="12" r="3" />
@@ -69,6 +71,7 @@
           <RouterLink :to="channelBase">频道知识</RouterLink>
           <RouterLink :to="`${channelBase}/search`">搜索本频道</RouterLink>
           <RouterLink :to="`${channelBase}/profile`">频道画像</RouterLink>
+          <RouterLink :to="{ path: '/wiki/contributors', query: { channel } }">频道贡献者</RouterLink>
         </section>
         <section v-else-if="!isDirectory && channels?.length" class="wiki-context-card">
           <h2>公开频道</h2>
@@ -76,21 +79,32 @@
             {{ entry.title }}
           </RouterLink>
         </section>
+        <div id="wiki-article-contributors"></div>
       </aside>
     </div>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { WIKI_FEED_ROUTES, WIKI_KEEP_ALIVE } from "../../router/wiki-routes";
 import { invalidateChannelWiki, refreshingCount, useWikiResource, wikiUrl } from "../../composables/wiki-store";
 import { publicWikiUrl, type WikiChannel } from "../../api/wiki";
+import { canManageWiki } from "../../api/wiki-account";
+import WikiAccountMenu from "./WikiAccountMenu.vue";
+import WikiAssistant from "./WikiAssistant.vue";
+import { wikiAssistantEnabled } from "../../api/wiki-assistant";
 import "./wiki.css";
 import "./wiki-public.css";
 const route = useRoute();
 const router = useRouter();
 const query = ref("");
+const assistantEnabled = ref(false);
+provide(wikiAssistantEnabled, assistantEnabled);
+const showAdmin = ref(false);
+async function checkAdmin() {
+  showAdmin.value = await canManageWiki();
+}
 const isDark = ref(document.documentElement.classList.contains("dark"));
 const themeAction = computed(() => isDark.value ? "切换到浅色模式" : "切换到深色模式");
 function syncTheme() {
@@ -111,6 +125,7 @@ const navigation = computed(() => [
   { label: "探索", to: "/wiki/search", active: route.name === "WikiGlobalSearch" },
   { label: "频道", to: "/wiki?tab=channels", active: isDirectory.value },
   { label: "收藏", to: "/wiki/bookmarks", active: route.name === "WikiBookmarks" },
+  { label: "贡献", to: "/wiki/contributors", active: route.name === "WikiContributors" },
   ...(channel.value ? [
     { label: "知识地图", to: `${channelBase.value}/graph`, active: route.name === "WikiGraph" },
     { label: "动态", to: `${channelBase.value}/timeline`, active: route.name === "WikiTimeline" },
@@ -153,15 +168,18 @@ async function checkVisibility() {
 }
 onMounted(() => {
   void checkVisibility();
+  void checkAdmin();
   visibilityTimer = setInterval(checkVisibility, 30_000);
   document.addEventListener("visibilitychange", checkVisibility);
   window.addEventListener("theme-change", syncTheme);
+  window.addEventListener("focus", checkAdmin);
 });
 onUnmounted(() => {
   clearInterval(visibilityTimer);
   visibilityRequest?.abort();
   document.removeEventListener("visibilitychange", checkVisibility);
   window.removeEventListener("theme-change", syncTheme);
+  window.removeEventListener("focus", checkAdmin);
 });
 function search() {
   void router.push({ name: "WikiGlobalSearch", query: { q: query.value.trim() || undefined } });
