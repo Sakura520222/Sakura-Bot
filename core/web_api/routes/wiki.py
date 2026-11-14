@@ -20,9 +20,9 @@ from core.media.image_validation import MAX_IMAGE_BYTES, ImageInputError, valida
 from core.wiki.avatars import sniff_media_type
 from core.wiki.cursor import InvalidCursor
 from core.wiki.models import MANUAL_REVIEW_POLICY, Strict, WikiConfig
-from core.wiki.reader import revision_changes
+from core.wiki.reader import public_notes, revision_changes
 from core.wiki.runtime import get_wiki_runtime
-from core.wiki.schema import CHANNEL_VISIBLE
+from core.wiki.schema import CHANNEL_VISIBLE, REVISION_VISIBLE
 from core.wiki.store import decode, encode
 
 CHANNEL = r"[A-Za-z0-9_-]{1,64}"
@@ -856,6 +856,63 @@ async def publications(channel: str, page: int = Query(1, ge=1, le=10000)):
         (ch["id"], (page - 1) * 50),
         fetch=True,
     )
+
+
+@admin.get("/channels/{channel}/publications/{publication_id}/pages/{page_id}")
+async def publication_page_preview(channel: str, publication_id: str, page_id: str):
+    service, ch = await managed(channel)
+    async with service.store.snapshot():
+        publication = await service.store.one(
+            """SELECT pub.id,pub.created_at,c.published_revision
+            FROM wiki_publications pub JOIN wiki_channels c ON c.id=pub.channel_id
+            JOIN wiki_pages p ON p.channel_id=c.id
+            WHERE pub.channel_id=%s AND pub.id=%s AND p.id=%s""",
+            (ch["id"], publication_id, page_id),
+        )
+        if not publication:
+            raise HTTPException(404, "找不到该频道快照或词条")
+        rows = await service.store.query(
+            f"""SELECT pp.publication_id,r.id,r.document,
+                ({REVISION_VISIBLE} AND NOT COALESCE(
+                    JSON_CONTAINS(JSON_EXTRACT(c.config,'$.hidden_topics'),JSON_QUOTE(p.topic)),FALSE
+                )) AS visible
+            FROM wiki_publication_pages pp JOIN wiki_pages p ON p.id=pp.page_id
+            JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.page_id=p.id AND r.channel_id=p.channel_id
+            JOIN wiki_channels c ON c.id=p.channel_id
+            WHERE c.id=%s AND p.id=%s AND pp.publication_id IN (%s,%s)""",
+            (ch["id"], page_id, publication_id, publication["published_revision"]),
+            fetch=True,
+        )
+    versions = {row["publication_id"]: row for row in rows}
+    target = versions.get(publication_id)
+    current = versions.get(publication["published_revision"])
+    document = decode(target["document"]) if target and target["visible"] else None
+    current_document = decode(current["document"]) if current and current["visible"] else {}
+    changes, truncated = (
+        revision_changes(current_document, document or {}) if document else ([], False)
+    )
+    return {
+        "publication_id": publication_id,
+        "created_at": publication["created_at"],
+        "current": publication_id == publication["published_revision"],
+        "status": "available" if document else "unavailable" if target else "missing",
+        "document": {
+            "title": document["title"],
+            "title_notes": public_notes(document.get("title_notes", [])),
+            "claims": [
+                {
+                    "key": claim["key"],
+                    "text": claim["text"],
+                    "community_notes": public_notes(claim.get("community_notes", [])),
+                }
+                for claim in document["claims"]
+            ],
+        }
+        if document
+        else None,
+        "changes": changes,
+        "truncated": truncated,
+    }
 
 
 @admin.get("/channels/{channel}/extractions")

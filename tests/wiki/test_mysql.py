@@ -448,8 +448,8 @@ async def test_publication_recovers_with_active_telegram_username(store, monkeyp
     assert not (await store.channel(channel_id))["access_verified"]
 
 
-async def test_community_title_note_and_correction_publish_as_revisions(store):
-    ch, _, page, revision, _ = await published(store)
+async def test_community_title_note_and_correction_publish_as_revisions(store, monkeypatch):
+    ch, _, page, revision, publication = await published(store)
     channel_id = ch["id"]
     config = ch["config"].model_copy(
         update={"proposals_enabled": True, "annotations_enabled": True, "publication_mode": "auto"}
@@ -497,9 +497,16 @@ async def test_community_title_note_and_correction_publish_as_revisions(store):
         channel_id, page["slug"], compare=(revision, renamed["revision_id"])
     )
     assert {"before": initial["title"], "after": renamed["title"]} in comparison["changes"]
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    preview = await wiki.publication_page_preview(channel_id, publication, page["id"])
+    assert preview["status"] == "available" and not preview["current"]
+    assert preview["document"]["title"] == initial["title"]
+    assert {"before": renamed["title"], "after": initial["title"]} in preview["changes"]
+    assert (await store.channel(channel_id))["published_revision"] == renamed["publication_id"]
 
 
-async def test_atomic_publication_visibility_revocation_and_rollback(store):
+async def test_atomic_publication_visibility_revocation_and_rollback(store, monkeypatch):
     ch, source, page, revision, publication = await published(store)
     reader = PublicReader(store)
     article = await reader.page(ch["id"], page["slug"])
@@ -522,6 +529,17 @@ async def test_atomic_publication_visibility_revocation_and_rollback(store):
     with pytest.raises(ValueError, match="revoked"):
         await Knowledge(store).publish(ch["id"], None, "test", rollback=publication)
     assert (await store.channel(ch["id"]))["published_revision"] == publication
+    service = WikiRuntime(store, None, None)
+    service.ready = True
+    monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: service)
+    preview = await wiki.publication_page_preview(ch["id"], publication, page["id"])
+    assert preview["status"] == "unavailable" and preview["document"] is None
+    await store.query(
+        "DELETE FROM wiki_publication_pages WHERE publication_id=%s AND page_id=%s",
+        (publication, page["id"]),
+    )
+    preview = await wiki.publication_page_preview(ch["id"], publication, page["id"])
+    assert preview["status"] == "missing" and preview["document"] is None
 
 
 async def test_community_contributions_follow_publication_and_privacy(store, monkeypatch):

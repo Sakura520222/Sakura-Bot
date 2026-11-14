@@ -47,6 +47,7 @@ let researchSaved;
 let submittedProposal;
 const reviewProposalId = "d".repeat(32);
 const draftJobId = "a".repeat(32);
+const snapshotID = "9".repeat(32);
 let draftApproved = false;
 const failedDraft = { id: "b".repeat(32), page_id: "c".repeat(32), title: "审校未通过的测试词条",
   created_at: channel.updated_at, slug: "draft", locked: false, hidden: false, approved: false, rejected: false, review_result: 0,
@@ -183,6 +184,15 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === "channels") out = [channel];
     else if (endpoint === "/api/wiki/admin/channels") out = [adminChannel];
     else if (endpoint === "/api/wiki/admin/channels/123/config") out = adminChannel;
+    else if (endpoint === "/api/wiki/admin/channels/123/publications") out = [{ id: snapshotID, created_at: channel.updated_at }];
+    else if (endpoint === `/api/wiki/admin/channels/123/publications/${snapshotID}/pages/${cards[0].id}`) {
+      assert.equal(req.method, "GET");
+      assert.equal(req.headers.authorization, "Bearer wiki-test-token");
+      out = { current: false, status: "available", truncated: false,
+        document: { title: "快照词条", title_notes: [], claims: [{ key: "md:fixture", text: "快照正文", community_notes: [] }] },
+        changes: [{ before: "当前内容", after: "快照正文" }] };
+    }
+    else if (endpoint === "/api/wiki/admin/channels/123/rollback") assert.fail("preview must not roll back");
     else if (endpoint === "/api/wiki/admin/channels/123/jobs") out = [{
       id: draftJobId, kind: "update", status: "running", phase: "review", created_at: channel.updated_at, updated_at: channel.updated_at,
       progress: { review_rejections: 1 },
@@ -731,11 +741,11 @@ try {
   });
   await tools.getByRole("button", { name: "建议修订" }).click();
   const titleEdit = accountPage.getByRole("dialog", { name: "提交标题修订建议" });
-  await titleEdit.getByRole("textbox", { name: "替换选中文字" }).fill("更新");
+  await titleEdit.getByRole("textbox", { name: "替换选中文字" }).fill("");
   await titleEdit.getByRole("button", { name: "提交审核" }).click();
   await titleEdit.waitFor({ state: "hidden" });
   assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.excerpt, submittedProposal.text],
-    [null, "edit", selectionText, "更新" + title.slice(2)]);
+    [null, "edit", selectionText, title.slice(2)]);
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();
@@ -872,6 +882,16 @@ try {
   await desktop.getByText("没有待审投稿。", { exact: true }).waitFor();
   await assertCentered(desktop.getByRole("dialog", { name: "管理本词条" }));
   assert.ok((await desktop.getByRole("textbox", { name: "正文", exact: true }).inputValue()).includes("Sakura"));
+  const manager = desktop.getByRole("dialog", { name: "管理本词条" });
+  await manager.getByText("频道发布与回滚", { exact: true }).click();
+  await manager.getByRole("button", { name: "预览", exact: true }).click();
+  const snapshot = desktop.getByRole("dialog", { name: "回滚预览" });
+  await assertCentered(snapshot);
+  await snapshot.locator(".revision-diff").getByText("修改后", { exact: true }).waitFor();
+  await snapshot.getByRole("button", { name: "所选快照正文", exact: true }).click();
+  await snapshot.getByRole("heading", { name: "快照词条" }).waitFor();
+  await snapshot.getByRole("button", { name: "关闭", exact: true }).click();
+  await snapshot.waitFor({ state: "hidden" });
   if (output) await desktop.screenshot({path:path.join(output,"wiki-article-management.png")});
   await desktop.getByRole("button", { name: "隐藏词条", exact: true }).click();
   await assertCentered(desktop.getByRole("dialog", { name: /^隐藏「/ }));

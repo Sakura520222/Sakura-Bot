@@ -407,6 +407,7 @@ def test_avatar_missing_or_invisible_channel_is_404(api, monkeypatch):
         "/api/wiki/admin/channels",
         "/api/wiki/admin/channels/123/config",
         "/api/wiki/admin/channels/123/publish",
+        "/api/wiki/admin/channels/123/publications/abc/pages/def",
         "/api/public/wiki/admin/channels",
         "/api/public/wiki/channels/123/publish",
         "/api/public/wiki/channels/123/avatar/x",

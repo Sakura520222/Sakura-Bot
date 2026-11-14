@@ -22,13 +22,14 @@
               <option v-for="(claim, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ plainWikiText(claim.text).slice(0, 42) }}</option>
             </select></label>
              <label>{{ passage?.range ? '替换选中文字' : ordinal === null ? '标题' : '正文' }}
-               <input v-if="ordinal === null" v-model="draft" required maxlength="160" />
-               <textarea v-else v-model="draft" required maxlength="14000" rows="5" />
+               <input v-if="ordinal === null" v-model="draft" :required="!passage?.range" maxlength="160" />
+               <textarea v-else v-model="draft" :required="!passage?.range" maxlength="14000" rows="5" />
              </label>
+            <p v-if="passage?.range" class="wiki-meta">留空可删除选中文字。</p>
             <details v-if="submittedText !== original"><summary>查看差异</summary>
               <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
             </details>
-            <div class="management-actions"><button type="submit" :disabled="!!pending || !draft.trim() || submittedText === original">{{ pending === 'correct' ? '正在提交…' : '提交审校' }}</button></div>
+            <div class="management-actions"><button type="submit" :disabled="!!pending || !canCorrect">{{ pending === 'correct' ? '正在提交…' : '提交审校' }}</button></div>
           </form>
           <details v-if="!editOnly" class="management-section" @toggle="versionsOpened">
             <summary>频道发布与回滚</summary>
@@ -36,13 +37,49 @@
             <p v-else-if="versions && !versions.length" class="wiki-meta">暂无可操作的版本。</p>
             <ul v-if="versions?.length" class="management-versions">
               <li v-for="entry in versions" :key="entry.id"><span>{{ formatDate(entry.created_at) }} · {{ entry.id.slice(0, 12) }}</span>
-                <button type="button" :disabled="!!pending" @click="publishChoice(entry)">{{ entry.kind === 'publish' ? '发布' : '回滚' }}</button></li>
+                <div class="management-actions">
+                  <button v-if="entry.kind === 'rollback'" type="button" @click="openPreview(entry)">预览</button>
+                  <button type="button" :disabled="!!pending" @click="publishChoice(entry)">{{ entry.kind === 'publish' ? '发布' : '回滚' }}</button>
+                </div>
+              </li>
             </ul>
           </details>
           <WikiCommunityAdmin v-if="!editOnly" class="management-section" :page="page.id" />
         </template>
       </template>
     </div>
+    <dialog ref="previewDialog" class="article-management snapshot-preview" aria-labelledby="snapshot-preview-title" @close="closePreview">
+      <header class="management-toolbar management-header">
+        <h2 id="snapshot-preview-title">回滚预览</h2>
+        <button type="button" autofocus @click="previewDialog?.close()">关闭</button>
+      </header>
+      <div v-if="previewChoice" class="management-body">
+        <p class="wiki-meta">{{ formatDate(previewChoice.created_at) }} · {{ previewChoice.id.slice(0, 12) }}<span v-if="preview?.current"> · 当前快照</span></p>
+        <p v-if="previewError" role="alert" class="management-feedback">{{ previewError }} <button type="button" @click="openPreview(previewChoice)">重试</button></p>
+        <p v-else-if="!preview" role="status" class="wiki-meta">正在加载快照…</p>
+        <p v-else-if="preview.status === 'missing'" class="wiki-meta">此快照不含当前词条。回滚后，这个词条将不在频道的公开快照中。</p>
+        <p v-else-if="!preview.document" class="wiki-meta">词条已隐藏或引用来源已失效，当前无法预览。</p>
+        <template v-else>
+          <div class="management-actions" role="group" aria-label="预览内容">
+            <button type="button" :aria-pressed="!showSnapshotBody" @click="showSnapshotBody = false">词条差异</button>
+            <button type="button" :aria-pressed="showSnapshotBody" @click="showSnapshotBody = true">所选快照正文</button>
+          </div>
+          <section v-if="!showSnapshotBody" class="management-section">
+            <h3>当前 → 所选快照</h3>
+            <WikiRevisionDiff v-if="preview.changes.length" :changes="preview.changes" />
+            <p v-else class="wiki-meta">词条正文及注解无变化。</p>
+            <p v-if="preview.truncated" class="wiki-meta">仅显示前 100 处差异。</p>
+          </section>
+          <div v-else class="management-section">
+            <WikiMarkdown heading :text="preview.document.title" :annotations="preview.document.title_notes" />
+            <section v-for="(claim, i) in preview.document.claims" :key="i">
+              <h4 v-if="!claim.key.startsWith('md:')">{{ claim.key }}</h4>
+              <WikiMarkdown :text="claim.text" :channel="channel" :annotations="claim.community_notes" />
+            </section>
+          </div>
+        </template>
+      </div>
+    </dialog>
     <dialog ref="confirmHide" class="management-confirm" aria-labelledby="confirm-wiki-hide">
       <h3 id="confirm-wiki-hide">隐藏「{{ page?.title }}」？</h3>
       <p>访客将无法访问此词条。管理员可在原链接恢复公开。</p>
@@ -56,15 +93,23 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { formatDate, wikiAdmin, type WikiArticle } from "../../api/wiki";
+import { formatDate, wikiAdmin, type WikiAnnotation, type WikiArticle, type WikiRevisionComparison } from "../../api/wiki";
 import { saveError } from "../../composables/autosave";
 import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
+import WikiMarkdown from "./WikiMarkdown.vue";
 import WikiRevisionDiff from "./WikiRevisionDiff.vue";
 import { plainWikiText } from "./wiki-utils";
 import { revisionText, type WikiPassage } from "./wiki-selection";
 
 type PageState = { id: string; title: string; locked: boolean; hidden: boolean };
 type Choice = { id: string; created_at: string; kind: "publish" | "rollback" };
+type SnapshotPreview = {
+  current: boolean;
+  status: "available" | "unavailable" | "missing";
+  document: { title: string; title_notes: WikiAnnotation[]; claims: { key: string; text: string; community_notes: WikiAnnotation[] }[] } | null;
+  changes: WikiRevisionComparison["changes"];
+  truncated: boolean;
+};
 type PageAction = "lock" | "unlock" | "hide" | "show";
 const props = defineProps<{ channel: string; slug: string; article?: WikiArticle }>();
 const emit = defineEmits<{ visibility: [hidden: boolean]; published: [] }>();
@@ -85,7 +130,14 @@ const ordinal = ref<number | null>(0);
 const draft = ref("");
 const original = computed(() => (ordinal.value === null ? props.article?.title : props.article?.claims[ordinal.value]?.text) || "");
 const submittedText = computed(() => passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
+const canCorrect = computed(() => !!submittedText.value.trim() && submittedText.value.trim() !== original.value.trim());
 const versions = ref<Choice[]>();
+const previewDialog = ref<HTMLDialogElement>();
+const previewChoice = ref<Choice>();
+const preview = ref<SnapshotPreview>();
+const previewError = ref("");
+const showSnapshotBody = ref(false);
+let previewRequest = 0;
 const root = computed(() => `/channels/${encodeURIComponent(props.channel)}`);
 const pagePath = (id: string) => `${root.value}/pages/${encodeURIComponent(id)}`;
 
@@ -127,7 +179,7 @@ function moderate(action: PageAction) {
   });
 }
 function correct() {
-  if (!props.article) return;
+  if (!props.article || !canCorrect.value) return;
   const revision = props.article.revision_id;
   return run("correct", async () => {
     await wikiAdmin(`${root.value}/revisions/${revision}/correct`, "POST", { claim: ordinal.value, text: submittedText.value });
@@ -145,6 +197,27 @@ function versionsOpened(event: Event) {
       ...publications.map((publication): Choice => ({ ...publication, kind: "rollback" }))];
   });
 }
+async function openPreview(entry: Choice) {
+  if (!page.value) return;
+  const request = ++previewRequest;
+  previewChoice.value = entry;
+  preview.value = undefined;
+  previewError.value = "";
+  if (!previewDialog.value?.open) previewDialog.value?.showModal();
+  try {
+    const result = await wikiAdmin<SnapshotPreview>(`${root.value}/publications/${entry.id}/pages/${page.value.id}`);
+    if (request !== previewRequest) return;
+    showSnapshotBody.value = !result.changes.length;
+    preview.value = result;
+  } catch (cause) {
+    if (request === previewRequest) previewError.value = saveError(cause);
+  }
+}
+function closePreview() {
+  previewRequest++;
+  previewChoice.value = undefined;
+  preview.value = undefined;
+}
 function publishChoice(entry: Choice) {
   return run(entry.kind, async () => {
     await wikiAdmin(`${root.value}/${entry.kind}`, "POST", entry.kind === "publish" ? { job_id: entry.id } : { publication_id: entry.id });
@@ -158,6 +231,9 @@ function publishChoice(entry: Choice) {
 <style scoped>
 .article-management { width: min(620px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--sb-border); border-radius: 16px; background: var(--sb-surface); color: var(--sb-text); }
 .article-management::backdrop { background: rgb(0 0 0 / 30%); }
+.snapshot-preview { width: min(840px, calc(100% - 24px)); }
+.snapshot-preview .wiki-meta { margin: 0; }
+.snapshot-preview button[aria-pressed="true"] { color: var(--sb-accent); background: var(--sb-accent-soft); }
 .management-header { padding: 12px 16px; }
 .management-header h2 { margin: 0; font-size: 17px; }
 .management-excerpt { border-inline-start: 3px solid var(--sb-accent); margin: 0; padding-inline: 10px; overflow-wrap: anywhere; }

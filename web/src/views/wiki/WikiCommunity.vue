@@ -21,15 +21,16 @@
         <option v-for="(item, i) in article.claims" :key="i" :value="i">{{ i + 1 }} · {{ item.text.slice(0, 42) }}</option>
       </select></label></p>
       <p><label>{{ editingText ? (passage?.range ? '替换选中文字' : titleTarget ? '修订后的标题' : '修订后的段落') : '说明' }}
-        <input v-if="editingText && titleTarget" v-model="draft" required maxlength="160" />
-        <textarea v-else v-model="draft" required maxlength="10000" rows="6" />
+        <input v-if="editingText && titleTarget" v-model="draft" :required="!replacingSelection" maxlength="160" />
+        <textarea v-else v-model="draft" :required="!replacingSelection" maxlength="10000" rows="6" />
       </label></p>
+      <p v-if="replacingSelection" class="wiki-meta">留空可删除选中文字。</p>
       <p><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
       <details><summary>预览</summary><p v-if="editingText && titleTarget">{{ submittedText }}</p><WikiMarkdown v-else :text="submittedText" :channel="article.channel_id" /></details>
       <details v-if="editingText && submittedText !== original"><summary>查看差异</summary>
         <WikiRevisionDiff :changes="[{ before: original, after: submittedText }]" />
       </details>
-      <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
+      <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy || !canSubmit">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
     </form>
     </dialog>
     <div v-if="!mineFirst" v-show="!article || sidebar || showList" :aria-busy="contributorsLoading">
@@ -109,6 +110,8 @@ const editingText = computed(() => kind.value === "edit" || kind.value === "corr
 const titleTarget = computed(() => claim.value === null);
 const original = computed(() => (claim.value === null ? props.article?.title : props.article?.claims[claim.value]?.text) || "");
 const submittedText = computed(() => editingText.value && passage.value ? revisionText(original.value, passage.value, draft.value) : draft.value);
+const replacingSelection = computed(() => editingText.value && !!passage.value?.range);
+const canSubmit = computed(() => !!submittedText.value.trim() && (!editingText.value || submittedText.value.trim() !== original.value.trim()));
 const contributorOffset = ref(0);
 const contributorsLoading = ref(false);
 const contributorsError = ref("");
@@ -183,7 +186,7 @@ function openProposal(mode: "edit" | "annotation", selection?: WikiPassage) {
 defineExpose({ openProposal });
 watch(editingText, chooseClaim);
 async function submit() {
-  if (!props.article || busy.value) return;
+  if (!props.article || busy.value || !canSubmit.value) return;
   busy.value = true;
   const article = props.article;
   try { await run(async () => {
