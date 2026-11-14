@@ -64,11 +64,12 @@
     </div>
     <ul v-else-if="mine?.length" class="contributors-list">
       <li v-for="entry in mine" :key="entry.id" class="proposal-row">
-        <div class="contributor-copy">
+        <component :is="entry.currently_public ? RouterLink : 'div'" class="contributor-copy proposal-summary"
+          :to="entry.currently_public ? { name: 'WikiArticle', params: { channel: entry.channel_id, slug: entry.page_id } } : undefined">
           <strong>{{ entry.title }}</strong>
           <span class="contributor-meta">{{ proposalStatus(entry) }}</span>
           <span v-if="entry.note">{{ entry.note }}</span>
-        </div>
+        </component>
         <button v-if="['pending', 'returned'].includes(entry.status)" type="button" :disabled="mineLoading" @click="withdraw(entry.id)">撤回投稿</button>
       </li>
     </ul>
@@ -111,6 +112,7 @@ let contributorsRequest: AbortController | undefined;
 const contributors = ref<{ id: string; display_name: string; username?: string; avatar: boolean; total: number; edits: number; annotations: number; sources: number }[]>();
 interface OwnProposal {
   id: string; title: string; status: string; note?: string; published: boolean; currently_public: boolean;
+  channel_id: string; page_id: string;
 }
 const mine = ref<OwnProposal[]>();
 const mineLoading = ref(false);
@@ -244,8 +246,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .community-sidebar { margin-block-start: 16px; }
 .contributors-list { padding: 0; margin: 0; list-style: none; }
 .contributors-list li { border-bottom: 1px solid var(--sb-border); }
-.wiki-shell .contributor-row,
-.proposal-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 12px; color: var(--sb-text); }
+.wiki-shell .contributor-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 12px; color: var(--sb-text); }
+.proposal-row { display: flex; align-items: center; gap: 12px; }
+.proposal-row .proposal-summary { padding: 14px 12px; }
+.proposal-row button { flex: none; margin-inline-end: 12px; }
+.wiki-shell .proposal-row a.proposal-summary { color: var(--sb-text); }
+.wiki-shell .proposal-row a.proposal-summary:hover { background: var(--sb-surface-2); text-decoration: none; }
+.proposal-row a.proposal-summary:hover strong { text-decoration: underline; }
 .wiki-shell .contributor-row:hover { text-decoration: none; background: var(--sb-surface-2); }
 .contributor-row:hover strong { text-decoration: underline; }
 .contributor-copy { display: grid; gap: 2px; min-width: 0; flex: 1; overflow-wrap: anywhere; }

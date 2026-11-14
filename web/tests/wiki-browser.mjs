@@ -97,7 +97,7 @@ const server = http.createServer(async (req,res) => {
       title: cards[0].title, slug: cards[0].slug, kind: "annotation", created_at: channel.updated_at,
       revision_id: cards[0].revision_id, channel_id: channel.id }];
     else if (endpoint === "/api/wiki/community/proposals" && req.method === "GET") out = [
-      { id: "live", title: "当前版本里的建议", status: "approved", published: true, currently_public: true },
+      { id: "live", title: "当前版本里的建议", status: "approved", published: true, currently_public: true, channel_id: channel.id, page_id: cards[0].id },
       { id: "old", title: "旧版本里的建议", status: "approved", published: true, currently_public: false },
       { id: "pending-publication", title: "等待发布的建议", status: "approved", published: false, currently_public: false },
     ];
@@ -611,6 +611,13 @@ try {
   for (const [title, status] of [["当前版本里的建议", "已发布"], ["旧版本里的建议", "当前未公开"], ["等待发布的建议", "已批准"]]) {
     await accountPage.getByRole("listitem").filter({ hasText: title }).getByText(status, { exact: true }).waitFor();
   }
+  const publishedProposal = accountPage.getByRole("link", { name: /当前版本里的建议/ });
+  assert.equal(await publishedProposal.getAttribute("href"), `/wiki/123/page/${cards[0].id}`);
+  assert.equal(await accountPage.getByRole("link", { name: /旧版本里的建议|等待发布的建议/ }).count(), 0);
+  await publishedProposal.click();
+  await accountPage.waitForURL(`**/wiki/123/page/${cards[0].id}`);
+  await accountPage.getByRole("heading", { name: cards[0].title, exact: true }).waitFor();
+  await accountPage.goBack();
   assert.equal(await accountPage.getByRole("list", { name: "公开贡献者" }).count(), 0);
   await accountPage.getByRole("link", { name: "贡献者", exact: true }).click();
   await accountPage.getByRole("list", { name: "公开贡献者" }).getByText("Cherry", { exact: true }).waitFor();
