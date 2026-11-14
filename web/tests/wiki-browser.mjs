@@ -265,6 +265,19 @@ async function assertCentered(dialog) {
     if (Math.abs(x) >= 2 || Math.abs(y) >= 2) throw new Error(`Dialog center offset: ${x}px, ${y}px`);
   });
 }
+async function assertHomeTabAlignment(page) {
+  const tabs = page.getByRole("navigation", { name: "首页栏目" });
+  const feed = page.locator(".wiki-feed-card").first();
+  await feed.waitFor();
+  const before = { tabs: (await tabs.boundingBox()).y, feed: (await feed.boundingBox()).y };
+  await tabs.getByRole("link", { name: "最新" }).click();
+  await page.waitForURL("**/wiki?tab=latest");
+  await feed.waitFor();
+  assert.deepEqual({ tabs: (await tabs.boundingBox()).y, feed: (await feed.boundingBox()).y }, before);
+  await tabs.getByRole("link", { name: "推荐" }).click();
+  await page.waitForURL("**/wiki");
+  await feed.waitFor();
+}
 let browser;
 try {
   browser = await chromium.launch({ ...(chrome ? { executablePath: chrome } : {}), args: ["--disable-gpu"] });
@@ -354,6 +367,10 @@ try {
   page.on("request",request=>{ if(request.url().includes("/api/public/wiki/feed")) feeds++; });
   await page.goto(url + "/wiki");
   await page.locator(".wiki-feed-card").first().waitFor();
+  const mobileTabs = await browser.newPage({ ...devices["Pixel 7"] });
+  await mobileTabs.goto(url + "/wiki");
+  await assertHomeTabAlignment(mobileTabs);
+  await mobileTabs.close();
   for (let batch=1;batch<12;batch++) {
     const prev = feeds;
     await page.evaluate(()=>window.scrollTo(0, document.documentElement.scrollHeight));
@@ -481,6 +498,7 @@ try {
   assert.equal(await desktop.getByRole("navigation", { name: "站点导航" }).getByRole("link", { name: "收藏", exact: true }).getAttribute("href"), "/wiki/bookmarks");
   const tabs = desktop.getByRole("navigation", { name: "首页栏目" });
   assert.deepEqual(await tabs.getByRole("link").allTextContents(), ["推荐", "最新"]);
+  await assertHomeTabAlignment(desktop);
   const brand = desktop.getByRole("link",{name:"Sakura Wiki",exact:true});
   assert.equal(await brand.textContent(), "Sakura Wiki");
   const desktopTools = desktop.getByRole("group",{name:"Wiki 工具"});

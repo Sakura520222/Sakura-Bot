@@ -1,6 +1,6 @@
 <template>
   <div class="wiki-view">
-    <header class="wiki-page-heading">
+    <header class="wiki-page-heading" :class="{ 'wiki-home-feed-heading': tab !== 'channels' }">
       <h1>{{ tab === "channels" ? "频道目录" : "频道百科" }}</h1>
       <button v-if="tab === 'recommended'" @click="refresh = Date.now()">换一批</button>
     </header>

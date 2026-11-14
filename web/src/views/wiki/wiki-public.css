@@ -8,6 +8,7 @@
   --wiki-motion-fast: 150ms;
   --wiki-motion-panel: 220ms;
   --wiki-masthead: 0px;
+  --wiki-control-height: 32px;
   font-family: "Inter", "Microsoft YaHei UI", system-ui, sans-serif;
   background: var(--sb-surface);
   font-size: 15px;
@@ -113,6 +114,9 @@
   gap: 12px;
   align-items: center;
   padding-block: 14px;
+}
+.wiki-shell .wiki-home-feed-heading {
+  min-height: calc(var(--wiki-control-height) + 28px);
 }
 .wiki-shell .wiki-page-heading h1 { margin: 0; font-size: 23px; }
 .wiki-shell .wiki-context-nav,
@@ -256,6 +260,7 @@
   .wiki-shell .wiki-reader-inline { display: block; }
 }
 @media (max-width: 720px) {
+  .wiki-shell { --wiki-control-height: 44px; }
   .wiki-shell .wiki-columns {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "navigation actions" "main main";
@@ -285,7 +290,7 @@
   .wiki-shell .wiki-header-actions { padding: 0 12px 0 0; }
   .wiki-shell .wiki-main { border: 0; padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
   .wiki-shell .wiki-main > .wiki-view { padding-inline: 12px; }
-  .wiki-shell button, .wiki-shell input, .wiki-shell select { min-height: 44px; }
+  .wiki-shell button, .wiki-shell input, .wiki-shell select { min-height: var(--wiki-control-height); }
 }
 @media (prefers-reduced-motion: reduce) {
   .wiki-shell *, .wiki-shell *::before, .wiki-shell *::after { animation: none !important; transition: none !important; }
