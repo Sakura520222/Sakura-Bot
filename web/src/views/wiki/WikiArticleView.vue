@@ -73,7 +73,10 @@
             <span v-else>{{ source.title }}</span>
             <time v-if="source.createdAt" :datetime="source.createdAt" class="wiki-meta"> · {{ formatDate(source.createdAt) }}</time>
             <span v-if="source.image" class="wiki-meta"> · 含图片资料</span>
-            <blockquote v-if="source.quotes.length">{{ source.quotes.join("\n\n") }}</blockquote>
+            <details v-if="source.quotes.length" class="source-excerpt" :key="data.revision_id + ':' + index">
+              <summary>查看摘录</summary>
+              <blockquote>{{ source.quotes.join("\n\n") }}</blockquote>
+            </details>
           </li>
         </ol>
         <button v-if="sourceLimit < sourceEntries.length" @click="sourceLimit += 20">查看更多来源</button>
@@ -390,6 +393,8 @@ onUnmounted(() => {
 .article-sources ol { margin-block: 10px; }
 .article-sources li { margin-block: 8px; overflow-wrap: anywhere; scroll-margin-top: calc(var(--wiki-masthead) + var(--wiki-article-toolbar-height, 0px) + 12px); }
 .article-sources li:target, .article-sources li:focus { background: var(--sb-accent-soft); }
+.source-excerpt { margin-top: 4px; }
+.source-excerpt summary { width: fit-content; }
 .article-sources blockquote { margin: 6px 0; }
 .related-neighbors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 8px; }
 .wiki-shell .related-neighbors a { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--sb-border); border-radius: 8px; color: var(--sb-text); overflow-wrap: anywhere; }

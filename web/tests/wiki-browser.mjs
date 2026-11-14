@@ -460,7 +460,13 @@ try {
   await page.waitForURL("**#source-1");
   await page.locator("#source-1:focus").waitFor();
   assert.equal(await page.getByRole("link", { name: "频道原帖", exact: true }).count(), 1);
-  await page.locator("#source-1").getByText("原帖片段", { exact: true }).waitFor();
+  const source = page.locator("#source-1");
+  const excerpt = source.getByText("原帖片段", { exact: true });
+  await excerpt.waitFor({ state: "hidden" });
+  await source.getByText("查看摘录", { exact: true }).click();
+  await excerpt.waitFor();
+  await source.getByText("查看摘录", { exact: true }).click();
+  await excerpt.waitFor({ state: "hidden" });
   await page.locator("#source-2").getByRole("link", { name: "外部参考" }).waitFor();
   await page.locator("#claim-0").getByText("未获外部证据", { exact: true }).waitFor();
   await page.getByRole("link",{name:"预览图片 · 示例"}).waitFor();
