@@ -456,8 +456,8 @@ try {
   const relatedEntries = page.getByRole("navigation", { name: "相关条目" });
   await relatedEntries.getByRole("link",{name:/较早/}).waitFor();
   await relatedEntries.getByRole("link", { name: "浏览同主题条目" }).waitFor();
-  await page.locator("#claim-0").getByRole("link", { name: "查看来源 1" }).click();
-  await page.waitForURL("**#source-1");
+  assert.equal(await page.locator(".wiki-claim-section").getByRole("link", { name: /查看来源 \d/ }).count(), 0);
+  await page.goto(url + "/wiki/123/page/article-0#source-1");
   await page.locator("#source-1:focus").waitFor();
   assert.equal(await page.getByRole("link", { name: "频道原帖", exact: true }).count(), 1);
   const source = page.locator("#source-1");

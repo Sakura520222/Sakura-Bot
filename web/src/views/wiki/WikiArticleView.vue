@@ -54,11 +54,9 @@
         <span v-if="claim.occurred_at" class="wiki-meta">发生于 {{ formatDay(claim.occurred_at) }}</span>
         <WikiMarkdown :text="claim.text" :channel="data.channel_id" :claim-index="index"
           :annotations="claim.community_notes" image-preview />
-        <div v-if="claim.fact_check || claim.valid_until || claimReferences[index]?.length" class="claim-meta wiki-meta">
+        <div v-if="claim.fact_check || claim.valid_until" class="claim-meta wiki-meta">
           <span v-if="claim.fact_check">{{ factLabels[claim.fact_check.status] || "未获外部证据" }}</span>
           <span v-if="claim.valid_until">有效至 {{ formatDay(claim.valid_until) }}</span>
-          <a v-for="number in claimReferences[index]" :key="number" :href="`#source-${number}`"
-            :aria-label="`查看来源 ${number}`" @click.prevent="jump(`source-${number}`)">[{{ number }}]</a>
         </div>
       </section>
       <button v-if="visibleCount < data.claims.length" @click="visibleCount += 8">继续阅读</button>
@@ -273,12 +271,10 @@ onUnmounted(() => {
 });
 watch([apiPath, () => data.value?.revision_id], () => { menu.value = undefined; selection.value = undefined; });
 const references = shallowRef<WikiReferences>();
-const articleEvidence = computed(() => {
+const sourceEntries = computed(() => {
   const article = data.value;
-  return article ? articleSources(article, article.sources ?? references.value?.sources ?? []) : undefined;
+  return article ? articleSources(article, article.sources ?? references.value?.sources ?? []) : [];
 });
-const sourceEntries = computed(() => articleEvidence.value?.entries ?? []);
-const claimReferences = computed(() => articleEvidence.value?.citations ?? []);
 const historyPanel = ref<InstanceType<typeof WikiRevisionHistory>>();
 const { data: related, error: relatedError, reload: reloadRelated } =
   useWikiResource<{ next: WikiNode | null; previous: WikiNode | null }>(
