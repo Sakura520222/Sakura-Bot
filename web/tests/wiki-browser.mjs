@@ -761,6 +761,13 @@ try {
   await noteEditor.waitFor({ state: "hidden" });
   assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.annotation_index, submittedProposal.text],
     [0, "annotation", 0, "更新注解。"]);
+  await editableNote.click({ button: "right" });
+  await accountPage.getByRole("menuitem", { name: "修改当前注解", exact: true }).click();
+  await noteText.fill("");
+  await noteEditor.getByRole("button", { name: "提交删除审核", exact: true }).click();
+  await noteEditor.waitFor({ state: "hidden" });
+  assert.deepEqual([submittedProposal.claim, submittedProposal.kind, submittedProposal.annotation_index, submittedProposal.text, submittedProposal.sources],
+    [0, "annotation", 0, "", []]);
   assistantEnabled = false;
   accountUser = null;
   await accountPage.close();

@@ -1,6 +1,6 @@
 <template>
   <div class="proposal-changes">
-    <p class="paragraph">{{ item.payload.claim === null ? '词条标题' : `第 ${item.payload.claim + 1} 段` }}<template v-if="item.payload.annotation_index != null"> · 修改注解</template></p>
+    <p class="paragraph">{{ item.payload.claim === null ? '词条标题' : `第 ${item.payload.claim + 1} 段` }}<template v-if="item.payload.annotation_index != null"> · {{ item.payload.text ? '修改注解' : '删除注解' }}</template></p>
     <WikiRevisionDiff v-if="editing" :changes="[{ before: before || null, after: after || null }]" />
     <template v-else>
       <section v-if="item.payload.excerpt || item.original" class="before"><h4>{{ item.payload.excerpt ? "所选原文" : item.payload.claim === null ? "原标题" : "原文段落" }}</h4><pre>{{ item.payload.excerpt || item.original }}</pre></section>

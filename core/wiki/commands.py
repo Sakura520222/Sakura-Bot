@@ -23,7 +23,14 @@ def proposal_summary(proposal):
 
     target = "词条标题" if payload["claim"] is None else f"第 {payload['claim'] + 1} 段"
     annotation_edit = payload.get("annotation_index") is not None
-    label = "修改注解" if annotation_edit else PROPOSAL_LABELS[kind]
+    annotation_delete = annotation_edit and not payload["text"]
+    label = (
+        "删除注解"
+        if annotation_delete
+        else "修改注解"
+        if annotation_edit
+        else PROPOSAL_LABELS[kind]
+    )
     lines = [
         f"Wiki 待审 · {label}",
         f"{excerpt(proposal['channel_title'], 100)} / {excerpt(proposal['title'], 160)} · {target}",
@@ -37,6 +44,9 @@ def proposal_summary(proposal):
             ("+", "修改后", payload["text"]),
         ):
             text = "\n".join(line[1:] for line in changes if line.startswith(marker))
+            if annotation_delete and marker == "+":
+                lines.append(f"{label}\n（删除整条注解）")
+                continue
             lines.append(
                 f"{label}\n{excerpt(text or ('（未改动）' if changes else fallback or '（原版本不可用）'))}"
             )

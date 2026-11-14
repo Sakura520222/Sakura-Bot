@@ -22,15 +22,16 @@
       </select></label></p>
       <p><label>{{ editingText ? (passage?.range ? '替换选中文字' : titleTarget ? '修订后的标题' : '修订后的段落') : '说明' }}
         <input v-if="editingText && titleTarget" v-model="draft" :required="!replacingSelection" maxlength="160" />
-        <textarea v-else v-model="draft" :required="!replacingSelection" maxlength="10000" rows="6" />
+        <textarea v-else v-model="draft" :required="!replacingSelection && annotationIndex === undefined" maxlength="10000" rows="6" />
       </label></p>
       <p v-if="replacingSelection" class="wiki-meta">留空可删除选中文字。</p>
-      <p><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
-      <details><summary>预览</summary><p v-if="editingText && titleTarget">{{ submittedText }}</p><WikiMarkdown v-else :text="submittedText" :channel="article.channel_id" /></details>
+      <p v-if="deletingNote" role="status" class="wiki-meta">审核并发布后，这条注解和它的来源链接将从当前词条移除。</p>
+      <p v-if="!deletingNote"><label>来源链接（每行一个）<textarea v-model="sources" rows="2" /></label></p>
+      <details v-if="!deletingNote"><summary>预览</summary><p v-if="editingText && titleTarget">{{ submittedText }}</p><WikiMarkdown v-else :text="submittedText" :channel="article.channel_id" /></details>
       <details v-if="editingText && submittedText !== original || annotationIndex !== undefined"><summary>查看差异</summary>
-        <WikiRevisionDiff :changes="[{ before: originalNote?.text ?? original, after: submittedText }]" />
+        <WikiRevisionDiff :changes="[{ before: originalNote?.text ?? original, after: deletingNote ? null : submittedText }]" />
       </details>
-      <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy || !canSubmit">{{ busy ? '正在提交…' : '提交审核' }}</button></div>
+      <div class="community-actions"><button type="button" @click="editor?.close()">取消</button> <button type="submit" :disabled="busy || !canSubmit">{{ busy ? '正在提交…' : deletingNote ? '提交删除审核' : '提交审核' }}</button></div>
     </form>
     </dialog>
     <div v-if="!mineFirst" v-show="!article || sidebar || showList" :aria-busy="contributorsLoading">
@@ -118,11 +119,12 @@ const originalNote = computed(() => {
   return notes?.[annotationIndex.value];
 });
 const sourceLinks = computed(() => sources.value.split(/\s+/).filter(Boolean));
-const canSubmit = computed(() => !!submittedText.value.trim() && (
+const deletingNote = computed(() => !!originalNote.value && !submittedText.value.trim());
+const canSubmit = computed(() => deletingNote.value || (!!submittedText.value.trim() && (
   originalNote.value ? submittedText.value.trim() !== originalNote.value.text ||
     JSON.stringify(sourceLinks.value) !== JSON.stringify(originalNote.value.sources) :
     !editingText.value || submittedText.value.trim() !== original.value.trim()
-));
+)));
 const contributorOffset = ref(0);
 const contributorsLoading = ref(false);
 const contributorsError = ref("");
@@ -209,11 +211,12 @@ async function submit() {
   try { await run(async () => {
     await refreshUser();
     if (props.article?.revision_id !== article.revision_id || !editing.value) return;
+    const deleting = deletingNote.value;
     await request("/proposals", "POST", { channel: article.channel_id, page: article.id, revision: article.revision_id,
       kind: kind.value, claim: claim.value, text: submittedText.value, excerpt: passage.value?.excerpt || "",
-      excerpt_occurrence: passage.value?.excerptOccurrence, sources: sourceLinks.value, annotation_index: annotationIndex.value });
+      excerpt_occurrence: passage.value?.excerptOccurrence, sources: deleting ? [] : sourceLinks.value, annotation_index: annotationIndex.value });
     showList.value = true;
-    message.value = "已提交，等待管理员审核。"; editor.value?.close();
+    message.value = deleting ? "已提交删除请求，等待管理员审核。" : "已提交，等待管理员审核。"; editor.value?.close();
   }); } finally { busy.value = false; }
 }
 async function readContributors(offset = contributorOffset.value) {

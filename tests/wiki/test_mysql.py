@@ -572,6 +572,25 @@ async def test_community_title_note_and_correction_publish_as_revisions(store, m
     assert preview["document"]["title"] == initial["title"]
     assert {"before": renamed["title"], "after": initial["title"]} in preview["changes"]
     assert (await store.channel(channel_id))["published_revision"] == updated["publication_id"]
+    with pytest.raises(ValueError, match="内容不能为空"):
+        Proposal(revision=updated["revision_id"], kind="annotation", claim=None, text="")
+    deletion = Proposal(
+        revision=updated["revision_id"],
+        kind="annotation",
+        claim=None,
+        annotation_index=0,
+        text=" ",
+    )
+    deletion_id, _ = await service.community.submit(user, channel_id, page["id"], deletion)
+    [queued] = await service.community.proposals(identifier=deletion_id, review=True)
+    assert queued["original"] == "更新后的标题注解"
+    assert (await service.reader.page(channel_id, page["slug"]))["title_notes"]
+    await service.community.decide(deletion_id, "approved", "test")
+    await service.run_job(await store.claim_job())
+    current = await service.reader.page(channel_id, page["slug"])
+    assert current["title_notes"] == []
+    previous = await service.reader.page(channel_id, page["slug"], revision=updated["revision_id"])
+    assert previous["title_notes"] == updated["title_notes"]
 
 
 async def test_atomic_publication_visibility_revocation_and_rollback(store, monkeypatch):

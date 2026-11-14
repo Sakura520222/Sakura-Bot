@@ -1032,11 +1032,16 @@ class Knowledge:
                 ):
                     raise ValueError("找不到所选注解，请刷新词条后重试")
                 original = notes[annotation_index]
-                notes[annotation_index] = {
-                    **original,
-                    "text": annotation["text"],
-                    "sources": annotation["sources"],
-                }
+                if annotation["text"]:
+                    notes[annotation_index] = {
+                        **original,
+                        "text": annotation["text"],
+                        "sources": annotation["sources"],
+                    }
+                else:
+                    notes.pop(annotation_index)
+                    if not notes:
+                        target.pop(notes_key)
         document["verified_at"] = utc().isoformat()
         await cur.execute(
             """INSERT INTO wiki_page_revisions

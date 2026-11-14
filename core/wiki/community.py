@@ -4,7 +4,7 @@ import re
 import uuid
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .knowledge import validate_title_correction
 from .models import Strict
@@ -32,7 +32,7 @@ class Proposal(Strict):
     revision: str = Field(pattern=r"^[a-f0-9]{32}$")
     kind: Literal["edit", "correction", "annotation", "source", "dispute", "outdated", "fact_check"]
     claim: int | None = Field(ge=0, le=10000, strict=True)
-    text: str = Field(min_length=1, max_length=10000)
+    text: str = Field(max_length=10000)
     sources: list[str] = Field(default_factory=list, max_length=5)
     excerpt: str = Field(default="", max_length=500)
     excerpt_occurrence: int | None = Field(default=None, ge=0, le=10000, strict=True)
@@ -40,11 +40,21 @@ class Proposal(Strict):
 
     @field_validator("text")
     @classmethod
-    def nonempty(cls, value):
+    def clean_text(cls, value):
         value = value.strip()
-        if not value or "\x00" in value:
-            raise ValueError("内容不能为空")
+        if "\x00" in value:
+            raise ValueError("内容含无效字符")
         return value
+
+    @model_validator(mode="after")
+    def validate_content(self):
+        if self.annotation_index is not None and self.kind != "annotation":
+            raise ValueError("修改注解时请选择注解类型")
+        if not self.text:
+            if self.annotation_index is None:
+                raise ValueError("内容不能为空")
+            self.sources = []
+        return self
 
     @field_validator("sources")
     @classmethod
@@ -122,8 +132,6 @@ class Community:
                 raise ValueError("找不到所选段落")
             note_index = proposal.annotation_index
             if note_index is not None:
-                if proposal.kind != "annotation":
-                    raise ValueError("修改注解时请选择注解类型")
                 original_note = find_annotation(document, proposal.claim, note_index)
                 original = original_note["text"]
                 if proposal.text == original and proposal.sources == original_note.get(
