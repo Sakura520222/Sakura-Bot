@@ -661,6 +661,7 @@ class WikiStore:
         "profile_narrative",
         "profile_generation",
         "review_policy",
+        "review_revisions",
         "summary_topics",
     )
 

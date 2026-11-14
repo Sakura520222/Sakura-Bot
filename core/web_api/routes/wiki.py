@@ -20,6 +20,7 @@ from core.media.image_validation import MAX_IMAGE_BYTES, ImageInputError, valida
 from core.wiki.avatars import sniff_media_type
 from core.wiki.cursor import InvalidCursor
 from core.wiki.models import Strict, WikiConfig
+from core.wiki.reader import revision_changes
 from core.wiki.runtime import get_wiki_runtime
 from core.wiki.schema import CHANNEL_VISIBLE
 from core.wiki.store import decode, encode
@@ -566,19 +567,79 @@ async def control_job(
 
 
 @admin.get("/channels/{channel}/revisions")
-async def revisions(channel: str, page: int = Query(1, ge=1, le=10000)):
+async def revisions(
+    channel: str,
+    page: int = Query(1, ge=1, le=10000),
+    q: str = Query("", max_length=160),
+    status: Literal["all", "pending", "failed", "passed", "rejected"] = "all",
+    job_id: str | None = Query(None, pattern=r"^[a-f0-9]{32}$"),
+):
     service, ch = await managed(channel)
+    conditions = ["r.channel_id=%s"]
+    args = [ch["id"]]
+    policy = None
+    if job_id:
+        job = await service.store.one(
+            "SELECT kind,`cursor` FROM wiki_jobs WHERE channel_id=%s AND id=%s", (ch["id"], job_id)
+        )
+        if not job:
+            raise HTTPException(404, "找不到该频道的任务")
+        manifest = decode(job["cursor"])
+        policy = manifest.get("review_policy")
+        candidates = manifest.get("review_revisions", manifest.get("revisions"))
+        if candidates is not None:
+            if (
+                "review_revisions" not in manifest
+                and policy
+                and not ch["published_revision"]
+                and job["kind"] in service.engine.INCREMENTAL_KINDS
+            ):
+                # Older running jobs did not persist the expanded review list for the first publication.
+                candidates = await service.engine.knowledge.expand_revisions(None, ch, manifest)
+            if candidates:
+                conditions.append(
+                    "r.id IN (SELECT candidate.id FROM JSON_TABLE(%s, '$[*]' "
+                    "COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) AS candidate)"
+                )
+                args.append(encode(list(candidates.values())))
+            else:
+                conditions.append("FALSE")
+        else:
+            conditions.append("r.job_id=%s")
+            args.append(job_id)
+    if q.strip():
+        term = "%" + q.strip().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        conditions.append("(p.title LIKE %s ESCAPE '!' OR r.search_text LIKE %s ESCAPE '!')")
+        args.extend((term, term))
+    review_filter = "AND rr.policy_key=%s" if policy else ""
+    status_filters = {
+        "pending": "rejected=FALSE AND approved=FALSE AND review_result IS NULL",
+        "failed": "rejected=FALSE AND review_result=FALSE",
+        "passed": "rejected=FALSE AND (review_result=TRUE OR (review_result IS NULL AND approved=TRUE))",
+        "rejected": "rejected=TRUE",
+    }
+    status_filter = status_filters.get(status, "1=1")
     return await service.store.query(
-        """SELECT r.id,r.page_id,r.job_id,r.approved,r.rejected,r.created_at,
-        p.title,p.slug,p.locked,p.hidden FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
-        WHERE r.channel_id=%s ORDER BY r.created_at DESC LIMIT 50 OFFSET %s""",
-        (ch["id"], (page - 1) * 50),
+        f"""SELECT * FROM (
+        SELECT r.id,r.page_id,r.job_id,r.approved,r.rejected,r.created_at,
+        p.title,p.slug,p.locked,p.hidden,
+        LEFT(JSON_UNQUOTE(JSON_EXTRACT(r.document,'$.claims[0].text')),200) excerpt,
+        (SELECT rr.approved FROM wiki_revision_reviews rr WHERE rr.revision_id=r.id {review_filter}
+        ORDER BY rr.created_at DESC,rr.policy_key,rr.subject_hash LIMIT 1) review_result
+        FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
+        WHERE {" AND ".join(conditions)}) listed
+        WHERE {status_filter} ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET %s""",
+        (*([policy] if policy else []), *args, (page - 1) * 50),
         fetch=True,
     )
 
 
 @admin.get("/channels/{channel}/revisions/{revision_id}")
-async def revision_detail(channel: str, revision_id: str):
+async def revision_detail(
+    channel: str,
+    revision_id: str,
+    job_id: str | None = Query(None, pattern=r"^[a-f0-9]{32}$"),
+):
     service, ch = await managed(channel)
     row = await service.store.one(
         "SELECT * FROM wiki_page_revisions WHERE id=%s AND channel_id=%s", (revision_id, ch["id"])
@@ -590,9 +651,11 @@ async def revision_detail(channel: str, revision_id: str):
         (row["page_id"], row["created_at"]),
     )
     document = decode(row["document"])
+    previous = decode(old["document"]) if old else {}
+    changes, truncated = revision_changes(previous, document)
     diff = "\n".join(
         difflib.unified_diff(
-            encode(decode(old["document"]) if old else {}).splitlines(),
+            encode(previous).splitlines(),
             encode(document).splitlines(),
             fromfile="previous",
             tofile="draft",
@@ -606,9 +669,12 @@ async def revision_detail(channel: str, revision_id: str):
         fetch=True,
     )
     review = await service.store.one(
-        """SELECT approved,result,created_at FROM wiki_revision_reviews WHERE revision_id=%s
-        ORDER BY created_at DESC LIMIT 1""",
-        (revision_id,),
+        """SELECT rr.approved,rr.result,rr.created_at FROM wiki_revision_reviews rr
+        WHERE rr.revision_id=%s AND (%s IS NULL OR rr.policy_key=(
+            SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(j.`cursor`,'$.review_policy')) AS CHAR CHARACTER SET ascii)
+            FROM wiki_jobs j WHERE j.channel_id=%s AND j.id=%s))
+        ORDER BY rr.created_at DESC,rr.policy_key,rr.subject_hash LIMIT 1""",
+        (revision_id, job_id, ch["id"], job_id),
     )
     if review:
         review["result"] = decode(review["result"])
@@ -616,6 +682,8 @@ async def revision_detail(channel: str, revision_id: str):
         "id": revision_id,
         "document": document,
         "diff": diff,
+        "changes": changes,
+        "changes_truncated": truncated,
         "evidence": evidence,
         "review": review,
     }

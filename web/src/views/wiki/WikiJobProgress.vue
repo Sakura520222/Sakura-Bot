@@ -88,7 +88,8 @@
       </details>
     </n-alert>
     <n-alert v-if="p.review_rejections" type="warning" :show-icon="false">
-      {{ p.review_rejections }} 个修订未通过来源审校。可在草稿中查看理由、修正或重新审校。
+      {{ p.review_rejections }} 个修订未通过来源审校。
+      <n-button text type="primary" @click="$emit('review-failures')">查看未通过的草稿</n-button>
     </n-alert>
     <n-alert v-if="p.album_rejections" type="warning" :show-icon="false">
       模型拒绝处理 {{ p.album_rejections }} 组相册，已保留原有内容。
@@ -118,6 +119,7 @@ import {
 } from "../../api/wiki";
 
 const props = defineProps<{ job: WikiJob }>();
+defineEmits<{ "review-failures": [] }>();
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval>;
 onMounted(() => {

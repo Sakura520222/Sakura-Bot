@@ -393,7 +393,7 @@
               >{{ stateLabels[job.status] || job.status }}</n-tag
             ></template
           >
-          <WikiJobProgress :job="job" />
+          <WikiJobProgress :job="job" @review-failures="openFailedDrafts(job.id)" />
           <template #action
             ><n-space
               ><n-button
@@ -422,98 +422,108 @@
         </n-card>
       </template>
       <template v-else-if="tab === 'review'">
-        <n-empty v-if="!revisions.length" description="暂无草稿" />
-        <div class="review-grid">
-          <div class="revision-list">
-            <n-card
-              v-for="rev in revisions"
-              :key="rev.id"
-              :title="rev.title"
-              size="small"
-              ><n-space
-                ><n-tag>{{ rev.rejected ? "已撤回" : rev.approved ? "已准予发布" : "草稿" }}</n-tag
-                ><n-tag v-if="rev.locked">已锁定</n-tag
-                ><n-tag v-if="rev.hidden">已隐藏</n-tag></n-space
-              >
-              <p class="muted">{{ formatDate(rev.created_at) }}</p>
-              <n-space
-                ><n-button
-                  type="primary"
-                  secondary
-                  @click="previewRevision(rev)"
-                  >预览</n-button
-                ><n-button
-                  @click="pageAction(rev, rev.locked ? 'unlock' : 'lock')"
-                  >{{ rev.locked ? "解锁" : "锁定" }}</n-button
-                ><n-button
-                  @click="pageAction(rev, rev.hidden ? 'show' : 'hide')"
-                  >{{ rev.hidden ? "恢复展示" : "撤回" }}</n-button
-                ><n-button type="error" secondary @click="reject(rev.id)"
-                  >拒绝</n-button
-                ><n-button @click="enqueue('page', rev.page_id)"
-                  >重新生成</n-button
-                ></n-space
-              ></n-card
-            >
+        <div ref="draftWorkspace" class="draft-workspace">
+          <div class="draft-filters" role="search" aria-label="筛选草稿">
+            <n-input v-model:value="draftSearch" clearable maxlength="160" placeholder="搜索标题或正文" aria-label="搜索草稿" @update:value="queueDraftSearch" @keydown.enter="applyDraftFilters" />
+            <n-select v-model:value="draftStatus" :options="draftStatusOptions" aria-label="审校状态" @update:value="applyDraftFilters" />
+            <n-button v-if="draftJob" secondary @click="clearDraftJob">仅查看此任务 ×</n-button>
+            <n-button :loading="draftsLoading" @click="refreshDrafts">刷新草稿</n-button>
           </div>
-          <n-card v-if="preview" :title="preview.document.title" size="small">
-            <n-alert v-if="preview.review" :type="preview.review.approved ? 'info' : 'warning'">
-              {{ preview.review.approved ? "来源审校通过" : "来源审校未通过" }} ·
-              {{ preview.review.result.model }} · {{ formatDate(preview.review.created_at) }}
-              <p v-for="(batch, i) in preview.review.result.batches" :key="i">{{ batch.reason }}</p>
-              <n-button v-if="!preview.review.approved" size="small" @click="retryRevisionReview(preview.id)">重新审校</n-button>
-            </n-alert>
-            <section
-              v-for="(claim, index) in preview.document.claims"
-              :key="index"
-              class="claim"
-            >
-              <h3>{{ claim.key }}</h3>
-              <n-tag size="small">{{ statusLabels[claim.status] }}</n-tag>
-              <p v-if="reviewedClaims.get(index)">{{ reviewedClaims.get(index)?.reason }}</p>
-              <WikiMarkdown :text="claim.text" :channel="selected" />
-              <n-collapse
-                ><n-collapse-item title="修正此断言" :name="index"
-                  ><n-input
-                    v-model:value="claim.text"
-                    type="textarea"
-                    :autosize="{ minRows: 3, maxRows: 8 }"
-                  /><n-button
-                    class="mt"
-                    @click="correctClaim(index, claim.text)"
-                    >保存修正并锁定</n-button
-                  ></n-collapse-item
-                ></n-collapse
-              >
-              <blockquote v-for="(ev, i) in claim.evidence" :key="i">
-                <p>{{ ev.quote }}</p>
-                <n-text depth="3">来源 {{ ev.source_id }}</n-text
-                ><n-button
-                  size="small"
-                  quaternary
-                  type="error"
-                  @click="hideSource(ev.source_id)"
-                  >屏蔽来源</n-button
-                >
-              </blockquote>
+          <div class="review-grid" :class="{ 'reading-draft': selectedDraft }">
+            <div class="draft-index">
+              <n-spin :show="draftsLoading">
+                <n-alert v-if="draftsError" type="error">{{ draftsError }} <n-button text @click="refreshDrafts">重试</n-button></n-alert>
+                <n-empty v-else-if="!revisions.length && !draftsLoading" description="没有符合条件的草稿" />
+              <div class="revision-list">
+                <button v-for="rev in revisions" :key="rev.id" type="button" class="draft-row"
+                  :aria-current="selectedDraft === rev.id ? 'true' : undefined" @click="previewRevision(rev)">
+                  <strong>{{ rev.title }}</strong>
+                  <span v-if="rev.excerpt" class="draft-excerpt">{{ plainWikiText(rev.excerpt) }}</span>
+                  <span class="draft-row-meta">
+                    <n-tag size="small" :bordered="false" :type="revisionStatus(rev).type">{{ revisionStatus(rev).label }}</n-tag>
+                    <span v-if="rev.locked">已锁定</span><span v-if="rev.hidden">已隐藏</span>
+                    <time :datetime="rev.created_at">{{ formatDate(rev.created_at) }}</time>
+                  </span>
+                </button>
+              </div>
+              </n-spin>
+              <nav class="draft-pagination" aria-label="草稿分页">
+                <n-button size="small" :disabled="adminPage <= 1 || draftsLoading" @click="changeDraftPage(-1)">上一页</n-button>
+                <span class="muted">第 {{ adminPage }} 页</span>
+                <n-button size="small" :disabled="revisions.length < 50 || draftsLoading" @click="changeDraftPage(1)">下一页</n-button>
+              </nav>
+            </div>
+            <section ref="draftReader" class="draft-reader" aria-label="草稿阅读区">
+              <n-button v-if="selectedDraft" class="draft-back" text @click="clearDraftPreview">返回草稿列表</n-button>
+              <n-skeleton v-if="previewLoading" :repeat="5" text />
+              <n-alert v-else-if="previewError" type="error">{{ previewError }} <n-button v-if="previewRow" text @click="previewRevision(previewRow)">重试</n-button></n-alert>
+              <n-empty v-else-if="!preview" description="选择一条草稿查看正文和审校结果" />
+              <article v-else>
+                <header class="draft-reader-header">
+                  <div><h2>{{ preview.document.title }}</h2><span v-if="previewRow" class="muted">{{ formatDate(previewRow.created_at) }}</span></div>
+                  <n-dropdown v-if="previewRow" trigger="click" :options="draftActions" @select="runDraftAction">
+                    <n-button size="small" :disabled="busy">草稿操作</n-button>
+                  </n-dropdown>
+                </header>
+                <n-alert v-if="preview.review && !preview.review.approved" type="warning" title="来源审校未通过">
+                  <p v-for="reason in reviewReasons" :key="reason">{{ reason }}</p>
+                  <n-button size="small" :disabled="busy" @click="retryRevisionReview(preview.id)">重新审校</n-button>
+                </n-alert>
+                <n-tabs v-model:value="draftReaderTab" type="line" aria-label="草稿详情">
+                  <n-tab name="text">正文</n-tab>
+                  <n-tab name="diff">修订对比</n-tab>
+                  <n-tab name="settings">标题与别名</n-tab>
+                </n-tabs>
+                <template v-if="draftReaderTab === 'text'">
+                  <section
+                    v-for="(claim, index) in preview.document.claims"
+                    :key="index"
+                    class="claim"
+                  >
+                    <h3 v-if="!claim.key.startsWith('md:')">{{ claim.key }}</h3>
+                    <n-tag v-if="claim.status !== 'current'" size="small">{{ statusLabels[claim.status] }}</n-tag>
+                    <WikiMarkdown :text="claim.text" :channel="selected" :annotations="claim.community_notes" />
+                    <n-alert v-if="reviewedClaims.has(index)" class="mt" type="warning" title="此段未通过审校">{{ reviewedClaims.get(index)?.reason }}</n-alert>
+                    <n-collapse
+                      ><n-collapse-item title="修订此段" :name="index"
+                        ><n-input
+                          :value="claimEdits[index] ?? claim.text"
+                          @update:value="claimEdits[index] = $event"
+                          type="textarea"
+                          :autosize="{ minRows: 3, maxRows: 8 }"
+                        /><n-button
+                          class="mt"
+                          :disabled="busy || !claimEdits[index]?.trim() || claimEdits[index] === claim.text"
+                          @click="correctClaim(index, claimEdits[index])"
+                          >提交修订</n-button
+                        ></n-collapse-item
+                      ><n-collapse-item v-if="claim.evidence.length" :title="`引用来源（${claim.evidence.length}）`" :name="`sources-${index}`">
+                        <blockquote v-for="(ev, i) in claim.evidence" :key="i">
+                          <p v-if="ev.quote">{{ ev.quote }}</p>
+                          <n-button size="small" quaternary type="error" :disabled="busy" @click="hideSource(ev.source_id)">屏蔽此来源</n-button>
+                        </blockquote>
+                      </n-collapse-item
+                      ></n-collapse
+                    >
+                  </section>
+                </template>
+                <template v-else-if="draftReaderTab === 'diff'">
+                  <WikiRevisionDiff v-if="preview.changes.length" :changes="preview.changes" />
+                  <n-empty v-else description="正文与上一版本一致" />
+                  <p v-if="preview.changes_truncated" class="muted">仅显示前 100 处变化。</p>
+                </template>
+                  <n-form v-else label-placement="top" class="mt"
+                    ><n-form-item label="标题"
+                      ><n-input v-model:value="editTitle" /></n-form-item
+                    ><n-form-item label="链接别名"
+                      ><n-input v-model:value="editSlug" /></n-form-item
+                    ><n-button @click="renamePage">保存标题与链接</n-button
+                    ><n-form-item label="同义名称" class="mt"
+                      ><n-input v-model:value="editAlias" /></n-form-item
+                    ><n-button @click="bindAlias">合并别名</n-button></n-form>
+              </article>
             </section>
-            <n-collapse
-              ><n-collapse-item title="修订差异" name="diff">
-                <pre>{{ preview.diff }}</pre></n-collapse-item
-              ><n-collapse-item title="标题与别名" name="aliases"
-                ><n-form label-placement="top"
-                  ><n-form-item label="标题"
-                    ><n-input v-model:value="editTitle" /></n-form-item
-                  ><n-form-item label="链接别名"
-                    ><n-input v-model:value="editSlug" /></n-form-item
-                  ><n-button @click="renamePage">保存标题与链接</n-button
-                  ><n-form-item label="同义名称" class="mt"
-                    ><n-input v-model:value="editAlias" /></n-form-item
-                  ><n-button @click="bindAlias">合并别名</n-button></n-form
-                ></n-collapse-item
-              ></n-collapse
-            ></n-card
-          >
+          </div>
         </div>
       </template>
       <template v-else-if="tab === 'history'">
@@ -572,7 +582,7 @@
         ></n-card
       >
       <n-space
-        v-if="['jobs', 'review', 'history'].includes(tab)"
+        v-if="['jobs', 'history'].includes(tab)"
         justify="center"
         ><n-button
           :disabled="adminPage <= 1 || busy"
@@ -587,9 +597,7 @@
             busy ||
             (tab === 'jobs'
               ? jobs.length
-              : tab === 'review'
-                ? revisions.length
-                : Math.max(publications.length, audit.length)) < 50
+              : Math.max(publications.length, audit.length)) < 50
           "
           @click="
             adminPage++;
@@ -621,6 +629,8 @@ import {
 import WikiJobProgress from "./WikiJobProgress.vue";
 import WikiExclusions from "./WikiExclusions.vue";
 import WikiMarkdown from "./WikiMarkdown.vue";
+import WikiRevisionDiff from "./WikiRevisionDiff.vue";
+import { plainWikiText } from "./wiki-utils";
 import WikiCommunityAdmin from "./WikiCommunityAdmin.vue";
 import WikiAccountSettings from "./WikiAccountSettings.vue";
 import { createWikiDraft } from "../../composables/wiki-admin";
@@ -682,6 +692,8 @@ interface Revision {
   locked: boolean;
   hidden: boolean;
   created_at: string;
+  excerpt?: string;
+  review_result?: boolean | number | null;
 }
 const route = useRoute();
 const router = useRouter();
@@ -697,7 +709,7 @@ const channels = ref<Channel[]>([]),
   busy = ref(false),
   error = ref(""),
   notice = ref(""),
-  tab = ref(proposalId.value ? "community" : route.query.tab === "jobs" ? "jobs" : "config"),
+  tab = ref(proposalId.value ? "community" : route.query.tab === "review" ? "review" : route.query.tab === "jobs" ? "jobs" : "config"),
   purgeConfirm = ref("");
 const adminPage = ref(1);
 const jobs = ref<Job[]>([]),
@@ -709,17 +721,54 @@ const jobs = ref<Job[]>([]),
   preview = ref<{
     id: string;
     document: { title: string; claims: Claim[] };
-    diff: string;
+    changes: { before: string | null; after: string | null }[];
+    changes_truncated?: boolean;
     review?: {
       approved: boolean;
       created_at: string;
-      result: { model: string; batches: { reason: string; claims: { index: number; reason: string }[] }[] };
+      result: {
+        batches?: { reason: string; claims: { index: number; reason: string; status?: string }[] }[];
+        fact_checks?: { index: number; status: string; reason: string }[];
+      };
     };
   }>(),
   previewRow = ref<Revision>(),
   editTitle = ref(""),
   editSlug = ref(""),
   editAlias = ref("");
+const draftWorkspace = ref<HTMLElement>();
+const draftReader = ref<HTMLElement>();
+const draftSearch = ref("");
+const draftJob = ref(typeof route.query.job === "string" && /^[a-f0-9]{32}$/.test(route.query.job) ? route.query.job : "");
+const draftStatus = ref(draftJob.value ? "failed" : "all");
+const draftReaderTab = ref("text");
+const draftsLoading = ref(false), draftsError = ref("");
+const previewLoading = ref(false), previewError = ref("");
+const selectedDraft = ref("");
+const claimEdits = ref<Record<number, string>>({});
+let listRequest = 0, detailRequest = 0;
+let draftSearchTimer: ReturnType<typeof setTimeout> | undefined;
+const draftStatusOptions = [
+  { label: "全部状态", value: "all" }, { label: "审校未通过", value: "failed" },
+  { label: "待审校", value: "pending" }, { label: "审校通过或已准予发布", value: "passed" },
+  { label: "已拒绝", value: "rejected" },
+];
+function revisionStatus(row: Revision) {
+  if (row.rejected) return { type: "error", label: "已拒绝" } as const;
+  if (row.review_result === false || row.review_result === 0) return { type: "warning", label: "审校未通过" } as const;
+  if (row.approved) return { type: "success", label: "已准予发布" } as const;
+  if (row.review_result) return { type: "success", label: "审校通过" } as const;
+  return { type: "default", label: "待审校" } as const;
+}
+const draftActions = computed(() => {
+  const row = previewRow.value;
+  return row ? [
+    { label: row.locked ? "解锁词条" : "锁定词条", key: row.locked ? "unlock" : "lock" },
+    { label: row.hidden ? "恢复展示" : "隐藏词条", key: row.hidden ? "show" : "hide" },
+    { label: "拒绝此修订", key: "reject", disabled: row.rejected },
+    { label: "重新生成词条", key: "regenerate", disabled: !!channel.value?.active_job },
+  ] : [];
+});
 
 interface FormSettings extends Config {
   hiddenTopics: string;
@@ -730,8 +779,14 @@ const coverBusy = ref(false);
 const coverFeedback = ref<{ text: string; error?: boolean }>();
 const draft = computed(() => autosave.value?.values.settings);
 const reviewedClaims = computed(() => new Map(
-  preview.value?.review?.result.batches.flatMap(batch => batch.claims.map(claim => [claim.index, claim] as const)),
+  preview.value?.review && !preview.value.review.approved ? [
+    ...(preview.value.review.result.fact_checks ?? []).filter(claim => ["rejected", "disputed", "outdated"].includes(claim.status)),
+    ...(preview.value.review.result.batches ?? []).flatMap(batch => batch.claims.filter(claim => claim.status !== "supported")),
+  ].map(claim => [claim.index, claim] as const) : [],
 ));
+const reviewReasons = computed(() => [...new Set(
+  preview.value?.review?.result.batches?.map(batch => batch.reason).filter(Boolean) ?? [],
+)]);
 const siteOrigin = window.location.origin;
 const channelOptions = computed(() =>
   channels.value.map((ch) => ({ label: ch.title, value: ch.id })),
@@ -909,6 +964,9 @@ async function switchChannel(value: string) {
   selected.value = value;
   localStorage.setItem("sakura_wiki_channel", value);
   adminPage.value = 1;
+  draftJob.value = "";
+  draftSearch.value = "";
+  draftStatus.value = "all";
   await loadChannel();
 }
 
@@ -999,7 +1057,8 @@ async function loadChannel() {
   busy.value = true;
   error.value = "";
   notice.value = "";
-  preview.value = undefined;
+  clearDraftPreview();
+  revisions.value = [];
   try {
     const loaded = await wikiAdmin<Channel>(`/channels/${owner}/config`);
     if (selected.value !== owner) return;
@@ -1026,8 +1085,7 @@ async function refreshData() {
       channel.value = currentChannel;
     }
   } else if (tab.value === "review") {
-    const rows = await wikiAdmin<Revision[]>(`${root()}/revisions${suffix}`);
-    if (selected.value === current) revisions.value = rows;
+    await refreshDrafts();
   } else if (tab.value === "history") {
     const [pubs, actions] = await Promise.all([
       wikiAdmin<typeof publications.value>(`${root()}/publications${suffix}`),
@@ -1106,15 +1164,103 @@ function pageAction(rev: Revision, action: string) {
   );
 }
 async function previewRevision(rev: Revision) {
+  const request = ++detailRequest;
+  const owner = selected.value;
+  selectedDraft.value = rev.id;
+  previewRow.value = rev;
+  preview.value = undefined;
+  previewError.value = "";
+  previewLoading.value = true;
+  draftReaderTab.value = "text";
+  claimEdits.value = {};
+  if (draftReader.value) draftReader.value.scrollTop = 0;
+  if (window.matchMedia("(max-width: 800px)").matches) {
+    void nextTick(() => draftWorkspace.value?.scrollIntoView({ block: "start" }));
+  }
+  const query = draftJob.value ? `?job_id=${draftJob.value}` : "";
   try {
-    preview.value = await wikiAdmin(`${root()}/revisions/${rev.id}`);
-    previewRow.value = rev;
+    const result = await wikiAdmin<NonNullable<typeof preview.value>>(`${root()}/revisions/${rev.id}${query}`);
+    if (request !== detailRequest || owner !== selected.value) return;
+    preview.value = result;
     editTitle.value = rev.title;
     editSlug.value = rev.slug;
     editAlias.value = "";
   } catch (err) {
-    error.value = problem(err);
+    if (request === detailRequest) previewError.value = problem(err);
+  } finally {
+    if (request === detailRequest) previewLoading.value = false;
   }
+}
+function clearDraftPreview() {
+  detailRequest++;
+  selectedDraft.value = "";
+  preview.value = undefined;
+  previewRow.value = undefined;
+  previewLoading.value = false;
+  previewError.value = "";
+}
+async function refreshDrafts() {
+  if (tab.value !== "review") return;
+  const request = ++listRequest;
+  const owner = selected.value;
+  draftsLoading.value = true;
+  draftsError.value = "";
+  const query = new URLSearchParams({ page: String(adminPage.value), q: draftSearch.value, status: draftStatus.value });
+  if (draftJob.value) query.set("job_id", draftJob.value);
+  try {
+    const rows = await wikiAdmin<Revision[]>(`${root()}/revisions?${query}`);
+    if (request !== listRequest || owner !== selected.value || tab.value !== "review") return;
+    revisions.value = rows;
+    if (selectedDraft.value) {
+      const current = rows.find(row => row.id === selectedDraft.value);
+      if (current) previewRow.value = current;
+      else clearDraftPreview();
+    }
+  } catch (cause) {
+    if (request === listRequest) draftsError.value = problem(cause);
+  } finally {
+    if (request === listRequest) draftsLoading.value = false;
+  }
+}
+function applyDraftFilters() {
+  clearTimeout(draftSearchTimer);
+  adminPage.value = 1;
+  clearDraftPreview();
+  void refreshDrafts();
+}
+function queueDraftSearch() {
+  clearTimeout(draftSearchTimer);
+  draftSearchTimer = setTimeout(applyDraftFilters, 250);
+}
+function changeDraftPage(step: number) {
+  adminPage.value += step;
+  clearDraftPreview();
+  void refreshDrafts();
+}
+function clearDraftJob() {
+  draftJob.value = "";
+  applyDraftFilters();
+  if (route.query.job) {
+    const query = { ...route.query };
+    delete query.job;
+    void router.replace({ query });
+  }
+}
+async function openFailedDrafts(job: string) {
+  draftJob.value = job;
+  draftStatus.value = "failed";
+  draftSearch.value = "";
+  clearDraftPreview();
+  tab.value = "review";
+  await nextTick();
+  draftWorkspace.value?.scrollIntoView({ block: "start" });
+}
+function runDraftAction(action: string) {
+  const row = previewRow.value;
+  if (!row) return;
+  if (action === "reject") return reject(row.id);
+  if (action === "regenerate") return enqueue("page", row.page_id);
+  return pageAction(row, action);
 }
 function renamePage() {
   if (previewRow.value)
@@ -1159,6 +1305,7 @@ async function purge() {
 }
 watch(tab, () => {
   adminPage.value = 1;
+  clearTimeout(draftSearchTimer);
   if (tab.value !== "config" && channel.value)
     refreshData().catch((err) => {
       error.value = problem(err);
@@ -1175,6 +1322,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
+  clearTimeout(draftSearchTimer);
   void autosave.value?.flush();
   stopDraftCache?.();
   autosave.value?.stop();
@@ -1227,17 +1375,71 @@ onUnmounted(() => {
 .job-stats {
   margin: 16px 0;
 }
+.draft-workspace { scroll-margin-top: 100px; }
+.draft-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.draft-filters .n-input { flex: 1 1 240px; }
+.draft-filters .n-select { width: min(100%, 210px); }
 .review-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.5fr);
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: minmax(230px, 30%) minmax(0, 1fr);
+  border: 1px solid var(--sb-border);
+  border-radius: 12px;
+  background: var(--sb-surface);
 }
-.revision-list {
+.draft-index,
+.draft-reader {
+  min-width: 0;
+  max-height: max(380px, calc(100dvh - 245px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.draft-index { border-inline-end: 1px solid var(--sb-border); }
+.draft-index :deep(.n-empty) { padding: 32px 12px; }
+.draft-reader { padding: clamp(16px, 2.5vw, 36px); }
+.draft-reader > article { max-width: 82ch; margin-inline: auto; }
+.draft-reader > .n-empty { margin-block: 56px; }
+.draft-reader-header {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
   gap: 12px;
+  margin-bottom: 16px;
 }
+.draft-reader-header h2 { margin: 0 0 4px; font-size: 22px; overflow-wrap: anywhere; }
+.draft-back { display: none; }
+.revision-list {
+  display: grid;
+}
+.draft-row {
+  display: grid;
+  gap: 6px;
+  text-align: start;
+  padding: 12px 14px;
+  font: inherit;
+  cursor: pointer;
+  color: var(--sb-text);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--sb-border);
+}
+.draft-row:hover { background: var(--sb-surface-2); }
+.draft-row[aria-current] { background: var(--sb-accent-soft); box-shadow: inset 3px 0 var(--sb-accent); }
+.draft-row:focus-visible { outline: 2px solid var(--sb-accent); outline-offset: -2px; }
+.draft-row strong { overflow-wrap: anywhere; }
+.draft-excerpt {
+  color: var(--sb-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.draft-row-meta, .draft-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--sb-text-2); font-size: 12px; }
+.draft-pagination { justify-content: space-between; padding: 10px 12px; }
 .claim {
   padding: 12px 0;
   border-bottom: 1px solid var(--sb-border);
@@ -1246,8 +1448,7 @@ onUnmounted(() => {
   margin: 0 0 8px;
   font-size: 16px;
 }
-.claim p,
-pre {
+.claim p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1282,6 +1483,9 @@ pre {
   .review-grid {
     grid-template-columns: 1fr;
   }
+  .draft-index, .draft-reader { max-height: none; overflow: visible; border: 0; }
+  .review-grid:not(.reading-draft) .draft-reader, .reading-draft .draft-index { display: none; }
+  .draft-back { display: inline-flex; margin-bottom: 14px; }
   .toolbar-actions {
     margin-left: 0;
     width: 100%;

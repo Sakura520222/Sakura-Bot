@@ -1233,11 +1233,15 @@ class WikiEngine:
             logger.info(
                 "Wiki job %s uses its generation route for the separate review call", job["id"]
             )
-        await self.store.report(job, "正在独立审校文章", stage="review")
         revisions = dict(cursor.get("revisions", {}))
         if job["kind"] in self.INCREMENTAL_KINDS and not channel["published_revision"]:
             async with self.store.transaction() as cur:
                 revisions = await self.knowledge.expand_revisions(cur, channel, cursor)
+        if revisions != cursor.get("revisions", {}):
+            cursor["review_revisions"] = revisions
+        else:
+            cursor.pop("review_revisions", None)
+        await self.store.report(job, "正在独立审校文章", stage="review")
         semaphore = asyncio.Semaphore(channel["config"].concurrency)
 
         async def check(page_id, revision_id):

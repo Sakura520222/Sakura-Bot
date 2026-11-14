@@ -53,6 +53,27 @@ def like(value):
     return "%" + value.replace("=", "==").replace("%", "=%").replace("_", "=_") + "%"
 
 
+def revision_changes(previous, current):
+    def blocks(document):
+        result = [document[key] for key in ("title", "topic") if key in document]
+        for claim in document.get("claims", []):
+            result.append(claim["text"])
+            for note in claim.get("community_notes", []):
+                excerpt = f"「{note['excerpt']}」" if note.get("excerpt") else ""
+                result.append("\n".join([f"注解{excerpt}　{note['text']}", *note["sources"]]))
+        return result
+
+    old, new = blocks(previous), blocks(current)
+    changes = []
+    for tag, start, end, new_start, new_end in SequenceMatcher(None, old, new).get_opcodes():
+        if tag != "equal":
+            for removed, added in zip_longest(old[start:end], new[new_start:new_end]):
+                if len(changes) == 100:
+                    return changes, True
+                changes.append({"before": removed, "after": added})
+    return changes, False
+
+
 def consistent_read(method):
     @wraps(method)
     async def read(self, *args, **kwargs):
@@ -552,29 +573,9 @@ class PublicReader:
         if before not in versions or after not in versions:
             return None
 
-        def blocks(row):
-            document = decode(row["document"])
-            result = [document["title"], document["topic"]]
-            for claim in document["claims"]:
-                result.append(claim["text"])
-                for note in claim.get("community_notes", []):
-                    excerpt = f"「{note['excerpt']}」" if note.get("excerpt") else ""
-                    result.append("\n".join([f"注解{excerpt}　{note['text']}", *note["sources"]]))
-            return result
-
-        old, new = blocks(versions[before]), blocks(versions[after])
-        changes = []
-        truncated = False
-        for tag, start, end, new_start, new_end in SequenceMatcher(None, old, new).get_opcodes():
-            if tag == "equal":
-                continue
-            for removed, added in zip_longest(old[start:end], new[new_start:new_end]):
-                if len(changes) == 100:
-                    truncated = True
-                    break
-                changes.append({"before": removed, "after": added})
-            if truncated:
-                break
+        changes, truncated = revision_changes(
+            decode(versions[before]["document"]), decode(versions[after]["document"])
+        )
         return {
             "before": {key: versions[before][key] for key in ("id", "created_at")},
             "after": {key: versions[after][key] for key in ("id", "created_at")},

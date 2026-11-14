@@ -1316,6 +1316,19 @@ async def test_failed_review_preserves_existing_publication(store, monkeypatch, 
         assert rejected
         monkeypatch.setattr(wiki, "get_wiki_runtime", lambda: runtime)
         runtime.ready = True
+        manifest = decode(saved["cursor"])["revisions"]
+        await store.query(
+            "UPDATE wiki_page_revisions SET job_id=NULL WHERE id=%s", (rejected["revision_id"],)
+        )
+        failed = await wiki.revisions(ch["id"], page=1, q="", status="failed", job_id=job_id)
+        assert rejected["revision_id"] in {item["id"] for item in failed}
+        assert all(
+            item["id"] in manifest.values() and item["review_result"] == 0 for item in failed
+        )
+        assert not await wiki.revisions(ch["id"], page=1, q="no matching title", job_id=job_id)
+        detail = await wiki.revision_detail(ch["id"], rejected["revision_id"], job_id=job_id)
+        assert detail["review"]["approved"] == 0
+        assert "changes" in detail and "changes_truncated" in detail
         retry = await wiki.retry_revision_review(ch["id"], rejected["revision_id"], "test")
         audit = await store.one(
             "SELECT details FROM wiki_review_actions WHERE action='retry_revision_review'"

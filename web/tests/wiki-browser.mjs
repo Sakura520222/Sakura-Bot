@@ -46,6 +46,10 @@ let articleHidden = false;
 let researchSaved;
 let submittedProposal;
 const reviewProposalId = "d".repeat(32);
+const draftJobId = "a".repeat(32);
+const failedDraft = { id: "b".repeat(32), page_id: "c".repeat(32), title: "审校未通过的测试词条",
+  created_at: channel.updated_at, slug: "draft", locked: false, hidden: false, approved: false, rejected: false, review_result: 0,
+  excerpt: "这段正文需要核实。" };
 const contributor = {id:"e".repeat(32), display_name:"Cherry", username:"cherry", avatar:true, total:2, annotations:1, edits:1, sources:0};
 let visibilityVersion = "v1:1";
 const wikiEntrypoints = ["/wiki", "/wiki/search", "/wiki?tab=channels", "/wiki/bookmarks", "/wiki/contributors"];
@@ -178,7 +182,22 @@ const server = http.createServer(async (req,res) => {
     else if (endpoint === "channels") out = [channel];
     else if (endpoint === "/api/wiki/admin/channels") out = [adminChannel];
     else if (endpoint === "/api/wiki/admin/channels/123/config") out = adminChannel;
-    else if (endpoint === "/api/wiki/admin/channels/123/jobs") out = [];
+    else if (endpoint === "/api/wiki/admin/channels/123/jobs") out = [{
+      id: draftJobId, kind: "update", status: "running", phase: "review", created_at: channel.updated_at, updated_at: channel.updated_at,
+      progress: { review_rejections: 1 },
+    }];
+    else if (endpoint === "/api/wiki/admin/channels/123/revisions") {
+      assert.equal(q.get("status"), "failed");
+      assert.equal(q.get("job_id"), draftJobId);
+      out = [failedDraft];
+    }
+    else if (endpoint === `/api/wiki/admin/channels/123/revisions/${failedDraft.id}`) {
+      assert.equal(q.get("job_id"), draftJobId);
+      out = { id: failedDraft.id, document: { title: failedDraft.title, claims: [{ key: "md:fixture", text: "**正文测试**", status: "current",
+        evidence: [{ source_id: "a".repeat(64), quote: "原帖摘录" }] }] },
+        changes: [{ before: "旧正文", after: "新正文" }],
+        review: { approved: false, result: { batches: [{ reason: "引文不足", claims: [{ index: 0, status: "unsupported", reason: "缺少原文依据" }] }] } } };
+    }
     else if (endpoint === "/api/wiki/admin/channels/123/excluded") out = { total: 0, unverified_total: 0, reasons: [], items: [] };
     else if (endpoint === "/api/wiki/admin/channels/123/cover" && req.method === "PUT") {
       assert.equal(req.headers.authorization, "Bearer wiki-test-token");
@@ -751,6 +770,16 @@ try {
   await desktop.getByText("没有符合条件的记录", { exact: true }).waitFor();
   await assertCentered(desktop.locator(".n-modal").filter({ hasText: "未纳入知识生成的消息" }));
   await desktop.keyboard.press("Escape");
+  await desktop.getByRole("button", { name: "查看未通过的草稿" }).click();
+  await desktop.getByRole("button", { name: /审校未通过的测试词条/ }).click();
+  const draftReader = desktop.getByRole("region", { name: "草稿阅读区" });
+  await draftReader.getByRole("heading", { name: failedDraft.title }).waitFor();
+  await draftReader.getByText("缺少原文依据", { exact: true }).waitFor();
+  assert.equal(await draftReader.getByText("原帖摘录", { exact: true }).isVisible(), false);
+  await draftReader.getByText("引用来源（1）", { exact: true }).click();
+  await draftReader.getByText("原帖摘录", { exact: true }).waitFor();
+  await draftReader.getByText("修订对比", { exact: true }).click();
+  await draftReader.locator("ins").getByText("新", { exact: true }).waitFor();
   await desktop.goto(url + "/wiki/contributors");
   const contributorList = desktop.getByRole("list", { name: "公开贡献者" });
   const contributorRow = contributorList.getByRole("link", { name: /Cherry/ });
