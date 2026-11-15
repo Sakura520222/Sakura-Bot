@@ -1,8 +1,13 @@
+from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from core.web_api.routes import wiki_research
 from core.wiki.web_research import (
     DEFAULTS,
     PageText,
@@ -15,6 +20,40 @@ from core.wiki.web_research import (
     public_url,
     stored_search_settings,
 )
+
+
+@pytest.mark.parametrize(
+    ("operation", "failure", "code", "message"),
+    [
+        ("search", "no_search_evidence", "no_search_evidence", "没有返回可用资料"),
+        ("fetch", "fetch_http_524", "fetch_http_524", "HTTP 524"),
+        ("search", "private diagnostic", "search_unavailable", "联网检索暂时不可用"),
+        ("fetch", "fetch_http_503: private diagnostic", "fetch_unavailable", "本次无法打开网页"),
+    ],
+)
+def test_research_errors_only_return_known_public_fields(
+    monkeypatch, operation, failure, code, message
+):
+    token = "fixture"
+    research = SimpleNamespace(**{operation: AsyncMock(side_effect=SearchUnavailable(failure))})
+    monkeypatch.setattr(wiki_research, "runtime", lambda: SimpleNamespace(research=research))
+    monkeypatch.setattr(
+        wiki_research,
+        "get_settings",
+        lambda: SimpleNamespace(telegram=SimpleNamespace(qa_bot_token=SecretStr(token))),
+    )
+    app = FastAPI()
+    app.include_router(wiki_research.router, prefix=wiki_research.PATH)
+    digest = sha256(f"sakura-wiki-research:v1:{token}".encode()).hexdigest()
+    response = TestClient(app).post(
+        wiki_research.PATH,
+        params={"operation": operation},
+        headers={"Authorization": f"Bearer {digest}"},
+        json={"value": "https://example.org"},
+    )
+    assert response.status_code == 200
+    assert response.json()["error"] == code and message in response.json()["message"]
+    assert "private diagnostic" not in response.text
 
 
 @pytest.mark.parametrize(

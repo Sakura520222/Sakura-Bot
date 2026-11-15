@@ -776,8 +776,12 @@ async def manually_approve_revision(channel: str, revision_id: str, actor=ADMIN_
                         progress,
                         actor,
                     )
-                except (PageEditConflict, PublicationAccessUnverified) as error:
-                    publication_error = str(error)
+                except PageEditConflict:
+                    publication_error = "当前词条状态或发布版本已变化，请刷新词条后重试。"
+                except PublicationAccessUnverified:
+                    publication_error = (
+                        "频道暂不满足发布条件。草稿已保留，请核对频道启用和公开状态后重试。"
+                    )
             else:
                 publication_pending = True
     return {

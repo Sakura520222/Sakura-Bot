@@ -29,7 +29,7 @@ from core.web_api.routes import auth, wiki, wiki_account
 from core.wiki.collector import SourceCollector
 from core.wiki.community import Community, Proposal
 from core.wiki.engine import WikiEngine
-from core.wiki.knowledge import Knowledge
+from core.wiki.knowledge import Knowledge, PageEditConflict, PublicationAccessUnverified
 from core.wiki.models import WikiConfig, chunks, digest, name_key
 from core.wiki.reader import PublicReader
 from core.wiki.runtime import WikiRuntime
@@ -1687,9 +1687,17 @@ async def test_admin_manually_approves_failed_drafts_without_rerunning_review(
     assert await runtime.engine.knowledge.publish(ch["id"], job_id, "test")
 
 
-@pytest.mark.parametrize("mode", ["auto", "review"])
+@pytest.mark.parametrize(
+    ("mode", "failure"),
+    [
+        ("auto", None),
+        ("review", None),
+        ("auto", PageEditConflict),
+        ("auto", PublicationAccessUnverified),
+    ],
+)
 async def test_manually_approved_completed_page_edit_honors_publication_mode(
-    store, monkeypatch, mode
+    store, monkeypatch, mode, failure
 ):
     ch, _, page, base, publication = await published(store)
     channel_id = ch["id"]
@@ -1707,11 +1715,21 @@ async def test_manually_approved_completed_page_edit_honors_publication_mode(
     revision, job_id = await knowledge.correct_page(channel_id, base, 0, "人工修订。", "test")
     await runtime.run_job(await store.claim_job())
     assert (await store.channel(channel_id))["published_revision"] == publication
+    if failure:
+        monkeypatch.setattr(
+            knowledge, "publish_approved_edit", AsyncMock(side_effect=failure("private diagnostic"))
+        )
     result = await wiki.manually_approve_revision(channel_id, revision, "test")
     saved = await store.one("SELECT status FROM wiki_jobs WHERE id=%s", (job_id,))
     article = await runtime.reader.page(channel_id, page["slug"])
     assert (await store.channel(channel_id))["active_job"] == channel_job
-    if mode == "auto":
+    if failure:
+        assert saved["status"] == "completed" and article["revision_id"] == base
+        assert result["publication_id"] is None
+        assert (
+            result["publication_error"] and "private diagnostic" not in result["publication_error"]
+        )
+    elif mode == "auto":
         assert saved["status"] == "published" and article["revision_id"] == revision
         assert result["publication_id"] == article["publication_id"]
     else:
