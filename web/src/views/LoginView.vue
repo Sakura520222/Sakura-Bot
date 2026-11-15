@@ -56,11 +56,17 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useMessage, type FormInst, type FormRules, type InputInst } from "naive-ui";
 import { loginWithToken, checkAuthStatus } from "@/api/modules";
 
 const router = useRouter();
+const route = useRoute();
+function afterLogin() {
+  const proposal = route.query.wiki_proposal;
+  return router.push(typeof proposal === "string" && /^[a-f0-9]{32}$/.test(proposal)
+    ? { name: "WikiAdmin", query: { proposal } } : "/");
+}
 const message = useMessage();
 const loading = ref(false);
 const devLoading = ref(false);
@@ -102,7 +108,7 @@ async function handleLogin() {
     if (res.success && res.access_token) {
       localStorage.setItem("sakura_bot_token", res.access_token);
       message.success("登录成功");
-      router.push("/");
+      void afterLogin();
     } else {
       const text = res.message || "认证失败";
       errorMessage.value = text;
@@ -126,7 +132,7 @@ async function handleDevLogin() {
     if (res.success && res.access_token) {
       localStorage.setItem("sakura_bot_token", res.access_token);
       message.info("已进入开发模式");
-      router.push("/");
+      void afterLogin();
     } else {
       const text = res.message || "开发模式认证失败";
       errorMessage.value = text;
@@ -137,7 +143,7 @@ async function handleDevLogin() {
     if (devModeAvailable.value) {
       localStorage.setItem("sakura_bot_token", "dev");
       message.info("已进入开发模式（后端不可用）");
-      router.push("/");
+      void afterLogin();
     } else {
       const text = "无法连接到服务器，请检查网络或稍后重试";
       errorMessage.value = text;

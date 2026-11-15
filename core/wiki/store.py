@@ -14,10 +14,27 @@ from datetime import timedelta
 
 import aiomysql
 
-from .models import WikiConfig, alias_key, canonical_id, chunks, digest, utc
-from .schema import CHANNEL_COVERS_TABLE, DIRTY_PAGES_TABLE, SCHEMA, SCHEMA_VERSION
+from .models import MANUAL_REVIEW_POLICY, WikiConfig, alias_key, canonical_id, chunks, digest, utc
+from .schema import (
+    ALBUMS_TABLE,
+    CHANNEL_COVERS_TABLE,
+    DIRTY_PAGES_TABLE,
+    REVISION_REVIEWS_TABLE,
+    SCHEMA,
+    SCHEMA_VERSION,
+    WIKI_ACCOUNT_TABLES,
+    WIKI_COMMUNITY_TABLES,
+)
 
 _read_snapshot = ContextVar("wiki_read_snapshot", default=None)
+MESSAGE_MEDIA_PREFIX = "message:"
+LEGACY_CAPTION_MEDIA = """FROM wiki_sources m
+    JOIN wiki_sources i ON i.channel_id=m.channel_id AND i.source_type='image'
+        AND i.message_id=m.message_id AND i.media_key=m.media_key
+    WHERE m.channel_id=%s AND m.source_type='message' AND m.media_group IS NULL
+    AND i.media_group IS NULL AND m.verified=TRUE AND i.verified=TRUE
+    AND m.deleted=FALSE AND m.hidden=FALSE AND m.excluded=FALSE
+    AND i.deleted=FALSE AND i.hidden=FALSE AND i.excluded=FALSE AND TRIM(m.body)<>''"""
 
 
 def encode(value):
@@ -130,6 +147,20 @@ class WikiStore:
                         raise
             await self.query(DIRTY_PAGES_TABLE)
             await self.query(CHANNEL_COVERS_TABLE)
+            await self.query(ALBUMS_TABLE)
+            if not await self.one(
+                "SHOW INDEX FROM wiki_sources WHERE Key_name='wiki_source_album'"
+            ):
+                try:
+                    await self.query(
+                        "ALTER TABLE wiki_sources ADD INDEX wiki_source_album(channel_id,media_group,source_type,message_id)"
+                    )
+                except aiomysql.OperationalError as error:
+                    if error.args[0] != 1061:
+                        raise
+            for statement in (*WIKI_ACCOUNT_TABLES, *WIKI_COMMUNITY_TABLES):
+                await self.query(statement)
+            await self.query(REVISION_REVIEWS_TABLE)
             return
         for statement in SCHEMA:
             try:
@@ -158,7 +189,15 @@ class WikiStore:
 
     async def register_channel(self, entity, configured_alias):
         channel = canonical_id(entity.id)
-        username = getattr(entity, "username", None)
+        # Telegram can place all public handles in Channel.usernames without setting username.
+        username = getattr(entity, "username", None) or next(
+            (
+                item.username
+                for item in getattr(entity, "usernames", None) or ()
+                if item.active and item.username
+            ),
+            None,
+        )
         access_verified = bool(
             username
             and getattr(entity, "broadcast", False)
@@ -177,7 +216,7 @@ class WikiStore:
                     getattr(entity, "title", channel),
                     username,
                     access_verified,
-                    utc() + timedelta(minutes=3),
+                    utc() + timedelta(minutes=3) if access_verified else None,
                     encode(WikiConfig().model_dump(mode="json")),
                     encode({"status": "unavailable", "reason": "not_scanned"}),
                 ),
@@ -206,43 +245,59 @@ class WikiStore:
 
     async def configure(self, channel, config: WikiConfig, actor):
         async with self.transaction() as cur:
-            await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
-            if not await cur.fetchone():
+            await cur.execute("SELECT config FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+            previous = await cur.fetchone()
+            if not previous:
                 raise ValueError("Unknown channel")
+            snapshot = config.model_dump(mode="json")
+            old = WikiConfig.model_validate(decode(previous["config"])).model_dump(mode="json")
+            ignored = {"ai_review_enabled"}
+            if not config.ai_review_enabled:
+                ignored.update({"fact_check", "fact_check_required"})
+            rebuild = any(
+                old[key] != value for key, value in snapshot.items() if key not in ignored
+            )
             await cur.execute(
                 """UPDATE wiki_channels SET config=%s,enabled=%s,public=%s,
-                updated_at=UTC_TIMESTAMP(6),dirty_at=UTC_TIMESTAMP(6),source_generation=source_generation+1 WHERE id=%s""",
-                (encode(config.model_dump(mode="json")), config.enabled, config.public, channel),
+                updated_at=UTC_TIMESTAMP(6),dirty_at=IF(%s,UTC_TIMESTAMP(6),dirty_at),
+                source_generation=source_generation+%s WHERE id=%s""",
+                (encode(snapshot), config.enabled, config.public, rebuild, int(rebuild), channel),
             )
-            # Policy changes invalidate evidence immediately, including past snapshots.
-            await cur.execute(
-                """UPDATE wiki_sources SET excluded=(excluded OR
-                (source_type='summary' AND %s=FALSE) OR (source_type='image' AND %s=FALSE)
-                OR (source_type='message' AND NOT JSON_CONTAINS(%s,JSON_QUOTE(category)))
-                OR (%s IS NOT NULL AND created_at<%s)) WHERE channel_id=%s""",
-                (
-                    config.include_summaries,
-                    config.include_images,
-                    encode(config.message_types),
-                    config.history_since,
-                    utc(config.history_since) if config.history_since else None,
-                    channel,
-                ),
-            )
-            # 策略翻转可能影响任意来源的可见性：保守登记全部页面待局部重建
-            await cur.execute(
-                "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s",
-                (channel, channel),
-            )
-            await self.audit(
-                cur, channel, "configure", channel, actor, config.model_dump(mode="json")
-            )
+            if rebuild:
+                await self.invalidate_channel_policy(cur, channel, config)
+                await cur.execute(
+                    "UPDATE wiki_albums SET pending=TRUE WHERE channel_id=%s", (channel,)
+                )
+            await self.audit(cur, channel, "configure", channel, actor, snapshot)
             if not config.enabled or config.paused:
                 await cur.execute(
                     """UPDATE wiki_jobs SET status='paused',lease_token=NULL,lease_until=NULL
-                    WHERE channel_id=%s AND status IN ('running','pending','partial')""",
+                    WHERE channel_id=%s AND kind<>'page_edit' AND status IN ('running','pending','partial')""",
                     (channel,),
                 )
+
+    @staticmethod
+    async def invalidate_channel_policy(cur, channel, config):
+        # Policy changes invalidate evidence immediately, including past snapshots.
+        await cur.execute(
+            """UPDATE wiki_sources SET excluded=(excluded OR
+                (source_type='summary' AND %s=FALSE) OR (source_type='image' AND %s=FALSE)
+                OR (source_type='message' AND NOT JSON_CONTAINS(%s,JSON_QUOTE(category)))
+                OR (%s IS NOT NULL AND created_at<%s)) WHERE channel_id=%s""",
+            (
+                config.include_summaries,
+                config.include_images,
+                encode(config.message_types),
+                config.history_since,
+                utc(config.history_since) if config.history_since else None,
+                channel,
+            ),
+        )
+        # 策略翻转可能影响任意来源的可见性：保守登记全部页面待局部重建
+        await cur.execute(
+            "INSERT IGNORE INTO wiki_dirty_pages SELECT %s,id FROM wiki_pages WHERE channel_id=%s",
+            (channel, channel),
+        )
 
     async def set_cover(self, channel, digest, image, actor):
         async with self.transaction() as cur:
@@ -300,6 +355,7 @@ class WikiStore:
         media_key=None,
     ):
         source_id = digest(channel, source_type, str(external_id))
+        media_group = media_group or None
         content_hash = digest(body, media_key)
         changed_at = utc(edited_at or created_at)
         async with self.transaction() as cur:
@@ -316,11 +372,31 @@ class WikiStore:
             ):
                 return source_id
             if (
+                verified
+                and media_key
+                and message_id
+                and source_type == "message"
+                and not media_group
+            ):
+                group = f"{MESSAGE_MEDIA_PREFIX}{message_id}"
+                if (not excluded and body.strip()) or (old and old["media_group"] == group):
+                    media_group = group
+            if media_key and message_id and source_type == "image":
+                await cur.execute(
+                    """SELECT media_group FROM wiki_sources WHERE id=%s AND media_key=%s
+                    AND verified=TRUE AND deleted=FALSE""",
+                    (digest(channel, "message", str(message_id)), media_key),
+                )
+                parent = await cur.fetchone()
+                if parent and parent["media_group"]:
+                    media_group = parent["media_group"]
+            if (
                 old
                 and old["content_hash"] == content_hash
                 and bool(old["verified"]) == verified
                 and bool(old["excluded"]) == excluded
                 and old["category"] == category
+                and (old["media_group"] or None) == media_group
             ):
                 if verified:
                     await cur.execute(
@@ -355,12 +431,29 @@ class WikiStore:
                     exclusion_reason or "",
                 ),
             )
+            if source_type == "message" and media_group:
+                # OCR can finish before a caption edit or a history recheck links the post.
+                await cur.execute(
+                    """SELECT id,media_group FROM wiki_sources WHERE channel_id=%s
+                    AND message_id=%s AND source_type='image' AND media_key=%s
+                    AND NOT (media_group <=> %s)""",
+                    (channel, message_id, media_key, media_group),
+                )
+                for image in await cur.fetchall():
+                    await cur.execute(
+                        "UPDATE wiki_sources SET media_group=%s WHERE id=%s",
+                        (media_group, image["id"]),
+                    )
+                    if image["media_group"]:
+                        await self.mark_album(cur, channel, image["media_group"])
             for chunk in chunks(source_id, body, content_hash):
                 await cur.execute(
                     """INSERT IGNORE INTO wiki_chunks
                     (id,source_id,content_hash,start_offset,end_offset) VALUES (%s,%s,%s,%s,%s)""",
                     (chunk["id"], source_id, content_hash, chunk["start"], chunk["end"]),
                 )
+            for group in {media_group, old["media_group"] if old else None} - {None, ""}:
+                await self.mark_album(cur, channel, group)
             if not excluded or (old and not old["excluded"]):
                 await cur.execute(
                     """UPDATE wiki_channels SET source_generation=source_generation+1,
@@ -368,6 +461,56 @@ class WikiStore:
                     (channel,),
                 )
         return source_id
+
+    @staticmethod
+    async def mark_album(cur, channel, group):
+        await cur.execute(
+            """INSERT INTO wiki_albums (channel_id,media_group) VALUES (%s,%s)
+            ON DUPLICATE KEY UPDATE pending=TRUE""",
+            (channel, group),
+        )
+
+    async def has_legacy_caption_media(self, channel):
+        return bool(await self.one(f"SELECT 1 {LEGACY_CAPTION_MEDIA} LIMIT 1", (channel,)))
+
+    async def group_legacy_caption_media(self, job):
+        channel = job["channel_id"]
+        while True:
+            async with self.transaction() as cur:
+                await cur.execute("SELECT id FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+                await self.fence(cur, job)
+                await cur.execute(
+                    f"""SELECT m.id caption,i.id image,m.message_id {LEGACY_CAPTION_MEDIA}
+                    ORDER BY m.message_id LIMIT 200""",
+                    (channel,),
+                )
+                pairs = await cur.fetchall()
+                if not pairs:
+                    return
+                for pair in pairs:
+                    group = f"{MESSAGE_MEDIA_PREFIX}{pair['message_id']}"
+                    await cur.execute(
+                        "UPDATE wiki_sources SET media_group=%s WHERE id IN (%s,%s)",
+                        (group, pair["caption"], pair["image"]),
+                    )
+                    await self.mark_album(cur, channel, group)
+
+    async def album_sources(self, channel, group, cur=None):
+        sql = """SELECT s.id,s.source_type,s.body,s.content_hash,s.message_id,s.created_at
+            FROM wiki_sources s WHERE s.channel_id=%s AND s.media_group=%s
+            AND s.source_type IN ('message','image')
+            AND s.verified=TRUE AND s.deleted=FALSE AND s.hidden=FALSE AND s.excluded=FALSE
+            AND (s.source_type='message' OR EXISTS (
+                SELECT 1 FROM wiki_sources parent WHERE parent.channel_id=s.channel_id
+                AND parent.source_type='message' AND parent.message_id=s.message_id
+                AND parent.media_key=s.media_key AND parent.verified=TRUE
+                AND parent.deleted=FALSE AND parent.hidden=FALSE AND parent.excluded=FALSE))
+            ORDER BY s.message_id,s.source_type DESC,s.id"""
+        args = (channel, group)
+        if cur:
+            await cur.execute(sql, args)
+            return list(await cur.fetchall())
+        return await self.query(sql, args, fetch=True)
 
     async def revoke(
         self, channel, *, source_id=None, message_ids=None, actor="telegram", deleted=False
@@ -399,6 +542,17 @@ class WikiStore:
             if not changed:
                 return
             await cur.execute(
+                """UPDATE wiki_albums a JOIN wiki_sources s ON s.channel_id=a.channel_id
+                AND s.media_group=a.media_group SET a.pending=TRUE
+                WHERE s.channel_id=%s AND """
+                + (
+                    "s.id=%s"
+                    if source_id
+                    else "s.message_id IN (" + ",".join(["%s"] * len(message_ids)) + ")"
+                ),
+                (channel, source_id) if source_id else (channel, *message_ids),
+            )
+            await cur.execute(
                 "UPDATE wiki_channels SET source_generation=source_generation+1,dirty_at=UTC_TIMESTAMP(6) WHERE id=%s",
                 (channel,),
             )
@@ -428,53 +582,106 @@ class WikiStore:
                 {"messages": message_ids or []},
             )
 
-    async def enqueue(self, channel, kind="update", actor="scheduler", page_id=None):
-        if kind not in {"backfill", "update", "reconcile", "reindex", "page"}:
+    async def enqueue(
+        self,
+        channel,
+        kind="update",
+        actor="scheduler",
+        page_id=None,
+        *,
+        cur=None,
+        require_new=False,
+    ):
+        if kind not in {"backfill", "update", "reconcile", "reindex", "page", "proposal", "albums"}:
             raise ValueError("Unknown Wiki job kind")
-        async with self.transaction() as cur:
-            await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
-            record = await cur.fetchone()
-            if not record or not record["enabled"]:
-                raise ValueError("Wiki is disabled")
-            if kind == "page":
-                await cur.execute(
-                    "SELECT id FROM wiki_pages WHERE id=%s AND channel_id=%s", (page_id, channel)
+        if cur is None:
+            async with self.transaction() as transaction:
+                return await self.enqueue(
+                    channel, kind, actor, page_id, cur=transaction, require_new=require_new
                 )
-                if not await cur.fetchone():
-                    raise ValueError("A page in this channel is required")
-            if record["active_job"]:
-                return record["active_job"]
-            job_id = uuid.uuid4().hex
-            progress = {
-                "enumerated": 0,
-                "processed": 0,
-                "excluded": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_hits": 0,
-                "generation_complete": False,
-                "review_complete": False,
-                "published": False,
-            }
+        await cur.execute("SELECT * FROM wiki_channels WHERE id=%s FOR UPDATE", (channel,))
+        record = await cur.fetchone()
+        if not record or not record["enabled"]:
+            raise ValueError("Wiki is disabled")
+        if kind == "page":
             await cur.execute(
-                """INSERT INTO wiki_jobs
-                (id,channel_id,kind,`cursor`,progress,next_attempt,created_at,updated_at)
-                VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
-                (job_id, channel, kind, encode({"page_id": page_id}), encode(progress)),
+                "SELECT id FROM wiki_pages WHERE id=%s AND channel_id=%s", (page_id, channel)
             )
-            await cur.execute(
-                "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
-            )
-            await self.audit(cur, channel, "enqueue", job_id, actor, {"kind": kind})
-            return job_id
+            if not await cur.fetchone():
+                raise ValueError("A page in this channel is required")
+        if record["active_job"]:
+            if require_new:
+                await cur.execute(
+                    "SELECT status FROM wiki_jobs WHERE id=%s", (record["active_job"],)
+                )
+                active = await cur.fetchone()
+                if active and active["status"] == "paused":
+                    raise ValueError("本频道有已暂停的任务。请恢复或取消该任务后再启动新任务。")
+                raise ValueError("本频道已有任务在处理，请在任务列表查看进度。")
+            return record["active_job"]
+        if require_new and decode(record["config"]).get("paused"):
+            raise ValueError("频道更新已暂停，请关闭「暂停自动更新」后再启动任务。")
+        job_id = uuid.uuid4().hex
+        progress = {
+            "enumerated": 0,
+            "processed": 0,
+            "excluded": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hits": 0,
+            "generation_complete": False,
+            "review_complete": False,
+            "published": False,
+        }
+        await cur.execute(
+            """INSERT INTO wiki_jobs
+            (id,channel_id,kind,`cursor`,progress,next_attempt,created_at,updated_at)
+            VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
+            (job_id, channel, kind, encode({"page_id": page_id}), encode(progress)),
+        )
+        await cur.execute("UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel))
+        await self.audit(cur, channel, "enqueue", job_id, actor, {"kind": kind})
+        return job_id
+
+    async def enqueue_page_edit(self, cur, channel, page, revision, base_revision, actor):
+        job_id = uuid.uuid4().hex
+        cursor = {"page_id": page, "revisions": {page: revision}, "base_revision": base_revision}
+        progress = {
+            "generation_complete": True,
+            "published": False,
+            "pages": 1,
+            "activity": "等待词条审校",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_hits": 0,
+        }
+        await cur.execute(
+            """INSERT INTO wiki_jobs
+            (id,channel_id,kind,phase,`cursor`,progress,next_attempt,created_at,updated_at)
+            VALUES (%s,%s,'page_edit','review',%s,%s,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))""",
+            (job_id, channel, encode(cursor), encode(progress)),
+        )
+        await cur.execute(
+            "UPDATE wiki_page_revisions SET job_id=%s WHERE id=%s", (job_id, revision)
+        )
+        await self.audit(
+            cur, channel, "enqueue", job_id, actor, {"kind": "page_edit", "page_id": page}
+        )
+        return job_id
 
     async def claim_job(self):
         async with self.transaction() as cur:
             await cur.execute("""SELECT j.id FROM wiki_jobs j JOIN wiki_channels c ON c.id=j.channel_id
-                WHERE c.enabled=TRUE AND JSON_EXTRACT(c.config,'$.paused')=FALSE
-                AND c.active_job=j.id AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
+                WHERE c.enabled=TRUE AND (
+                    (j.kind='page_edit' AND NOT EXISTS (
+                        SELECT 1 FROM wiki_jobs running WHERE running.channel_id=j.channel_id
+                        AND running.kind='page_edit' AND running.status='running'
+                        AND running.lease_until>=UTC_TIMESTAMP(6)
+                    ))
+                    OR (c.active_job=j.id AND JSON_EXTRACT(c.config,'$.paused')=FALSE)
+                ) AND ((j.status IN ('pending','partial') AND j.next_attempt<=UTC_TIMESTAMP(6))
                 OR (j.status='running' AND j.lease_until<UTC_TIMESTAMP(6)))
-                ORDER BY c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
+                ORDER BY (j.kind='page_edit') DESC,c.public DESC,j.created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
             selected = await cur.fetchone()
             if not selected:
                 return None
@@ -544,12 +751,50 @@ class WikiStore:
     # 终态任务仅保留发布/展示所需的清单与叙述，窗口游标等临时状态不再回写
     TERMINAL_CURSOR_KEYS = (
         "page_id",
+        "base_revision",
         "revisions",
         "dropped_pages",
         "profile_narrative",
         "profile_generation",
+        "review_policy",
+        "review_revisions",
+        "review_rejected_revisions",
         "summary_topics",
     )
+
+    async def reconcile_manual_reviews(self, cur, cursor, progress):
+        remaining = progress.get("review_rejections", 0)
+        if not remaining:
+            return False
+        rejected = cursor.get("review_rejected_revisions")
+        if rejected is None:
+            revisions = cursor.get("review_revisions", cursor.get("revisions", {}))
+            # Completed jobs from previous versions did not retain the rejected IDs.
+            await cur.execute(
+                """SELECT rv.revision_id FROM wiki_revision_reviews rv
+                JOIN JSON_TABLE(%s,'$[*]' COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) ids
+                ON ids.id=rv.revision_id WHERE rv.policy_key=%s
+                GROUP BY rv.revision_id HAVING MAX(rv.approved)=FALSE""",
+                (encode(list(revisions.values())), cursor.get("review_policy")),
+            )
+            rejected = [row["revision_id"] for row in await cur.fetchall()]
+            if len(rejected) != remaining:
+                return False
+        await cur.execute(
+            """SELECT DISTINCT rv.revision_id FROM wiki_revision_reviews rv
+            JOIN JSON_TABLE(%s,'$[*]' COLUMNS(id CHAR(32) CHARACTER SET ascii PATH '$')) ids
+            ON ids.id=rv.revision_id WHERE rv.policy_key=%s AND rv.approved=TRUE""",
+            (encode(rejected), MANUAL_REVIEW_POLICY),
+        )
+        approved = {row["revision_id"] for row in await cur.fetchall()}
+        if not approved:
+            return False
+        rejected = [revision for revision in rejected if revision not in approved]
+        cursor["review_rejected_revisions"] = rejected
+        progress.update(review_complete=not rejected, review_rejections=len(rejected))
+        if not rejected:
+            progress["activity"] = "审校已完成，等待发布"
+        return True
 
     async def finish(self, job, status="completed", error=None, delay=0):
         async with self.transaction() as cur:
@@ -558,6 +803,16 @@ class WikiStore:
             )
             await self.fence(cur, job)
             cursor = job["cursor"]
+            if status == "completed" and job["phase"] == "ready":
+                reconciled = await self.reconcile_manual_reviews(cur, cursor, job["progress"])
+                if reconciled and job["kind"] == "page_edit" and job["progress"]["review_complete"]:
+                    await cur.execute(
+                        "SELECT JSON_UNQUOTE(JSON_EXTRACT(config,'$.publication_mode')) mode FROM wiki_channels WHERE id=%s",
+                        (job["channel_id"],),
+                    )
+                    if (await cur.fetchone())["mode"] == "auto":
+                        # Approval arrived after the running worker's publication check.
+                        status = "pending"
             if status in {"completed", "published"}:
                 cursor = {key: cursor[key] for key in self.TERMINAL_CURSOR_KEYS if key in cursor}
             await cur.execute(
@@ -574,12 +829,12 @@ class WikiStore:
                     job["id"],
                 ),
             )
-            if status in {"completed", "published", "failed"}:
+            if job["kind"] != "page_edit" and status in {"completed", "published", "failed"}:
                 await cur.execute(
                     "UPDATE wiki_channels SET active_job=NULL WHERE id=%s AND active_job=%s",
                     (job["channel_id"], job["id"]),
                 )
-            if status == "failed":
+            if job["kind"] != "page_edit" and status == "failed":
                 # A terminal failure must not immediately create another identical job
                 # through the dirty/debounce path and defeat the retry limit.
                 await cur.execute(
@@ -588,7 +843,7 @@ class WikiStore:
                 )
 
     async def control_job(self, channel, job_id, action, actor):
-        if action not in {"pause", "resume", "retry"}:
+        if action not in {"pause", "resume", "retry", "cancel"}:
             raise ValueError("Unknown job action")
         async with self.transaction() as cur:
             await cur.execute(
@@ -602,12 +857,33 @@ class WikiStore:
             job = await cur.fetchone()
             if not job or not channel_row:
                 raise ValueError("Unknown job")
-            if channel_row["active_job"] not in (None, job_id):
-                raise ValueError("Another job is active")
+            page_edit = job["kind"] == "page_edit"
+            if job["status"] == "cancelled":
+                if action == "cancel":
+                    return
+                raise ValueError("该任务已取消，请启动新任务")
+            if not page_edit and channel_row["active_job"] not in (None, job_id):
+                raise ValueError("本频道已有其他任务")
             if job["status"] in {"completed", "published"}:
-                raise ValueError("Completed jobs are immutable; start a new job")
+                raise ValueError("任务已结束，请启动新任务")
             progress = decode(job["progress"])
             progress["active_requests"] = {}
+            if action == "cancel":
+                if page_edit or job["status"] != "paused":
+                    raise ValueError("仅可取消已暂停的频道任务")
+                progress.update(activity="已取消", error_detail="", reserved_tokens=0)
+                await cur.execute(
+                    """UPDATE wiki_jobs SET status='cancelled',lease_token=NULL,lease_until=NULL,
+                    error_code=NULL,updated_at=UTC_TIMESTAMP(6),progress=%s WHERE id=%s""",
+                    (encode(progress), job_id),
+                )
+                await cur.execute(
+                    """UPDATE wiki_channels SET active_job=NULL,scheduled_at=UTC_TIMESTAMP(6)
+                    WHERE id=%s AND active_job=%s""",
+                    (channel, job_id),
+                )
+                await self.audit(cur, channel, action, job_id, actor)
+                return
             if action != "pause":
                 progress.update(error_detail="", activity="等待后台执行")
             await cur.execute(
@@ -615,9 +891,10 @@ class WikiStore:
                 attempts=0,error_code=NULL,next_attempt=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),progress=%s WHERE id=%s""",
                 ("paused" if action == "pause" else "pending", encode(progress), job_id),
             )
-            await cur.execute(
-                "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
-            )
+            if not page_edit:
+                await cur.execute(
+                    "UPDATE wiki_channels SET active_job=%s WHERE id=%s", (job_id, channel)
+                )
             await self.audit(cur, channel, action, job_id, actor)
 
     async def source_batch(self, channel, after="", limit=100, page_id=None, group=None):

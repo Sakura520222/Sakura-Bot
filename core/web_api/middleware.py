@@ -27,6 +27,7 @@ from .auth import verify_token
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("core.web_api.access")
 _wiki_buckets = OrderedDict()
+_wiki_account_buckets = OrderedDict()
 
 # 不需要认证的路径
 PUBLIC_PATHS = {
@@ -52,6 +53,50 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         from .routes.wiki import WIKI_AVATAR_ROUTE, is_public_wiki_request
+        from .routes.wiki_account import METHODS
+        from .routes.wiki_assistant import is_assistant_request
+        from .routes.wiki_community import is_community_request
+        from .routes.wiki_research import PATH as research_path
+
+        if path == research_path and request.method == "POST":
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        if (
+            (request.method, path) in METHODS
+            or is_assistant_request(request.method, path)
+            or is_community_request(request.method, path)
+        ):
+            if path.endswith(("/start", "/callback")):
+                peer = request.client.host if request.client else "unknown"
+                window = int(time.monotonic() // 60)
+                old_window, count = _wiki_account_buckets.pop(peer, (window, 0))
+                count = count + 1 if window == old_window else 1
+                _wiki_account_buckets[peer] = (window, count)
+                if len(_wiki_account_buckets) > 10000:
+                    _wiki_account_buckets.popitem(last=False)
+                if count > 60:
+                    return JSONResponse(
+                        {"detail": "Wiki 登录请求过于频繁"},
+                        status_code=429,
+                        headers={"Cache-Control": "no-store", "Retry-After": "60"},
+                    )
+            # CORS for the legacy WebUI must not authorize reading cookie-backed account data.
+            response = await call_next(request)
+            for header in list(response.headers):
+                if header.startswith("access-control-"):
+                    del response.headers[header]
+            response.headers.update(
+                {
+                    "Cache-Control": "no-store",
+                    "Referrer-Policy": "no-referrer",
+                    "X-Content-Type-Options": "nosniff",
+                    "Cross-Origin-Resource-Policy": "same-origin",
+                    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+                }
+            )
+            return response
 
         if is_public_wiki_request(path, request.method):
             # Trust the socket peer, never an arbitrary forwarded header. Bound memory.
@@ -151,6 +196,9 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             client_host = request.client.host if request.client else "unknown"
+            if path == "/api/wiki/account/callback":
+                access_logger.error("Wiki Telegram 回调异常: %s", type(e).__name__)
+                raise
             access_logger.error(
                 "WebUI 请求异常: %s %s client=%s elapsed=%.2fms error=%s: %s",
                 request.method,

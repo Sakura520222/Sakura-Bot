@@ -24,7 +24,7 @@
         <RouterLink class="wiki-tag" :to="{ path: `/wiki/${item.channel_id}/search`, query: { topic: item.topic } }">
           {{ item.topic }}
         </RouterLink>
-        <span>{{ kindLabels[item.kind] || item.kind }}</span>
+        <span v-if="item.kind !== 'Topic' && kindLabels[item.kind]">{{ kindLabels[item.kind] }}</span>
         <RouterLink :to="{ path: item.url, hash: '#sources' }">{{ item.evidence_count }} 个来源</RouterLink>
       </footer>
     </div>

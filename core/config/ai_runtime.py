@@ -22,6 +22,11 @@ class AIConnectionSettings:
     vision_description: bool = True
 
 
+def has_wiki_review_route(profiles):
+    route = profiles.routing.get("wiki_review")
+    return bool(route and (route.provider_id or route.profile_id or route.model))
+
+
 def effective_ai_config(
     config: dict | None = None, purpose: str = "summary"
 ) -> AIConnectionSettings:
@@ -33,9 +38,7 @@ def effective_ai_config(
         raise ValueError("Unknown AI purpose")
     profiles = parse_ai_profiles(config)
     route = profiles.routing.get(purpose)
-    if purpose == "wiki_review" and not (
-        route and (route.provider_id or route.profile_id or route.model)
-    ):
+    if purpose == "wiki_review" and not has_wiki_review_route(profiles):
         route = profiles.routing.get("wiki")
     vision = dict(
         vision_enabled=profiles.vision.enabled,

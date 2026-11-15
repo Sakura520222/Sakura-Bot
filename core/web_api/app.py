@@ -43,6 +43,10 @@ from .routes import (
     userbot,
     vector_store,
     wiki,
+    wiki_account,
+    wiki_assistant,
+    wiki_community,
+    wiki_research,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,13 @@ def create_app() -> FastAPI:
     app.include_router(images.router, prefix="/api/images", tags=["图片任务"])
     app.include_router(wiki.public, prefix="/api/public/wiki", tags=["公开 Wiki"])
     app.include_router(wiki.admin, prefix="/api/wiki/admin", tags=["Wiki 管理"])
+    app.include_router(wiki_account.router, prefix=wiki_account.ACCOUNT_PATH, tags=["Wiki 账户"])
+    app.include_router(wiki_account.admin, prefix="/api/wiki/admin", tags=["Wiki 管理"])
+    app.include_router(wiki_assistant.router, prefix=wiki_assistant.PATH, tags=["Wiki 助手"])
+    app.include_router(wiki_research.router, prefix=wiki_research.PATH, include_in_schema=False)
+    app.include_router(wiki_research.admin, prefix="/api/wiki/admin", tags=["Wiki 管理"])
+    app.include_router(wiki_community.router, prefix=wiki_community.PATH, tags=["Wiki 社区"])
+    app.include_router(wiki_community.admin, prefix="/api/wiki/admin", tags=["Wiki 管理"])
 
     @app.get("/wiki-preview/{channel}", include_in_schema=False)
     async def wiki_channel_preview(channel: str):

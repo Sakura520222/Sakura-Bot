@@ -1,6 +1,6 @@
 <template>
   <div class="wiki-view">
-    <header class="wiki-page-heading">
+    <header class="wiki-page-heading" :class="{ 'wiki-home-feed-heading': tab !== 'channels' }">
       <h1>{{ tab === "channels" ? "频道目录" : "频道百科" }}</h1>
       <button v-if="tab === 'recommended'" @click="refresh = Date.now()">换一批</button>
     </header>
@@ -8,7 +8,7 @@
       <RouterLink v-for="entry in tabs" :key="entry.id" :to="{ name: 'WikiHome', query: { tab: entry.id === 'recommended' ? undefined : entry.id } }"
         :aria-current="tab === entry.id ? 'page' : undefined">{{ entry.label }}</RouterLink>
     </nav>
-    <WikiFeed v-if="tab !== 'channels'" :url="feedUrl" :item-key="(item: WikiCard) => item.id" label="公开知识信息流">
+    <WikiFeed v-if="tab !== 'channels'" :url="feedUrl" :manual-refresh="tab === 'recommended'" :item-key="(item: WikiCard) => item.id" label="公开知识信息流">
       <template #default="{ item }"><WikiFeedCard :item="item" /></template>
     </WikiFeed>
     <template v-else>

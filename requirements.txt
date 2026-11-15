@@ -46,7 +46,7 @@ python-telegram-bot>=20.0
 # Web 管理界面 API 框架
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-PyJWT>=2.8.0
+PyJWT[crypto]>=2.8.0
 
 # ========== 测试和开发工具 ==========
 

@@ -197,34 +197,57 @@ func (c *Community) callbackAccess(ctx context.Context, msg *models.Message, act
 }
 
 func (c *Community) subscriptionAccess(ctx context.Context, msg *models.Message, user int64, s config.AssistantSettings) bool {
-	if !s.RequireSubscription {
+	message, buttons := c.subscriptionProblem(ctx, user, s)
+	if message == "" {
 		return true
+	}
+	var keyboard models.ReplyMarkup
+	if len(buttons) != 0 {
+		buttons = append(buttons, []models.InlineKeyboardButton{{Text: "我已订阅", CallbackData: "qa:verify"}})
+		keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: buttons}
+	}
+	c.say(ctx, msg, message, keyboard)
+	return false
+}
+
+// WebSubscription uses the same Telegram membership checks without sending a message.
+func (c *Community) WebSubscription(ctx context.Context, user int64) string {
+	settings, err := c.Config.AssistantSettings()
+	if err != nil || user <= 0 {
+		return "助手配置无效，请联系管理员。"
+	}
+	message, buttons := c.subscriptionProblem(ctx, user, settings)
+	for _, row := range buttons {
+		for _, button := range row {
+			message += "\n" + button.Text + " " + button.URL
+		}
+	}
+	return message
+}
+
+func (c *Community) subscriptionProblem(ctx context.Context, user int64, s config.AssistantSettings) (string, [][]models.InlineKeyboardButton) {
+	if !s.RequireSubscription {
+		return "", nil
 	}
 	me, e := c.TG.GetMe(ctx)
 	if e != nil {
-		c.say(ctx, msg, "订阅验证暂不可用，请稍后重试。", nil)
-		return false
+		return "订阅验证暂不可用，请稍后重试。", nil
 	}
 	buttons := [][]models.InlineKeyboardButton{}
-	missing := false
 	for _, ch := range s.RequiredChannels {
 		chat, e := c.chat(ctx, ch)
 		if e != nil {
-			c.say(ctx, msg, "无法查询必订阅频道，请联系管理员。", nil)
-			return false
+			return "无法查询必订阅频道，请联系管理员。", nil
 		}
 		self, e := c.TG.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chat.ID, UserID: me.ID})
 		if e != nil || self == nil || (self.Type != models.ChatMemberTypeAdministrator && self.Type != models.ChatMemberTypeOwner) {
-			c.say(ctx, msg, "助手 Bot 需要成为必订阅频道的管理员后才能验证。", nil)
-			return false
+			return "助手 Bot 需要成为必订阅频道的管理员后才能验证。", nil
 		}
 		m, e := c.TG.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chat.ID, UserID: user})
 		if e != nil {
-			c.say(ctx, msg, "订阅验证服务异常，请稍后重试。", nil)
-			return false
+			return "订阅验证服务异常，请稍后重试。", nil
 		}
 		if !member(m) {
-			missing = true
 			url := ch
 			if chat.Username != "" {
 				url = "https://t.me/" + chat.Username
@@ -234,12 +257,10 @@ func (c *Community) subscriptionAccess(ctx context.Context, msg *models.Message,
 			buttons = append(buttons, []models.InlineKeyboardButton{{Text: "加入 " + chat.Title, URL: url}})
 		}
 	}
-	if !missing {
-		return true
+	if len(buttons) == 0 {
+		return "", nil
 	}
-	buttons = append(buttons, []models.InlineKeyboardButton{{Text: "我已订阅", CallbackData: "qa:verify"}})
-	c.say(ctx, msg, "请先订阅以下全部频道，然后重新验证。", &models.InlineKeyboardMarkup{InlineKeyboard: buttons})
-	return false
+	return "请先订阅以下全部频道，然后重新验证。", buttons
 }
 func (c *Community) say(ctx context.Context, msg *models.Message, text string, keyboard models.ReplyMarkup) {
 	_, _ = c.TG.SendMessage(ctx, &bot.SendMessageParams{ChatID: msg.Chat.ID, MessageThreadID: msg.MessageThreadID, Text: text, ReplyParameters: &models.ReplyParameters{MessageID: msg.ID}, ReplyMarkup: keyboard})

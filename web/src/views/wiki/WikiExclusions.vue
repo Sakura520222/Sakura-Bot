@@ -3,8 +3,9 @@
     >未纳入 {{ Number(count || 0).toLocaleString("zh-CN") }} 条 ·
     查看原因</n-button
   >
-  <n-drawer v-model:show="show" :width="760" placement="right">
-    <n-drawer-content title="未纳入知识生成的消息" closable>
+  <n-modal v-model:show="show" preset="card" title="未纳入知识生成的消息" closable
+    style="width: min(760px, calc(100vw - 32px))">
+    <div class="exclusion-dialog-body">
       <n-text depth="3"
         >原文仍保存在归档中。这里列出当前筛选条件、系统事件或重复总结对应的具体消息。</n-text
       >
@@ -63,8 +64,8 @@
         :page-size="20"
         @update:page="load"
       />
-    </n-drawer-content>
-  </n-drawer>
+    </div>
+  </n-modal>
 </template>
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
@@ -153,6 +154,11 @@ watch(
 );
 </script>
 <style scoped>
+.exclusion-dialog-body {
+  max-height: max(8rem, calc(100dvh - 128px));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
 .exclusion-controls {
   margin: 16px 0;
 }

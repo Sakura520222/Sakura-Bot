@@ -1,8 +1,14 @@
 /* Public shell and shared feed */
+@media (min-width: 721px) {
+  html:has(.wiki-shell .wiki-columns) {
+    scrollbar-gutter: stable both-edges;
+  }
+}
 .wiki-shell {
   --wiki-motion-fast: 150ms;
   --wiki-motion-panel: 220ms;
   --wiki-masthead: 0px;
+  --wiki-control-height: 32px;
   font-family: "Inter", "Microsoft YaHei UI", system-ui, sans-serif;
   background: var(--sb-surface);
   font-size: 15px;
@@ -108,6 +114,9 @@
   gap: 12px;
   align-items: center;
   padding-block: 14px;
+}
+.wiki-shell .wiki-home-feed-heading {
+  min-height: calc(var(--wiki-control-height) + 28px);
 }
 .wiki-shell .wiki-page-heading h1 { margin: 0; font-size: 23px; }
 .wiki-shell .wiki-context-nav,
@@ -231,15 +240,12 @@
 }
 .wiki-shell .wiki-bookmark-row .wiki-feed-card { border: 0; }
 .wiki-shell .wiki-bookmarks-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin: 16px 0; }
-.wiki-shell .wiki-reader-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 20px 0; }
 .wiki-shell .wiki-profile-panels { margin-block: 12px; }
 .wiki-shell .wiki-profile-view { padding-top: 16px; }
 .wiki-shell .wiki-feed-tabs button { flex: 1; border: 0; border-bottom: 3px solid transparent; border-radius: 0; min-height: 44px; }
 .wiki-shell .wiki-feed-tabs button[aria-pressed="true"] { border-color: var(--sb-accent); }
 .wiki-shell button.wiki-mini-bar { min-height: 16px; height: auto; flex: 1; padding: 0; border: 0; border-radius: 4px 4px 0 0; background: var(--sb-accent); }
 .wiki-shell button.wiki-mini-bar[aria-pressed="true"] { background: var(--sb-text); }
-.wiki-shell .wiki-evidence-card { margin-top: 8px; border: 1px solid var(--sb-border); padding: 8px 12px; border-radius: 8px; }
-.wiki-shell .wiki-evidence-card summary { cursor: pointer; }
 @media (max-width: 1150px) {
   .wiki-shell { --wiki-masthead: 54px; }
   .wiki-shell .wiki-columns {
@@ -251,6 +257,7 @@
   .wiki-shell .wiki-reader-inline { display: block; }
 }
 @media (max-width: 720px) {
+  .wiki-shell { --wiki-control-height: 44px; }
   .wiki-shell .wiki-columns {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "navigation actions" "main main";
@@ -280,7 +287,7 @@
   .wiki-shell .wiki-header-actions { padding: 0 12px 0 0; }
   .wiki-shell .wiki-main { border: 0; padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
   .wiki-shell .wiki-main > .wiki-view { padding-inline: 12px; }
-  .wiki-shell button, .wiki-shell input, .wiki-shell select { min-height: 44px; }
+  .wiki-shell button, .wiki-shell input, .wiki-shell select { min-height: var(--wiki-control-height); }
 }
 @media (prefers-reduced-motion: reduce) {
   .wiki-shell *, .wiki-shell *::before, .wiki-shell *::after { animation: none !important; transition: none !important; }

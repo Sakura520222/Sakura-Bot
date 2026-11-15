@@ -105,9 +105,10 @@ func (e *ToolExecutor) Execute(ctx context.Context, toolName string, args map[st
 // dispatch 路由到各工具实现；返回的 error 表示工具层异常（非业务 error
 // JSON 载荷），由 Execute 统一记录并包装。
 func (e *ToolExecutor) dispatch(ctx context.Context, toolName string, args map[string]any) (string, error) {
-	switch toolName {
-	case "wiki_search", "wiki_get_page", "wiki_get_related", "wiki_get_changes", "wiki_get_channel_profile":
+	if contracts.WikiPublicTool(toolName) {
 		return e.executeWiki(ctx, toolName, args)
+	}
+	switch toolName {
 	case "semantic_search":
 		return e.executeSemanticSearch(ctx, args)
 	case "keyword_search":

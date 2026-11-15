@@ -16,6 +16,8 @@
 
 import hashlib
 import logging
+import time
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -111,6 +113,13 @@ async def telegram_oauth_callback(request: Request):
         if not check_admin_permission(user_id):
             return TokenLoginResponse(success=False, message="无管理员权限")
 
+        from .wiki import runtime
+
+        if not await runtime().accounts.consume_legacy(
+            data["hash"], datetime.fromtimestamp(time.time(), UTC)
+        ):
+            return TokenLoginResponse(success=False, message="Telegram 登录请求已使用")
+
         from ..auth import generate_token
 
         access_token = generate_token(user_id)
@@ -118,9 +127,11 @@ async def telegram_oauth_callback(request: Request):
         logger.info(f"Telegram OAuth 登录成功: user_id={user_id}")
         return TokenLoginResponse(success=True, access_token=access_token, message="登录成功")
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Telegram OAuth 回调失败: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.warning("Telegram OAuth 回调失败: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Telegram 登录暂时不可用") from None
 
 
 @router.get("/status", response_model=AuthStatusResponse)

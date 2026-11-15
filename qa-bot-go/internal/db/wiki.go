@@ -36,6 +36,7 @@ const wikiPageJoin = ` FROM wiki_channels c JOIN wiki_publication_pages pp ON pp
     JOIN wiki_page_revisions r ON r.id=pp.revision_id AND r.channel_id=c.id `
 
 var wikiKey = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,180}$`)
+var wikiRecordID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 // WikiRepository is read-only and owns neither schema migration nor knowledge generation.
 type WikiRepository struct{ DB *sql.DB }
@@ -61,6 +62,10 @@ func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts co
 	}
 	if (opts.Slug != "" && !wikiKey.MatchString(opts.Slug)) || (opts.NodeID != "" && !wikiKey.MatchString(opts.NodeID)) {
 		return nil, errors.New("invalid Wiki identifier")
+	}
+	if (opts.RevisionID != "" && !wikiRecordID.MatchString(opts.RevisionID)) ||
+		(opts.ContributorID != "" && !wikiRecordID.MatchString(opts.ContributorID)) {
+		return nil, errors.New("invalid Wiki revision or contributor identifier")
 	}
 	for _, date := range []string{opts.After, opts.Before} {
 		if date != "" {
@@ -97,13 +102,17 @@ func (w *WikiRepository) ReadWiki(ctx context.Context, operation string, opts co
 		result, err = wikiRelated(ctx, tx, opts)
 	case "wiki_get_channel_profile":
 		result, err = wikiProfile(ctx, tx, opts)
+	case "wiki_get_revision_history":
+		result, err = wikiRevisionHistory(ctx, tx, opts)
+	case "wiki_get_contributors":
+		result, err = wikiContributors(ctx, tx, opts)
 	default:
 		return nil, errors.New("unknown Wiki read operation")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", operation, err)
 	}
-	if opts.Channel == "" {
+	if opts.Channel == "" && operation != "wiki_get_contributors" {
 		channels, catalogErr := wikiChannels(ctx, tx)
 		if catalogErr != nil {
 			return nil, fmt.Errorf("list published Wiki channels: %w", catalogErr)
@@ -137,7 +146,7 @@ func wikiChannels(ctx context.Context, tx *sql.Tx) ([]map[string]any, error) {
 			return nil, err
 		}
 		path := "/wiki/" + url.PathEscape(id)
-		channels = append(channels, map[string]any{"channel_id": id, "title": title, "username": username, "page_count": count, "url": path, "wiki_url": wikiAbsoluteURL(config, path)})
+		channels = append(channels, map[string]any{"channel_id": id, "title": title, "username": username, "description": wikiDescription(config), "page_count": count, "url": path, "wiki_url": wikiAbsoluteURL(config, path)})
 	}
 	return channels, rows.Err()
 }
@@ -235,7 +244,14 @@ func scanWikiPage(scanner wikiScanner) (map[string]any, map[string]any, map[stri
 		return nil, nil, nil, err
 	}
 	path := "/wiki/" + url.PathEscape(channel) + "/page/" + url.PathEscape(slug)
-	card := map[string]any{"id": id, "slug": slug, "title": document["title"], "kind": kind, "topic": topic, "channel_id": channel, "channel_title": channelTitle, "publication_id": pub, "revision_id": revision, "updated_at": created.UTC().Format(time.RFC3339), "url": path, "wiki_url": wikiAbsoluteURL(config, path)}
+	card := map[string]any{"id": id, "slug": slug, "kind": kind, "topic": topic, "channel_id": channel, "channel_title": channelTitle, "publication_id": pub, "revision_id": revision, "updated_at": created.UTC().Format(time.RFC3339), "url": path, "wiki_url": wikiAbsoluteURL(config, path)}
+	wikiDocumentCard(card, document)
+	return card, document, config, nil
+}
+
+func wikiDocumentCard(card, document map[string]any) {
+	card["title"] = document["title"]
+	delete(card, "excerpt")
 	if facts, ok := document["claims"].([]any); ok && len(facts) > 0 {
 		fact, _ := facts[0].(map[string]any)
 		text, _ := fact["text"].(string)
@@ -245,7 +261,6 @@ func scanWikiPage(scanner wikiScanner) (map[string]any, map[string]any, map[stri
 		}
 		card["excerpt"] = string(runes)
 	}
-	return card, document, config, nil
 }
 
 func wikiAbsoluteURL(config map[string]any, path string) any {
@@ -257,14 +272,26 @@ func wikiAbsoluteURL(config map[string]any, path string) any {
 	return strings.TrimRight(base, "/") + path
 }
 
-func wikiPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[string]any, error) {
+func wikiCurrentPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[string]any, map[string]any, map[string]any, error) {
 	if opts.Channel == "" || opts.Slug == "" {
-		return nil, errors.New("channel and slug required")
+		return nil, nil, nil, errors.New("channel and slug required")
 	}
 	row := tx.QueryRowContext(ctx, `SELECT p.id,p.slug,p.title,p.kind,p.topic,c.id,c.title,c.published_revision,r.id,r.created_at,r.document,c.config`+wikiPageJoin+` WHERE c.id=? AND (p.slug=? OR p.id=? OR EXISTS (SELECT 1 FROM wiki_slug_aliases a WHERE a.channel_id=c.id AND a.page_id=p.id AND a.slug=?)) AND `+wikiVisible+" LIMIT 1", opts.Channel, opts.Slug, opts.Slug, opts.Slug)
-	card, document, config, err := scanWikiPage(row)
+	return scanWikiPage(row)
+}
+
+func wikiPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[string]any, error) {
+	card, document, config, err := wikiCurrentPage(ctx, tx, opts)
 	if err != nil {
 		return nil, err
+	}
+	current := card["revision_id"].(string)
+	card["current_revision_id"] = current
+	if opts.RevisionID != "" && opts.RevisionID != current {
+		document, err = wikiHistoricalPage(ctx, tx, opts.RevisionID, card, config)
+		if err != nil {
+			return nil, err
+		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT s.id,s.source_type,s.message_id,s.created_at,s.edited_at,c.username FROM wiki_evidence e JOIN wiki_sources s ON s.id=e.source_id JOIN wiki_channels c ON c.id=s.channel_id WHERE e.revision_id=?`, card["revision_id"])
 	if err != nil {
@@ -292,8 +319,12 @@ func wikiPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[
 		return nil, err
 	}
 	facts, _ := document["claims"].([]any)
+	attributions, err := wikiNoteAttributions(ctx, tx, card["id"].(string), document)
+	if err != nil {
+		return nil, err
+	}
 	safeFacts := []any{}
-	for _, rawFact := range facts {
+	for ordinal, rawFact := range facts {
 		fact, ok := rawFact.(map[string]any)
 		if !ok {
 			continue
@@ -321,9 +352,11 @@ func wikiPage(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (map[
 			evidence = append(evidence, map[string]any{"source_id": id, "start": ref["start"], "end": ref["end"], "quote": quote, "url": source["url"]})
 		}
 		safe["evidence"] = evidence
+		safe["community_notes"] = wikiPublicNotes(fact, ordinal, attributions)
 		safeFacts = append(safeFacts, safe)
 	}
 	card["claims"], card["sources"], card["verified_at"] = safeFacts, sourceList, document["verified_at"]
+	card["title_notes"] = wikiPublicNotes(map[string]any{"community_notes": document["title_notes"]}, -1, attributions)
 	return card, nil
 }
 
@@ -450,7 +483,12 @@ func wikiProfile(ctx context.Context, tx *sql.Tx, opts contracts.WikiOptions) (m
 		}
 	}
 	path := "/wiki/" + url.PathEscape(opts.Channel) + "/profile"
-	return map[string]any{"url": path, "wiki_url": wikiAbsoluteURL(config, path), "channel_id": opts.Channel, "title": title, "publication_id": pub, "coverage": safeCoverage, "statistics": map[string]any{"message_count": count, "avg_message_length": average, "earliest": nullWikiTime(first), "latest": nullWikiTime(last)}, "hours_utc": hours, "months": months, "topics": topics, "topic_trends": trends, "narrative": narrative, "as_of": time.Now().UTC().Format(time.RFC3339), "method": "Actual verified messages; topics may overlap. No user profiling."}, nil
+	return map[string]any{"url": path, "wiki_url": wikiAbsoluteURL(config, path), "channel_id": opts.Channel, "title": title, "description": wikiDescription(config), "publication_id": pub, "coverage": safeCoverage, "statistics": map[string]any{"message_count": count, "avg_message_length": average, "earliest": nullWikiTime(first), "latest": nullWikiTime(last)}, "hours_utc": hours, "months": months, "topics": topics, "topic_trends": trends, "narrative": narrative, "as_of": time.Now().UTC().Format(time.RFC3339), "method": "Actual verified messages; topics may overlap. No user profiling."}, nil
+}
+
+func wikiDescription(config map[string]any) string {
+	description, _ := config["description"].(string)
+	return description
 }
 
 // Only fixed, field-whitelisted profile SELECTs use this helper.

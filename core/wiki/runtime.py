@@ -8,12 +8,16 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
+from .accounts import WikiAccounts
 from .collector import SourceCollector
+from .community import Community
 from .engine import BudgetExceeded, WikiEngine, WikiResponseError
-from .models import WikiConfig, alias_key, canonical_id, utc
+from .knowledge import PageEditConflict, PublicationAccessUnverified
+from .models import SKIPPED_AI_REVIEW, WikiConfig, alias_key, canonical_id, utc
 from .outbox import EventOutbox
 from .reader import PublicReader
 from .store import LeaseLost, WikiSchemaError, WikiStore, decode
+from .web_research import WebResearch
 
 logger = logging.getLogger(__name__)
 _runtime = None
@@ -49,8 +53,12 @@ async def start_wiki(db, client, scheduler, bot_client=None):
 class WikiRuntime:
     def __init__(self, store, client, scheduler):
         self.store, self.client, self.scheduler = store, client, scheduler
+        self.accounts = WikiAccounts(store)
         self.collector = SourceCollector(store, client)
         self.engine = WikiEngine(store)
+        self.community = Community(store, self.engine.knowledge)
+        self.research = WebResearch(store)
+        self.engine.research = self.research
         self.reader = PublicReader(store)
         self.avatar = None
         self.tasks = set()
@@ -58,6 +66,7 @@ class WikiRuntime:
         self.ready = False
         self.startup_error = ""
         self._last_refresh = None
+        self._last_account_cleanup = None
         self.bot_client = None
         self.outbox = EventOutbox()
         self.recovery_keys = set()
@@ -67,6 +76,7 @@ class WikiRuntime:
 
     async def start(self, bot_client=None):
         await self.store.initialize()
+        await self.engine.knowledge.repair_generated_title_separators()
         if not self._outbox_restored:
             self.recovery_keys.update(await asyncio.to_thread(self.outbox.keys))
             self._outbox_restored = True
@@ -121,12 +131,21 @@ class WikiRuntime:
         import core.config as config_module
 
         allowed = set()
-        for configured in config_module.CHANNELS:
+        verified = set()
+        wiki_channels = await self.store.query(
+            "SELECT id FROM wiki_channels WHERE enabled=TRUE", fetch=True
+        )
+        configured_channels = dict.fromkeys(
+            [*config_module.CHANNELS, *(row["id"] for row in wiki_channels)]
+        )
+        for configured in configured_channels:
             old = None
             try:
                 key = alias_key(configured)
                 old = await self.store.channel(key)
                 if old:
+                    if old["id"] in verified and key == old["id"]:
+                        continue
                     allowed.add(old["id"])
                 if self.client and self.client.is_connected():
                     from telethon.tl.types import PeerChannel
@@ -136,6 +155,7 @@ class WikiRuntime:
                         entity = await self.client.get_entity(target)
                     channel = await self.store.register_channel(entity, configured)
                     allowed.add(channel["id"])
+                    verified.add(channel["id"])
             except Exception as error:
                 logger.info("Wiki channel verification deferred: %s", type(error).__name__)
                 if old:
@@ -173,11 +193,29 @@ class WikiRuntime:
                 return
             if not self._last_refresh or utc() - self._last_refresh >= timedelta(minutes=1):
                 await self.refresh_channels()
+            if not self._last_account_cleanup or utc() - self._last_account_cleanup >= timedelta(
+                hours=1
+            ):
+                await self.accounts.cleanup()
+                await self.research.prune()
+                self._last_account_cleanup = utc()
             for row in await self.store.query(
-                "SELECT * FROM wiki_channels WHERE enabled=TRUE", fetch=True
+                """SELECT c.*,EXISTS (SELECT 1 FROM wiki_edit_proposals e
+                WHERE e.channel_id=c.id AND e.status='approved' AND e.revision_id IS NULL) queued_edit
+                FROM wiki_channels c WHERE c.enabled=TRUE""",
+                fetch=True,
             ):
                 config = WikiConfig.model_validate(decode(row["config"]))
+                if row["queued_edit"]:
+                    await self.community.dispatch_approved(row["id"])
                 if config.paused or row["active_job"]:
+                    continue
+                if (
+                    row["published_revision"]
+                    and row["access_verified"]
+                    and await self.store.has_legacy_caption_media(row["id"])
+                ):
+                    await self.store.enqueue(row["id"], "albums", "caption_media_repair")
                     continue
                 due = schedule_due(config, row.get("scheduled_at"))
                 dirty = row["dirty_at"] and utc() - row["dirty_at"] >= timedelta(
@@ -214,6 +252,7 @@ class WikiRuntime:
                 owner.cancel()
 
         heartbeat = asyncio.create_task(keep_lease())
+        page_edit = job["kind"] == "page_edit"
         try:
             channel = await self.store.channel(job["channel_id"])
             if job["phase"] == "collect":
@@ -241,9 +280,21 @@ class WikiRuntime:
                 await self.store.checkpoint(job, "extract")
             if job["phase"] == "extract":
                 await self.engine.generate(job, channel)
+            previous_policy = job["cursor"].get("review_policy")
+            if job["phase"] == "ready" and (
+                not previous_policy
+                or (previous_policy == SKIPPED_AI_REVIEW and channel["config"].ai_review_enabled)
+                or (
+                    previous_policy != SKIPPED_AI_REVIEW and not channel["config"].ai_review_enabled
+                )
+            ):
+                # An unfinished pre-upgrade job may have reached ready using the old flags.
+                await self.store.checkpoint(job, "review")
             if job["phase"] == "assemble":
                 await self.store.report(job, "正在整理文章与知识地图", stage="assemble")
                 await self.engine.assemble(job, channel)
+            if job["phase"] == "review":
+                await self.engine.review(job, channel)
             if job["phase"] == "ready":
                 if job["kind"] in {"backfill", "reconcile"}:
                     await self.collector.coverage(
@@ -252,33 +303,48 @@ class WikiRuntime:
                 fresh = await self.store.channel(channel["id"])
                 # New messages do not invalidate a completed historical snapshot.
                 # Publication still checks every included source/hash transactionally.
-                job["progress"]["newer_sources_pending"] = (
-                    fresh["source_generation"] != job["progress"]["source_generation"]
-                )
+                if not page_edit:
+                    job["progress"]["newer_sources_pending"] = (
+                        fresh["source_generation"] != job["progress"]["source_generation"]
+                    )
                 if (
                     fresh["config"].publication_mode == "auto"
                     and job["progress"]["review_complete"]
                     and job["progress"].get("pages")
                 ):
-                    await self.store.report(job, "正在发布频道内容", stage="publish")
+                    await self.store.report(
+                        job,
+                        "正在发布词条修订" if page_edit else "正在发布频道内容",
+                        stage="publish",
+                    )
                     pub = await self.engine.knowledge.publish(
                         channel["id"], job["id"], "wiki", running_job=job
                     )
                     job["progress"]["publication_id"] = pub
                     job["progress"]["published"] = True
-                    if self.avatar:
+                    if self.avatar and not page_edit:
                         task = asyncio.create_task(self.refresh_avatar(channel["id"]))
                         self.tasks.add(task)
                         task.add_done_callback(self.tasks.discard)
-                job["progress"]["activity"] = (
-                    "构建完成，内容已发布" if job["progress"]["published"] else "构建完成"
-                )
+                if job["progress"]["published"]:
+                    job["progress"]["activity"] = (
+                        "词条修订已发布" if page_edit else "构建完成，内容已发布"
+                    )
+                elif job["progress"].get("review_rejections"):
+                    job["progress"]["activity"] = "部分修订未通过来源审校，请在草稿中处理"
+                elif page_edit and job["progress"].get("review_skipped"):
+                    job["progress"]["activity"] = "词条修订等待发布"
+                else:
+                    job["progress"]["activity"] = (
+                        "词条修订已通过审校，等待发布" if page_edit else "构建完成"
+                    )
                 job["progress"]["stage"] = "done"
                 job["progress"]["active_requests"] = {}
-                await self.store.query(
-                    "UPDATE wiki_channels SET dirty_at=NULL WHERE id=%s AND source_generation=%s",
-                    (channel["id"], job["progress"]["source_generation"]),
-                )
+                if not page_edit:
+                    await self.store.query(
+                        "UPDATE wiki_channels SET dirty_at=NULL WHERE id=%s AND source_generation=%s",
+                        (channel["id"], job["progress"]["source_generation"]),
+                    )
                 await self.store.finish(
                     job, "published" if job["progress"]["published"] else "completed"
                 )
@@ -290,8 +356,12 @@ class WikiRuntime:
             job["progress"]["error_detail"] = str(error)
             job["progress"]["activity"] = "任务预算不足，已保留当前进度"
             await self.store.finish(job, "paused", "token_budget_reached")
+        except PublicationAccessUnverified as error:
+            detail = str(error)
+            job["progress"].update(error_detail=detail, activity=detail, active_requests={})
+            await self.store.finish(job, "failed", "publication_access_unverified")
         except Exception as error:
-            if isinstance(error, WikiResponseError):
+            if isinstance(error, (WikiResponseError, PageEditConflict)):
                 detail = str(error)
             elif getattr(error, "status_code", None):
                 detail = f"模型服务返回 HTTP {error.status_code}"
@@ -317,8 +387,17 @@ class WikiRuntime:
                         if isinstance(error, (WikiResponseError, ValueError))
                         else min(10, 2 ** job["attempts"])
                     )
+                if page_edit and (
+                    isinstance(error, PageEditConflict)
+                    or str(error) == "Publication includes revoked, rejected or hidden evidence"
+                ):
+                    if not isinstance(error, PageEditConflict):
+                        job["progress"].update(
+                            error_detail="修订引用的来源已失效", activity="修订引用的来源已失效"
+                        )
+                    await self.store.finish(job, "failed", "page_edit_conflict")
+                    return
                 if str(error) == "Publication includes revoked, rejected or hidden evidence":
-                    job["phase"] = "assemble"
                     job["cursor"].pop("page_after", None)
                     job["cursor"]["revisions"] = {}
                     job["cursor"].pop("dropped_pages", None)
@@ -330,7 +409,14 @@ class WikiRuntime:
                     job["progress"].update(
                         assembled_pages=0, pages=0, activity="来源有更新，正在刷新文章"
                     )
+                    await self.store.checkpoint(job, "assemble")
                     delay = 1
+                if str(error) in {
+                    "Publication requires independent review of each new revision",
+                    "已重新启用 AI 来源审校，请重新审校后发布",
+                }:
+                    job["progress"]["review_complete"] = False
+                    await self.store.checkpoint(job, "review")
                 if job["phase"] == "collect":
                     job["progress"]["collection_failures"] = (
                         job["progress"].get("collection_failures", 0) + 1
@@ -392,6 +478,7 @@ class WikiRuntime:
                 "channel_id": cid,
                 "message_id": message.id,
                 "media_key": media_key,
+                "media_group": str(getattr(message, "grouped_id", "") or ""),
                 "category": "image" if media_key else "text",
                 "body": getattr(message, "message", None) or "",
                 "created_at": message.date.isoformat(),
@@ -464,6 +551,7 @@ class WikiRuntime:
                         original_length=len(record["body"]),
                         verified=True,
                         media_key=record.get("media_key"),
+                        media_group=record.get("media_group"),
                         category=record.get("category", "text"),
                     )
                     if not self.client or not self.client.is_connected():

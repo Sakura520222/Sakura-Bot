@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts" generic="T">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { publicWikiUrl, type WikiBatch } from "../../api/wiki";
 import { invalidateWiki, isUnavailable, loadWiki, onWikiChannelChange } from "../../composables/wiki-store";
 import WikiFeedSegment from "./WikiFeedSegment.vue";
@@ -38,6 +38,7 @@ const props = withDefaults(defineProps<{
   emptyTitle?: string;
   skeleton?: "rows" | "timeline";
   channel?: string;
+  manualRefresh?: boolean;
 }>(), { emptyTitle: "暂无匹配内容", skeleton: "rows" });
 
 const pages = shallowRef<T[][]>([]);
@@ -60,8 +61,7 @@ let invalidated = false;
 let generation = 0;
 let checkedAt = 0;
 let observer: IntersectionObserver | undefined;
-let visible = false;
-let automaticLoads: number[] = [];
+const preloadMargin = 480;
 const seen = new Set<string>();
 const lastItem = (items?: T[]) => items?.[items.length - 1];
 
@@ -70,7 +70,8 @@ async function read(url: string, first: boolean) {
   loading.value = true;
   error.value = "";
   try {
-    const batch = await loadWiki(url, publicWikiUrl<WikiBatch<T>>, first ? 30_000 : 0);
+    const ttl = first ? (props.manualRefresh ? Infinity : 30_000) : 0;
+    const batch = await loadWiki(url, publicWikiUrl<WikiBatch<T>>, ttl);
     if (request !== generation) return;
     if (first) {
       seen.clear();
@@ -96,7 +97,11 @@ async function read(url: string, first: boolean) {
     resetRequired.value = !first && (cause as { status?: number })?.status === 400;
     error.value = cause instanceof Error ? cause.message : "加载失败";
   } finally {
-    if (request === generation) loading.value = false;
+    if (request === generation) {
+      loading.value = false;
+      // The sentinel may remain in view after a short page or a page of duplicate entries.
+      void nextTick(nearBottom);
+    }
   }
 }
 
@@ -116,52 +121,52 @@ function next() {
 }
 
 function nearBottom() {
-  if (!active || !visible || !nextUrl.value || loading.value || error.value) return;
-  const now = Date.now();
-  automaticLoads = automaticLoads.filter((at) => now - at < 60_000);
-  if (automaticLoads.length >= 8 || document.hidden) return;
+  if (!active || !observer || !nextUrl.value || loading.value || error.value || document.hidden) return;
   const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
   if (connection?.saveData) return;
-  automaticLoads.push(now);
-  void next();
+  const bounds = sentinel.value?.getBoundingClientRect();
+  if (bounds && bounds.top <= window.innerHeight + preloadMargin && bounds.bottom >= -preloadMargin) void next();
 }
 
-watch(sentinel, (element) => {
+function observeSentinel(element = sentinel.value) {
   observer?.disconnect();
-  visible = false;
+  observer = undefined;
   if (!element || !active || typeof IntersectionObserver === "undefined") return;
   observer = new IntersectionObserver(([entry]) => {
-    visible = entry.isIntersecting;
-    nearBottom();
-  }, { rootMargin: "480px 0px" });
+    if (entry.isIntersecting) nearBottom();
+  }, { rootMargin: `${preloadMargin}px 0px` });
   observer.observe(element);
-}, { flush: "post" });
+}
+watch(sentinel, observeSentinel, { flush: "post" });
 
 watch(() => props.url, () => { if (active) void reset(); }, { immediate: true });
 
 function revalidate() {
-  if (!active || document.hidden || !checkedAt || Date.now() - checkedAt < 30_000) return;
+  if (props.manualRefresh || !active || document.hidden || !checkedAt || Date.now() - checkedAt < 30_000) return;
   if (pages.value.length <= 1) void read(props.url, true);
 }
 let lastUrl = props.url;
 const stopChannelChanges = onWikiChannelChange((channels) => {
-  if (props.channel && !channels.includes(props.channel)) return;
+  if (props.manualRefresh || (props.channel && !channels.includes(props.channel))) return;
   generation++;
   invalidated = true;
   pages.value = [];
   cursor.value = null;
   if (active) void reset(true);
 });
-onMounted(() => document.addEventListener("visibilitychange", revalidate));
+function visibilityChanged() {
+  revalidate();
+  nearBottom();
+}
+onMounted(() => document.addEventListener("visibilitychange", visibilityChanged));
 onDeactivated(() => {
   active = false;
   lastUrl = props.url;
   observer?.disconnect();
-  visible = false;
 });
 onActivated(() => {
   active = true;
-  if (observer && sentinel.value) observer.observe(sentinel.value);
+  observeSentinel();
   if (invalidated || lastUrl !== props.url) void reset();
   else revalidate();
 });
@@ -169,6 +174,6 @@ onUnmounted(() => {
   generation++;
   stopChannelChanges();
   observer?.disconnect();
-  document.removeEventListener("visibilitychange", revalidate);
+  document.removeEventListener("visibilitychange", visibilityChanged);
 });
 </script>

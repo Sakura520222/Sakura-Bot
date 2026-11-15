@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from telethon import events
+from telethon.tl.types import Message, MessageReplyHeader, PeerChannel
 
 from core.moderation.ai_rule_extractor import sanitize_candidates
 
@@ -131,6 +132,34 @@ async def test_anonymous_admin_report_requires_group_policy_and_audits_shared_ac
     assert feedback["payload"]["reporter"]["source"] == "telegram:peer_channel"
 
 
+@pytest.mark.parametrize("kind", ["same_group", "external", "forwarded", "channel_post"])
+async def test_native_telegram_anonymous_learning_report(guard, learning, kind):
+    guard.client.admins.add(guard.bot_id)
+    guard.group(CHAT).allow_anonymous_admin_report = True
+    event = submit_event(guard, text="@admin 上报")
+    event.message = Message(
+        id=event.id,
+        peer_id=PeerChannel(1234567890),
+        from_id=PeerChannel(888) if kind == "external" else None,
+        message="@admin 上报",
+        reply_to=MessageReplyHeader(reply_to_msg_id=42),
+        post=kind == "channel_post",
+        fwd_from=object() if kind == "forwarded" else None,
+    )
+    event.sender_id = event.message.sender_id
+    if kind != "same_group":
+        await guard.learning.handle_report(event)
+        assert not learning.samples.rows and not event.reply.called
+        return
+
+    await submit(guard, event)
+    sample = only_sample(learning)
+    reporter = sample["payload"]["reporters"][0]
+    assert reporter["actor_type"] == "anonymous_group_admin"
+    assert reporter["user_id"] is None and reporter["source"] == "telegram:peer_id"
+    assert sample["id"][:12] in event.reply.call_args.args[0]
+
+
 async def test_anonymous_report_policy_revoked_during_reply_lookup_is_effective(guard, learning):
     guard.client.admins.add(guard.bot_id)
     guard.group(CHAT).allow_anonymous_admin_report = True
@@ -147,8 +176,6 @@ async def test_anonymous_report_policy_revoked_during_reply_lookup_is_effective(
 
 
 async def test_external_identity_cannot_use_fake_positive_admin_sender(guard, learning):
-    from telethon.tl.types import PeerChannel
-
     event = submit_event(guard)
     event.message.from_id = PeerChannel(888)
     await guard.learning.handle_report(event)

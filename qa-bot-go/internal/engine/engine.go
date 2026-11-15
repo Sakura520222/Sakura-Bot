@@ -292,7 +292,7 @@ func (e *Engine) ProcessQueryStream(ctx context.Context, query string, userID in
 // run 执行完整查询管线（qa_engine_v3.py:156-217 逐段对齐）。
 // 返回 errConsumerGone 表示消费端已停止；其他非 nil 错误交由外层兜底。
 func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, userID int64, channelHint string) error {
-	e.log.Info(fmt.Sprintf("[stream] 处理查询: user_id=%d, query=%s", userID, query))
+	e.log.Info("[stream] 处理查询", "user_id", userID)
 	if pinner, ok := e.llm.(interface {
 		Pin(context.Context) context.Context
 	}); ok {
@@ -405,7 +405,9 @@ func (e *Engine) run(ctx context.Context, send func(Chunk) bool, query string, u
 // 绝不改写用户消息本身；includeTools 为 false 时（降级直连）不附加工具说明。
 func (e *Engine) buildSystemPrompt(ctx context.Context, channelHint string, includeTools bool) string {
 	channelContext := ""
-	if s, err := e.memory.GetChannelContext(ctx); err != nil {
+	if Scope(ctx) == WikiWebScope {
+		channelContext = "请使用公开 Wiki 工具查找资料。引用时只使用工具返回的原帖或词条 URL。"
+	} else if s, err := e.memory.GetChannelContext(ctx); err != nil {
 		// Python 版 memory_manager.get_channel_context 内部捕获异常返回空串；
 		// 引擎对接口错误同样降级为空串并保留原日志文案（memory_manager.py:179）。
 		e.log.Error(fmt.Sprintf("获取频道上下文失败: %T: %s", err, err))
@@ -432,6 +434,9 @@ func (e *Engine) buildSystemPrompt(ctx context.Context, channelHint string, incl
 	systemPrompt += telegramChatPrompt(ctx)
 
 	if includeTools {
+		if Scope(ctx) == WikiWebScope {
+			return systemPrompt + wikiPublicInstructions + "\n若公开资料不足，说明缺失的证据。"
+		}
 		systemPrompt += strings.ReplaceAll(agentToolInstructions,
 			"{max_iterations}", strconv.Itoa(AgentMaxIterations))
 		systemPrompt += wikiToolInstructions

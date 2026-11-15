@@ -21,6 +21,7 @@ type AIPool struct {
 	jobs                                chan *AIJob
 	slots                               chan struct{}
 	active                              map[string]*AIJob
+	userSlots                           map[int64]int
 	timeout                             time.Duration
 	wg                                  sync.WaitGroup
 	closed                              bool
@@ -53,7 +54,7 @@ func NewAIPool(ctx context.Context, workers, capacity int, timeout time.Duration
 	// Use an explicit wide type for allocation arithmetic on all Go targets.
 	totalCapacity := int64(workers) + int64(capacity)
 	ctx, cancel := context.WithCancel(ctx)
-	p := &AIPool{ctx: ctx, cancel: cancel, jobs: make(chan *AIJob, totalCapacity), slots: make(chan struct{}, totalCapacity), active: make(map[string]*AIJob), timeout: timeout, MaxMessages: 8, InboxCapacity: 8, PerUser: 4}
+	p := &AIPool{ctx: ctx, cancel: cancel, jobs: make(chan *AIJob, totalCapacity), slots: make(chan struct{}, totalCapacity), active: make(map[string]*AIJob), userSlots: make(map[int64]int), timeout: timeout, MaxMessages: 8, InboxCapacity: 8, PerUser: 4}
 	for i := 0; i < workers; i++ {
 		p.wg.Add(1)
 		go p.worker()
@@ -80,13 +81,7 @@ func (p *AIPool) AcquireScoped(user int64, scope string) (*AIJob, bool, error) {
 	if old != nil && !old.sealed && old.ctx.Err() == nil {
 		return old, true, nil
 	}
-	count := 0
-	for _, j := range p.active {
-		if j.user == user {
-			count++
-		}
-	}
-	if old == nil && count >= p.PerUser {
+	if p.userSlots[user] >= p.PerUser {
 		return nil, false, errors.New("你的并发回合已达上限，请稍候。")
 	}
 	select {
@@ -101,6 +96,7 @@ func (p *AIPool) AcquireScoped(user int64, scope string) (*AIJob, bool, error) {
 		j.predecessor = old
 	}
 	p.active[key] = j
+	p.userSlots[user]++
 	return j, false, nil
 }
 func (j *AIJob) Admit(input engine.TurnInput, id string, reserve func() contracts.QuotaCheckResult) (contracts.QuotaCheckResult, bool) {
@@ -154,6 +150,19 @@ func (j *AIJob) Release() {
 		defer p.mu.Unlock()
 		if p.active[j.key] == j {
 			delete(p.active, j.key)
+			for predecessor := j.predecessor; predecessor != nil; predecessor = predecessor.predecessor {
+				select {
+				case <-predecessor.done:
+					continue
+				default:
+					p.active[j.key] = predecessor
+				}
+				break
+			}
+		}
+		p.userSlots[j.user]--
+		if p.userSlots[j.user] == 0 {
+			delete(p.userSlots, j.user)
 		}
 		<-p.slots
 		close(j.done)

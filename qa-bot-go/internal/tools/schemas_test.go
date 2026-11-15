@@ -16,14 +16,14 @@ import (
 	"testing"
 )
 
-// TestToolSchemasShape 校验内嵌 schema 与 agent_tools.py:30-277 的一致性：
-// 9 个工具、名称与顺序、全部为 function 类型、参数为 object。
+// TestToolSchemasShape 校验工具名称、顺序和参数类型。
 func TestToolSchemasShape(t *testing.T) {
 	wantNames := []string{
 		"semantic_search", "keyword_search", "list_channels", "resolve_channel",
 		"get_recent_summaries", "get_channel_stats", "get_source_detail",
 		"rerank_results", "get_channel_info",
 		"wiki_search", "wiki_get_page", "wiki_get_related", "wiki_get_changes", "wiki_get_channel_profile",
+		"wiki_get_revision_history", "wiki_get_contributors",
 	}
 	if got := ToolNames(); strings.Join(got, ",") != strings.Join(wantNames, ",") {
 		t.Fatalf("工具名/顺序漂移: got %v, want %v", got, wantNames)
@@ -56,8 +56,8 @@ func TestToolSchemasRequiredField(t *testing.T) {
 	if err := json.Unmarshal(ToolSchemasJSON, &raw); err != nil {
 		t.Fatalf("ToolSchemasJSON 非法: %v", err)
 	}
-	if len(raw) != 14 {
-		t.Fatalf("schema 数量 = %d, 期望 14", len(raw))
+	if len(raw) != 16 {
+		t.Fatalf("schema 数量 = %d, 期望 16", len(raw))
 	}
 	byName := make(map[string]map[string]any, len(raw))
 	for _, item := range raw {
