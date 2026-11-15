@@ -306,14 +306,18 @@ const port = await listen(server);
 const baselinePort = baseline ? await listen(before) : null;
 const url = "http://127.0.0.1:" + port;
 async function assertCentered(dialog) {
-  await dialog.waitFor();
-  await dialog.evaluate(async (element) => {
-    await Promise.allSettled(element.getAnimations().map((animation) => animation.finished));
-    const { left, top, width, height } = element.getBoundingClientRect();
-    const x = left + width / 2 - document.documentElement.clientWidth / 2;
-    const y = top + height / 2 - innerHeight / 2;
-    if (Math.abs(x) >= 2 || Math.abs(y) >= 2) throw new Error(`Dialog center offset: ${x}px, ${y}px`);
-  });
+  const element = await dialog.elementHandle();
+  try {
+    // A visible modal can still be waiting for its CSS enter transition to start.
+    await dialog.page().waitForFunction((modal) => {
+      const { left, top, width, height } = modal.getBoundingClientRect();
+      const x = left + width / 2 - document.documentElement.clientWidth / 2;
+      const y = top + height / 2 - innerHeight / 2;
+      return width > 0 && height > 0 && Math.abs(x) < 2 && Math.abs(y) < 2;
+    }, element, { timeout: 5000 });
+  } finally {
+    await element.dispose();
+  }
 }
 async function assertHomeTabAlignment(page) {
   const tabs = page.getByRole("navigation", { name: "首页栏目" });
