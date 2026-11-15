@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from .ai_profiles import PURPOSES, parse_ai_profiles
 from .runtime import runtime_config
 
+PURPOSE_FALLBACKS = {"wiki_review": "wiki", "guard": "summary", "guard_vision": "vision"}
+
+
+def has_bound_route(route) -> bool:
+    return bool(route and (route.provider_id or route.profile_id or route.model))
+
 
 @dataclass(frozen=True)
 class AIConnectionSettings:
@@ -23,8 +29,7 @@ class AIConnectionSettings:
 
 
 def has_wiki_review_route(profiles):
-    route = profiles.routing.get("wiki_review")
-    return bool(route and (route.provider_id or route.profile_id or route.model))
+    return has_bound_route(profiles.routing.get("wiki_review"))
 
 
 def effective_ai_config(
@@ -38,8 +43,9 @@ def effective_ai_config(
         raise ValueError("Unknown AI purpose")
     profiles = parse_ai_profiles(config)
     route = profiles.routing.get(purpose)
-    if purpose == "wiki_review" and not has_wiki_review_route(profiles):
-        route = profiles.routing.get("wiki")
+    fallback = PURPOSE_FALLBACKS.get(purpose)
+    if fallback and not has_bound_route(route):
+        route = profiles.routing.get(fallback)
     vision = dict(
         vision_enabled=profiles.vision.enabled,
         vision_ocr=profiles.vision.ocr,

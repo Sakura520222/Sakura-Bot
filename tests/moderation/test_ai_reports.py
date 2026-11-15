@@ -6,7 +6,7 @@ import asyncio
 from copy import deepcopy
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from telethon.tl.functions.users import GetFullUserRequest
@@ -248,13 +248,16 @@ async def test_model_gateway_uses_current_runtime_and_rejects_incomplete_json(
     )
     configured = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     client = SimpleNamespace(with_options=lambda **kwargs: configured)
-    monkeypatch.setattr(gateway, "get_async_ai_runtime", lambda: (client, "updated-model"))
+    runtime = Mock(return_value=(client, "updated-model"))
+    monkeypatch.setattr(gateway, "get_async_ai_runtime", runtime)
     if valid:
         assert (await classify({"sample": "synthetic"}))["model"] == "updated-model"
     else:
         with pytest.raises(ValueError):
             await classify({"sample": "synthetic"})
     request = create.await_args.kwargs
+    runtime.assert_called_once_with(purpose="guard")
+    assert "max_tokens" not in request
     assert request["model"] == "updated-model" and request["response_format"] == {
         "type": "json_object"
     }

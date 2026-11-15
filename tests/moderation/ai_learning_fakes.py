@@ -48,7 +48,9 @@ class MemoryAISamples:
             next((row for row in self.rows.values() if row.get("case_id") == case_id), None)
         )
 
-    async def save(self, store, sample, *, label=None, status=None, error=None, payload=None):
+    async def save(
+        self, store, sample, *, label=None, status=None, error=None, payload=None, source=None
+    ):
         # 与 SQL 实现一致：未显式传值时采用传入样本上的当前字段。
         row = self.rows[sample["id"]]
         row.update(
@@ -57,6 +59,7 @@ class MemoryAISamples:
             error=sample.get("error") if error is None else error,
             payload=deepcopy(payload) if payload is not None else deepcopy(sample["payload"]),
             updated_at=utc_now_naive(),
+            source=source or sample["source"],
         )
         return deepcopy(row)
 
@@ -81,6 +84,14 @@ class MemoryAISamples:
             if row["chat_id"] == chat_id and row["user_id"] == user_id
         ]
         return sorted(rows, key=lambda row: row["created_at"], reverse=True)[:limit]
+
+    async def enforcement_samples(self, store, chat_id, user_id):
+        return [
+            deepcopy(row)
+            for row in self.rows.values()
+            if (row["chat_id"], row["user_id"]) == (chat_id, user_id)
+            and (row["label"] == "positive" or row["payload"].get("enforcement"))
+        ]
 
     async def list(self, **filters):
         rows = sorted(self.rows.values(), key=lambda row: row["created_at"], reverse=True)
@@ -295,6 +306,15 @@ class MemoryAIRules:
                 for hit in reversed(self.hits)
                 if hit["chat_id"] == chat_id and hit["user_id"] == user_id
             ][:limit]
+        )
+
+    async def hit_rule_ids(self, store, chat_id, user_id):
+        return sorted(
+            {
+                hit["rule_id"]
+                for hit in self.hits
+                if (hit["chat_id"], hit["user_id"]) == (chat_id, user_id)
+            }
         )
 
     async def for_sample(self, store, sample_id):

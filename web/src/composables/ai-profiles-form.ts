@@ -7,6 +7,8 @@ export const aiPurposes: { key: AIPurpose; label: string; description: string }[
   { key: "poll", label: "投票生成", description: "从总结生成投票" },
   { key: "wiki", label: "Wiki 生成", description: "频道百科知识抽取与增量维护" },
   { key: "wiki_review", label: "Wiki 审校", description: "独立核查事实与公开权限；未绑定时使用 Wiki 生成模型" },
+  { key: "guard", label: "Sakura Guard 文本审核", description: "观察期广告检测、举报复核和 AI 学习使用该模型。" },
+  { key: "guard_vision", label: "Sakura Guard 图片 OCR", description: "群组启用观察期 OCR 时使用该图片模型。" },
 ];
 
 export interface AIProfileDraft extends AIProfile {

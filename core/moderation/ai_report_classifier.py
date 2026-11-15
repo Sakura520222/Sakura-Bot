@@ -76,13 +76,15 @@ def actionable(verdict: Verdict, context: dict, *, threshold=0.95, categories=No
     )
 
 
-async def classify(context: dict) -> dict:
+async def classify(context: dict, *, use_client_timeout: bool = False) -> dict:
     # 在每次调用时获取热更新后的模型，不占用助手 Bot 的用户问答配额。
     from core.ai.ai_client import get_async_ai_runtime
 
-    client, model = get_async_ai_runtime()
-    async with asyncio.timeout(55):
-        result = await client.with_options(max_retries=0, timeout=45).chat.completions.create(
+    client, model = get_async_ai_runtime(purpose="guard")
+    if not use_client_timeout:
+        client = client.with_options(max_retries=0, timeout=45)
+    async with asyncio.timeout(None if use_client_timeout else 55):
+        result = await client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -90,7 +92,6 @@ async def classify(context: dict) -> dict:
             ],
             response_format={"type": "json_object"},
             temperature=0,
-            max_tokens=1400,
         )
     choice = result.choices[0]
     if choice.finish_reason != "stop" or not choice.message.content:

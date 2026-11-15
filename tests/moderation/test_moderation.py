@@ -1,12 +1,19 @@
 # Copyright 2026 Sakura-Bot
 # 本项目采用 AGPL-3.0 许可
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from telethon import events
 from telethon.errors import UserNotParticipantError
+from telethon.extensions import BinaryReader
+from telethon.tl.types import (
+    ChatInvitePublicJoinRequests,
+    PeerChannel,
+    UpdateBotChatInviteRequester,
+)
 
 from core.moderation.config import GuardGroup
 from core.moderation.matcher import Match
@@ -241,6 +248,125 @@ async def test_join_request_match_rejects_instead_of_claiming_a_ban(guard, store
     assert case["action"] == "reject" and case["status"] == "done"
     assert ("reject", CHAT, USER) in guard.client.calls
     assert not review_buttons(case)
+
+
+@pytest.mark.parametrize("policy", ["manual", "approve"])
+@pytest.mark.parametrize("source", ["nickname", "username", "active_alias"])
+async def test_global_nickname_blacklist_always_rejects_application(guard, store, policy, source):
+    from telethon.tl.types import PeerChannel
+
+    guard.config.nickname_keywords = ["廣告詞", "SpamTag"]
+    config = guard.group(CHAT)
+    config.nickname_filter = False
+    config.join_requests = policy
+    config.join_request_match_action = policy
+    user = guard.client.users[USER]
+    if source == "nickname":
+        user.first_name, user.last_name = "广告", "词"
+    elif source == "username":
+        user.username = "ＳＰＡＭＴＡＧ_001"
+    else:
+        user.usernames = [SimpleNamespace(active=True, username="account_spamtag")]
+    guard.client.fail["permissions"] = UserNotParticipantError(request=None)
+
+    await guard.handle_join_request(
+        SimpleNamespace(peer=PeerChannel(1234567890), user_id=USER, date="today", qts=20)
+    )
+
+    case = next(iter(store.cases.values()))
+    assert case["action"] == "reject" and case["status"] == "done"
+    assert case["payload"]["evidence"]["reason"] in guard.config.nickname_keywords
+    assert ("reject", CHAT, USER) in guard.client.calls
+    assert ("approve", CHAT, USER) not in guard.client.calls
+
+
+async def test_application_whitelist_and_group_rule_policies_are_preserved(guard, store):
+    from telethon.tl.types import PeerChannel
+
+    from core.moderation.config import GuardRule
+
+    config = guard.group(CHAT)
+    config.join_requests = "approve"
+    config.join_request_match_action = "manual"
+    config.rules = [GuardRule(id="group-nick", target="nickname", kind="keyword", value="仅本群")]
+    user = guard.client.users[USER]
+    user.first_name = "仅本群"
+    await guard.handle_join_request(
+        SimpleNamespace(peer=PeerChannel(1234567890), user_id=USER, date="today", qts=21)
+    )
+    assert next(iter(store.cases.values()))["action"] == "manual"
+
+    guard.config.nickname_keywords = ["仅本群"]
+    await store.set_whitelist(CHAT, USER, ADMIN)
+    await guard.handle_join_request(
+        SimpleNamespace(peer=PeerChannel(1234567890), user_id=USER, date="today", qts=22)
+    )
+    assert ("approve", CHAT, USER) in guard.client.calls
+    assert ("reject", CHAT, USER) not in guard.client.calls
+
+
+@pytest.mark.parametrize(
+    ("decision", "result"),
+    [
+        ("approve", "JoinChatBotResultApproved"),
+        ("manual", "JoinChatBotResultQueued"),
+        ("reject", "JoinChatBotResultDeclined"),
+    ],
+)
+async def test_realtime_join_request_sends_client_result_before_verification(
+    guard,
+    store,
+    decision,
+    result,
+):
+    config = guard.group(CHAT)
+    config.join_requests = "manual" if decision == "manual" else "approve"
+    config.verify_join = True
+    if decision == "reject":
+        guard.config.nickname_keywords = ["广告"]
+        guard.client.users[USER].first_name = "廣告"
+    update = UpdateBotChatInviteRequester(
+        PeerChannel(1234567890),
+        datetime.now(UTC),
+        USER,
+        "",
+        ChatInvitePublicJoinRequests(),
+        40,
+        query_id=-12345,
+    )
+    with BinaryReader(bytes(update)) as reader:
+        decoded = reader.tgread_object()
+
+    await guard.handle_join_request(decoded)
+    await guard.handle_join_request(decoded)
+
+    assert guard.client.calls.count(("join_query", -12345, result)) == 1
+    assert all(action[0] not in {"approve", "reject"} for action in guard.client.calls)
+    case = next(item for item in store.cases.values() if item["action"] == decision)
+    assert case["payload"]["join_request_query"]["answered"]
+    if decision == "approve":
+        assert guard.client.calls[0][0] == "join_query"
+        assert guard.client.member_rights[(CHAT, USER)]["send_messages"]
+    else:
+        assert await store.verification(CHAT, USER) is None
+
+
+async def test_expired_realtime_join_request_never_uses_delayed_approval(guard, store):
+    guard.group(CHAT).join_requests = "approve"
+    guard.group(CHAT).verify_join = True
+    await guard.handle_join_request(
+        SimpleNamespace(
+            peer=PeerChannel(1234567890),
+            user_id=USER,
+            qts=41,
+            query_id=42,
+            date=datetime.now(UTC) - timedelta(seconds=11),
+        )
+    )
+    case = next(iter(store.cases.values()))
+    assert case["status"] == "execution_failed" and case["error"] == "JoinRequestQueryExpired"
+    assert await store.verification(CHAT, USER) is None
+    assert not guard.client.calls
 
 
 async def test_start_stop_registers_main_bot_only_and_cleans_up(guard):

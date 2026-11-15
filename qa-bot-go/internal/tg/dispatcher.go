@@ -72,6 +72,10 @@ type CommandLayer interface {
 // （WithDefaultHandler 需要先拿到本分发器，故字段后置赋值）；任一层为 nil
 // 时跳过对应步骤（防御装配遗漏，正常装配不应出现）。
 type Dispatcher struct {
+	Verification interface {
+		Matches(*models.Update) bool
+		HandleUpdate(context.Context, *models.Update) bool
+	}
 	// Appeal 申诉层（组 -1）。
 	Appeal AppealLayer
 	// Submission 投稿 FSM。
@@ -107,14 +111,24 @@ func IsAppealCallbackData(data string) bool {
 func (d *Dispatcher) HandleUpdate(ctx context.Context, upd *models.Update) {
 	d.inFlight.Add(1)
 	defer d.inFlight.Add(-1)
+	verification := false
 	defer func() {
 		if r := recover(); r != nil {
+			if verification {
+				d.Log.Errorf("入群验证更新处理失败: %T", r)
+				return
+			}
 			d.Log.Errorf("处理更新失败（已跳过）: %T: %v | update摘要: %s",
 				r, r, UpdateJSONSummary(upd, updateSummaryLimit))
 		}
 	}()
 
 	if upd == nil {
+		return
+	}
+	if d.Verification != nil && d.Verification.Matches(upd) {
+		verification = true
+		d.Verification.HandleUpdate(ctx, upd)
 		return
 	}
 

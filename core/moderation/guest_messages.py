@@ -148,7 +148,7 @@ class GuestMessages:
         latest = await self.service.repository.get_case(parent["id"])
         if not await self.blacklist_allowed(store, latest, task):
             return None
-        if await self.service.protected(parent["chat_id"], user, applicant=True) or (
+        if await self.service.punishment_paused(parent["chat_id"], user, applicant=True) or (
             await store.whitelisted(parent["chat_id"], user.id)
             and not await store.blacklist(user.id)
         ):
@@ -172,7 +172,7 @@ class GuestMessages:
         latest = await self.service.repository.get_case(parent["id"])
         if not await self.blacklist_allowed(store, latest, task):
             return None
-        if await self.service.protected(parent["chat_id"], user, applicant=True) or (
+        if await self.service.punishment_paused(parent["chat_id"], user, applicant=True) or (
             await store.whitelisted(parent["chat_id"], user.id)
             and not await store.blacklist(user.id)
         ):
@@ -255,7 +255,7 @@ class GuestMessages:
                     else:
                         user = await service.load_message_user(user_id)
                         config = service.group(parent["chat_id"])
-                        exempt = await service.protected(
+                        exempt = await service.punishment_paused(
                             parent["chat_id"], user, applicant=True
                         ) or (
                             await store.whitelisted(parent["chat_id"], user_id)

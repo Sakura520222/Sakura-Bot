@@ -14,6 +14,20 @@ export interface GuardGroup {
   enabled: boolean;
   kick_button_enabled: boolean;
   verify_join: boolean;
+  verification_mode: "legacy" | "assistant";
+  verification_steps: number;
+  verification_question_types: ("word" | "position")[];
+  verification_risk_threshold: number;
+  verification_risk_action: "extra_steps" | "hold";
+  verification_risk_extra_steps: number;
+  verification_risk_weights: Partial<Record<"no_username" | "no_photo" | "random_name" | "similar_names" | "prior_enforcement", number>>;
+  observation_minutes: number;
+  observation_messages: number;
+  observation_action: "delete" | "extend" | "mute";
+  observation_image_mode: "off" | "qr" | "ocr";
+  observation_ai_review: boolean;
+  observation_ai_confidence: number;
+  observation_share_patterns: boolean;
   verification_timeout: number;
   verification_max_attempts: number;
   verification_timeout_action: GuardMemberAction;
@@ -73,6 +87,10 @@ export interface GuardReporter {
 }
 export type GuardTable = "cases" | "whitelist" | "blacklist" | "verifications" | "notifications";
 export interface GuardRecord {
+  verification?: {
+    state: string; steps: number; completed_steps: number; observation_hits: number;
+    profile?: { name: string; username: string | null; score: number; signals: string[]; has_visible_photo: boolean | null; premium: boolean | null };
+  };
   message_cleanup_pending?: boolean;
   id?: string;
   case_id?: string;
@@ -94,6 +112,7 @@ export interface GuardRecord {
   last_seen_at?: string;
   error?: string;
   payload?: {
+    observation_ai?: { model: string; verdict: { confidence: number; reason: string; evidence: { quote: string }[] } };
     guest_actor?: { user_id: number; bot_id: number; chat_id: number; message_id: number; source: string };
     guest_ban?: { status: string; action?: "blacklist"; case_id?: string; error?: string };
     ai_report_review?: {
@@ -135,6 +154,9 @@ export interface GuardRecord {
 }
 export async function getGuardConfig() {
   return (await api.get<{ config: { nickname_keywords: string[]; ai_learning: AILearningSettings; groups: Record<string, GuardGroup>; retention_days: number }; defaults: GuardGroup }>("/guard/config")).data;
+}
+export async function getVerificationDiagnostics(chat: string) {
+  return (await api.get<{ assistant: string; assistant_username: string | null; counts: Record<string, number> }>(`/guard/groups/${chat}/verification`)).data;
 }
 export async function saveGuardGroup(chat: string, group: GuardGroup) {
   return (await api.put(`/guard/groups/${chat}`, group)).data;
@@ -261,7 +283,7 @@ export async function setGuardRetention(retention_days: number) {
 }
 
 // ── AI 智能风控（学习）──
-export type AILearningSource = "admin_report" | "member_report" | "review_outcome" | "ai_review";
+export type AILearningSource = "admin_report" | "member_report" | "review_outcome" | "ai_review" | "rule_auto_ban" | "admin_blacklist";
 export type AILearningTarget = "nickname" | "username" | "message" | "caption" | "link";
 export type AIRuleStatus = "candidate" | "active" | "disabled" | "rejected" | "expired";
 export interface AILearningSettings {
@@ -322,6 +344,7 @@ export interface AISample {
   created_at: string;
   updated_at: string;
   payload: {
+    enforcement?: { source: string; confidence: string; case_id: string; historical: boolean }[];
     nickname?: string;
     usernames?: string[];
     message?: { text?: string; links?: string[] };
@@ -361,6 +384,7 @@ export interface AILearningQuery {
   chat_id?: number;
   status?: string;
   label?: string;
+  source?: string;
   rule_type?: string;
   limit?: number;
   offset?: number;
@@ -385,6 +409,14 @@ export async function getAIRuleHits(id: string) {
 }
 export async function getAISamples(params: AILearningQuery) {
   return (await api.get<{ rows: AISample[]; total: number }>("/guard/ai-learning/samples", { params })).data;
+}
+export async function reviewAISample(id: string, action: "confirm" | "correct" | "delete") {
+  await api.post(`/guard/ai-learning/samples/${id}/${action}`);
+}
+export async function backfillAISamples(chat_id: number, cursor: string) {
+  return (await api.post<{ scanned: number; confirmed: number; failed: string[]; next_cursor: string | null }>(
+    "/guard/ai-learning/samples/backfill", null, { params: { chat_id, cursor } },
+  )).data;
 }
 export async function getAILearningJobs(params: AILearningQuery) {
   return (await api.get<{ rows: AILearningJob[]; total: number; counts: Record<string, number> }>("/guard/ai-learning/jobs", { params })).data;

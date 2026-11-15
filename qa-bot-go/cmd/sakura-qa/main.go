@@ -194,6 +194,15 @@ func run() int {
 		return 1
 	}
 	tgClient := tg.NewClient(qaBot, slogBridge{logger}, tg.DefaultAPITimeout)
+	me, err := tgClient.GetMe(ctx)
+	if err == nil && me != nil && me.ID > 0 && me.Username != "" {
+		disp.Verification = handlers.NewVerificationHandler(guardRepo, tgClient, me.ID, me.Username)
+		go verificationHeartbeat(ctx, guardRepo, me.ID, me.Username, logger)
+	} else {
+		logger.Warn("无法确认助手账号，入群验证不可用")
+		// Consume verification updates even when account discovery fails.
+		disp.Verification = handlers.NewVerificationHandler(guardRepo, tgClient, 0, "")
+	}
 
 	// 申诉层（组 -1）。
 	appealHandler := handlers.NewAppealHandler(guardRepo, tgClient, qaBot, slogBridge{logger})
@@ -293,6 +302,24 @@ func run() int {
 	waitInFlight(disp, logger)
 	logger.Info("问答Bot已关闭")
 	return 0
+}
+
+func verificationHeartbeat(ctx context.Context, repo *guard.Repository, botID int64, username string, logger *slog.Logger) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := repo.VerificationHeartbeat(writeCtx, username, botID)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("入群验证助手心跳写入失败", "type", fmt.Sprintf("%T", err))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // allUpdateTypes 对齐 PTB Update.ALL_TYPES 的全量 update 类型

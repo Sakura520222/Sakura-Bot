@@ -251,7 +251,7 @@ class ReviewHandler:
                 exempt = await store.whitelisted(case["chat_id"], case["user_id"]) and not (
                     config.share_global_blacklist and await store.blacklist(case["user_id"])
                 )
-                protected = await self.service.protected(
+                protected = await self.service.punishment_paused(
                     case["chat_id"],
                     SimpleNamespace(
                         id=case["user_id"],
@@ -363,7 +363,7 @@ class ReviewHandler:
                     else None
                 )
                 user = await self.service.load_message_user(case["user_id"], message)
-                if await self.service.protected(case["chat_id"], user, applicant=True):
+                if await self.service.punishment_paused(case["chat_id"], user, applicant=True):
                     raise GuardError("guard.verification_target_protected")
                 if case["action"] == "report" and case["payload"].get("message_id"):
                     await self.request_message_deletion(
@@ -392,6 +392,7 @@ class ReviewHandler:
             await self.service.learning.record_review_outcome(
                 store, case, await store.case(case["id"]), action=action
             )
+            await self.service.learning.sync_enforcement(store, await store.case(case["id"]))
         except Exception as error:
             await store.update_case(
                 case["id"],
@@ -428,7 +429,7 @@ class ReviewHandler:
         freshly_banned = False
         if not case["payload"].get("kick_banned"):
             user = await call(self.service.client.get_entity(user_id))
-            if await self.service.protected(chat_id, user, applicant=True):
+            if await self.service.punishment_paused(chat_id, user, applicant=True):
                 raise GuardError("guard.verification_target_protected")
             current = {} if basic_group else await self.service.actions.rights(chat_id, user_id)
             if current.get("view_messages"):

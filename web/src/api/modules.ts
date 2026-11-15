@@ -73,7 +73,7 @@ export async function updateAIConfig(data: Partial<AIConfig & { api_key?: string
   return res.data;
 }
 
-export type AIPurpose = "summary" | "assistant" | "vision" | "poll" | "wiki" | "wiki_review";
+export type AIPurpose = "summary" | "assistant" | "vision" | "poll" | "wiki" | "wiki_review" | "guard" | "guard_vision";
 
 export interface AIProfile {
   name: string;

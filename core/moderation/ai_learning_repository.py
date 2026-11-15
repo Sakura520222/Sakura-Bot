@@ -88,9 +88,21 @@ class AISamples:
             await store.one("SELECT * FROM moderation_ai_samples WHERE case_id=%s", (case_id,))
         )
 
-    async def save(self, store, sample, *, label=None, status=None, error=None, payload=None):
+    async def enforcement_samples(self, store, chat_id, user_id):
+        return [
+            decode_sample(row)
+            for row in await store.all(
+                """SELECT * FROM moderation_ai_samples WHERE chat_id=%s AND user_id=%s
+            AND (label='positive' OR JSON_EXTRACT(payload,'$.enforcement') IS NOT NULL)""",
+                (chat_id, user_id),
+            )
+        ]
+
+    async def save(
+        self, store, sample, *, label=None, status=None, error=None, payload=None, source=None
+    ):
         await store.execute(
-            """UPDATE moderation_ai_samples SET label=%s,status=%s,error=%s,payload=%s,updated_at=%s
+            """UPDATE moderation_ai_samples SET label=%s,status=%s,error=%s,payload=%s,updated_at=%s,source=%s
             WHERE id=%s""",
             (
                 sample["label"] if label is None else label,
@@ -98,6 +110,7 @@ class AISamples:
                 sample.get("error") if error is None else error,
                 encode(sample["payload"] if payload is None else payload),
                 utc_now_naive(),
+                source or sample["source"],
                 sample["id"],
             ),
         )
@@ -129,7 +142,7 @@ class AISamples:
         )
         return [decode_sample(row) for row in rows]
 
-    async def list(self, *, chat_id=None, label=None, status=None, limit=50, offset=0):
+    async def list(self, *, chat_id=None, label=None, status=None, source=None, limit=50, offset=0):
         async with self.repository.pool.acquire() as connection:
             store = GuardStore(connection)
             clauses, values = [], []
@@ -139,6 +152,11 @@ class AISamples:
             if label:
                 clauses.append("label=%s")
                 values.append(label)
+            if source:
+                clauses.append(
+                    "(source=%s OR JSON_CONTAINS(payload,JSON_OBJECT('source',%s),'$.enforcement'))"
+                )
+                values.extend((source, source))
             if status:
                 clauses.append("status=%s")
                 values.append(status)
@@ -238,12 +256,13 @@ class AILearningJobs:
             (now + timedelta(seconds=delay), error, now, job["sample_id"], job["token"]),
         )
 
-    async def requeue(self, store, sample_id):
+    async def requeue(self, store, sample_id, *, after_sample_review=False):
         """转人工任务由管理员重新排队：轮换 token 作废旧租约，尝试次数清零。"""
         now = utc_now_naive()
+        statuses = "('manual','skipped')" if after_sample_review else "('manual')"
         changed = await store.execute(
-            """UPDATE moderation_ai_learning_jobs SET status='queued',token=%s,attempts=0,
-            retry_at=%s,error=NULL,updated_at=%s WHERE sample_id=%s AND status='manual'""",
+            f"""UPDATE moderation_ai_learning_jobs SET status='queued',token=%s,attempts=0,
+            retry_at=%s,error=NULL,updated_at=%s WHERE sample_id=%s AND status IN {statuses}""",
             (uuid.uuid4().hex, now, now, sample_id),
         )
         return bool(changed)
@@ -407,6 +426,13 @@ class AIRules:
             (chat_id, user_id, limit),
         )
         return [decode_hit(row) for row in rows]
+
+    async def hit_rule_ids(self, store, chat_id, user_id):
+        rows = await store.all(
+            "SELECT DISTINCT rule_id FROM moderation_ai_rule_hits WHERE chat_id=%s AND user_id=%s",
+            (chat_id, user_id),
+        )
+        return [row["rule_id"] for row in rows]
 
     async def for_sample(self, store, sample_id):
         rows = await store.all(

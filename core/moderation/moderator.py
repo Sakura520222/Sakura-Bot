@@ -8,9 +8,11 @@ import hashlib
 import logging
 import uuid
 from copy import copy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import aiomysql
 from telethon import events, utils
 from telethon.errors import UserNotParticipantError
 from telethon.tl.types import (
@@ -26,7 +28,7 @@ from telethon.tl.types import (
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
 
-from .ai_reports import AIReportReview
+from .ai_reports import AIReportReview, message_snapshot
 from .ban_history import BanHistoryCleanup
 from .bot_observer import BotMessageObserver
 from .chat_cleanup import ChatCleanup
@@ -37,8 +39,10 @@ from .guest_messages import GuestMessages, guest_actor, guest_source
 from .history_cleanup import HistoryCleanup
 from .matcher import Match, Matcher, normalize
 from .notification import Notifier, stable_random_id
+from .observation import inspect_message, message_fingerprint, observation_active, profile_snapshot
+from .observation_media import ObservationMedia
 from .repository import ACTIVE_VERIFICATIONS
-from .telegram import TelegramActionError, TelegramActions, call, mutate, mute_rights
+from .telegram import Protection, TelegramActionError, TelegramActions, call, mutate, mute_rights
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class Moderator:
         self._handlers = []
         self._worker = None
         self._wake = asyncio.Event()
+        self._pending_joins = {}
         self.appeals = None
         self.directory = GroupDirectory(
             client, lambda: self.config.groups, lambda: self.bot_id, repository
@@ -83,6 +88,7 @@ class Moderator:
         self.learning = AILearning(self)
         self.bot_observer = BotMessageObserver(self)
         self.guest_messages = GuestMessages(self)
+        self.observation_media = ObservationMedia(self)
 
     @staticmethod
     def _default_admins():
@@ -133,8 +139,10 @@ class Moderator:
         await self.deleted_cleanup.start_worker()
         await self.ai_reports.start()
         await self.learning.start()
+        self.observation_media.start()
 
     async def stop(self):
+        await self.observation_media.stop()
         self.bot_observer.detach()
         await self.learning.stop()
         await self.ai_reports.stop()
@@ -197,25 +205,37 @@ class Moderator:
                 return False
         return False
 
-    async def protected(self, chat_id, user, *, applicant=False, allow_nonmember=False):
+    async def protection(self, chat_id, user, *, applicant=False, allow_nonmember=False):
         if user.id == self.bot_id:
-            return True
+            return Protection.PROTECTED
         if getattr(user, "bot", False) and user.id in self.group(chat_id).trusted_bot_ids:
-            return True
+            return Protection.PROTECTED
         try:
             permissions = await self.actions.permissions(chat_id, user.id)
-            return bool(permissions.is_admin or permissions.is_creator)
+            return (
+                Protection.PROTECTED
+                if permissions.is_admin or permissions.is_creator
+                else Protection.UNPROTECTED
+            )
         except UserNotParticipantError:
             # 访客 Bot 可以发言但不是群成员；明确的非成员身份不代表管理员豁免。
-            return not (applicant or allow_nonmember)
-        except Exception:
-            # 无法确定成员权限时禁止自动处罚。
+            return Protection.UNPROTECTED if applicant or allow_nonmember else Protection.UNKNOWN
+        except Exception as error:
             logger.warning(
-                "Guard 无法确认成员权限 chat=%s user=%s", chat_id, user.id, exc_info=True
+                "Guard 无法确认成员权限 chat=%s user=%s error=%s",
+                chat_id,
+                user.id,
+                type(error).__name__,
             )
-            return True
+            return Protection.UNKNOWN
 
-    async def match(self, store, config, chat_id, user, message=None):
+    async def punishment_paused(self, chat_id, user, **kwargs):
+        """管理员受保护，权限未知的目标也不得执行自动处罚。"""
+        return await self.protection(chat_id, user, **kwargs) is not Protection.UNPROTECTED
+
+    async def match(
+        self, store, config, chat_id, user, message=None, *, checked_global_nickname=False
+    ):
         caller = guest_actor(message)
         if config.share_global_blacklist and caller and await store.blacklist(caller):
             await store.touch_blacklist(caller)
@@ -237,7 +257,7 @@ class Moderator:
             )
         if await store.whitelisted(chat_id, user.id):
             return None
-        matcher = Matcher(config, self.config.nickname_keywords)
+        matcher = Matcher(config, [] if checked_global_nickname else self.config.nickname_keywords)
         nickname = matcher.nickname(user)
         if nickname:
             return nickname
@@ -322,7 +342,7 @@ class Moderator:
         try:
             # get_entity 重新获取用户快照，不依赖可能过时的 event.sender 缓存。
             user = await self.load_message_user(event.sender_id, event.message)
-            if await self.protected(
+            if await self.punishment_paused(
                 chat_id,
                 user,
                 # 能发送当前消息的访客仍需检测昵称；明确非成员不等于管理员。
@@ -334,9 +354,53 @@ class Moderator:
                 if not config.enabled:
                     return
                 match = await self.match(store, config, chat_id, user, event.message)
+                observed = False
+                if (
+                    not match
+                    and config.observation_minutes
+                    and not await store.whitelisted(chat_id, user.id)
+                ):
+                    session = await store.verification(chat_id, user.id)
+                    if session and session["status"] in {"passing", "passed"}:
+                        state = session["payload"].get("observation")
+                        shared_pattern = False
+                        if config.observation_share_patterns and observation_active(
+                            config, state, event.id
+                        ):
+                            fingerprint = message_fingerprint(event.message)
+                            sources = [
+                                int(key)
+                                for key, group in self.config.groups.items()
+                                if key != str(chat_id)
+                                and group.enabled
+                                and group.observation_share_patterns
+                            ]
+                            if fingerprint and sources:
+                                shared_pattern = await store.shared_observation_pattern(
+                                    fingerprint, sources
+                                )
+                        match, changed = inspect_message(
+                            config, state, event.message, shared_pattern=shared_pattern
+                        )
+                        if changed:
+                            await store.save_verification(session)
+                        observed = match is not None
+                        if not match and observation_active(config, state, event.id):
+                            self.observation_media.enqueue(
+                                chat_id, user.id, session["id"], event.message
+                            )
                 if match:
                     token = f"message:{event.id}:{getattr(event.message, 'edit_date', None)}"
                     await self.punish(store, chat_id, user, match, token, event.message)
+                    if observed and config.observation_action == "mute":
+                        await self.punish(
+                            store,
+                            chat_id,
+                            user,
+                            replace(match, action="mute"),
+                            f"{token}:mute",
+                            event.message,
+                        )
                     raise events.StopPropagation
         except events.StopPropagation:
             raise
@@ -347,25 +411,7 @@ class Moderator:
         if isinstance(update, (UpdateChannelParticipant, UpdateChatParticipantAdmin)):
             if update.user_id != self.bot_id:
                 if isinstance(update, UpdateChannelParticipant):
-                    previous, current = update.prev_participant, update.new_participant
-                    was_absent = participant_user_id(previous) is None
-                    is_present = participant_user_id(current) == update.user_id
-                    if was_absent and is_present:
-                        chat_id = utils.get_peer_id(PeerChannel(update.channel_id))
-                        if self.group(chat_id).enabled:
-                            try:
-                                user = await call(self.client.get_entity(update.user_id))
-                                await self.process_join(
-                                    chat_id,
-                                    user,
-                                    f"participant:{update.channel_id}:{update.user_id}:{update.date}",
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "Guard 成员加入检测失败 chat=%s user=%s",
-                                    chat_id,
-                                    update.user_id,
-                                )
+                    await self.handle_member_change(update)
                 return
         chat_id = (
             -update.chat_id
@@ -374,6 +420,57 @@ class Moderator:
         )
         self.directory.invalidate(chat_id)
         self.directory.refresh()
+
+    async def handle_member_change(self, update):
+        chat_id = utils.get_peer_id(PeerChannel(update.channel_id))
+        if not self.group(chat_id).enabled:
+            return
+        user_id, current = update.user_id, update.new_participant
+        timestamp = int(update.date.timestamp())
+        is_present = participant_user_id(current) == user_id
+        try:
+            if is_present and participant_user_id(update.prev_participant) is None:
+                user = await call(self.client.get_entity(user_id))
+                await self.process_join(chat_id, user, f"membership:{timestamp}:raw:{update.qts}")
+            elif update.actor_id != self.bot_id:
+                async with self.repository.lock(user_id) as store:
+                    session = await store.verification(chat_id, user_id)
+                    if not session or session["status"] not in {
+                        "checking",
+                        "preparing",
+                        "waiting",
+                        "passing",
+                        "held",
+                    }:
+                        return
+                    token = session["payload"].get("join_token", "")
+                    if token.startswith("membership:"):
+                        fields = token.split(":", 3)
+                        joined_at = int(fields[1])
+                        if timestamp < joined_at or (
+                            timestamp == joined_at
+                            and fields[2:3] == ["raw"]
+                            and update.qts <= int(fields[3])
+                        ):
+                            return
+                    if not is_present:
+                        banned = getattr(
+                            getattr(current, "banned_rights", None), "view_messages", False
+                        )
+                        session["status"] = "blocked" if banned else "left"
+                        session["payload"]["left_at"] = timestamp
+                        session["payload"]["left_qts"] = update.qts
+                    elif "assistant" in session["payload"] and session["payload"].get(
+                        "original_rights"
+                    ):
+                        session["status"] = "held"
+                        session["error"] = "guard.permissions_changed"
+                    else:
+                        return
+                    await store.save_verification(session)
+                    self._wake.set()
+        except Exception:
+            logger.exception("Guard 成员状态更新失败 chat=%s user=%s", chat_id, user_id)
 
     async def handle_profile_update(self, update):
         try:
@@ -404,7 +501,7 @@ class Moderator:
                     )
                 ):
                     continue
-                if await self.protected(chat_id, user):
+                if await self.punishment_paused(chat_id, user):
                     continue
                 async with self.repository.lock(user.id) as store:
                     current = self.group(chat_id)
@@ -428,12 +525,37 @@ class Moderator:
             return
         try:
             if event.user_left or event.user_kicked:
+                date = getattr(getattr(event, "action_message", None), "date", None) or getattr(
+                    getattr(event, "original_update", None), "date", None
+                )
+                timestamp = int(date.timestamp()) if isinstance(date, datetime) else None
                 for user_id in event.user_ids:
                     async with self.repository.lock(user_id) as store:
                         session = await store.verification(chat_id, user_id)
                         # 超时踢出的 leave 事件不抢占已经持久化的踢出意图。
-                        if session and session["status"] in {"waiting", "preparing"}:
+                        if session and session["status"] in {
+                            "checking",
+                            "waiting",
+                            "preparing",
+                            "passing",
+                            "held",
+                        }:
+                            token = session["payload"].get("join_token", "")
+                            if timestamp is not None and token.startswith("membership:"):
+                                joined_at = int(token.split(":", 3)[1])
+                                if timestamp < joined_at:
+                                    continue
+                                if timestamp == joined_at and "assistant" in session["payload"]:
+                                    # 同秒内有顺序信息的原始成员更新负责取消旧会话。
+                                    try:
+                                        await self.actions.permissions(chat_id, user_id)
+                                    except UserNotParticipantError:
+                                        pass
+                                    else:
+                                        continue
                             session["status"] = "left"
+                            if timestamp is not None:
+                                session["payload"]["left_at"] = timestamp
                             await store.save_verification(session)
                 return
             if not (event.user_joined or event.user_added):
@@ -449,40 +571,110 @@ class Moderator:
                     ).strip(":")
                     or uuid.uuid4().hex
                 )
-                await self.process_join(chat_id, user, f"join:{identity}")
+                date = getattr(action_message, "date", None) or getattr(original, "date", None)
+                token = (
+                    f"membership:{int(date.timestamp())}:chat:{identity}"
+                    if isinstance(date, datetime)
+                    else f"join:{identity}"
+                )
+                await self.process_join(chat_id, user, token)
         except Exception:
             logger.exception("Guard 入群检测失败 chat=%s", chat_id)
 
     async def process_join(self, chat_id, user, token):
-        if not self.group(chat_id).enabled or await self.protected(chat_id, user):
+        key = (chat_id, user.id, token)
+        if not self.group(chat_id).enabled:
+            self._pending_joins.pop(key, None)
             return
+        try:
+            await self.process_join_locked(chat_id, user, token)
+        except (aiomysql.OperationalError, aiomysql.InterfaceError, OSError) as error:
+            # 已落盘的会话由恢复 worker 接管；首次写入失败也要在数据库恢复后重新核查。
+            if key in self._pending_joins or len(self._pending_joins) < 512:
+                self._pending_joins[key] = None
+            logger.error(
+                "Guard 入群处理暂不可用 chat=%s user=%s error=%s",
+                chat_id,
+                user.id,
+                type(error).__name__,
+            )
+        else:
+            self._pending_joins.pop(key, None)
+
+    async def process_join_locked(self, chat_id, user, token):
         async with self.repository.lock(user.id) as store:
             config = self.group(chat_id)
             if not config.enabled:
                 return
-            match = await self.match(store, config, chat_id, user)
-            if match:
-                await self.punish(store, chat_id, user, match, token)
-                if match.action in {"warn", "mute"} and config.verify_join:
-                    await self.verification.begin(store, chat_id, user, token)
-            elif config.verify_join and not await store.whitelisted(chat_id, user.id):
+            if not await self.verification.new_join_event(store, chat_id, user.id, token):
+                return
+            protection = await self.protection(chat_id, user)
+            if protection is Protection.PROTECTED:
+                return
+            if protection is Protection.UNKNOWN:
+                await self.verification.begin(store, chat_id, user, token, defer=True)
+                logger.warning(
+                    "Guard 暂无法安全施加验证禁言，已记录待重试入群 chat=%s user=%s",
+                    chat_id,
+                    user.id,
+                )
+                self._wake.set()
+                return
+            if await self.join_requires_verification(store, config, chat_id, user, token):
                 await self.verification.begin(store, chat_id, user, token)
+
+    async def join_requires_verification(self, store, config, chat_id, user, token):
+        match = await self.match(store, config, chat_id, user)
+        if match:
+            case = await self.punish(store, chat_id, user, match, token)
+            enforced = case and case["status"] == ("pending" if match.action == "ban" else "done")
+            return config.verify_join and (match.action in {"warn", "mute"} or not enforced)
+        return config.verify_join and not await store.whitelisted(chat_id, user.id)
 
     async def handle_join_request(self, update):
         chat_id = utils.get_peer_id(update.peer)
-        config = self.group(chat_id)
-        if not config.enabled:
-            return
+        query_id = getattr(update, "query_id", None)
+        query = (
+            {"id": query_id, "expires_at": update.date.timestamp() + 10}
+            if query_id is not None
+            else None
+        )
         try:
+            if not self.group(chat_id).enabled:
+                if query:
+                    await self.actions.answer_join_request_query(
+                        query["id"], "manual", query["expires_at"]
+                    )
+                return
             user = await call(self.client.get_entity(update.user_id))
-            if await self.protected(chat_id, user, applicant=True):
+            if await self.punishment_paused(chat_id, user, applicant=True):
+                if query:
+                    await self.actions.answer_join_request_query(
+                        query["id"], "manual", query["expires_at"]
+                    )
                 return
             async with self.repository.lock(user.id) as store:
                 config = self.group(chat_id)
                 if not config.enabled:
+                    if query:
+                        await self.actions.answer_join_request_query(
+                            query["id"], "manual", query["expires_at"]
+                        )
                     return
-                matched = await self.match(store, config, chat_id, user)
-                token = f"request:{update.date}:{getattr(update, 'qts', 0)}"
+                # 全局昵称黑名单决定能否入群，本群规则仍使用申请命中动作。
+                blocked_name = None
+                if not await store.whitelisted(chat_id, user.id):
+                    blocked_name = Matcher(config, self.config.nickname_keywords).nickname(
+                        user, global_only=True
+                    )
+                matched = blocked_name or await self.match(
+                    store, config, chat_id, user, checked_global_nickname=True
+                )
+                token = (
+                    f"request-query:{query_id}"
+                    if query
+                    else f"request:{update.date}:{getattr(update, 'qts', 0)}"
+                )
                 if matched:
                     matched = Match(
                         "join_request",
@@ -490,10 +682,9 @@ class Moderator:
                         matched.reason,
                         matched.original,
                         matched.normalized,
-                        config.join_request_match_action,
+                        "reject" if blocked_name else config.join_request_match_action,
                         matched.ai_rule,
                     )
-                    await self.punish(store, chat_id, user, matched, token)
                 elif config.join_requests == "approve":
                     matched = Match(
                         "join_request",
@@ -503,12 +694,18 @@ class Moderator:
                         "",
                         "approve",
                     )
-                    await self.punish(store, chat_id, user, matched, token)
                 else:
                     matched = Match(
                         "join_request", "request-manual", "manual_join_request", "", "", "manual"
                     )
-                    await self.punish(store, chat_id, user, matched, token)
+                await self.punish(
+                    store,
+                    chat_id,
+                    user,
+                    matched,
+                    token,
+                    extra_payload={"join_request_query": query} if query else None,
+                )
         except Exception:
             logger.exception("Guard 入群申请处理失败 chat=%s", chat_id)
 
@@ -639,6 +836,27 @@ class Moderator:
                         await self.execute_case(store, existing)
                     return await store.case(existing["id"])
         payload = await self.snapshot(chat_id, user, match, message)
+        if (
+            message is not None
+            and match.action == "ban"
+            and not match.ai_rule
+            and (
+                match.target in {"message", "link"}
+                and self.group(chat_id).observation_share_patterns
+            )
+        ):
+            payload["observation_fingerprint"] = message_fingerprint(message)
+        if (
+            match.action == "ban"
+            and self.learning.enabled(chat_id)
+            and (
+                self.learning.source_allowed("rule_auto_ban")
+                or self.learning.source_allowed("admin_blacklist")
+            )
+        ):
+            payload["learning_profile"] = profile_snapshot(user, self.group(chat_id), False)
+            if message is not None:
+                payload["learning_message"] = message_snapshot(message)
         payload.update(extra_payload or {})
         case = {
             "id": uuid.uuid4().hex,
@@ -714,12 +932,16 @@ class Moderator:
                 else None
             )
             user = await self.load_message_user(user_id, bound_message)
-            if await self.protected(
+            protection = await self.protection(
                 chat_id,
                 user,
                 applicant=action in {"approve", "reject", "manual", "ban", "kick"},
                 allow_nonmember=bot_message,
-            ):
+            )
+            if protection is Protection.UNKNOWN:
+                await store.update_case(case["id"], "executing", error="guard.permissions_unknown")
+                return
+            if protection is Protection.PROTECTED:
                 await store.update_case(case["id"], "cancelled")
                 return
             if action == "ban":
@@ -768,18 +990,27 @@ class Moderator:
                     payload["kick_banned"] = True
                     await store.update_case(case["id"], "executing", payload=payload)
                 await self.actions.unban(chat_id, user_id)
-            elif action in {"reject", "approve"}:
-                try:
-                    await self.actions.join_request(chat_id, user_id, action == "approve")
-                except TelegramActionError as error:
-                    if str(error) not in {
-                        "HideRequesterMissingError",
-                        "UserAlreadyParticipantError",
-                    }:
-                        raise
-                    # 申请不存在无法推断已批准；只在确认成员存在时恢复批准后的验证。
-                    if action == "approve":
-                        await self.actions.permissions(chat_id, user_id)
+            elif action in {"reject", "approve", "manual"}:
+                query = payload.get("join_request_query")
+                if query:
+                    if not query.get("answered"):
+                        await self.actions.answer_join_request_query(
+                            query["id"], action, query["expires_at"]
+                        )
+                        query["answered"] = True
+                        await store.update_case(case["id"], "executing", payload=payload)
+                elif action != "manual":
+                    try:
+                        await self.actions.join_request(chat_id, user_id, action == "approve")
+                    except TelegramActionError as error:
+                        if str(error) not in {
+                            "HideRequesterMissingError",
+                            "UserAlreadyParticipantError",
+                        }:
+                            raise
+                        # 申请不存在无法推断已批准；只在确认成员存在时恢复批准后的验证。
+                        if action == "approve":
+                            await self.actions.permissions(chat_id, user_id)
                 if action == "approve" and config.verify_join:
                     await self.verification.begin(store, chat_id, user, f"request:{case['id']}")
         except TelegramActionError as error:
@@ -792,10 +1023,26 @@ class Moderator:
             await store.update_case(case["id"], status, error=str(error))
             logger.exception("Guard 处罚执行失败 case=%s", case["id"])
         else:
+            latest = await store.case(case["id"])
+            payload = latest["payload"]
+            if (
+                action == "ban"
+                and self.learning.enabled(chat_id)
+                and self.learning.source_allowed("rule_auto_ban")
+            ):
+                payload["learning_enforcement_pending"] = True
             await store.update_case(
                 case["id"],
                 "pending" if action == "ban" else "manual" if action == "manual" else "done",
+                payload=payload,
             )
+            await self.learning.sync_enforcement(store, await store.case(case["id"]))
+            if (
+                action == "ban"
+                and config.observation_share_patterns
+                and payload.get("observation_fingerprint")
+            ):
+                await store.save_observation_pattern(chat_id, payload["observation_fingerprint"])
         await self.ban_history.finish(store, case)
         await self.notifier.sync(store, await store.case(case["id"]), config)
 
@@ -822,6 +1069,17 @@ class Moderator:
                 key: group.kick_button_enabled for key, group in self.config.groups.items()
             }
         )
+        for chat_id, user_id, token in list(self._pending_joins)[:20]:
+            try:
+                user = await call(self.client.get_entity(user_id))
+                await self.process_join(chat_id, user, token)
+            except Exception as error:
+                logger.warning(
+                    "Guard 入群重试暂缓 chat=%s user=%s error=%s",
+                    chat_id,
+                    user_id,
+                    type(error).__name__,
+                )
         for candidate in cases:
             try:
                 async with self.repository.lock(candidate["user_id"]) as store:
@@ -832,6 +1090,7 @@ class Moderator:
                         await self.execute_case(store, case)
                     elif case["status"].startswith("reviewing_"):
                         await self.reviews.resume(store, case)
+                    await self.learning.sync_enforcement(store, await store.case(case["id"]))
                     await self.reviews.resume_message_deletion(store, await store.case(case["id"]))
                     await self.ban_history.resume(store, await store.case(case["id"]))
                     await self.notifier.sync(

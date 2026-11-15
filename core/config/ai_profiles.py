@@ -12,7 +12,16 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-PURPOSES = ("summary", "assistant", "vision", "poll", "wiki", "wiki_review")
+PURPOSES = (
+    "summary",
+    "assistant",
+    "vision",
+    "poll",
+    "wiki",
+    "wiki_review",
+    "guard",
+    "guard_vision",
+)
 
 
 class StrictModel(BaseModel):

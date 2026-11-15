@@ -227,6 +227,14 @@ async def joined_groups(refresh: bool = False, context=GUARD_ADMIN):
     return service.directory.snapshot()
 
 
+@router.get("/groups/{chat_id}/verification")
+async def verification_diagnostics(chat_id: int, context=GUARD_ADMIN):
+    service, _ = context
+    return await service.repository.verification_diagnostics(
+        chat_id, service.verification.configured_assistant_id()
+    )
+
+
 @router.get("/chats")
 async def joined_chats(refresh: bool = False, context=GUARD_ADMIN):
     service, _ = context
@@ -535,6 +543,14 @@ async def records(
                 and (row["status"] not in ACTIVE_VERIFICATIONS or row["status"] == "kicking")
                 and payload.get("cleanup_pending", True)
             )
+            if assistant := payload.get("assistant"):
+                row["verification"] = {
+                    "state": assistant["state"],
+                    "steps": assistant["steps"],
+                    "completed_steps": len(assistant.get("receipts", [])),
+                    "profile": payload.get("profile"),
+                    "observation_hits": (payload.get("observation") or {}).get("hits", 0),
+                }
     return result
 
 
@@ -587,6 +603,8 @@ async def whitelist(body: WhitelistRequest, context=GUARD_ADMIN):
             body.enabled,
             reviewer_actor="webui:admin" if reviewer_id == "admin" else f"telegram:{reviewer_id}",
         )
+        if body.enabled:
+            await service.learning.record_whitelist(store, body.chat_id, body.user_id, reviewer_id)
         await service.record_event(
             store,
             body.chat_id,
@@ -867,14 +885,48 @@ async def ai_learning_samples(
     chat_id: int | None = None,
     label: str | None = Query(None, pattern=r"^(pending|positive|negative|neutral)$"),
     status: str | None = Query(None, pattern=r"^(new|queued|learned|skipped|invalid)$"),
+    source: str | None = Query(
+        None,
+        pattern=r"^(admin_report|member_report|review_outcome|ai_review|rule_auto_ban|admin_blacklist)$",
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     context=GUARD_ADMIN,
 ):
     service, _ = context
     return await service.learning.samples.list(
-        chat_id=chat_id, label=label, status=status, limit=limit, offset=offset
+        chat_id=chat_id, label=label, status=status, source=source, limit=limit, offset=offset
     )
+
+
+@router.post("/ai-learning/samples/backfill")
+async def backfill_ai_learning_samples(
+    chat_id: int = Query(lt=0),
+    cursor: str = Query("", pattern=r"^(?:[0-9a-f]{32})?$"),
+    context=GUARD_ADMIN,
+):
+    service, _ = context
+    if not service.learning.enabled(chat_id) or not any(
+        service.learning.source_allowed(source) for source in ("rule_auto_ban", "admin_blacklist")
+    ):
+        raise HTTPException(409, t("guard.ai_learning_backfill_disabled"))
+    return await service.learning.backfill_enforcement(chat_id, cursor)
+
+
+@router.post("/ai-learning/samples/{sample_id}/{action}")
+async def review_ai_learning_sample(
+    sample_id: str,
+    action: Literal["confirm", "correct", "delete"],
+    context=GUARD_ADMIN,
+):
+    service, actor = context
+    try:
+        found = await service.learning.review_sample(sample_id, action, actor)
+    except GuardError as error:
+        raise business_error(error) from error
+    if not found:
+        raise HTTPException(404, t("guard.invalid_callback"))
+    return {"success": True}
 
 
 @router.get("/ai-learning/jobs")
