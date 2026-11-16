@@ -1,13 +1,14 @@
 """Probe the installed WebUI and Go executable inside a release image."""
 
-import os
 import subprocess
+import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from core.system.process_manager import _resolve_qa_binary, effective_qa_runtime
+from core.system import process_manager
 from core.web_api.app import create_app
 
 
@@ -42,11 +43,22 @@ def main():
             response = client.get(route)
             assert response.status_code == 200 and response.content == path.read_bytes(), route
 
-    assert effective_qa_runtime() == "go"
-    binary = _resolve_qa_binary()
-    assert binary == "/usr/local/bin/sakura-qa"
-    # Test execution and configuration without connecting to Telegram or MySQL.
-    subprocess.run([binary], env=os.environ | {"QA_BOT_ENABLED": "false"}, check=True, timeout=15)
+    # Exercise the actual launcher and binary. Disable polling only in the child.
+    popen = subprocess.Popen
+
+    def start_offline(command, *, cwd, env):
+        assert command == ["/usr/local/bin/sakura-qa"], command
+        return popen(command, cwd=cwd, env=env | {"QA_BOT_ENABLED": "false"})
+
+    with (
+        patch.object(sys, "argv", ["main.py"]),
+        patch.object(subprocess, "Popen", side_effect=start_offline),
+    ):
+        result = process_manager.start_qa_bot()
+    assert result["success"], result
+    process = process_manager.get_qa_bot_process()
+    assert process.wait(timeout=15) == 0
+    assert process_manager.get_qa_bot_status()["runtime"] == "go"
     print("WebUI /login, /wiki, all static assets, and the Go executable verified")
 
 
