@@ -94,6 +94,20 @@ CREATE TABLE IF NOT EXISTS moderation_verification_sessions (
     INDEX idx_guard_verification_due (status, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS moderation_verification_assistants (
+    username VARCHAR(32) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL PRIMARY KEY,
+    bot_id BIGINT NOT NULL,
+    seen_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS moderation_observation_patterns (
+    fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    chat_id BIGINT NOT NULL,
+    seen_at DATETIME NOT NULL,
+    PRIMARY KEY (fingerprint, chat_id),
+    INDEX idx_guard_pattern_retention (seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS moderation_notifications (
     case_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     target_id BIGINT NOT NULL,

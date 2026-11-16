@@ -147,10 +147,28 @@
                 已开始的验证仅在本人答对或管理员点击“跳过验证”后恢复权限。超时或答错后的警告、禁言及等待人工处理均保留验证禁言；关闭开关或加入白名单也不会自动解禁正在验证的成员。
               </n-alert>
               <div class="field-grid">
+                <n-form-item label="验证模式"><n-select v-model:value="form.verification_mode" :options="verificationModes" /></n-form-item>
+                <template v-if="form.verification_mode === 'assistant'">
+                  <n-form-item label="常规验证步数"><n-input-number v-model:value="form.verification_steps" :min="2" :max="5" /></n-form-item>
+                  <n-form-item label="验证题型池"><n-select v-model:value="form.verification_question_types" multiple :options="verificationQuestionTypes" /></n-form-item>
+                  <n-form-item label="高风险阈值"><n-input-number v-model:value="form.verification_risk_threshold" :min="1" :max="30" /></n-form-item>
+                  <n-form-item label="高风险验证动作"><n-select v-model:value="form.verification_risk_action" :options="riskActions" /></n-form-item>
+                  <n-form-item v-if="form.verification_risk_action === 'extra_steps'" label="高风险额外步数"><n-input-number v-model:value="form.verification_risk_extra_steps" :min="1" :max="3" /></n-form-item>
+                  <n-form-item v-for="(label, signal) in riskSignals" :key="signal" :label="label">
+                    <n-input-number :value="form.verification_risk_weights?.[signal] ?? 0" :min="0" :max="10" @update:value="value => setRiskWeight(signal, value)" />
+                  </n-form-item>
+                  <n-form-item label="观察期分钟数（0 为关闭）"><n-input-number v-model:value="form.observation_minutes" :min="0" :max="1440" /></n-form-item>
+                  <n-form-item label="观察期消息数"><n-input-number v-model:value="form.observation_messages" :min="1" :max="50" /></n-form-item>
+                  <n-form-item label="观察期命中动作"><n-select v-model:value="form.observation_action" :options="observationActions" /></n-form-item>
+                  <n-form-item label="观察期图片检测"><n-select v-model:value="form.observation_image_mode" :options="observationImageModes" /></n-form-item>
+                  <n-form-item label="用已配置的 AI 异步检测观察期广告"><n-switch v-model:value="form.observation_ai_review" /></n-form-item>
+                  <n-form-item v-if="form.observation_ai_review" label="观察期 AI 删除置信度"><n-input-number v-model:value="form.observation_ai_confidence" :min="0.5" :max="1" :step="0.01" /></n-form-item>
+                  <n-form-item label="与同样启用此项的群共享已处罚广告的文案指纹"><n-switch v-model:value="form.observation_share_patterns" /></n-form-item>
+                </template>
                 <n-form-item label="验证超时（秒）"><n-input-number v-model:value="form.verification_timeout" :min="30" :max="600" /></n-form-item>
                 <n-form-item label="最多答错次数"><n-input-number v-model:value="form.verification_max_attempts" :min="1" :max="10" /></n-form-item>
                 <n-form-item label="入群申请流程"><n-select v-model:value="form.join_requests" :options="joinOptions" /></n-form-item>
-                <n-form-item label="入群申请命中规则后的动作"><n-select v-model:value="form.join_request_match_action" :options="requestMatchActions" /></n-form-item>
+                <n-form-item label="入群申请命中其他规则后的动作" feedback="命中全局昵称黑名单的申请会直接拒绝。"><n-select v-model:value="form.join_request_match_action" :options="requestMatchActions" /></n-form-item>
                 <n-form-item label="验证超时后的动作"><n-select v-model:value="form.verification_timeout_action" :options="verificationActions" /></n-form-item>
                 <n-form-item label="答错达到上限后的动作"><n-select v-model:value="form.verification_wrong_action" :options="verificationActions" /></n-form-item>
                 <n-form-item label="验证结束后的消息处理"><n-select v-model:value="form.verification_message_mode" :options="verificationMessageModes" /></n-form-item>
@@ -158,6 +176,14 @@
                   <n-select v-model:value="form.verification_admin_actions" multiple clearable :options="verificationAdminActions" placeholder="清空后隐藏封禁、拉黑和跳过按钮" />
                 </n-form-item>
               </div>
+              <n-space v-if="form.verification_mode === 'assistant'" align="center">
+                <n-button secondary size="small" @click="loadVerificationDiagnostics">刷新助手状态</n-button>
+                <span v-if="verificationDiagnostics" class="sub-hint">
+                  {{ assistantStatus[verificationDiagnostics.assistant] || verificationDiagnostics.assistant }}
+                  <template v-if="verificationDiagnostics.assistant_username"> · @{{ verificationDiagnostics.assistant_username }}</template>
+                  <template v-if="verificationDiagnostics.assistant !== 'error'"> · 近 7 天保留会话 {{ verificationDiagnostics.counts.joined }}，开始 {{ verificationDiagnostics.counts.started }}，通过第 1 / 2 步 {{ verificationDiagnostics.counts.step_one }} / {{ verificationDiagnostics.counts.step_two }}，放行 {{ verificationDiagnostics.counts.released }}，超时 {{ verificationDiagnostics.counts.expired }}，待审核或失败 {{ verificationDiagnostics.counts.held_or_failed }}，观察命中 {{ verificationDiagnostics.counts.observation_hits }}</template>
+                </span>
+              </n-space>
             </div>
 
             <!-- 过滤与处罚：各检测项的命中动作 + 关键词 + 名单 -->
@@ -360,11 +386,17 @@
               <div class="page-toolbar">
                 <div class="toolbar-left">
                   <n-select v-model:value="aiSampleLabel" class="sel-status" :options="aiSampleLabelOptions" clearable placeholder="样本标签" @update:value="resetAiRecords" />
+                  <n-select v-model:value="aiSampleSource" class="sel-status" :options="aiSourceOptions" clearable placeholder="样本来源" @update:value="resetAiRecords" />
                   <n-input v-model:value="aiFilterChat" class="inp-filter" placeholder="群组 ID（可选）" clearable @keyup.enter="resetAiRecords" />
                 </div>
                 <n-button secondary :loading="aiRecordsLoading" @click="resetAiRecords">查询 / 刷新</n-button>
               </div>
               <n-data-table size="small" :columns="aiSampleColumns" :data="aiSamples" :loading="aiRecordsLoading" :bordered="false" :scroll-x="1100" />
+              <n-space align="center" class="block-gap-sm">
+                <n-button secondary :loading="backfillRunning" :disabled="!aiFilterChat.trim()" @click="runSampleBackfill(false)">{{ backfillProgress?.next ? '继续补录下一批' : '补录本群历史处罚' }}</n-button>
+                <n-button v-if="backfillProgress?.failed" secondary :loading="backfillRunning" @click="runSampleBackfill(true)">重试失败批次</n-button>
+                <span v-if="backfillProgress" class="sub-hint">本批检查 {{ backfillProgress.scanned }} 案，确认 {{ backfillProgress.confirmed }} 案，失败 {{ backfillProgress.failed }} 案</span>
+              </n-space>
               <div class="pager"><n-pagination v-model:page="aiSamplePage" :page-size="20" :item-count="aiSampleTotal" @update:page="loadAiSamples" /></div>
             </n-tab-pane>
             <n-tab-pane name="jobs" tab="学习任务">
@@ -512,6 +544,15 @@
           <span v-else>{{ detail.payload?.message_id || '—' }}</span>
         </n-descriptions-item>
         <n-descriptions-item label="状态">{{ recordStatus(detail) }}</n-descriptions-item>
+        <n-descriptions-item v-if="detail.verification" label="助手验证进度">{{ detail.verification.completed_steps }} / {{ detail.verification.steps }} · 观察期命中 {{ detail.verification.observation_hits }} 次</n-descriptions-item>
+        <n-descriptions-item v-if="detail.verification?.profile" label="新成员风险画像">
+          {{ detail.verification.profile.name }} · {{ detail.verification.profile.username || '无用户名' }} · {{ detail.verification.profile.score }} 分
+          <div>{{ detail.verification.profile.signals.map(signal => riskSignals[signal as keyof typeof riskSignals] || signal).join('、') || '未命中风险信号' }}</div>
+        </n-descriptions-item>
+        <n-descriptions-item v-if="detail.payload?.observation_ai" label="观察期 AI 证据">
+          {{ detail.payload.observation_ai.verdict.reason }} · {{ detail.payload.observation_ai.model }}
+          <div v-for="(item, index) in detail.payload.observation_ai.verdict.evidence" :key="index" class="evidence">{{ item.quote }}</div>
+        </n-descriptions-item>
         <n-descriptions-item v-if="detail.payload?.guest_actor" label="访客机器人调用者">{{ detail.payload.guest_ban?.status === 'blacklisted' ? '已联动封禁并加入全局黑名单' : detail.payload.guest_ban?.status === 'banned' ? '已联动封禁' : detail.payload.guest_ban?.status === 'skipped' ? '已按权限或豁免规则跳过' : detail.payload.guest_ban?.action === 'blacklist' ? '联动封禁及全局拉黑待处理' : detail.payload.guest_ban ? '联动封禁待处理' : '仅记录来源' }}<span v-if="detail.payload.guest_ban?.error"> · {{ detail.payload.guest_ban.error }}</span><div v-if="detail.payload.guest_ban?.case_id">关联案件：{{ detail.payload.guest_ban.case_id }}</div></n-descriptions-item>
         <n-descriptions-item v-if="detail.payload?.ai_report_review" label="AI 超时审核">
           {{ detail.payload.ai_report_review.state === 'applied' ? '已自动处罚' : detail.payload.ai_report_review.state === 'executing' ? '正在执行处罚' : '继续等待管理员' }}
@@ -600,7 +641,7 @@ import {
 } from "naive-ui";
 import {
   addGuardGroup, getAILearningJobs, getAILearningRuntime, getAIRuleDetail, getAIRuleHits, getAIRules,
-  getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, manageAIRule, removeGuardBlacklist,
+  backfillAISamples, getAISamples, getGuardJoinedGroups, getGuardConfig, getGuardRecords, getVerificationDiagnostics, manageAIRule, removeGuardBlacklist, reviewAISample,
   retryAILearningJob, retryGuardCase, reviewGuardCase, saveAILearningSettings, saveGuardSettings, saveGuardRetention,
   saveGuardNicknameKeywords, setAIRuleScopes, setGuardWhitelist, updateAIRuleAction,
   type AILearningJob, type AILearningSettings, type AIRule, type AIRuleHit, type AISample,
@@ -650,8 +691,12 @@ const aiRuleTotal = ref(0), aiSampleTotal = ref(0), aiJobTotal = ref(0);
 const aiRulePage = ref(1), aiSamplePage = ref(1), aiJobPage = ref(1);
 const aiRuleStatus = ref<string | null>(null), aiRuleType = ref<string | null>(null);
 const aiSampleLabel = ref<string | null>(null), aiJobStatus = ref<string | null>(null);
+const aiSampleSource = ref<string | null>(null);
 const aiJobCounts = ref<Record<string, number> | null>(null);
 const aiFilterChat = ref("");
+const backfillRunning = ref(false);
+const backfillProgress = ref<{ scanned: number; confirmed: number; failed: number; next: string | null; cursor: string } | null>(null);
+watch(aiFilterChat, () => { backfillProgress.value = null; });
 const aiRecordsLoading = ref(false);
 const aiRuleDetail = ref<AIRule | null>(null);
 const aiRuleHits = ref<AIRuleHit[]>([]);
@@ -668,6 +713,23 @@ let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false, discoveryRequest = 0;
 const selectedId = ref<string | null>(null), newChatId = ref("");
 const form = computed(() => selectedId.value ? groups.value[selectedId.value] : undefined);
+const verificationDiagnostics = ref<Awaited<ReturnType<typeof getVerificationDiagnostics>> | null>(null);
+const assistantStatus: Record<string, string> = { ready: "助手在线", offline: "助手心跳不可用", unconfigured: "尚未配置助手", error: "诊断读取失败" };
+const riskSignals = { no_username: "无用户名", no_photo: "无可见头像", random_name: "随机英文昵称", similar_names: "近期同型昵称", prior_enforcement: "近期处罚记录" };
+function setRiskWeight(signal: keyof typeof riskSignals, value: number | null) {
+  if (form.value && value !== null) form.value.verification_risk_weights = { ...form.value.verification_risk_weights, [signal]: value };
+}
+async function loadVerificationDiagnostics() {
+  const chat = selectedId.value;
+  verificationDiagnostics.value = null;
+  if (!chat || form.value?.verification_mode !== "assistant") return;
+  try {
+    const data = await getVerificationDiagnostics(chat);
+    if (selectedId.value === chat) verificationDiagnostics.value = data;
+  } catch {
+    if (selectedId.value === chat) verificationDiagnostics.value = { assistant: "error", assistant_username: null, counts: {} };
+  }
+}
 const currentEditor = computed(() => form.value && selectedId.value ? editors.get(selectedId.value) : undefined);
 const groupIssues = computed(() => currentEditor.value ? (Object.entries(currentEditor.value.states) as [keyof GuardGroup, { status: string; error?: string }][]).filter(([, state]) => state.error).map(([field, state]) => ({ field, label: guardLabels[field], ...state })) : []);
 const groupOptions = computed(() => Object.entries(groups.value).map(([value, group]) => ({ label: `${groupMetadata.value[value]?.title || '群名待解析'}（${value}）· ${group.enabled ? '已启用' : '未启用'}${editors.get(value)?.hasUnsaved() ? ' · 未保存' : ''}`, value })));
@@ -691,6 +753,11 @@ const actions = [{ label: "删除消息", value: "delete" }, { label: "警告", 
 const memberActions = actions.filter(action => action.value !== "delete");
 const nicknameRuleActions = [{ label: "跟随昵称命中动作", value: "delete" }, ...memberActions];
 const verificationActions = [{ label: "封禁并通知审核", value: "ban" }, { label: "踢出（可再加入）", value: "kick" }, { label: "保持验证禁言，等待管理员", value: "mute" }, { label: "警告并保持验证禁言", value: "warn" }, { label: "等待管理员处理（保持禁言）", value: "allow" }];
+const verificationModes = [{ label: "群内传统验证", value: "legacy" }, { label: "助手 Bot 多步验证", value: "assistant" }];
+const verificationQuestionTypes = [{ label: "词语选择", value: "word" }, { label: "位置选择", value: "position" }];
+const riskActions = [{ label: "增加验证步数", value: "extra_steps" }, { label: "保持禁言，等待人工处理", value: "hold" }];
+const observationActions = [{ label: "删除命中消息", value: "delete" }, { label: "删除消息并延长观察期", value: "extend" }, { label: "删除消息并禁言", value: "mute" }];
+const observationImageModes = [{ label: "关闭", value: "off" }, { label: "本地二维码检测", value: "qr" }, { label: "本地二维码与已配置的视觉 OCR", value: "ocr" }];
 const verificationMessageModes = [{ label: "删除验证消息（默认）", value: "delete" }, { label: "保留处理结果，移除所有按钮", value: "result" }];
 const verificationAdminActions = [{ label: "一键封禁", value: "ban" }, { label: "封禁并加入黑名单", value: "blacklist" }, { label: "跳过验证", value: "skip" }];
 const requestMatchActions = [{ label: "拒绝申请（默认）", value: "reject" }, { label: "保持待审，通知管理员", value: "manual" }, { label: "批准后继续按入群规则处理", value: "approve" }];
@@ -702,7 +769,7 @@ const targets = [{ label: "昵称", value: "nickname" }, { label: "用户名", v
 const kinds = [{ label: "关键词", value: "keyword" }, { label: "正则", value: "regex" }];
 const tables = [{ label: "案件 / 处罚日志", value: "cases" }, { label: "本群白名单", value: "whitelist" }, { label: "全局永久黑名单", value: "blacklist" }, { label: "入群验证 / 错误", value: "verifications" }, { label: "通知投递 / 错误", value: "notifications" }];
 const statusNames: Record<string, string> = { pending: "已封禁 · 待审核", executing: "执行中", execution_failed: "执行失败", reviewing_allow: "解封恢复中", reviewing_blacklist: "拉黑恢复中", allowed: "已解封并加入白名单", blacklisted: "已永久拉黑", done: "已完成", cancelled: "已取消", manual: "申请待人工处理", preparing: "准备验证", waiting: "等待作答", passing: "恢复权限中", kicking: "踢出恢复中", cancelling: "取消验证中", passed: "验证通过", expired: "验证超时 / 已踢出", left: "成员已离开", blocked: "已被规则拦截", permanent: "永久拉黑" };
-Object.assign(statusNames, { admin_pending: "管理员操作恢复中", admin_banned: "管理员已封禁", admin_blacklisted: "管理员已封禁并拉黑", admin_skipped: "管理员已跳过验证", failed_banned: "验证失败 / 已封禁", kicking: "验证封禁恢复中" });
+Object.assign(statusNames, { checking: "等待确认成员权限", admin_pending: "管理员操作恢复中", admin_banned: "管理员已封禁", admin_blacklisted: "管理员已封禁并拉黑", admin_skipped: "管理员已跳过验证", failed_banned: "验证失败 / 已封禁", kicking: "验证封禁恢复中" });
 Object.assign(statusNames, { failed_kicked: "验证失败 / 已踢出", failed_muted: "验证失败 / 已禁言", failed_warned: "验证失败 / 已警告", failed_allowed: "验证失败 / 按配置放行" });
 Object.assign(statusNames, { held: "未通过验证 / 保持禁言待管理员处理" });
 Object.assign(statusNames, { reviewing_unban: "解除限制恢复中", reviewing_ban: "管理员封禁恢复中", unbanned: "已仅解除封禁", unmuted: "已撤销本次禁言", ignored: "已忽略本次警告", allowed: "已处理并加入本群白名单" });
@@ -717,6 +784,8 @@ const aiSourceOptions = [
   { label: "普通成员举报", value: "member_report" },
   { label: "管理员审核结果", value: "review_outcome" },
   { label: "举报超时 AI 复核结果", value: "ai_review" },
+  { label: "规则自动封禁", value: "rule_auto_ban" },
+  { label: "管理员一键拉黑", value: "admin_blacklist" },
 ];
 const aiTargetOptions = [
   { label: "昵称", value: "nickname" },
@@ -734,7 +803,7 @@ const aiRuleStatusNames: Record<string, string> = { candidate: "候选待审", a
 const aiRuleStatusName = (value?: string) => value ? aiRuleStatusNames[value] || value : "—";
 const aiRuleTypeName = (value?: string) => ({ nickname: "昵称", username: "用户名", message: "消息", link: "链接", pattern: "归一模式" } as Record<string, string>)[value || ""] || value || "—";
 const aiSampleLabelNames: Record<string, string> = { pending: "待验证", positive: "正样本", negative: "负样本", neutral: "中性" };
-const aiSampleSourceNames: Record<string, string> = { admin_report: "管理员上报", member_report: "成员举报", ai_review: "AI 复核" };
+const aiSampleSourceNames: Record<string, string> = Object.fromEntries(aiSourceOptions.map(option => [option.value, option.label]));
 const aiJobStatusNames: Record<string, string> = { queued: "排队中", running: "分析中", done: "已完成", manual: "转人工", skipped: "已跳过" };
 const aiJobStatusName = (value: string) => aiJobStatusNames[value] || value;
 const aiRuleStatusOptions = Object.entries(aiRuleStatusNames).map(([value, label]) => ({ label, value }));
@@ -830,6 +899,7 @@ function hasUnsaved() { return composing.value || [...editors.values()].some(edi
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } }
 function flushHidden() { if (document.visibilityState === "hidden") void flushAll(); }
 watch(selectedId, (_, previous) => { if (previous) void editors.get(previous)?.flush(); });
+watch(() => [selectedId.value, form.value?.verification_mode], loadVerificationDiagnostics);
 
 function numeric(value: string, negative = false) {
   const number = Number(value);
@@ -1004,10 +1074,32 @@ async function loadAiSamples() {
     const chat = aiChatId();
     if (chat !== undefined) params.chat_id = chat;
     if (aiSampleLabel.value) params.label = aiSampleLabel.value;
+    if (aiSampleSource.value) params.source = aiSampleSource.value;
     const result = await getAISamples(params);
     if (request === aiRequest) { aiSamples.value = result.rows; aiSampleTotal.value = result.total; }
   } catch (error) { if (request === aiRequest) report(error); }
   finally { if (request === aiRequest) aiRecordsLoading.value = false; }
+}
+async function runSampleBackfill(retry: boolean) {
+  const chat = aiChatId();
+  if (chat === undefined || backfillRunning.value) return;
+  const cursor = (retry ? backfillProgress.value?.cursor : backfillProgress.value?.next) || "";
+  backfillRunning.value = true;
+  try {
+    const result = await backfillAISamples(chat, cursor);
+    if (aiChatId() !== chat) return;
+    backfillProgress.value = { scanned: result.scanned, confirmed: result.confirmed, failed: result.failed.length, next: result.next_cursor, cursor };
+    await loadAiSamples();
+  } catch (error) { report(error); }
+  finally { backfillRunning.value = false; }
+}
+function manageAISample(row: AISample, action: "confirm" | "correct" | "delete") {
+  const update = async () => {
+    try { await reviewAISample(row.id, action); await loadAiSamples(); }
+    catch (error) { report(error); }
+  };
+  if (action === "delete") dialog.warning({ title: "删除样本证据", content: "样本将退出学习，保留去重和纠错记录。", positiveText: "删除", negativeText: "取消", onPositiveClick: update });
+  else void update();
 }
 async function loadAiJobs() {
   const request = ++aiRequest;
@@ -1162,6 +1254,10 @@ const aiSampleColumns = computed<DataTableColumns<AISample>>(() => [
   { title: "群组", key: "chat_id", width: 150 },
   { title: "用户", key: "user_id", width: 110 },
   { title: "来源", key: "source", width: 96, render: row => aiSampleSourceNames[row.source] || row.source },
+  { title: "可信度", key: "confidence", width: 96, render: row => {
+    const sources = row.payload.enforcement?.map(event => event.confidence) || [];
+    return sources.includes("high") ? "高" : sources.includes("medium") ? "中" : sources.length ? "仅参考" : "—";
+  } },
   {
     title: "标签", key: "label", width: 86,
     render: row => h("span", { class: `gpill ${row.label === "positive" ? "error" : row.label === "negative" ? "success" : "neutral"}` }, [h("span", { class: "gpdot" }), aiSampleLabelNames[row.label] || row.label]),
@@ -1181,6 +1277,11 @@ const aiSampleColumns = computed<DataTableColumns<AISample>>(() => [
   { title: "证据摘要", key: "text", minWidth: 220, ellipsis: { tooltip: true }, render: row => row.payload?.message?.text || row.payload?.nickname || "—" },
   { title: "错误", key: "error", width: 130, ellipsis: { tooltip: true } },
   { title: "时间（UTC）", key: "created_at", width: 170 },
+  { title: "样本审核", key: "review", width: 175, render: row => row.status === "invalid" ? "证据已删除" : [
+    h(NButton, { quaternary: true, size: "small", disabled: row.label === "positive", onClick: () => manageAISample(row, "confirm") }, () => "确认"),
+    h(NButton, { quaternary: true, size: "small", disabled: row.label === "negative", onClick: () => manageAISample(row, "correct") }, () => "纠错"),
+    h(NButton, { quaternary: true, size: "small", type: "error", onClick: () => manageAISample(row, "delete") }, () => "删除"),
+  ] },
 ]);
 const aiJobColumns = computed<DataTableColumns<AILearningJob>>(() => [
   { title: "群组", key: "chat_id", width: 150 },

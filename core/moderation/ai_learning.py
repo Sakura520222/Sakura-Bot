@@ -413,14 +413,268 @@ class AILearning:
         except Exception:
             logger.warning("Guard AI 学习样本写入失败 case=%s", case.get("id"), exc_info=True)
 
+    async def record_enforcement(self, store, case, *, historical=False):
+        if not self.enabled(case["chat_id"]):
+            return False
+        payload = case["payload"]
+        evidence = payload.get("evidence") or {}
+        if case["status"] == "blacklisted" and not payload.get("guest_source_case"):
+            source, confidence = "admin_blacklist", "high"
+        elif (
+            case["status"] == "pending"
+            and case["action"] == "ban"
+            and not any(
+                payload.get(key)
+                for key in (
+                    "verification_failure",
+                    "verification_admin",
+                    "ai_report_review",
+                    "guest_source_case",
+                )
+            )
+            and not evidence.get("ai_rule")
+            and evidence.get("target") != "global_blacklist"
+        ):
+            source, confidence = "rule_auto_ban", "medium"
+        else:
+            return False
+        if not self.source_allowed(source):
+            return False
+        chat_id, user_id, case_id = case["chat_id"], case["user_id"], case["id"]
+        message_id = payload.get("message_id")
+        key = (
+            sample_key(chat_id, message_id)
+            if message_id
+            else hashlib.sha256(f"ai-case:{case_id}".encode()).hexdigest()
+        )
+        message = payload.get("reported_message") or payload.get("learning_message") or {}
+        if not message and message_id:
+            message = {"text": evidence.get("original") or ""}
+        has_evidence = bool(
+            message.get("text")
+            or message.get("links")
+            or message.get("buttons")
+            or message.get("has_media")
+            or evidence.get("target") in {"nickname", "username"}
+            and evidence.get("original")
+        )
+        actor = case.get("reviewer_actor") or (
+            "system:manual_rule" if source == "rule_auto_ban" else None
+        )
+        positive = bool(
+            has_evidence
+            and (source == "rule_auto_ban" or case.get("reviewer_id") or case.get("reviewer_actor"))
+        )
+        entry = {
+            "source": source,
+            "case_id": case_id,
+            "status": case["status"],
+            "rule_id": evidence.get("rule_id"),
+            "actor": actor,
+            "confidence": confidence if positive else "reference",
+            "at": (
+                case.get("reviewed_at") or case.get("updated_at") or utc_now_naive()
+            ).isoformat(),
+            "evidence_complete": has_evidence,
+            "historical": historical,
+            "version": 1,
+        }
+        async with atomic(store):
+            row = await self.samples.by_key(store, key)
+            if row and (row["user_id"] != user_id or row["status"] == "invalid"):
+                return False
+            if row is None:
+                row, _ = await self.samples.create(
+                    store,
+                    {
+                        "id": uuid.uuid4().hex,
+                        "idempotency_key": key,
+                        "case_id": case_id,
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "message_id": message_id,
+                        "source": source,
+                        "label": "positive" if positive else "pending",
+                        "status": "new",
+                        "payload": {
+                            "nickname": payload.get("name", ""),
+                            "usernames": [payload["username"]] if payload.get("username") else [],
+                            "user_id": user_id,
+                            "message": message,
+                            "profile": payload.get("learning_profile"),
+                        },
+                    },
+                )
+            sample_payload = row["payload"]
+            events = sample_payload.setdefault("enforcement", [])
+            if any(item["case_id"] == case_id and item["source"] == source for item in events):
+                return row["label"] == "positive"
+            events.append(entry)
+            if positive and source == "admin_blacklist" and case.get("reviewer_id"):
+                reporters = sample_payload.setdefault("reporters", [])
+                if not any(item.get("user_id") == case["reviewer_id"] for item in reporters):
+                    reporters.append(
+                        {"user_id": case["reviewer_id"], "at": entry["at"], "note": ""}
+                    )
+            if positive and row["label"] != "negative":
+                source = row["source"] if row["source"] == "admin_blacklist" else source
+                await self.samples.save(
+                    store,
+                    row,
+                    label="positive",
+                    source=source,
+                    status="queued" if row["status"] == "new" else None,
+                )
+                await self.jobs.enqueue(store, row)
+                await self.refresh_rules_for_sample(store, row["id"])
+                self.wake_event.set()
+            else:
+                await self.samples.save(store, row)
+            await self.feedback.record(
+                store,
+                rule_id=None,
+                sample_id=row["id"],
+                case_id=case_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                kind=entry["source"],
+                polarity="positive" if positive and row["label"] != "negative" else "neutral",
+                actor=actor or "system:historical",
+                payload=entry,
+            )
+        return positive and row["label"] != "negative"
+
+    async def sync_enforcement(self, store, case):
+        if not case["payload"].get("learning_enforcement_pending"):
+            return
+        try:
+            await self.record_enforcement(store, case)
+            latest = await store.case(case["id"])
+            payload = {**latest["payload"], "learning_enforcement_pending": False}
+            await store.update_case(
+                case["id"], latest["status"], error=latest.get("error"), payload=payload
+            )
+        except Exception as error:
+            logger.warning(
+                "Guard 学习样本待重试 case=%s error=%s", case["id"], type(error).__name__
+            )
+
+    async def backfill_enforcement(self, chat_id, cursor):
+        since = utc_now_naive() - timedelta(days=self.settings().sample_retention_days)
+        cases = await self.service.repository.enforcement_history(chat_id, cursor, since)
+        confirmed = 0
+        failed = []
+        for candidate in cases[:50]:
+            try:
+                async with self.service.repository.lock(candidate["user_id"]) as store:
+                    case = await store.case(candidate["id"])
+                    if (
+                        not case
+                        or case["chat_id"] != chat_id
+                        or await store.whitelisted(chat_id, case["user_id"])
+                    ):
+                        continue
+                    if case["status"] == "blacklisted":
+                        blacklist = await store.blacklist(case["user_id"])
+                        if not blacklist or blacklist["case_id"] != case["id"]:
+                            continue
+                    if await self.record_enforcement(store, case, historical=True):
+                        confirmed += 1
+            except Exception as error:
+                logger.warning(
+                    "Guard 历史学习样本补录失败 case=%s error=%s",
+                    candidate["id"],
+                    type(error).__name__,
+                )
+                failed.append(candidate["id"])
+        return {
+            "scanned": min(len(cases), 50),
+            "confirmed": confirmed,
+            "failed": failed,
+            "next_cursor": cases[49]["id"] if len(cases) > 50 else None,
+        }
+
+    async def review_sample(self, sample_id, action, actor):
+        async with self.service.repository.pool.acquire() as connection:
+            initial = await self.samples.get(GuardStore(connection), sample_id)
+        if initial is None:
+            return False
+        async with self.service.repository.lock(initial["user_id"]) as store, atomic(store):
+            sample = await self.samples.get(store, sample_id)
+            if not sample or sample["status"] == "invalid":
+                return False
+            label = "positive" if action == "confirm" else "negative"
+            evidence = sample["payload"].get("message") or {}
+            if action == "confirm" and not (
+                any(evidence.get(key) for key in ("text", "links", "buttons", "has_media"))
+                or any(
+                    item.get("evidence_complete")
+                    for item in sample["payload"].get("enforcement", [])
+                )
+            ):
+                raise GuardError("guard.ai_learning_sample_evidence_required")
+            if action != "delete" and sample["label"] == label:
+                return True
+            await self.samples.save(
+                store,
+                sample,
+                label=label,
+                status="invalid" if action == "delete" else None,
+                payload={} if action == "delete" else None,
+            )
+            if label == "positive" and self.enabled(sample["chat_id"]):
+                job = await self.jobs.get(store, sample_id)
+                if job and await self.jobs.requeue(store, sample_id, after_sample_review=True):
+                    await self.samples.save(store, {**sample, "label": label}, status="queued")
+                elif not job:
+                    await self.jobs.enqueue(store, sample)
+                self.wake_event.set()
+            await self.feedback.record(
+                store,
+                rule_id=None,
+                sample_id=sample_id,
+                case_id=sample.get("case_id"),
+                chat_id=sample["chat_id"],
+                user_id=sample["user_id"],
+                kind=f"sample_{action}",
+                polarity=label,
+                actor=str(actor),
+                payload={},
+            )
+            await self.refresh_rules_for_sample(store, sample_id)
+        return True
+
     async def record_review_outcome(self, store, case, result, action=None):
         """将管理员最终成功操作结果写入样本反馈；失败/超时不算确认违规。"""
-        if not self.settings().enabled or not self.source_allowed("review_outcome"):
+        if not self.settings().enabled:
             return
         try:
             if action is None:
                 history = (result["payload"].get("review_history") or [-1, {}])[-1]
                 action = history.get("action")
+            if action == "blacklist" and await self.record_enforcement(store, result):
+                return
+            if action == "allow" and case["action"] != "report":
+                await self.record_whitelist(
+                    store, case["chat_id"], case["user_id"], result.get("reviewer_actor")
+                )
+                return
+            if action == "unban" and case["action"] != "report":
+                key = (
+                    sample_key(case["chat_id"], case["payload"]["message_id"])
+                    if case["payload"].get("message_id")
+                    else None
+                )
+                sample = (
+                    await self.samples.by_key(store, key)
+                    if key
+                    else await self.samples.by_case(store, case["id"])
+                )
+                if sample and sample["label"] == "positive":
+                    await self.samples.save(store, sample, label="negative")
+                    await self.refresh_rules_for_sample(store, sample["id"])
+            if not self.source_allowed("review_outcome") and action not in {"allow", "unban"}:
+                return
             if case["action"] == "report":
                 # 用户举报案件：驳回=负样本；确认封禁/拉黑/踢出=正样本；仅删除=弱反馈。
                 polarity = {
@@ -446,6 +700,10 @@ class AILearning:
                             store, sample_key(case["chat_id"], message_id)
                         )
                 if sample is None:
+                    if action == "allow":
+                        await self.record_whitelist(store, case["chat_id"], case["user_id"], actor)
+                    return
+                if sample["status"] == "invalid":
                     return
                 await self.samples.save(store, sample, label=polarity)
                 await self.feedback.record(
@@ -461,7 +719,9 @@ class AILearning:
                     payload={"status": result["status"]},
                 )
                 await self.refresh_rules_for_sample(store, sample["id"])
-                if polarity == "negative":
+                if action == "allow":
+                    await self.record_whitelist(store, case["chat_id"], case["user_id"], actor)
+                elif polarity == "negative":
                     await self.correct_rules_for_user(store, case, actor, kind="review_correction")
             elif polarity == "negative":
                 # 自动处罚被人工纠正：命中该用户的 AI 规则记误判并复核。
@@ -499,7 +759,7 @@ class AILearning:
         if not self.settings().enabled:
             return
         try:
-            samples = await self.samples.for_user_chat(store, chat_id, user_id, limit=20)
+            samples = await self.samples.enforcement_samples(store, chat_id, user_id)
             for sample in samples:
                 if sample["label"] == "positive":
                     await self.samples.save(store, sample, label="negative")
@@ -534,14 +794,9 @@ class AILearning:
             await self._apply_feedback_policy(store, rule)
 
     async def correct_rules_for_user(self, store, case, actor, *, kind="hit_correction"):
-        """对最近命中该用户的 AI 规则记录误判，达到阈值后自动暂停。"""
-        hits = await self.rules.hits_for(store, case["chat_id"], case["user_id"], limit=20)
-        corrected = set()
-        for hit in hits:
-            if hit["rule_id"] in corrected:
-                continue
-            corrected.add(hit["rule_id"])
-            rule = await self.rules.get(store, hit["rule_id"])
+        """对命中该用户的规则记录纠错，达到阈值后自动暂停。"""
+        for rule_id in await self.rules.hit_rule_ids(store, case["chat_id"], case["user_id"]):
+            rule = await self.rules.get(store, rule_id)
             if not rule or rule["status"] not in {"active", "candidate"}:
                 continue
             await self.rules.add_correction(store, rule)
@@ -754,8 +1009,8 @@ class AILearning:
             if not job:
                 return
             sample = await self.samples.get(store, candidate["sample_id"])
-            if not sample or sample["label"] == "negative":
-                if sample:
+            if not sample or sample["label"] == "negative" or sample["status"] == "invalid":
+                if sample and sample["status"] != "invalid":
                     await self.samples.save(store, sample, status="skipped")
                 await self.jobs.save(store, job, "skipped", job["payload"], error="NegativeSample")
                 return
@@ -786,6 +1041,12 @@ class AILearning:
         async with service.repository.lock(candidate["user_id"]) as store:
             current = await self.jobs.get(store, candidate["sample_id"])
             if not current or current["token"] != job["token"] or current["status"] != "running":
+                return
+            sample = await self.samples.get(store, candidate["sample_id"])
+            if not sample or sample["label"] == "negative" or sample["status"] == "invalid":
+                await self.jobs.save(
+                    store, current, "skipped", current["payload"], error="NegativeSample"
+                )
                 return
             if failure:
                 if job["attempts"] >= MAX_JOB_ATTEMPTS:

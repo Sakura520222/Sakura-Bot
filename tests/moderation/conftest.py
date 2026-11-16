@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon import utils
+from telethon.tl.functions.bots import SetJoinChatResultsRequest
 from telethon.tl.functions.channels import EditBannedRequest
 from telethon.tl.functions.messages import (
     DeleteChatUserRequest,
@@ -334,6 +335,7 @@ class FakeTelegram:
             is_admin=user_id in self.admins,
             is_creator=False,
             participant=SimpleNamespace(
+                user_id=user_id,
                 kicked_by=self.ban_actors.get((chat_id, user_id)),
                 banned_rights=rights_object(self.member_rights[(chat_id, user_id)]),
                 admin_rights=SimpleNamespace(
@@ -382,14 +384,24 @@ class FakeTelegram:
             self.calls.append(("restrict", request.channel, request.participant))
             if "restrict" in self.fail:
                 raise self.fail["restrict"]
-            self.member_rights[(request.channel, request.participant)] = rights_dict(
-                request.banned_rights
+            key = (request.channel, request.participant)
+            rights = rights_dict(request.banned_rights)
+            self.member_rights[key] = rights
+            self.ban_actors[key] = (
+                999
+                if any(value for name, value in rights.items() if name != "until_date")
+                else None
             )
             return True
         if isinstance(request, HideChatJoinRequestRequest):
             self.calls.append(
                 ("approve" if request.approved else "reject", request.peer, request.user_id)
             )
+            if "request" in self.fail:
+                raise self.fail["request"]
+            return True
+        if isinstance(request, SetJoinChatResultsRequest):
+            self.calls.append(("join_query", request.query_id, type(request.result).__name__))
             if "request" in self.fail:
                 raise self.fail["request"]
             return True

@@ -171,7 +171,7 @@ class AIReportReview:
         existing = await store.active_ban(case["chat_id"], user.id)
         if existing and existing["id"] != case["id"]:
             raise ValueError("ExistingBanCase")
-        if await self.service.protected(case["chat_id"], user, allow_nonmember=True):
+        if await self.service.punishment_paused(case["chat_id"], user, allow_nonmember=True):
             raise ValueError("ProtectedUser")
         from telethon.errors import UserNotParticipantError
 

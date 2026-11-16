@@ -1,5 +1,6 @@
 # Telegram API 客户端
-telethon>=1.34.0
+# Layer 233 exposes the real-time join request query used by Telegram guard bots.
+telethon @ git+https://codeberg.org/Lonami/Telethon.git@d8a33dad2f269cfd3f34a33e248e91ca59b4cdfb
 
 # Sakura Guard 规则归一化与有超时保护的正则
 opencc-python-reimplemented>=0.1.7
@@ -73,3 +74,4 @@ pre-commit>=3.0.0
 
 # Validate downloaded PNG/JPEG payloads before vision processing
 Pillow>=11.3.0
+zxing-cpp>=3,<4

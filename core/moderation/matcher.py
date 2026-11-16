@@ -95,7 +95,9 @@ class Matcher:
         self.regex_remaining = 0.025
         self._budget_logged = False
 
-    def _match(self, target: str, original: str, words: list[str], action: str):
+    def _match(
+        self, target: str, original: str, words: list[str], action: str, *, keywords_only=False
+    ):
         original = original[:16384]
         normalized = normalize(original)
         for index, word in enumerate(words):
@@ -111,6 +113,8 @@ class Matcher:
                     normalized_evidence,
                     action,
                 )
+        if keywords_only:
+            return None
         for rule in self.config.rules:
             if rule.target != target:
                 continue
@@ -150,8 +154,8 @@ class Matcher:
                 )
         return None
 
-    def nickname(self, user):
-        if not self.config.nickname_filter:
+    def nickname(self, user, *, global_only=False):
+        if not global_only and not self.config.nickname_filter:
             return None
         name = " ".join(
             value
@@ -161,11 +165,19 @@ class Matcher:
         username = getattr(user, "username", None) or ""
         for target, value in (("nickname", name), ("username", username)):
             matched = self._match(
-                target, value, self.nickname_keywords, self.config.nickname_action
+                target,
+                value,
+                self.nickname_keywords,
+                self.config.nickname_action,
+                keywords_only=global_only,
             )
             if matched:
                 return matched
-            if self.config.ban_any_traditional and _converter.convert(value) != value:
+            if (
+                not global_only
+                and self.config.ban_any_traditional
+                and _converter.convert(value) != value
+            ):
                 return Match(
                     target,
                     "traditional",
@@ -177,7 +189,11 @@ class Matcher:
         for alias in getattr(user, "usernames", None) or []:
             if getattr(alias, "active", False):
                 matched = self._match(
-                    "username", alias.username, self.nickname_keywords, self.config.nickname_action
+                    "username",
+                    alias.username,
+                    self.nickname_keywords,
+                    self.config.nickname_action,
+                    keywords_only=global_only,
                 )
                 if matched:
                     return matched

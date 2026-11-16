@@ -6,6 +6,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import uuid
@@ -16,13 +17,16 @@ from telethon.errors import MessageIdInvalidError, MessageNotModifiedError, User
 
 from core.i18n.i18n import t
 from core.infrastructure.database.mysql import utc_now_naive
+from core.infrastructure.telegram_bot_api import bot_id_from_token
 
 from .config import GuardGroup
+from .deleted_cleanup import participant_user_id
 from .matcher import Match
 from .moderator import GuardError
 from .notification import RETIRED_NOTICES, stable_random_id
+from .observation import observation_state, profile_snapshot
 from .repository import ACTIVE_VERIFICATIONS
-from .telegram import call, same_rights, verification_rights
+from .telegram import call, rights_dict, same_rights, verification_rights
 
 logger = logging.getLogger(__name__)
 CHALLENGE_VERSION = 5
@@ -34,6 +38,42 @@ ADMIN_RESULTS = {
     "skip": "admin_skipped",
 }
 ADMIN_ACTIONABLE_STATES = {"waiting", "passing", "cancelling", "held"}
+
+
+def verified_assistant(session):
+    state = session["payload"].get("assistant", {})
+    if not isinstance(state, dict):
+        return False
+    completed = state.get("completed_at")
+    started = state.get("started_at")
+    receipts = state.get("receipts")
+    steps = state.get("steps")
+    if (
+        state.get("version") != 1
+        or state.get("state") != "completed"
+        or type(steps) is not int
+        or not 2 <= steps <= 5
+        or not isinstance(receipts, list)
+        or len(receipts) != steps
+        or state.get("actor_id") != session["user_id"]
+        or state.get("session_id") != session["id"]
+        or state.get("chat_id") != session["chat_id"]
+        or not state.get("bot_id")
+        or type(completed) is not int
+        or type(started) is not int
+        or not 0
+        < started
+        <= completed
+        <= min(session["expires_at"], utc_now_naive()).replace(tzinfo=UTC).timestamp()
+    ):
+        return False
+    return (
+        all(
+            isinstance(receipt, str) and re.fullmatch(r"[0-9a-f]{24}", receipt)
+            for receipt in receipts
+        )
+        and len(set(receipts)) == steps
+    )
 
 
 def answer_context(session):
@@ -71,6 +111,8 @@ def answer_value(session, token):
 def verified_answer(session):
     """恢复任务必须重验答题凭据，不能把一个 passing 字符串当作放行授权。"""
     payload = session["payload"]
+    if "assistant" in payload:
+        return verified_assistant(session)
     proof = payload.get("answer_receipt")
     if not isinstance(proof, dict):
         return False
@@ -138,6 +180,7 @@ def user_identity(user):
 def challenge_buttons(session, config=None):
     config = config or GuardGroup()
     prefix = f"sg:v:{session['id']}:"
+    assistant = session["payload"].get("assistant")
     rows = (
         []
         if session["status"] == "held"
@@ -148,6 +191,17 @@ def challenge_buttons(session, config=None):
             ],
         ]
     )
+    if assistant is not None:
+        rows = []
+        if session["status"] != "held" and assistant.get("bot_id") and assistant.get("secret"):
+            rows = [
+                [
+                    Button.url(
+                        t("guard.verify_assistant_button"),
+                        f"https://t.me/{assistant['username']}?start=verify_{session['id']}{assistant['secret']}",
+                    )
+                ]
+            ]
     management = [
         Button.inline(t(f"guard.verify_{action}_button"), (prefix + code.decode()).encode())
         for code, action in ADMIN_ACTIONS.items()
@@ -166,8 +220,8 @@ def challenge_buttons(session, config=None):
     return rows
 
 
-def challenge_policy(config):
-    return {
+def challenge_policy(config, session):
+    policy = {
         key: getattr(config, key)
         for key in (
             "verification_max_attempts",
@@ -177,18 +231,29 @@ def challenge_policy(config):
             "kick_button_enabled",
         )
     }
+    if assistant := session["payload"].get("assistant"):
+        policy["assistant_bot_id"] = assistant.get("bot_id")
+        policy["assistant_username"] = assistant.get("username")
+        policy["verification_max_attempts"] = assistant["max_attempts"]
+    return policy
 
 
 def challenge_text(session, identity, config=None):
     config = config or GuardGroup()
     return t(
-        "guard.challenge_held" if session["status"] == "held" else "guard.challenge",
+        "guard.challenge_held"
+        if session["status"] == "held"
+        else "guard.challenge_assistant"
+        if session["payload"].get("assistant", {}).get("bot_id")
+        else "guard.challenge_assistant_unavailable"
+        if "assistant" in session["payload"]
+        else "guard.challenge",
         name=identity["name"],
         username="@" + identity["username"] if identity.get("username") else t("guard.no_username"),
         user_id=session["user_id"],
         question=session["payload"]["question"],
         seconds=max(0, int((session["expires_at"] - utc_now_naive()).total_seconds())),
-        attempts=config.verification_max_attempts,
+        attempts=challenge_policy(config, session)["verification_max_attempts"],
         wrong_action=t(f"guard.verify_action_{config.verification_wrong_action}"),
         timeout_action=t(f"guard.verify_action_{config.verification_timeout_action}"),
         admin_hint="\n" + t("guard.admin_verification_hint")
@@ -202,22 +267,58 @@ class Verification:
         self.service = service
         self.actions = service.actions
 
-    async def begin(self, store, chat_id, user, token):
+    def configured_assistant_id(self):
+        if os.getenv("QA_BOT_ENABLED", "True").lower() != "true":
+            return None
+        token = os.getenv("QA_BOT_TOKEN", "").strip()
+        if ":" not in token:
+            return None
+        try:
+            bot_id = bot_id_from_token(token)
+        except ValueError:
+            return None
+        return bot_id if 0 < bot_id < 2**63 and bot_id != self.service.bot_id else None
+
+    async def new_join_event(self, store, chat_id, user_id, token):
+        session = await store.verification(chat_id, user_id)
+        if not session:
+            return True
+        payload = session["payload"]
+        previous = payload.get("join_token", "")
+        if token == previous:
+            return False
+        incoming = token.split(":", 3)
+        earlier = previous.split(":", 3)
+        if incoming[0] != "membership":
+            return True
+        timestamp = int(incoming[1])
+        if earlier[0] == "membership" and timestamp < int(earlier[1]):
+            return False
+        if left := payload.get("left_at"):
+            if timestamp < left:
+                return False
+            if (
+                timestamp == left
+                and incoming[2:3] == ["raw"]
+                and int(incoming[3]) <= payload.get("left_qts", 0)
+            ):
+                return False
+        elif (
+            earlier[0] == "membership"
+            and timestamp == int(earlier[1])
+            and session["status"] != "left"
+        ):
+            # ChatAction 与原始成员更新可能描述同一次加入。
+            return False
+        return True
+
+    async def begin(self, store, chat_id, user, token, *, defer=False):
         existing = await store.verification(chat_id, user.id)
         if existing and existing["status"] in ACTIVE_VERIFICATIONS:
             # 重放入群事件、批准事件与 ChatAction 竞争都复用当前挑战，不延长超时。
             return existing
         if existing and existing["payload"].get("join_token") == token:
             return existing
-        original = await self.actions.rights(chat_id, user.id)
-        if (
-            existing
-            and existing["status"] == "left"
-            and same_rights(original, verification_rights(existing["payload"]["original_rights"]))
-        ):
-            # 成员退群后限制可能仍保留；重复加入时不能把验证禁言当成原有权限。
-            original = existing["payload"]["original_rights"]
-        restricted = verification_rights(original)
         first, second = secrets.randbelow(20) + 1, secrets.randbelow(20) + 1
         answer = first + second
         options = {answer}
@@ -230,7 +331,7 @@ class Verification:
             "id": uuid.uuid4().hex,
             "chat_id": chat_id,
             "user_id": user.id,
-            "status": "preparing",
+            "status": "checking",
             "expires_at": utc_now_naive() + timedelta(seconds=config.verification_timeout),
             "message_id": None,
             "attempts": 0,
@@ -240,20 +341,130 @@ class Verification:
                 "question": f"{first} + {second}",
                 "options": options,
                 "correct": options.index(answer),
-                "original_rights": original,
-                "restricted_rights": restricted,
-                "requested_rights": restricted.copy(),
+                "recheck_join_rules": defer,
                 "generation": 0,
                 "lifecycle": True,
             },
         }
+        if config.verification_mode == "assistant":
+            session["payload"]["assistant"] = {
+                "version": 1,
+                "state": "pending",
+                "secret": secrets.token_hex(12),
+                "steps": config.verification_steps,
+                "question_types": config.verification_question_types,
+                "max_attempts": config.verification_max_attempts,
+            }
+        if existing and existing["status"] == "left" and existing["payload"].get("original_rights"):
+            session["payload"]["previous_rights"] = existing["payload"]["original_rights"]
+        if existing and existing["payload"].get("profile"):
+            old_profile = existing["payload"]["profile"]
+            session["payload"]["first_observed_at"] = old_profile.get(
+                "first_observed_at"
+            ) or old_profile.get("observed_at")
         await store.save_verification(session)
-        await self.tick(store, session)
+        if not defer:
+            await self.tick(store, session)
         return session
+
+    async def prepare(self, store, session, user, member, config):
+        chat_id = session["chat_id"]
+        payload = session["payload"]
+        if (
+            not config.enabled
+            or (not config.verify_join and not payload.get("recheck_join_rules"))
+            or member.is_admin
+            or member.is_creator
+            or user.id == self.service.bot_id
+            or (getattr(user, "bot", False) and user.id in config.trusted_bot_ids)
+            or (
+                payload.get("recheck_join_rules")
+                and not await self.service.join_requires_verification(
+                    store, config, chat_id, user, payload["join_token"]
+                )
+            )
+        ):
+            latest = await store.verification_by_id(session["id"])
+            session["status"] = (
+                "blocked" if latest and latest["status"] == "blocked" else "cancelled"
+            )
+            session["error"] = None
+            await store.save_verification(session)
+            return False
+        if payload.pop("recheck_join_rules", False):
+            member = await self.actions.permissions(chat_id, user.id)
+            if member.is_admin or member.is_creator:
+                session["status"] = "cancelled"
+                await store.save_verification(session)
+                return False
+        original = rights_dict(getattr(member.participant, "banned_rights", None))
+        if original.get("view_messages"):
+            session["status"] = "blocked"
+            await store.save_verification(session)
+            return False
+        previous = payload.pop("previous_rights", None)
+        if (
+            previous
+            and same_rights(original, verification_rights(previous))
+            and (
+                "assistant" not in payload
+                or getattr(member.participant, "kicked_by", None) == self.service.bot_id
+            )
+        ):
+            original = previous
+        restricted = verification_rights(original)
+        if assistant := payload.get("assistant"):
+            profile = profile_snapshot(
+                user, config, await store.previous_verification_enforcement(user.id)
+            )
+            profile["first_observed_at"] = (
+                payload.pop("first_observed_at", None) or profile["observed_at"]
+            )
+            if (
+                profile["name_cluster"]
+                and await store.similar_verification_names(
+                    chat_id, user.id, profile["name_cluster"]
+                )
+                >= 2
+            ):
+                profile["signals"].append("similar_names")
+                profile["score"] += config.verification_risk_weights.get("similar_names", 0)
+            payload["profile"] = profile
+            if profile["score"] >= config.verification_risk_threshold:
+                if config.verification_risk_action == "hold":
+                    assistant["state"] = "held"
+                else:
+                    assistant["steps"] = min(
+                        5, assistant["steps"] + config.verification_risk_extra_steps
+                    )
+        payload.update(
+            original_rights=original,
+            restricted_rights=restricted,
+            requested_rights=restricted.copy(),
+        )
+        session["status"] = "preparing"
+        session["expires_at"] = utc_now_naive() + timedelta(seconds=config.verification_timeout)
+        await store.save_verification(session)
+        return True
+
+    async def bind_assistant(self, store, session):
+        state = session["payload"].get("assistant")
+        bot_id = self.configured_assistant_id()
+        if not state or not bot_id or state.get("bot_id") not in {None, bot_id}:
+            return False
+        assistant = await store.verification_assistant(bot_id)
+        if not assistant or assistant["bot_id"] != bot_id:
+            return False
+        if state.get("bot_id") == bot_id and state.get("username") == assistant["username"]:
+            return False
+        state.update(bot_id=assistant["bot_id"], username=assistant["username"])
+        return True
 
     async def send_challenge(self, store, session, user):
         payload = session["payload"]
         held = session["status"] == "held"
+        if not held:
+            await self.bind_assistant(store, session)
         prepare_answer_tokens(session)
         await store.save_verification(session)
         identity = user_identity(user)
@@ -267,7 +478,7 @@ class Verification:
         payload.update(
             identity,
             challenge_version=CHALLENGE_VERSION,
-            challenge_policy=challenge_policy(config),
+            challenge_policy=challenge_policy(config, session),
             held_message=held,
         )
         session["status"] = "held" if held else "waiting"
@@ -333,6 +544,56 @@ class Verification:
             # 人工禁言/封禁不可被验证按钮覆盖。管理员修复权限后本意图可继续恢复。
             raise GuardError("guard.permissions_changed")
         await self.actions.set_rights(session["chat_id"], session["user_id"], original)
+
+    async def restore_assistant(self, store, session):
+        payload = session["payload"]
+        if (
+            not verified_assistant(session)
+            or payload["assistant"].get("bot_id") != self.configured_assistant_id()
+            or session["expires_at"] <= utc_now_naive()
+        ):
+            raise GuardError("guard.verification_release_required")
+        member = await self.actions.permissions(session["chat_id"], session["user_id"])
+        if (
+            member.is_admin
+            or member.is_creator
+            or participant_user_id(member.participant) != session["user_id"]
+        ):
+            raise GuardError("guard.permissions_changed")
+        current = rights_dict(getattr(member.participant, "banned_rights", None))
+        original, expected = payload["original_rights"], payload["requested_rights"]
+        if current.get("view_messages"):
+            raise GuardError("guard.permissions_changed")
+        if payload.get("release_intent") and same_rights(current, original):
+            return
+        if not payload.get("restriction_confirmed") or not same_rights(current, expected):
+            raise GuardError("guard.permissions_changed")
+        if (
+            not same_rights(current, original)
+            and getattr(member.participant, "kicked_by", None) != self.service.bot_id
+        ):
+            raise GuardError("guard.permissions_changed")
+        payload["release_intent"] = True
+        if "observation" not in payload:
+            payload["observation"] = observation_state(self.service.group(session["chat_id"]))
+        await store.save_verification(session)
+        if not same_rights(current, original):
+            member = await self.actions.permissions(session["chat_id"], session["user_id"])
+            current = rights_dict(getattr(member.participant, "banned_rights", None))
+            if (
+                member.is_admin
+                or member.is_creator
+                or participant_user_id(member.participant) != session["user_id"]
+                or not same_rights(current, expected)
+                or getattr(member.participant, "kicked_by", None) != self.service.bot_id
+            ):
+                raise GuardError("guard.permissions_changed")
+            if (
+                session["expires_at"] <= utc_now_naive()
+                or not self.service.group(session["chat_id"]).enabled
+            ):
+                raise GuardError("guard.verification_expired")
+            await self.actions.set_rights(session["chat_id"], session["user_id"], original)
 
     async def finish_message(self, store, session):
         config = self.service.group(session["chat_id"])
@@ -448,12 +709,23 @@ class Verification:
     async def resume_timeout(self, store, session):
         config = self.service.group(session["chat_id"])
         if "failure_intent" not in session["payload"]:
-            wrong = session["attempts"] >= config.verification_max_attempts
+            assistant = session["payload"].get("assistant")
+            wrong = session["attempts"] >= (
+                assistant["max_attempts"] if assistant else config.verification_max_attempts
+            )
+            action = (
+                config.verification_wrong_action if wrong else config.verification_timeout_action
+            )
+            if assistant and not wrong:
+                bot_id = self.configured_assistant_id()
+                if assistant.get("bot_id") not in {
+                    None,
+                    bot_id,
+                } or not await store.verification_assistant(bot_id):
+                    action = "allow"
             session["payload"]["failure_intent"] = {
                 "case_id": uuid.uuid4().hex,
-                "action": config.verification_wrong_action
-                if wrong
-                else config.verification_timeout_action,
+                "action": action,
                 "reason": "wrong" if wrong else "timeout",
             }
             await store.save_verification(session)
@@ -502,7 +774,8 @@ class Verification:
             session["error"] = case.get("error") or "guard.operation_failed"
         else:
             session["status"] = case["payload"]["verification_result"]
-            session["error"] = None
+            if session["status"] != "held" or session.get("error") != "guard.permissions_changed":
+                session["error"] = None
             session["payload"]["cleanup_pending"] = True
         await store.save_verification(session)
         await self.finish_message(store, session)
@@ -526,6 +799,11 @@ class Verification:
             return
         try:
             action = intent["action"]
+            assistant = session["payload"].get("assistant")
+            if action == "kick" and assistant and case["payload"].get("kick_banned"):
+                await self.service.reviews.kick_member(store, case, manage_verification=False)
+                await store.update_case(case["id"], "done")
+                return
             if action == "kick" and case["payload"].get("kick_banned"):
                 await self.actions.unban(case["chat_id"], case["user_id"])
                 await store.update_case(case["id"], "done")
@@ -535,7 +813,7 @@ class Verification:
             if (
                 not config.enabled
                 or not config.verify_join
-                or await self.service.protected(case["chat_id"], user, applicant=True)
+                or await self.service.punishment_paused(case["chat_id"], user, applicant=True)
                 or await store.whitelisted(case["chat_id"], user.id)
             ):
                 await store.update_case(
@@ -567,6 +845,8 @@ class Verification:
             if action == "ban":
                 await self.actions.ban(case["chat_id"], case["user_id"])
                 await self.service.ban_history.prepare(store, case)
+            elif action == "kick" and assistant:
+                await self.service.reviews.kick_member(store, case, manage_verification=False)
             elif action == "kick":
                 await self.actions.ban(case["chat_id"], case["user_id"])
                 case["payload"]["kick_banned"] = True
@@ -622,12 +902,70 @@ class Verification:
             user = await call(self.actions.client.get_entity(session["user_id"]))
             if session["status"] != "kicking":
                 try:
-                    await self.actions.permissions(session["chat_id"], session["user_id"])
+                    member = await self.actions.permissions(session["chat_id"], session["user_id"])
                 except UserNotParticipantError:
+                    if session["status"] == "checking" and session["expires_at"] > utc_now_naive():
+                        raise GuardError("guard.permissions_unknown") from None
                     session["status"] = "left"
                     await store.save_verification(session)
                     await self.finish_message(store, session)
                     return
+            if session["status"] == "checking" and not await self.prepare(
+                store, session, user, member, config
+            ):
+                await self.finish_message(store, session)
+                return
+            assistant = session["payload"].get("assistant")
+            if assistant and session["status"] in {"waiting", "passing"}:
+                current = rights_dict(getattr(member.participant, "banned_rights", None))
+                if current.get("view_messages"):
+                    session["status"] = "blocked"
+                    await store.save_verification(session)
+                    await self.finish_message(store, session)
+                    return
+                if participant_user_id(member.participant) != session["user_id"]:
+                    session["status"] = "left"
+                    await store.save_verification(session)
+                    await self.finish_message(store, session)
+                    return
+                expected = session["payload"]["requested_rights"]
+                original = session["payload"]["original_rights"]
+                own_restriction = same_rights(current, expected) and (
+                    same_rights(current, original)
+                    or getattr(member.participant, "kicked_by", None) == self.service.bot_id
+                )
+                released = session["payload"].get("release_intent") and same_rights(
+                    current, original
+                )
+                if session["payload"].get("restriction_confirmed") and not (
+                    own_restriction or released
+                ):
+                    session["status"] = "held"
+                    session["error"] = "guard.permissions_changed"
+                    await store.save_verification(session)
+                    return
+                if (
+                    session["status"] == "passing"
+                    and session["payload"].get("release_intent")
+                    and verified_assistant(session)
+                    and same_rights(current, session["payload"]["original_rights"])
+                    and await store.active_ban(session["chat_id"], session["user_id"]) is None
+                ):
+                    session["status"] = "passed"
+                    session["error"] = None
+                    await store.save_verification(session)
+                    await self.finish_message(store, session)
+                    return
+            if session["status"] == "waiting" and assistant:
+                if not session["payload"].get("restriction_confirmed") and same_rights(
+                    rights_dict(getattr(member.participant, "banned_rights", None)),
+                    session["payload"]["requested_rights"],
+                ):
+                    session["payload"]["restriction_confirmed"] = True
+                    await store.save_verification(session)
+                if verified_assistant(session):
+                    session["status"] = "passing"
+                    await store.save_verification(session)
             if session["status"] == "cancelling" or (
                 session["status"] == "passing" and not verified_answer(session)
             ):
@@ -643,7 +981,8 @@ class Verification:
                 return
             if session["status"] != "held" and (
                 session["expires_at"] <= utc_now_naive()
-                or session["attempts"] >= config.verification_max_attempts
+                or session["attempts"]
+                >= (assistant["max_attempts"] if assistant else config.verification_max_attempts)
             ):
                 # 恢复权限失败也不能无限越过截止时间；超时先于 passing 重试。
                 session["status"] = "kicking"
@@ -652,6 +991,16 @@ class Verification:
                 return
             elif session["status"] == "passing":
                 # 昵称或全局黑名单在验证过程中发生变化时，也不能绕过检测。
+                if assistant and (
+                    not config.enabled
+                    or member.is_admin
+                    or member.is_creator
+                    or config.share_global_blacklist
+                    and await store.blacklist(user.id)
+                ):
+                    session["status"] = "held"
+                    await store.save_verification(session)
+                    return
                 matched = await self.service.match(store, config, session["chat_id"], user)
                 if matched and matched.action in {"ban", "kick"}:
                     await self.service.punish(
@@ -659,7 +1008,10 @@ class Verification:
                     )
                     session["status"] = "blocked"
                 else:
-                    await self.restore(session)
+                    if assistant:
+                        await self.restore_assistant(store, session)
+                    else:
+                        await self.restore(session)
                     if matched:
                         await self.service.punish(
                             store, session["chat_id"], user, matched, f"verify:{session['id']}"
@@ -675,14 +1027,31 @@ class Verification:
                 session["payload"]["requested_rights"] = expected
                 session["payload"]["restricted_rights"] = expected.copy()
                 await store.save_verification(session)
-                await self.actions.set_rights(session["chat_id"], session["user_id"], expected)
+                if assistant:
+                    member = await self.actions.permissions(session["chat_id"], session["user_id"])
+                    now_rights = rights_dict(getattr(member.participant, "banned_rights", None))
+                    if (
+                        member.is_admin
+                        or member.is_creator
+                        or not (
+                            same_rights(now_rights, current) or same_rights(now_rights, expected)
+                        )
+                    ):
+                        raise GuardError("guard.permissions_changed")
+                if not assistant or not same_rights(now_rights, expected):
+                    await self.actions.set_rights(session["chat_id"], session["user_id"], expected)
                 observed = await self.actions.rights(session["chat_id"], session["user_id"])
                 # GetParticipant 可能暂时返回旧权限；它只能用于确认，不能替换已落盘意图。
                 session["payload"]["restriction_confirmed"] = same_rights(observed, expected)
+                if assistant and assistant["state"] == "held":
+                    session["status"] = "held"
                 await store.save_verification(session)
                 await self.send_challenge(store, session, user)
                 return
             elif session["status"] in {"waiting", "held"}:
+                assistant_bound = session["status"] == "waiting" and await self.bind_assistant(
+                    store, session
+                )
                 message = await call(
                     self.actions.client.get_messages(session["chat_id"], ids=session["message_id"])
                 )
@@ -694,8 +1063,10 @@ class Verification:
                     return
                 identity = user_identity(user)
                 if (
-                    session["payload"].get("challenge_version") != CHALLENGE_VERSION
-                    or session["payload"].get("challenge_policy") != challenge_policy(config)
+                    assistant_bound
+                    or session["payload"].get("challenge_version") != CHALLENGE_VERSION
+                    or session["payload"].get("challenge_policy")
+                    != challenge_policy(config, session)
                     or session["payload"].get("held_message", False)
                     != (session["status"] == "held")
                     or session["payload"].get("answer_context") != answer_context(session)
@@ -720,12 +1091,13 @@ class Verification:
                     session["payload"].update(
                         identity,
                         challenge_version=CHALLENGE_VERSION,
-                        challenge_policy=challenge_policy(config),
+                        challenge_policy=challenge_policy(config, session),
                         lifecycle=True,
                         held_message=session["status"] == "held",
                     )
                 await self.record_start(store, session)
-            session["error"] = None
+            if session["status"] != "held" or session.get("error") != "guard.permissions_changed":
+                session["error"] = None
             await store.save_verification(session)
             if session["status"] not in ACTIVE_VERIFICATIONS:
                 await self.finish_message(store, session)
@@ -871,7 +1243,7 @@ class Verification:
                     return
                 user = await call(self.actions.client.get_entity(session["user_id"]))
                 if action != "skip" and (
-                    await self.service.protected(session["chat_id"], user)
+                    await self.service.punishment_paused(session["chat_id"], user)
                     or await store.whitelisted(session["chat_id"], user.id)
                 ):
                     raise GuardError("guard.verification_target_protected")
@@ -1013,7 +1385,7 @@ class Verification:
                     )
                 await store.update_case(case["id"], "done")
             elif action in {"ban", "blacklist"}:
-                if await self.service.protected(
+                if await self.service.punishment_paused(
                     case["chat_id"], user, applicant=True
                 ) or await store.whitelisted(case["chat_id"], user.id):
                     payload = {**case["payload"], "verification_result": "held"}
@@ -1024,6 +1396,9 @@ class Verification:
                 if action == "blacklist":
                     # 封禁确认成功后，黑名单与案件终态复用现有原子事务。
                     await store.finish_review(case, "blacklist")
+                    await self.service.learning.sync_enforcement(
+                        store, await store.case(case["id"])
+                    )
                 else:
                     await store.update_case(case["id"], "pending")
             else:
@@ -1059,6 +1434,8 @@ class Verification:
             if session["status"] != "waiting":
                 await event.answer(verification_state_text(session["status"]), alert=True)
                 return
+            if "assistant" in session["payload"]:
+                raise GuardError("guard.invalid_callback")
             if (
                 session["expires_at"] <= utc_now_naive()
                 or session["attempts"]

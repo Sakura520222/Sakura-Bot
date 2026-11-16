@@ -68,7 +68,7 @@ async def extract(context: dict) -> dict:
     # 推理型模型生成长 JSON 较慢：外层 180s、内层 HTTP 170s，完全错开。
     from core.ai.ai_client import get_async_ai_runtime
 
-    client, model = get_async_ai_runtime()
+    client, model = get_async_ai_runtime(purpose="guard")
     async with asyncio.timeout(180):
         result = await client.with_options(max_retries=0, timeout=170).chat.completions.create(
             model=model,

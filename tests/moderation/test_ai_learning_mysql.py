@@ -75,6 +75,57 @@ async def test_mysql_admin_report_is_idempotent_and_enqueues_once(guard, stores,
     assert len((await stores.jobs.list())["rows"]) == 1
 
 
+async def test_mysql_confirmed_rule_and_blacklist_share_one_enforcement_sample(
+    guard,
+    stores,
+    mysql_repository,
+):
+    from types import SimpleNamespace
+
+    from core.moderation.matcher import Match
+    from core.moderation.observation import message_fingerprint
+
+    guard.config.ai_learning.sources.extend(["rule_auto_ban", "admin_blacklist"])
+    guard.group(CHAT).observation_share_patterns = True
+    message = SimpleNamespace(
+        id=1730, message="查看最新广告请点击 https://example.com/ads", media=None
+    )
+    fingerprint = message_fingerprint(message)
+    match = Match("message", "manual-ads", "link ads", message.message, message.message, "ban")
+    async with mysql_repository.lock(USER) as store:
+        guard.client.fail["ban"] = RuntimeError("synthetic failure")
+        case = await guard.punish(store, CHAT, guard.client.users[USER], match, "ads", message)
+        assert case["status"] == "execution_failed"
+        assert (await stores.samples.list(chat_id=CHAT))["total"] == 0
+        assert not await store.shared_observation_pattern(fingerprint, [CHAT])
+
+        guard.client.fail.clear()
+        await store.update_case(case["id"], "executing")
+        await guard.execute_case(store, await store.case(case["id"]))
+        created = (await stores.samples.list(chat_id=CHAT))["rows"][0]
+        assert created["source"] == "rule_auto_ban" and created["label"] == "positive"
+        assert created["payload"]["enforcement"][0]["confidence"] == "medium"
+        assert await store.shared_observation_pattern(fingerprint, [CHAT])
+        assert not await store.shared_observation_pattern(fingerprint, [CHAT - 1])
+
+    result = await guard.reviews.review(case["id"], "blacklist", ADMIN)
+    assert result["status"] == "blacklisted"
+    samples = await stores.samples.list(chat_id=CHAT)
+    assert samples["total"] == 1 and samples["rows"][0]["id"] == created["id"]
+    events = samples["rows"][0]["payload"]["enforcement"]
+    assert [event["source"] for event in events] == ["rule_auto_ban", "admin_blacklist"]
+    assert events[-1]["confidence"] == "high"
+    assert (await stores.jobs.list())["total"] == 1
+    assert (await stores.backfill_enforcement(CHAT, ""))["confirmed"] == 1
+    assert (await stores.samples.list(chat_id=CHAT))["total"] == 1
+
+    assert await stores.review_sample(created["id"], "correct", ADMIN)
+    assert (await stores.samples.list(chat_id=CHAT))["rows"][0]["label"] == "negative"
+    assert await stores.review_sample(created["id"], "delete", ADMIN)
+    deleted = (await stores.samples.list(chat_id=CHAT))["rows"][0]
+    assert deleted["status"] == "invalid" and deleted["payload"] == {}
+
+
 async def test_mysql_anonymous_reports_share_audited_actor_across_concurrent_events(
     guard, stores, mysql_repository
 ):

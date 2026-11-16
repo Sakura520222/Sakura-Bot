@@ -80,6 +80,38 @@ def test_migration_preserves_credentials_models_and_legacy_routes_without_writin
     assert effective_ai_config(cfg, "poll").api_key == "default-secret"
 
 
+def test_guard_text_and_ocr_routes_can_be_saved_independently(api):
+    client, store = api
+    body = payload(client)
+    body["routing"]["vision"] = {"provider_id": "p", "model_id": "A"}
+    assert client.put("/api/ai/providers", json=body).status_code == 200
+    before = store.read()
+    assert effective_ai_config(before, "guard") == effective_ai_config(before, "summary")
+    assert effective_ai_config(before, "guard_vision") == effective_ai_config(before, "vision")
+
+    body = payload(client)
+    body["providers"]["guard-provider"] = {
+        "name": "Guard provider",
+        "provider": "openai",
+        "base_url": "https://guard.example/v1",
+        "api_key": "guard-secret",
+        "models": {
+            "guard-text": {"name": "Guard text", "supports_vision": False},
+            "guard-ocr": {"name": "Guard OCR", "supports_vision": True},
+        },
+    }
+    body["routing"]["guard"] = {"provider_id": "guard-provider", "model_id": "guard-text"}
+    body["routing"]["guard_vision"] = {"provider_id": "guard-provider", "model_id": "guard-ocr"}
+    response = client.put("/api/ai/providers", json=body)
+    assert response.status_code == 200 and "guard-secret" not in response.text
+    after = ConfigStore(store.path).read()
+    assert effective_ai_config(after, "guard").model == "guard-text"
+    assert effective_ai_config(after, "guard_vision").model == "guard-ocr"
+    assert effective_ai_config(after, "guard_vision").supports_vision
+    assert effective_ai_config(after, "summary") == effective_ai_config(before, "summary")
+    assert effective_ai_config(after, "vision") == effective_ai_config(before, "vision")
+
+
 def test_incremental_models_roundtrip_restart_independent_capabilities_and_revisions(
     api, monkeypatch
 ):

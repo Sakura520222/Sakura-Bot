@@ -2,6 +2,15 @@ import type { GuardGroup, GuardRule, GuardSwitch } from "../api/guard";
 
 export const guardLabels: Record<keyof GuardGroup, string> = {
   enabled: "启用本群 Sakura Guard", verify_join: "普通入群验证",
+  verification_mode: "验证模式", verification_steps: "验证步数",
+  verification_question_types: "验证题型池",
+  verification_risk_threshold: "高风险阈值", verification_risk_action: "高风险验证动作",
+  verification_risk_extra_steps: "高风险额外步数", verification_risk_weights: "风险信号权重",
+  observation_minutes: "观察期时长", observation_messages: "观察消息数", observation_action: "观察期命中动作",
+  observation_image_mode: "观察期图片检测",
+  observation_ai_review: "观察期 AI 语义检测",
+  observation_ai_confidence: "观察期 AI 删除置信度",
+  observation_share_patterns: "跨群重复广告检测",
   kick_button_enabled: "显示“仅踢出”管理按钮",
   nickname_filter: "昵称及用户名过滤", message_filter: "消息及编辑消息过滤",
   block_bot_messages: "拦截机器人发言", share_global_blacklist: "共享全局永久黑名单",
@@ -15,7 +24,7 @@ export const guardLabels: Record<keyof GuardGroup, string> = {
   review_chat_id: "审核群 ID",
   verification_max_attempts: "最多答错次数", verification_timeout_action: "验证超时动作",
   verification_wrong_action: "答错达到上限后的动作", verification_message_mode: "验证结束后的消息处理",
-  verification_admin_actions: "可用管理员验证按钮", join_request_match_action: "申请命中规则后的动作",
+  verification_admin_actions: "可用管理员验证按钮", join_request_match_action: "申请命中其他规则后的动作",
   nickname_action: "昵称及用户名命中动作", bot_message_action: "机器人发言命中动作",
   notification_enabled: "通知管理员", notification_events: "通知事件",
   verification_notice_cleanup: "结果通知送达后删除验证开始通知",
@@ -41,6 +50,7 @@ export const immediateGuardFields: (keyof GuardGroup)[] = [
   ...guardSwitches, "message_keywords", "trusted_bot_ids", "reviewer_ids",
   "notification_ids", "join_requests", "message_action",
   "verification_timeout_action", "verification_wrong_action", "verification_message_mode", "verification_admin_actions",
+  "verification_mode", "verification_question_types", "verification_risk_action", "observation_action", "observation_image_mode", "observation_ai_review", "observation_share_patterns",
   "join_request_match_action", "nickname_action", "bot_message_action", "notification_events",
   "button_message_action", "forwarded_message_action", "contact_message_action",
   "ai_report_review_action", "ai_report_review_categories",
@@ -80,6 +90,13 @@ export function validateNicknameKeywords(value: string[]): string | undefined {
 }
 
 export function validateGuardField(field: keyof GuardGroup, value: unknown): string | undefined {
+  if (field === "verification_steps") return integerError(value, 2, 5);
+  if (field === "verification_question_types" && (!Array.isArray(value) || !value.length)) return "至少保留一种验证题型";
+  if (field === "verification_risk_threshold") return integerError(value, 1, 30);
+  if (field === "verification_risk_extra_steps") return integerError(value, 1, 3);
+  if (field === "observation_minutes") return integerError(value, 0, 1440);
+  if (field === "observation_ai_confidence" && (typeof value !== "number" || !Number.isFinite(value) || value < 0.5 || value > 1)) return "请输入 0.5–1 之间的置信度";
+  if (field === "observation_messages") return integerError(value, 1, 50);
   if (field === "verification_timeout") return integerError(value, 30, 600);
   if (field === "ai_report_review_delay_minutes") return integerError(value, 1, 1440);
   if (field === "ai_report_review_confidence") {

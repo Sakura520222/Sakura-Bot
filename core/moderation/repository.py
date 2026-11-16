@@ -16,6 +16,7 @@ from core.infrastructure.database.mysql import utc_now_naive
 from .guest_messages import blacklist_task, current_blacklist_task
 
 ACTIVE_VERIFICATIONS = (
+    "checking",
     "preparing",
     "waiting",
     "passing",
@@ -187,6 +188,7 @@ class GuardStore:
         ]
         if action == "blacklist":
             payload = blacklist_task(payload, case.get("reviewer_id"), case.get("reviewer_actor"))
+            payload["learning_enforcement_pending"] = True
         await self.connection.begin()
         try:
             if guest_parent is not None:
@@ -280,6 +282,53 @@ class GuardStore:
             "SELECT * FROM moderation_verification_sessions WHERE id=%s", (session_id,)
         )
 
+    async def verification_assistant(self, bot_id):
+        if not bot_id:
+            return None
+        return await self.one(
+            """SELECT username,bot_id FROM moderation_verification_assistants
+            WHERE bot_id=%s AND seen_at >= UTC_TIMESTAMP() - INTERVAL 90 SECOND
+            ORDER BY seen_at DESC LIMIT 1""",
+            (bot_id,),
+        )
+
+    async def previous_verification_enforcement(self, user_id):
+        return bool(
+            await self.one(
+                """SELECT 1 FROM moderation_cases WHERE user_id=%s
+            AND created_at>=UTC_TIMESTAMP() - INTERVAL 30 DAY
+            AND (status='blacklisted' OR (action='ban' AND status IN ('pending','done')))
+            LIMIT 1""",
+                (user_id,),
+            )
+        )
+
+    async def similar_verification_names(self, chat_id, user_id, cluster):
+        rows = await self.all(
+            """SELECT user_id FROM moderation_verification_sessions WHERE chat_id=%s AND user_id<>%s
+            AND updated_at >= UTC_TIMESTAMP() - INTERVAL 1 DAY
+            AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.profile.name_cluster'))=%s LIMIT 3""",
+            (chat_id, user_id, cluster),
+        )
+        return len(rows)
+
+    async def save_observation_pattern(self, chat_id, fingerprint):
+        await self.execute(
+            """INSERT INTO moderation_observation_patterns (fingerprint,chat_id,seen_at)
+            VALUES (%s,%s,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE seen_at=VALUES(seen_at)""",
+            (fingerprint, chat_id),
+        )
+
+    async def shared_observation_pattern(self, fingerprint, chat_ids):
+        ids = ",".join(["%s"] * len(chat_ids))
+        return bool(
+            await self.one(
+                f"""SELECT 1 FROM moderation_observation_patterns WHERE fingerprint=%s AND chat_id IN ({ids})
+            AND seen_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY LIMIT 1""",
+                (fingerprint, *chat_ids),
+            )
+        )
+
     async def save_verification(self, session):
         await self.execute(
             """INSERT INTO moderation_verification_sessions
@@ -344,6 +393,39 @@ class GuardRepository:
     async def get_verification(self, session_id):
         async with self.pool.acquire() as connection:
             return await GuardStore(connection).verification_by_id(session_id)
+
+    async def verification_diagnostics(self, chat_id, bot_id):
+        async with self.pool.acquire() as connection:
+            store = GuardStore(connection)
+            assistant = await store.verification_assistant(bot_id)
+            counts = await store.one(
+                """SELECT COUNT(*) AS joined,
+                COUNT(CASE WHEN JSON_EXTRACT(payload,'$.assistant.started_at') IS NOT NULL THEN 1 END) AS started,
+                COUNT(CASE WHEN JSON_LENGTH(JSON_EXTRACT(payload,'$.assistant.receipts')) >= 1 THEN 1 END) AS step_one,
+                COUNT(CASE WHEN JSON_LENGTH(JSON_EXTRACT(payload,'$.assistant.receipts')) >= 2 THEN 1 END) AS step_two,
+                COUNT(CASE WHEN status='passed' THEN 1 END) AS released,
+                COUNT(CASE WHEN status IN ('failed_banned','failed_kicked','held') THEN 1 END) AS held_or_failed,
+                COUNT(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(payload,'$.failure_intent.reason')) = 'timeout' THEN 1 END) AS expired,
+                COUNT(CASE WHEN JSON_EXTRACT(payload,'$.observation.hits') > 0 THEN 1 END) AS observation_hits
+                FROM moderation_verification_sessions WHERE chat_id=%s AND updated_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY""",
+                (chat_id,),
+            )
+        return {
+            "assistant": "ready" if assistant else "offline" if bot_id else "unconfigured",
+            "assistant_username": assistant["username"] if assistant else None,
+            "counts": counts,
+        }
+
+    async def enforcement_history(self, chat_id, cursor, since):
+        async with self.pool.acquire() as connection:
+            return await GuardStore(connection).all(
+                """SELECT c.id,c.user_id FROM moderation_cases c
+                LEFT JOIN moderation_blacklist b ON b.case_id=c.id AND b.user_id=c.user_id
+                WHERE c.chat_id=%s AND c.id>%s AND c.updated_at>=%s
+                AND ((c.action='ban' AND c.status='pending') OR (c.status='blacklisted' AND b.user_id IS NOT NULL))
+                ORDER BY c.id LIMIT 51""",
+                (chat_id, cursor, since),
+            )
 
     async def cleaned_chat_history(self, bot_id):
         async with self.pool.acquire() as connection:
@@ -472,8 +554,9 @@ class GuardRepository:
                 OR n.case_id IS NULL OR ((n.synced_status IS NULL OR n.synced_status NOT IN ('deleting','removed')) AND (n.synced_status IS NULL OR n.synced_status<>c.status OR n.error IS NOT NULL) AND n.retry_at<=%s)
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_pending'))='true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.notification_cleanup_retry_at')),'1970-01-01T00:00:00')<=%s)
                 OR (c.action='report' AND c.status='pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_controls_version')),'0')<>'2')
-                OR (((c.action IN ('ban','mute','warn','report') AND (c.status='pending' OR (c.status='done' AND c.action IN ('mute','warn')) OR (c.action='report' AND c.status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))) OR (c.action='verify_skip' AND c.status='done') OR (JSON_EXTRACT(c.payload,'$.verification_failure') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_result'))='held') OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_state')) IN ('waiting','passing','cancelling','held','passed','admin_skipped'))) AND (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.controls_version')),'0')<>'2' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.kick_button_enabled')),'true')<>COALESCE(JSON_UNQUOTE(JSON_EXTRACT(%s,CONCAT('$."',c.chat_id,'"'))),'true')))
+                OR (((c.action IN ('ban','mute','warn','report') AND (c.status='pending' OR (c.status='done' AND c.action IN ('mute','warn')) OR (c.action='report' AND c.status IN ('allowed','blacklisted','unbanned','unmuted','ignored')))) OR (c.action='verify_skip' AND c.status='done') OR (JSON_EXTRACT(c.payload,'$.verification_failure') IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_result'))='held') OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.verification_state')) IN ('waiting','passing','cancelling','held','passed','admin_skipped'))) AND (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.controls_version')),'0')<>'2' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.kick_button_enabled')),'true')<>IF(JSON_CONTAINS(%s, JSON_OBJECT(CAST(c.chat_id AS CHAR), JSON_EXTRACT('false','$'))), 'false', 'true')))
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.report_notice_dirty'))='true'
+                OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.learning_enforcement_pending'))='true'
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban_pending'))='true' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.guest_ban.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
                 OR JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup_dirty'))='true'
                 OR (JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.status'))='pending' AND COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.payload,'$.ban_message_cleanup.retry_at')),'null'),'1970-01-01T00:00:00')<=%s)
@@ -489,23 +572,29 @@ class GuardRepository:
                 ),
             )
             sessions = await store.all("""SELECT * FROM moderation_verification_sessions
-                WHERE status IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','held')
+                WHERE status IN ('checking','preparing','waiting','passing','kicking','cancelling','admin_pending','held')
                 OR (message_id IS NOT NULL AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending')),'true')='true')
                 OR (status IN ('passed','cancelled','left') AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.lifecycle'))='true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.lifecycle_recorded')),'false')='false')
-                ORDER BY CASE WHEN status IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','held') THEN 0 ELSE 1 END, expires_at ASC,updated_at ASC LIMIT 100""")
+                ORDER BY CASE WHEN status IN ('checking','preparing','waiting','passing','kicking','cancelling','admin_pending','held') THEN 0 ELSE 1 END, updated_at ASC, expires_at ASC LIMIT 100""")
         return cases, sessions
 
     async def cleanup(self, days):
         cutoff = utc_now_naive() - timedelta(days=days)
         async with self.pool.acquire() as connection:
             store = GuardStore(connection)
+            await store.execute(
+                "DELETE FROM moderation_observation_patterns WHERE seen_at < UTC_TIMESTAMP() - INTERVAL 7 DAY LIMIT 5000"
+            )
+            await store.execute(
+                "DELETE FROM moderation_verification_assistants WHERE seen_at < UTC_TIMESTAMP() - INTERVAL 1 DAY LIMIT 200"
+            )
             # 永久名单、待审核和待恢复操作不随审计留存期限删除。
             await store.execute(
                 "DELETE FROM moderation_cases WHERE created_at<%s AND status IN ('done','allowed','unbanned','unmuted','ignored','blacklisted','execution_failed','cancelled','manual','kicked') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.notification_cleanup_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_message_deletion.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.report_notice_dirty')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.guest_ban_pending')),'false')<>'true' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup.status')),'')<>'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.ban_message_cleanup_dirty')),'false')<>'true' AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.case_id=moderation_cases.id) LIMIT 500",
                 (cutoff,),
             )
             await store.execute(
-                "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('preparing','waiting','passing','kicking','cancelling','admin_pending','admin_kick_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
+                "DELETE FROM moderation_verification_sessions WHERE updated_at<%s AND status NOT IN ('checking','preparing','waiting','passing','kicking','cancelling','admin_pending','admin_kick_pending','held') AND (message_id IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(payload,'$.cleanup_pending'))='false') LIMIT 500",
                 (cutoff,),
             )
             await store.execute(

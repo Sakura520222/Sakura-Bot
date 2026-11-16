@@ -74,6 +74,36 @@ class GuardGroup(BaseModel):
     enabled: bool = False
     kick_button_enabled: bool = True
     verify_join: bool = True
+    verification_mode: Literal["legacy", "assistant"] = "legacy"
+    # Accept settings saved by the first assistant preview. The running assistant is resolved by bot ID.
+    verification_assistant_username: str = Field(
+        default="", pattern=r"^([a-zA-Z][a-zA-Z0-9_]{4,31})?$"
+    )
+    verification_steps: int = Field(default=2, ge=2, le=5)
+    verification_question_types: list[Literal["word", "position"]] = Field(
+        default_factory=lambda: ["word", "position"], min_length=1, max_length=2
+    )
+    verification_risk_threshold: int = Field(default=4, ge=1, le=30)
+    verification_risk_action: Literal["extra_steps", "hold"] = "extra_steps"
+    verification_risk_extra_steps: int = Field(default=1, ge=1, le=3)
+    verification_risk_weights: dict[
+        Literal["no_username", "no_photo", "random_name", "similar_names", "prior_enforcement"], int
+    ] = Field(
+        default_factory=lambda: {
+            "no_username": 1,
+            "no_photo": 1,
+            "random_name": 2,
+            "similar_names": 2,
+            "prior_enforcement": 4,
+        }
+    )
+    observation_minutes: int = Field(default=30, ge=0, le=1440)
+    observation_messages: int = Field(default=5, ge=1, le=50)
+    observation_action: Literal["delete", "extend", "mute"] = "delete"
+    observation_image_mode: Literal["off", "qr", "ocr"] = "qr"
+    observation_ai_review: bool = False
+    observation_ai_confidence: float = Field(default=0.97, ge=0.5, le=1.0, allow_inf_nan=False)
+    observation_share_patterns: bool = False
     verification_timeout: int = Field(default=120, ge=30, le=600)
     verification_max_attempts: int = Field(default=3, ge=1, le=10)
     verification_timeout_action: MemberAction = "ban"
@@ -82,6 +112,14 @@ class GuardGroup(BaseModel):
     verification_admin_actions: list[Literal["ban", "blacklist", "skip"]] = Field(
         default_factory=lambda: ["ban", "blacklist", "skip"], max_length=3
     )
+
+    @field_validator("verification_risk_weights")
+    @classmethod
+    def validate_risk_weights(cls, value):
+        if any(not 0 <= weight <= 10 for weight in value.values()):
+            raise ValueError("invalid verification risk weight")
+        return value
+
     join_requests: Literal["manual", "approve"] = "manual"
     join_request_match_action: Literal["reject", "manual", "approve"] = "reject"
     nickname_filter: bool = True
@@ -165,7 +203,14 @@ class DeletedUserCleanupSettings(BaseModel):
     interval_hours: int = Field(default=24, ge=1, le=720)
 
 
-AILearningSource = Literal["admin_report", "member_report", "review_outcome", "ai_review"]
+AILearningSource = Literal[
+    "admin_report",
+    "member_report",
+    "review_outcome",
+    "ai_review",
+    "rule_auto_ban",
+    "admin_blacklist",
+]
 AILearningTarget = Literal["nickname", "username", "message", "caption", "link"]
 DEFAULT_AI_LEARNING_SOURCES = [
     "admin_report",
@@ -183,7 +228,7 @@ class AILearningSettings(BaseModel):
     enabled: bool = False
     shared_rules_enabled: bool = False
     sources: list[AILearningSource] = Field(
-        default_factory=lambda: DEFAULT_AI_LEARNING_SOURCES.copy(), max_length=4
+        default_factory=lambda: DEFAULT_AI_LEARNING_SOURCES.copy(), max_length=6
     )
     targets: list[AILearningTarget] = Field(
         default_factory=lambda: DEFAULT_AI_LEARNING_TARGETS.copy(), max_length=5

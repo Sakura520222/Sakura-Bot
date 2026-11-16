@@ -68,11 +68,12 @@
         <n-gi v-for="purpose in aiPurposes" :key="purpose.key" span="0:2 1024:1">
           <n-card size="small" :title="purpose.label">
             <n-form label-placement="top" :disabled="busy">
-              <n-form-item label="厂商"><n-select :value="draft.routing[purpose.key].provider_id" :options="purpose.key === 'wiki_review' ? reviewRoutingOptions : routingOptions" @update:value="setRouteProvider(purpose.key, $event)" /></n-form-item>
+              <n-form-item label="厂商"><n-select :value="draft.routing[purpose.key].provider_id" :options="routingOptions(purpose.key)" @update:value="setRouteProvider(purpose.key, $event)" /></n-form-item>
               <n-form-item label="已添加模型"><n-select :value="draft.routing[purpose.key].model_id || null" :options="routeModels(purpose.key)" :disabled="busy || !draft.routing[purpose.key].provider_id" filterable @update:value="setRouteModel(purpose.key, $event)" /></n-form-item>
               <n-form-item label="图片能力（默认使用该模型的开关）"><n-select :value="visionOverride(purpose.key)" :options="capabilityOptions" @update:value="setVisionOverride(purpose.key, $event)" /></n-form-item>
             </n-form>
-            <n-text depth="3">{{ purpose.key === 'wiki_review' ? '可选择独立的厂商和模型。未绑定时沿用 Wiki 生成模型。' : routeCapability(purpose.key) }}</n-text>
+            <n-text v-if="purpose.key === 'guard' || purpose.key === 'guard_vision'" depth="3">{{ purpose.description }}</n-text>
+            <n-text v-else depth="3">{{ purpose.key === 'wiki_review' ? '可选择独立的厂商和模型。未绑定时沿用 Wiki 生成模型。' : routeCapability(purpose.key) }}</n-text>
             <div class="effective">当前已保存：{{ effectiveLabel(purpose.key) }}</div>
           </n-card>
         </n-gi>
@@ -116,8 +117,14 @@ const busy = computed(() => loading.value || saving.value || modelLoading.value 
 const dirty = computed(() => !!draft.value && JSON.stringify(providersPayload(draft.value)) !== baseline.value);
 const selected = computed(() => draft.value?.providers[selectedId.value]);
 const providerOptions = computed(() => Object.entries(draft.value?.providers || {}).map(([value, p]) => ({ value, label: p.name || "未命名厂商" })));
-const routingOptions = computed(() => [{ value: "", label: "旧版默认配置（回退）" }, ...providerOptions.value]);
-const reviewRoutingOptions = computed(() => [{ value: "", label: "沿用 Wiki 生成模型" }, ...providerOptions.value]);
+const routingFallbackLabels: Partial<Record<AIPurpose, string>> = {
+  wiki_review: "沿用 Wiki 生成模型",
+  guard: "沿用频道总结模型",
+  guard_vision: "沿用图片识别模型",
+};
+function routingOptions(purpose: AIPurpose) {
+  return [{ value: "", label: routingFallbackLabels[purpose] || "旧版默认配置（回退）" }, ...providerOptions.value];
+}
 const discovery = computed(() => discoveries.value[selectedId.value]?.baseUrl === selected.value?.base_url.trim() ? discoveries.value[selectedId.value] : undefined);
 const candidateOptions = computed(() => (discovery.value?.models || []).map(value => ({ value, label: `${value}${Object.prototype.hasOwnProperty.call(selected.value?.models || {}, value) ? '（已添加）' : ''}`, disabled: Object.prototype.hasOwnProperty.call(selected.value?.models || {}, value) })));
 const baseUrlPlaceholder = "https://api.openai.com/v1";

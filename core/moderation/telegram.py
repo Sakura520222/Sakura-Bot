@@ -5,8 +5,10 @@
 
 import asyncio
 from datetime import UTC, datetime
+from enum import Enum, auto
 
 from telethon import utils
+from telethon.tl.functions.bots import SetJoinChatResultsRequest
 from telethon.tl.functions.channels import EditBannedRequest
 from telethon.tl.functions.messages import (
     DeleteChatUserRequest,
@@ -14,7 +16,15 @@ from telethon.tl.functions.messages import (
     HideChatJoinRequestRequest,
     SendMessageRequest,
 )
-from telethon.tl.types import ChatBannedRights, InputPeerUser, PeerChat, PeerUser
+from telethon.tl.types import (
+    ChatBannedRights,
+    InputPeerUser,
+    JoinChatBotResultApproved,
+    JoinChatBotResultDeclined,
+    JoinChatBotResultQueued,
+    PeerChat,
+    PeerUser,
+)
 
 VERIFICATION_RESTRICTIONS = (
     "send_messages",
@@ -33,6 +43,12 @@ VERIFICATION_RESTRICTIONS = (
     "send_voices",
     "send_docs",
 )
+
+
+class Protection(Enum):
+    PROTECTED = auto()
+    UNPROTECTED = auto()
+    UNKNOWN = auto()
 
 
 def verification_rights(original):
@@ -155,6 +171,25 @@ class TelegramActions:
 
     async def join_request(self, chat_id, user_id, approved):
         await mutate(self.client(HideChatJoinRequestRequest(chat_id, user_id, approved=approved)))
+
+    async def answer_join_request_query(self, query_id, action, expires_at):
+        remaining = expires_at - datetime.now(UTC).timestamp()
+        if remaining <= 0:
+            raise TelegramActionError("JoinRequestQueryExpired")
+        result = {
+            "approve": JoinChatBotResultApproved,
+            "reject": JoinChatBotResultDeclined,
+            "manual": JoinChatBotResultQueued,
+        }[action]()
+        try:
+            accepted = await asyncio.wait_for(
+                self.client(SetJoinChatResultsRequest(query_id=query_id, result=result)),
+                timeout=remaining,
+            )
+        except Exception as error:
+            raise TelegramActionError(type(error).__name__) from error
+        if not accepted:
+            raise TelegramActionError("JoinRequestQueryNotAnswered")
 
     async def input_user(self, user_id):
         return utils.get_input_user(await call(self.client.get_input_entity(PeerUser(user_id))))
