@@ -78,7 +78,8 @@ RUN sed -i 's/\r$//' /usr/local/bin/sakura-entrypoint \
 # 创建必要的目录和文件，并设置权限
 RUN mkdir -p /app/data/sessions && \
     chmod 755 /app/data /app/data/sessions && \
-    touch /app/data/config.json /app/data/prompt.txt /app/data/poll_prompt.txt /app/data/.last_summary_time.json /app/data/.poll_regenerations.json
+    printf '{}\n' > /app/data/config.json && \
+    touch /app/data/prompt.txt /app/data/poll_prompt.txt /app/data/.last_summary_time.json /app/data/.poll_regenerations.json
 
 # 设置数据卷
 VOLUME ["/app/data"]

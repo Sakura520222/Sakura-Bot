@@ -31,6 +31,8 @@ See the [command reference](wiki/User-Commands.md) for the full command list and
 
 ## Quick Start
 
+For the project's ZIP or tar.gz release attachments, see [installing and updating from a release archive](docs/release-archives.md).
+
 Requires **Python 3.13+** or **Docker 20.10+**, plus:
 
 - A Telegram Bot Token from [@BotFather](https://t.me/BotFather)

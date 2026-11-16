@@ -87,6 +87,7 @@ jobs:
           context: .
           push: false
           tags: sakura-bot:test
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -116,6 +117,18 @@ jobs:
           prepare_runtime()
           assert Path("web/dist/index.html").is_file()
           PY
+
+      - name: 设置 Go（发布附件冒烟测试）
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: qa-bot-go/go.mod
+          cache-dependency-path: qa-bot-go/go.sum
+
+      - name: 验证干净目录中的两个发布附件
+        run: |
+          python scripts/release_archive.py build --directory "$RUNNER_TEMP/release-assets" \
+            --extract-to "$RUNNER_TEMP/release-smoke"
+          bash scripts/smoke_release.sh "$RUNNER_TEMP/release-smoke" sakura-bot:test "$(git rev-parse HEAD)"
 
   tests:
     name: 单元测试

@@ -36,6 +36,8 @@
 
 ## 🐳 方案一：Docker 部署（推荐）
 
+使用 GitHub Release 自制 ZIP 或 tar.gz 时，参见[发布附件安装与更新](https://github.com/Sakura520222/Sakura-Bot/blob/main/docs/release-archives.md)。
+
 ### 步骤 1：克隆项目
 
 ```bash
