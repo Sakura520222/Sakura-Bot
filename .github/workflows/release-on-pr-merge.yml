@@ -452,10 +452,12 @@ jobs:
   build-and-upload-assets:
     name: 打包并上传附件
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: analyze-and-update-release
     if: always() && needs.analyze-and-update-release.result == 'success'
     permissions:
       contents: write
+      packages: read
     
     steps:
       - name: 检出发布对应的提交
@@ -464,215 +466,100 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.analyze-and-update-release.outputs.release_sha }}
       
-      - name: 验证项目结构
-        run: |
-          if [ ! -f "main.py" ]; then
-            echo "❌ 错误: main.py 文件不存在"
-            exit 1
-          fi
-          if [ ! -f "requirements.txt" ]; then
-            echo "❌ 错误: requirements.txt 文件不存在"
-            exit 1
-          fi
-          if [ ! -d "core" ]; then
-            echo "❌ 错误: core 目录不存在"
-            exit 1
-          fi
-          echo "✅ 项目结构验证通过"
-      
       - name: 设置 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      
-      - name: 获取版本信息
-        id: get_version
-        run: |
-          VERSION="${{ needs.analyze-and-update-release.outputs.version }}"
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=v${VERSION}" >> $GITHUB_OUTPUT
-          echo "当前版本: ${VERSION}"
-      
-      - name: 等待 Release 创建并验证 Tag
+
+      - name: 等待并验证远端标签
         id: verify_tag
+        env:
+          TAG_NAME: v${{ needs.analyze-and-update-release.outputs.version }}
+          RELEASE_SHA: ${{ needs.analyze-and-update-release.outputs.release_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          
-          echo "⏳ 等待 Release 创建完成..."
-          
-          # 等待最多 30 秒，确保 Release 创建完成
-          MAX_RETRIES=6
-          RETRY_COUNT=0
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            # 检查 Tag 是否已经生效
-            if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
-              echo "✅ Tag ${TAG_NAME} 已确认存在"
-              echo "tag_verified=true" >> $GITHUB_OUTPUT
+          for attempt in {1..6}; do
+            tag_sha=$(git ls-remote origin "refs/tags/$TAG_NAME" "refs/tags/$TAG_NAME^{}" |
+              awk '$2 ~ /\^\{\}$/ { peeled=$1; next } { direct=$1 } END { print peeled ? peeled : direct }')
+            if [ -n "$tag_sha" ]; then
               break
             fi
-            
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "⏳ 等待 Tag 生效... ($RETRY_COUNT/$MAX_RETRIES)"
             sleep 5
           done
-          
-          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-            echo "❌ 错误: Tag ${TAG_NAME} 未能在预期时间内生效"
-            echo "tag_verified=false" >> $GITHUB_OUTPUT
+          if [ "$tag_sha" != "$RELEASE_SHA" ] || [ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]; then
+            echo "::error::Tag $TAG_NAME ($tag_sha) and checkout must match $RELEASE_SHA."
             exit 1
           fi
-          
-          # 验证 Release 是否存在
-          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            echo "❌ 错误: Release ${TAG_NAME} 不存在"
-            exit 1
-          fi
-          
-          echo "✅ Release ${TAG_NAME} 已确认存在"
+          gh release view "$TAG_NAME" >/dev/null
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: 生成并校验源码附件
+        run: python scripts/release_archive.py build --directory "$RUNNER_TEMP/release-assets"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 拉取同一提交的官方镜像
+        id: image
+        timeout-minutes: 25
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: 检查 Release 附件状态
-        id: check_assets
+          RELEASE_SHA: ${{ needs.analyze-and-update-release.outputs.release_sha }}
         run: |
-          TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          
-          # 检查是否有附件
-          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
-          echo "现有附件数量: $ASSETS"
-          
-          # 先完成打包，再由 upload --clobber 替换本次生成的同名资源。
-          # 保留其他附件，也避免打包失败时丢失已有下载文件。
-          echo "should_upload=true" >> $GITHUB_OUTPUT
-          echo "ℹ️ 将上传新的发布附件"
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ref="$repo:sha-$RELEASE_SHA"
+          until docker pull "$ref"; do
+            sleep 20
+          done
+          revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$ref")
+          test "$revision" = "$RELEASE_SHA"
+          digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" |
+            awk -v repo="$repo" 'index($0, repo "@sha256:") == 1 { print; exit }')
+          test -n "$digest"
+          echo "ref=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: 上传发布附件
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: 创建发布资源包
-        if: steps.check_assets.outputs.should_upload == 'true'
+          TAG_NAME: ${{ steps.verify_tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          RELEASE_NAME="${TAG_NAME}"
-          RELEASE_DIR="Sakura-Bot-${RELEASE_NAME}"
-          
-          mkdir -p "$RELEASE_DIR"
-          
-          echo "📦 正在打包发布资源..."
-          
-          echo "📋 打包配置:" > packaging_manifest.txt
-          echo "- 版本: ${VERSION}" >> packaging_manifest.txt
-          echo "- Tag: ${TAG_NAME}" >> packaging_manifest.txt
-          echo "" >> packaging_manifest.txt
-          echo "📦 包含文件:" >> packaging_manifest.txt
-          
-          # 复制核心代码
-          if [ -f "main.py" ]; then 
-            cp main.py "$RELEASE_DIR/"
-            echo "- main.py" >> packaging_manifest.txt
-          fi
-          if [ -f "qa_bot.py" ]; then 
-            cp qa_bot.py "$RELEASE_DIR/"
-            echo "- qa_bot.py" >> packaging_manifest.txt
-          fi
-          find core -name "*.py" -exec cp --parents {} "$RELEASE_DIR/" \;
-          # 递归删除 core 目录下所有 __pycache__ 目录，避免它们被打包进发布包
-          find "${RELEASE_DIR}/core" -type d -name '__pycache__' -exec rm -rf {} +
-          echo "- core/ (所有Python文件)" >> packaging_manifest.txt
-          
-          # 复制配置文件
-          [ -f "pyproject.toml" ] && cp pyproject.toml "$RELEASE_DIR/" && echo "- pyproject.toml" >> packaging_manifest.txt
-          [ -f "pytest.ini" ] && cp pytest.ini "$RELEASE_DIR/" && echo "- pytest.ini" >> packaging_manifest.txt
-          [ -f ".gitignore" ] && cp .gitignore "$RELEASE_DIR/" && echo "- .gitignore" >> packaging_manifest.txt
-          
-          # 包含tests目录
-          if [ -d "tests" ]; then
-            cp -r tests "$RELEASE_DIR/"
-            echo "- tests/" >> packaging_manifest.txt
-          fi
-          
-          # 包含wiki文档
-          if [ -d "wiki" ]; then
-            cp -r wiki "$RELEASE_DIR/"
-            echo "- wiki/" >> packaging_manifest.txt
-          fi
-          
-          # 创建必要的目录
-          mkdir -p "$RELEASE_DIR/data"
-          mkdir -p "$RELEASE_DIR/data/sessions"
-          mkdir -p "$RELEASE_DIR/data/vectors"
-          
-          # 复制配置文件
-          [ -f "data/.env.example" ] && cp "data/.env.example" "$RELEASE_DIR/data/" && echo "- data/.env.example" >> packaging_manifest.txt
-          [ -f "data/config.example.json" ] && cp "data/config.example.json" "$RELEASE_DIR/data/" && echo "- data/config.example.json" >> packaging_manifest.txt
-          [ -f "data/prompt.txt" ] && cp "data/prompt.txt" "$RELEASE_DIR/data/" && echo "- data/prompt.txt" >> packaging_manifest.txt
-          [ -f "data/poll_prompt.txt" ] && cp "data/poll_prompt.txt" "$RELEASE_DIR/data/" && echo "- data/poll_prompt.txt" >> packaging_manifest.txt
-          [ -f "data/qa_persona.txt" ] && cp "data/qa_persona.txt" "$RELEASE_DIR/data/" && echo "- data/qa_persona.txt" >> packaging_manifest.txt
-          
-          # 复制必要文件
-          [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/" && echo "- requirements.txt" >> packaging_manifest.txt
-          [ -f "README.md" ] && cp README.md "$RELEASE_DIR/" && echo "- README.md" >> packaging_manifest.txt
-          [ -f "README_EN.md" ] && cp README_EN.md "$RELEASE_DIR/" && echo "- README_EN.md" >> packaging_manifest.txt
-          [ -f "CHANGELOG.md" ] && cp CHANGELOG.md "$RELEASE_DIR/" && echo "- CHANGELOG.md" >> packaging_manifest.txt
-          [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/" && echo "- LICENSE" >> packaging_manifest.txt
-          [ -f "CONTRIBUTING.md" ] && cp CONTRIBUTING.md "$RELEASE_DIR/" && echo "- CONTRIBUTING.md" >> packaging_manifest.txt
-          
-          # 复制启动脚本
-          [ -f "start.bat" ] && cp start.bat "$RELEASE_DIR/" && echo "- start.bat" >> packaging_manifest.txt
-          [ -f "start.sh" ] && cp start.sh "$RELEASE_DIR/" && echo "- start.sh" >> packaging_manifest.txt
-          
-          # 复制 Docker 文件
-          [ -f "Dockerfile" ] && cp Dockerfile "$RELEASE_DIR/" && echo "- Dockerfile" >> packaging_manifest.txt
-          [ -f "docker-compose.yml" ] && cp docker-compose.yml "$RELEASE_DIR/" && echo "- docker-compose.yml" >> packaging_manifest.txt
-          [ -f "docker-entrypoint.sh" ] && cp docker-entrypoint.sh "$RELEASE_DIR/" && echo "- docker-entrypoint.sh" >> packaging_manifest.txt
-          [ -f ".dockerignore" ] && cp .dockerignore "$RELEASE_DIR/" && echo "- .dockerignore" >> packaging_manifest.txt
-          
-          # 设置可执行权限
-          chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
-          chmod +x "$RELEASE_DIR/docker-entrypoint.sh" 2>/dev/null || true
-          
-          # 创建压缩包
-          echo "" >> packaging_manifest.txt
-          echo "🗜️ 正在创建压缩包..." >> packaging_manifest.txt
-          tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR/"
-          zip -q -r "${RELEASE_DIR}.zip" "$RELEASE_DIR/"
-          
-          # 计算文件大小
-          TAR_SIZE=$(du -h "${RELEASE_DIR}.tar.gz" | cut -f1)
-          ZIP_SIZE=$(du -h "${RELEASE_DIR}.zip" | cut -f1)
-          
-          echo "✅ 资源包创建完成" >> packaging_manifest.txt
-          echo "- ${RELEASE_DIR}.tar.gz: ${TAR_SIZE}" >> packaging_manifest.txt
-          echo "- ${RELEASE_DIR}.zip: ${ZIP_SIZE}" >> packaging_manifest.txt
-          
-          echo "✅ 资源包创建完成"
-          cat packaging_manifest.txt
-      
-      - name: 上传发布资源
-        if: steps.check_assets.outputs.should_upload == 'true'
-        run: |
-          TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          ASSET_NAME="Sakura-Bot-${TAG_NAME}"
-          
-          echo "正在上传资源到 Release ${TAG_NAME}..."
-          
-          gh release upload "$TAG_NAME" "${ASSET_NAME}.tar.gz" "${ASSET_NAME}.zip" --clobber
-          
-          echo "✅ 资源上传完成"
+          asset="$RUNNER_TEMP/release-assets/Sakura-Bot-$TAG_NAME"
+          gh release upload "$TAG_NAME" "$asset.zip" "$asset.tar.gz" "$RUNNER_TEMP/release-assets/SHA256SUMS" --clobber
+
+      - name: 回下载实际发布附件并验证摘要与清单
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.verify_tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          downloaded="$RUNNER_TEMP/downloaded-assets"
+          gh release download "$TAG_NAME" --dir "$downloaded" \
+            --pattern "Sakura-Bot-$TAG_NAME.zip" --pattern "Sakura-Bot-$TAG_NAME.tar.gz" --pattern SHA256SUMS
+          cmp "$RUNNER_TEMP/release-assets/SHA256SUMS" "$downloaded/SHA256SUMS"
+          python scripts/release_archive.py verify --directory "$downloaded" --extract-to "$RUNNER_TEMP/release-smoke"
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: qa-bot-go/go.mod
+          cache-dependency-path: qa-bot-go/go.sum
+
+      - name: 验证最终附件的构建和镜像挂载
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          RELEASE_SHA: ${{ needs.analyze-and-update-release.outputs.release_sha }}
+        run: bash scripts/smoke_release.sh "$RUNNER_TEMP/release-smoke" "$IMAGE_REF" "$RELEASE_SHA"
       
       - name: 发送 Telegram 通知（附件已上传）
-        if: steps.check_assets.outputs.should_upload == 'true'
         env:
+          VERSION: ${{ needs.analyze-and-update-release.outputs.version }}
+          TAG_NAME: ${{ steps.verify_tag.outputs.tag }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHANNEL_ID }}
         run: |
           if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-            VERSION="${{ steps.get_version.outputs.VERSION }}"
-            TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
             PR_NUMBER="${{ needs.analyze-and-update-release.outputs.pr_number }}"
             if [ -n "$PR_NUMBER" ]; then
@@ -708,26 +595,14 @@ jobs:
           fi
       
       - name: 生成发布摘要
-        if: steps.check_assets.outputs.should_upload == 'true'
+        env:
+          TAG_NAME: ${{ steps.verify_tag.outputs.tag }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
         run: |
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
           
           echo "# 🚀 Release ${TAG_NAME} 创建成功" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ 版本: **v${VERSION}**" >> $GITHUB_STEP_SUMMARY
-          echo "📦 附件: **已上传** (.tar.gz 和 .zip)" >> $GITHUB_STEP_SUMMARY
+          echo "📦 附件已回下载并通过 SHA-256、Docker 构建和挂载冒烟测试" >> $GITHUB_STEP_SUMMARY
+          echo "🐳 已验证镜像：${IMAGE_REF}" >> $GITHUB_STEP_SUMMARY
           echo "🔗 发布页面: [${RELEASE_URL}](${RELEASE_URL})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ℹ️ **注意**: Release 描述和附件均已成功创建" >> $GITHUB_STEP_SUMMARY
-      
-      - name: 清理临时文件
-        if: always()
-        run: |
-          rm -f packaging_manifest.txt
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          rm -rf "Sakura-Bot-v${VERSION}"
-          rm -f "Sakura-Bot-v${VERSION}.tar.gz"
-          rm -f "Sakura-Bot-v${VERSION}.zip"
-          echo "✅ 临时文件已清理"

@@ -31,6 +31,8 @@ Sakura-Bot 是一个 Telegram 频道管理工具：用 AI 总结频道内容、�
 
 ## 快速开始
 
+从 GitHub Release 下载自制 ZIP 或 tar.gz 的用户，请按[发布附件安装与更新](docs/release-archives.md)部署。
+
 需要 **Python 3.13+** 或 **Docker 20.10+**，以及：
 
 - Telegram Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）

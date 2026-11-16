@@ -7,6 +7,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+if [ -f RELEASE_REVISION ]; then
+    echo "Release 源码附件请按 docs/release-archives.md 使用 Docker Compose 安装或更新。" >&2
+    exit 1
+fi
+
 echo "==> 更新源码（快进合并，保留本地配置）"
 git pull --ff-only || echo "!! 源码有本地分叉，请手动处理后再部署（已跳过 git pull）"
 

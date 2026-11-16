@@ -4,7 +4,7 @@ services:
     # （.github/workflows/docker-build.yml），服务器免本地构建；
     # 源码仍整体挂载，代码更新走 git pull / /update 命令。
     # fork / 本地源码部署：docker compose build && docker compose up -d
-    image: ghcr.io/sakura520222/sakura-bot:main
+    image: ${SAKURA_BOT_IMAGE:-ghcr.io/sakura520222/sakura-bot:main}
     build: .
     container_name: sakura-bot
     user: "root:root"
