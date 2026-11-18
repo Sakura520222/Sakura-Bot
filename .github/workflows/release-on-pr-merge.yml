@@ -95,24 +95,14 @@ jobs:
       - name: 读取当前版本
         id: read_version
         run: |
-          # 读取 core/__init__.py 中的当前版本号（支持单/双引号及不同空格）
-          VERSION_FILE="core/__init__.py"
-          if [ -f "$VERSION_FILE" ]; then
-            CURRENT_VERSION=$(
-              sed -n "s/^[[:space:]]*__version__[[:space:]]*=[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" "$VERSION_FILE" | head -n 1
-            )
-
-            # 如果未能解析出版本号则直接失败，避免创建错误 tag（如 v）
-            if [ -z "$CURRENT_VERSION" ]; then
-              echo "无法从 $VERSION_FILE 解析版本号，请检查 __version__ 定义格式是否正确。" >&2
-              exit 1
-            fi
-          else
-            CURRENT_VERSION="未知版本"
+          CURRENT_VERSION=$(tr -d '\r\n' < VERSION)
+          if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
+            echo "VERSION 中的版本号无效。" >&2
+            exit 1
           fi
 
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-          echo "$VERSION_FILE 当前版本: $CURRENT_VERSION"
+          echo "当前版本: $CURRENT_VERSION"
 
           # 获取今天日期
           TODAY=$(date +'%Y-%m-%d')
@@ -543,10 +533,9 @@ jobs:
       - name: 设置 Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: qa-bot-go/go.mod
-          cache-dependency-path: qa-bot-go/go.sum
+          go-version-file: go.mod
 
-      - name: 验证最终附件的构建和镜像挂载
+      - name: 验证最终附件的构建和镜像运行
         env:
           IMAGE_REF: ${{ steps.image.outputs.ref }}
           RELEASE_SHA: ${{ needs.analyze-and-update-release.outputs.release_sha }}

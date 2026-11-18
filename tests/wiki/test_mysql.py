@@ -1191,7 +1191,7 @@ async def test_go_reads_identical_publication_and_revocation(store):
     result = await asyncio.to_thread(
         subprocess.run,
         ["go", "test", "./internal/db", "-run", "TestWikiSharedMySQL", "-count=1"],
-        cwd=Path(__file__).parents[2] / "qa-bot-go",
+        cwd=Path(__file__).parents[2],
         env=env,
         capture_output=True,
         text=True,
@@ -1203,7 +1203,7 @@ async def test_go_reads_identical_publication_and_revocation(store):
     result = await asyncio.to_thread(
         subprocess.run,
         ["go", "test", "./internal/db", "-run", "TestWikiSharedMySQL", "-count=1"],
-        cwd=Path(__file__).parents[2] / "qa-bot-go",
+        cwd=Path(__file__).parents[2],
         env=env,
         capture_output=True,
         text=True,
@@ -1215,7 +1215,7 @@ async def test_go_reads_identical_publication_and_revocation(store):
     result = await asyncio.to_thread(
         subprocess.run,
         ["go", "test", "./internal/db", "-run", "TestWikiSharedMySQL", "-count=1"],
-        cwd=Path(__file__).parents[2] / "qa-bot-go",
+        cwd=Path(__file__).parents[2],
         env=env,
         capture_output=True,
         text=True,

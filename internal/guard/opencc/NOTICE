@@ -1,0 +1,8 @@
+The embedded TSCharacters.txt and TSPhrases.txt conversion dictionaries come
+from OpenCC and are copied unchanged from opencc-python-reimplemented 0.1.7.
+
+OpenCC: https://github.com/BYVoid/OpenCC
+Python distribution: https://github.com/yichen0831/opencc-python
+
+The dictionaries are licensed under the Apache License, Version 2.0.
+The full license is included in LICENSE.

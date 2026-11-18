@@ -2,8 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13+-blue?style=flat-square&logo=python)](https://www.python.org/downloads/)
-[![Code style: ruff](https://img.shields.io/endpoint?style=flat-square&url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Go](https://img.shields.io/badge/Go-1.27+-blue?style=flat-square&logo=go)](https://go.dev/dl/)
 [![Docker](https://img.shields.io/badge/docker-20.10%2B-blue?style=flat-square&logo=docker)](https://www.docker.com/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/pulls)
 [![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/stargazers)
@@ -25,7 +24,7 @@ Sakura-Bot 是一个 Telegram 频道管理工具：用 AI 总结频道内容、�
 - **多 AI 用途路由**：独立服务档案分配总结、助手、图片识别及投票模型，支持模型列表与手动输入、脱敏密钥、连接/调用测试；[配置说明](wiki/AI_PROFILES.md)
 - **Sakura Guard**：按群启用昵称与消息规则、联系人卡片过滤、入群验证、`@admin 举报`、管理员审核、黑白名单和自助封禁申诉
 - **Sakura Wiki**：现有 WebUI 的 `/wiki` 提供免登录频道百科、证据文章、交互式知识地图、时间轴与真实消息画像；AI 自动维护、管理员审核发布，Go 助手共享同一 MySQL 快照。默认关闭；[使用与管理手册](docs/sakura-wiki.md)。仓库 `wiki/` 仍为项目文档。
-- **基础设施**：多频道多管理员、中英双语界面、配置热重载与原子回滚、问答 Bot 双运行时热切换、优雅关闭
+- **基础设施**：多频道多管理员、中英双语界面、配置热重载与原子回滚、独立问答进程、优雅关闭
 
 完整命令列表见[命令参考](wiki/User-Commands.md)，各功能的使用细节见[用户文档](wiki/User-Guide.md)。
 
@@ -33,81 +32,31 @@ Sakura-Bot 是一个 Telegram 频道管理工具：用 AI 总结频道内容、�
 
 从 GitHub Release 下载自制 ZIP 或 tar.gz 的用户，请按[发布附件安装与更新](docs/release-archives.md)部署。
 
-需要 **Python 3.13+** 或 **Docker 20.10+**，以及：
-
-- Telegram Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）
-- Telegram API 凭证（从 [my.telegram.org](https://my.telegram.org) 获取）
-- OpenAI 兼容 API Key（如 [DeepSeek](https://platform.deepseek.com/)、[OpenAI](https://platform.openai.com/)）
-- MySQL 数据库（应用数据仅支持 MySQL，需自行部署，Compose 不包含 MySQL）
-
-Docker 部署（推荐，一条命令更新）：
+需要 **Docker Engine 和 Compose v2**，或 **Go 1.27+ 和 Node.js 22+**。请准备 Telegram Bot Token、Telegram API 凭证、OpenAI 兼容服务凭证和 MySQL 数据库。[获取凭证及配置说明](wiki/User-Getting-Started.md)
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
-cp data/.env.example data/.env   # 编辑 .env，填入上述配置
-bash scripts/deploy.sh           # 更新源码 + 拉取 GHCR 依赖镜像并启动
+cp data/.env.example data/.env   # 编辑 Telegram、MySQL 和 AI 配置
+bash scripts/deploy.sh
 ```
 
-依赖镜像（Python 依赖、Go 二进制、前端产物）由 [GitHub Actions](.github/workflows/docker-build.yml) 构建并推送到 GHCR，服务器不再本地构建；业务代码仍从挂载的源码加载，日常更新同样只需 `bash scripts/deploy.sh`（纯 Python 改动甚至只需 `git pull` 后重启）。若镜像拉取被拒（401/403），到 GitHub 仓库 Packages 设置将 `sakura-bot` 包改为 public，或在服务器执行一次 `docker login ghcr.io`。fork 或源码部署仍可 `docker compose build && docker compose up -d`。
+GitHub Actions 发布包含主 Bot、助手 Bot 和 WebUI 的完整镜像。部署脚本快进更新 Git 工作区，拉取对应提交的镜像并重建容器。容器持久化 `data/` 和 `logs/`。[部署、升级及回滚](docs/go-deployment.md)
 
-本地运行：
-
-```bash
-git clone https://github.com/Sakura520222/Sakura-Bot.git
-cd Sakura-Bot
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp data/.env.example data/.env   # 编辑 .env，填入上述配置
-python main.py
-```
-
-首次运行需要输入手机号和验证码完成 Telegram 登录，之后会话文件会自动复用。各配置项说明、问答 Bot / UserBot / WebUI / Sakura Guard 的启用方式和常见问题，见[快速开始](wiki/User-Getting-Started.md)。
-
-Docker 部署中，向 Bot 发送 `/update` 会更新宿主机仓库并重启；更新使用快进合并、保留本地配置，遇到冲突会停止并提示。纯 Python 源码改动即时生效；涉及依赖、前端或 Go 二进制的变更，`/update` 会自动请求宿主机部署器（在服务器上执行一次 `bash deploy/install-deployer.sh` 安装）拉取新依赖镜像并重建容器——**全程无需登录服务器**。未安装部署器时退回容器内自愈路径（重装依赖、重建 WebUI）。
-
-### 问答 Bot 运行时
-
-问答 Bot 默认使用 Go 实现（`qa-bot-go/`，资源占用约为 Python 版的 1/7），Python 版保留为回退。生效优先级为 `config.json` > 环境变量 `QA_BOT_RUNTIME`（部署级覆盖，见 `data/.env.example`）> `go`。管理员可用主 Bot 命令 `/qa_runtime`（别名 `/qa_运行时`）查看或切换运行时，也可在 WebUI「系统」页一键切换；切换会写入 `config.json` 持久化并立即重启问答 Bot（进行中的问答会话会中断），Go 二进制缺失时自动回退 Python。详见[运行时占用优化](wiki/Developer-Runtime-Footprint-Optimization.md)。
+在 Linux 或 macOS 本地开发时运行 `bash start.sh`，Windows 运行 `start.bat`。脚本会构建两个 Go 程序和 WebUI，然后启动主 Bot。若启用了 UserBot 且尚无授权会话，按部署手册完成首次登录。
 
 ## 目录结构
 
-```
-Sakura-Bot/
-├── core/               # 核心代码
-│   ├── ai/             # AI 引擎（Agentic RAG、向量存储、嵌入、重排）
-│   ├── bootstrap/      # 应用引导（初始化器编排）
-│   ├── commands/       # 命令处理器
-│   ├── config/         # 配置热重载（事件总线、文件监控、原子回滚）
-│   ├── forwarding/     # 频道消息转发
-│   ├── handlers/       # 事件处理器（UserBot、跨 Bot 通信、投稿审核）
-│   ├── i18n/           # 国际化（zh-CN、en-US）
-│   ├── infrastructure/ # 数据库、日志、异常、工具
-│   ├── moderation/     # Sakura Guard 群管
-│   ├── services/       # 业务服务层
-│   ├── system/         # 调度、错误处理、进程、关闭
-│   ├── telegram/       # Telegram 客户端
-│   └── web_api/        # WebUI API（FastAPI、JWT 认证）
-├── data/               # 配置（.env、config.json）、提示词、会话、向量库
-├── web/                # WebUI 前端（Vue 3 + Vite + Naive UI）
-├── wiki/               # 文档站源文件（VitePress）
-├── tests/              # 测试
-├── main.py             # 主程序入口
-└── qa_bot.py           # 问答 Bot 入口
+```text
+cmd/sakura-main/   主 Bot 入口
+cmd/sakura-qa/     助手 Bot 入口
+internal/          业务领域与共享基础设施
+web/               Vue 3、Vite 和 Naive UI
+data/              运行配置、提示词、会话和向量库
+wiki/              项目文档站
 ```
 
-## 技术栈
-
-| 技术 | 用途 |
-| --- | --- |
-| Python 3.13+ | 主语言 |
-| Telethon / python-telegram-bot | Telegram 客户端（主 Bot / 问答 Bot） |
-| OpenAI SDK | LLM 调用（任意 OpenAI 兼容服务） |
-| FastAPI + Vue 3 | WebUI 后端与前端 |
-| MySQL (aiomysql) / ChromaDB | 应用数据库 / 向量存储 |
-| APScheduler / watchdog | 定时任务 / 配置热重载 |
-| Ruff / Docker / GitHub Actions | 代码质量 / 部署 / CI |
+主 Bot 使用 gotd/td 处理 MTProto，与助手共用 Go Telegram Bot API 客户端。应用数据保存在 MySQL，向量索引使用 SQLite WAL 和 float32。两个进程使用同一套 OpenAI 兼容客户端、Embedding、Reranker、配置、日志和媒体处理实现。
 
 ## 文档
 
@@ -118,7 +67,7 @@ Sakura-Bot/
 
 ## 贡献
 
-欢迎 Issue 和 PR。PR 请提交到 `main` 分支（`dev` 由自动化维护），提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)，代码风格使用 Ruff。详见[贡献指南](CONTRIBUTING.md)和[行为准则](wiki/Code-of-Conduct.md)。
+欢迎 Issue 和 PR。PR 请提交到 `main` 分支（`dev` 由自动化维护），提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)，Go 代码使用 gofmt。详见[贡献指南](CONTRIBUTING.md)和[行为准则](wiki/Code-of-Conduct.md)。
 
 ## 许可证
 
@@ -126,8 +75,8 @@ Sakura-Bot/
 
 ## 致谢
 
-- [Telethon](https://github.com/LonamiWebs/Telethon) - Telegram MTProto 客户端
-- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) - Telegram Bot API 库
+- [gotd/td](https://github.com/gotd/td) - Telegram MTProto 客户端
+- [go-telegram/bot](https://github.com/go-telegram/bot) - Telegram Bot API 库
 - [DeepSeek](https://www.deepseek.com/) / [OpenAI](https://openai.com/) - 大模型 API
 - [SiliconFlow](https://siliconflow.cn/) - Embedding 与 Reranker API
 - 所有[贡献者](https://github.com/Sakura520222/Sakura-Bot/graphs/contributors)

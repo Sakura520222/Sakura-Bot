@@ -15,7 +15,7 @@
 
 在开始之前，请确保您具备以下条件：
 
-- ✅ **Python 3.13+** 或 **Docker 20.10+**
+- ✅ **Go 1.27+ 与 Node.js 22+**，或 **Docker Engine 与 Compose v2**
 - ✅ **Telegram Bot Token**（从 [@BotFather](https://t.me/BotFather) 获取）
 - ✅ **Telegram API 凭证**（从 [my.telegram.org](https://my.telegram.org) 获取）
 - ✅ **AI API Key**（推荐使用 [DeepSeek](https://platform.deepseek.com/) 或 [OpenAI](https://platform.openai.com/)）
@@ -93,14 +93,14 @@ MYSQL_DATABASE=sakura_bot_db
 ### 步骤 4：启动服务
 
 ```bash
-# 一键部署：更新源码 + 拉取依赖镜像并启动
+# 一键部署：更新源码 + 拉取完整镜像并启动
 bash scripts/deploy.sh
 
 # 查看日志
 docker compose logs -f
 ```
 
-`docker-compose.yml` 默认使用由 GitHub Actions 构建并推送到 GHCR 的依赖镜像 `ghcr.io/sakura520222/sakura-bot:main`（内含 Python 依赖、Go 二进制与前端产物），服务器无需本地构建；源码仍整体挂载到容器（`.:/app`），业务代码始终从宿主机加载。
+镜像由 GitHub Actions 发布，包含主 Bot、助手和 WebUI。`scripts/deploy.sh` 拉取与 Git 提交匹配的镜像。`data/` 和 `logs/` 保存于宿主机。
 
 **镜像拉取被拒（401/403）时**，任选其一处理：
 
@@ -116,14 +116,15 @@ docker compose up -d
 
 ### 步骤 5：首次登录
 
-首次运行时，您需要在日志中找到登录提示，然后在 Telegram 中完成登录：
+启用 UserBot 且尚无可用会话时，在终端运行授权命令。已有 Telethon 会话可从原路径导入。
 
-1. 查看日志中的手机号输入提示
-2. 在 Telegram 中输入手机号
-3. 输入收到的验证码
-4. （如果有两步验证）输入密码
+```bash
+docker compose stop sakura-summary-bot
+docker compose run --rm --no-deps sakura-summary-bot sakura-main --login-userbot
+docker compose up -d --no-build
+```
 
-登录成功后，Bot 将自动运行。
+若部署固定了 `SAKURA_BOT_IMAGE`，这些命令也要使用同一镜像。主 Bot 使用 Bot Token，UserBot 使用手机号、验证码及已启用的两步验证密码。
 
 ### 步骤 6：添加频道
 
@@ -131,26 +132,16 @@ docker compose up -d
 2. 发送 `/添加频道 https://t.me/your_channel`
 3. Bot 将开始监控该频道
 
+
 ### ✅ 完成！
 
 您已成功部署 Sakura-Bot！Bot 将按配置自动总结频道内容。
 
 ### 更新与重建
 
-日常更新只需向 Bot 发送 `/update`：它会将宿主机仓库快进合并到最新版本（保留本地配置，遇到冲突或分支分叉时停止并提示）。若变更涉及镜像层文件（`qa-bot-go/`、`web/`、`Dockerfile`、`docker-compose.yml`、`requirements.txt` 或镜像构建工作流），Bot 会写入更新请求标记，之后：
+手动更新使用 `bash scripts/deploy.sh`。运行 systemd 的服务器可执行一次 `bash deploy/install-deployer.sh`，让管理员使用 `/update` 提交更新请求。部署器快进更新源码并拉取对应提交的镜像。fork 或本地源码构建使用 `docker compose build` 后执行 `docker compose up -d --no-build`。
 
-- **已安装自动部署器**（推荐）：部署器监听到标记后自动拉取新依赖镜像并重建容器，全程无需登录服务器，也不再执行容器内的依赖安装与前端构建。部署器在宿主机一次性安装（需要 systemd）：
-
-  ```bash
-  bash deploy/install-deployer.sh   # 仓库不在 /root/Sakura-Bot 时传入实际路径
-  ```
-
-- **未安装自动部署器**：`/update` 退回容器内自愈路径——安装 Python 依赖、构建 WebUI 并重启。更新请求标记会保留（`deploy.sh` 本身不消费它）；之后可在宿主机手动执行 `bash scripts/deploy.sh` 完成相同的镜像更新，若日后安装了自动部署器，systemd 单元检测到残留标记会自动触发一次部署。
-
-变更不涉及镜像层时，`/update` 会在容器内安装依赖、构建 WebUI 并重启。也可以随时在宿主机手动执行 `bash scripts/deploy.sh` 一键更新（快进源码 + 拉取最新镜像）；`docker compose up -d --build` 仅用于 fork 或本地源码构建场景。
-
-项目目录通过 `.:/app` 挂载，源码与 `data/` 都保存在宿主机，容器重建不会丢失数据。
-
+[升级、备份与回滚](../docs/go-deployment.md)
 ---
 
 ## 💻 方案二：本地安装
@@ -162,46 +153,13 @@ git clone https://github.com/Sakura520222/Sakura-Bot.git
 cd Sakura-Bot
 ```
 
-### 步骤 2：创建虚拟环境（推荐）
+### 步骤 2：配置环境变量
 
-```bash
-# 创建虚拟环境
-python -m venv venv
+复制 `data/.env.example` 为 `data/.env`，填入 Telegram、MySQL 和 AI 配置。
 
-# 激活虚拟环境
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-```
+### 步骤 3：构建并运行
 
-### 步骤 3：安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 步骤 4：配置环境变量
-
-```bash
-# 复制配置模板
-cp data/.env.example data/.env
-
-# 编辑配置文件
-nano data/.env  # 或使用其他编辑器
-```
-
-填写与 Docker 方案相同的必要配置（见上文）。
-
-### 步骤 5：运行程序
-
-```bash
-python main.py
-```
-
-### 步骤 6：首次登录
-
-与 Docker 方案相同，完成 Telegram 登录。
+安装 Go 和 Node.js，执行 `bash start.sh` 或 Windows 下的 `start.bat`。脚本构建 WebUI 和两个 Go 二进制。在仓库根目录执行 `bin/sakura-main --login-userbot`（Windows 使用 `bin\sakura-main.exe --login-userbot`）完成首次 UserBot 授权。
 
 ### ✅ 完成！
 
@@ -318,7 +276,7 @@ docker compose logs -f
 
 ### Q1: 首次运行需要登录吗？
 
-**A:** 是的。首次运行需要输入手机号和验证码完成 Telegram 登录。登录后会生成会话文件，后续运行无需重新登录。
+**A:** 主 Bot 使用配置好的 Bot Token。启用 UserBot 时，首次授权需输入手机号和验证码。后续启动会复用会话文件。
 
 ### Q2: Bot 没有响应怎么办？
 
@@ -340,7 +298,7 @@ docker compose logs -f
 
 ### Q5: Docker 部署如何备份数据？
 
-**A:** 数据都保存在宿主机的 `data/` 目录（Compose 使用绑定挂载，不涉及命名卷），直接打包即可：
+**A:** 暂停服务写入后备份 MySQL 数据库、宿主机的 `data/`、自定义数据目录和 Compose 配置。可用下列命令归档 `data/`。
 
 ```bash
 tar -czf backup-$(date +%Y%m%d).tar.gz data/

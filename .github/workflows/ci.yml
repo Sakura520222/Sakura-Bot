@@ -2,87 +2,91 @@ name: CI 持续集成
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
+
+permissions:
+  contents: read
 
 jobs:
-  code-quality:
-    name: 代码质量检查
+  tests:
+    name: 单元测试
     runs-on: ubuntu-latest
-    
+    services:
+      test-mysql:
+        image: mysql:8.4.10
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_DATABASE: sakura_go_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+    env:
+      MYSQL_TEST_DSN: "root@tcp(127.0.0.1:3306)/sakura_go_test"
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 设置 Python 3.13
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          python-version: '3.13'
-          cache: 'pip'
-      
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff pylint mypy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-      
-      - name: Ruff 代码质量检查 (Lint)
-        run: |
-          ruff check . --output-format=github
-      
-      - name: Ruff 代码格式检查 (Format)
-        run: |
-          ruff format --check .
-      
-      - name: 代码复杂度检查（可选）
-        run: |
-          pylint core/*.py --fail-under=7.0 || echo "代码复杂度检查通过（仅供参考）"
-        continue-on-error: true
+          go-version-file: go.mod
+      - name: 检查 Go 格式
+        run: test -z "$(gofmt -l cmd internal | tee /dev/stderr)"
+      - name: Go 单元与 MySQL 集成测试
+        run: go test -count=1 -coverprofile=coverage.go.out ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: 检测并发竞争
+        run: go test -race -count=1 ./...
+        env:
+          # MySQL tests already ran above. Run the non-MySQL suite under the race detector.
+          MYSQL_TEST_DSN: ""
+      - name: 上传 Go 覆盖率
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: go-coverage
+          path: coverage.go.out
 
   security-scan:
-    name: 安全漏洞扫描
+    name: Go 依赖漏洞扫描
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 设置 Python 3.13
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          python-version: '3.13'
-      
-      - name: 安装安全扫描工具
-        run: |
-          python -m pip install --upgrade pip
-          pip install safety pip-audit
-      
-      - name: Safety 扫描
-        run: |
-          if [ -f requirements.txt ]; then
-            safety check --file requirements.txt || true
-          fi
-      
-      - name: Pip-audit 审计
-        run: |
-          if [ -f requirements.txt ]; then
-            pip-audit --requirement requirements.txt || true
-          fi
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  frontend:
+    name: WebUI 验证
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run test:wiki:browser
+      - run: npm run test:assistant:browser
 
   docker-build-test:
     name: Docker 构建测试
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 设置 Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: 构建测试镜像
-        uses: docker/build-push-action@v5
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: false
@@ -91,47 +95,22 @@ jobs:
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
-      - name: 测试容器启动
-        run: |
-          docker run --rm \
-            -e TELEGRAM_API_ID=12345 \
-            -e TELEGRAM_API_HASH=mock_hash \
-            -e TELEGRAM_BOT_TOKEN=123:mock_token \
-            sakura-bot:test python --version
-
-      - name: 验证源码挂载和更新工具链
-        run: |
-          docker run --rm -i \
-            -e TELEGRAM_API_ID=12345 \
-            -e TELEGRAM_API_HASH=mock_hash \
-            -e TELEGRAM_BOT_TOKEN=123:mock_token \
-            -v "$PWD:/app" \
-            sakura-bot:test python - <<'PY'
-          import subprocess
-          from pathlib import Path
-          from core.docker_runtime import prepare_runtime
-
-          for command in (["git", "rev-parse", "--show-toplevel"], ["node", "--version"], ["npm", "--version"]):
-              subprocess.run(command, check=True)
-          prepare_runtime()
-          assert Path("web/dist/index.html").is_file()
-          PY
-
-      - name: 设置 Go（发布附件冒烟测试）
-        uses: actions/setup-go@v5
+      - name: 验证 Go 运行时与 WebUI
+        run: bash scripts/smoke_image.sh sakura-bot:test "$(tr -d '\r\n' < VERSION)" "$RUNNER_TEMP/smoke-image"
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: qa-bot-go/go.mod
-          cache-dependency-path: qa-bot-go/go.sum
-
-      - name: 验证干净目录中的两个发布附件
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 验证两个发布附件
         run: |
           python scripts/release_archive.py build --directory "$RUNNER_TEMP/release-assets" \
             --extract-to "$RUNNER_TEMP/release-smoke"
           bash scripts/smoke_release.sh "$RUNNER_TEMP/release-smoke" sakura-bot:test "$(git rev-parse HEAD)"
 
-  tests:
-    name: 单元测试
+  legacy-parity:
+    name: Python 迁移回归
     runs-on: ubuntu-latest
     services:
       wiki-mysql:
@@ -178,14 +157,18 @@ jobs:
       - name: 安装测试依赖
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist
+          pip install pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist ruff
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: 检查迁移基准的 Python 代码
+        run: |
+          ruff check . --output-format=github
+          ruff format --check .
 
       - name: 设置 Go（Wiki 跨语言快照验证）
         uses: actions/setup-go@v5
         with:
-          go-version-file: qa-bot-go/go.mod
-          cache-dependency-path: qa-bot-go/go.sum
+          go-version-file: go.mod
       
       - name: 运行单元测试并收集覆盖率
         id: unit_tests
@@ -214,23 +197,6 @@ jobs:
             --strict-markers
           test -s test-results/integration.xml
 
-      - name: 设置 Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: 运行前端回归测试
-        run: |
-          npm --prefix web ci
-          npm --prefix web test
-
-      - name: 验证公开 Wiki 的移动端浏览流程
-        working-directory: web
-        run: |
-          npx playwright-core install --with-deps chromium
-          npm run build
-          npm run test:wiki:browser
-      
       - name: 验证 coverage 数据文件
         if: always()
         run: |
@@ -282,26 +248,13 @@ jobs:
   summary:
     name: CI 检查汇总
     runs-on: ubuntu-latest
-    needs: [code-quality, security-scan, docker-build-test, tests]
+    needs: [tests, security-scan, frontend, docker-build-test, legacy-parity]
     if: always()
-    
     steps:
-      - name: 生成检查报告
+      - name: 检查所有验证任务
+        env:
+          JOB_RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "# CI 检查结果" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- 代码质量检查: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 安全漏洞扫描: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Docker 构建测试: ${{ needs.docker-build-test.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 单元测试: ${{ needs.tests.result }}" >> $GITHUB_STEP_SUMMARY
-      
-      - name: 检查是否全部通过
-        run: |
-          if [ "${{ needs.code-quality.result }}" != "success" ] || \
-             [ "${{ needs.security-scan.result }}" != "success" ] || \
-             [ "${{ needs.docker-build-test.result }}" != "success" ] || \
-             [ "${{ needs.tests.result }}" != "success" ]; then
-            echo "CI 检查未全部通过"
-            exit 1
-          fi
-          echo "✅ 所有检查通过"
+          for result in $JOB_RESULTS; do
+            test "$result" = success || exit 1
+          done

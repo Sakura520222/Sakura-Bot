@@ -14,7 +14,7 @@ QA_BOT_USER_LIMIT=3
 QA_BOT_DAILY_LIMIT=200
 ```
 
-助手 Token 必须与主 Bot 不同。正常启动主进程或 Docker Compose 即可，不需要另建第二个助手容器，也不要让 Python 与 Go 同时消费一个助手 Token。
+助手 Token 必须与主 Bot 不同。正常启动主进程或 Docker Compose 即可，不需要另建第二个助手容器。同一个助手 Token 只应有一个更新消费者。
 
 旧 Python 运行时保留兼容用途；本页的积分、订阅门槛、评论区、动态追问和原生富文本功能只在 Go 实现。
 

@@ -1,9 +1,6 @@
 name: docker-build
 
-# 构建依赖镜像并推送 GHCR（Python 依赖 + Go 二进制 + 前端产物）。
-# 服务器保持源码挂载、走源码更新；bash scripts/deploy.sh = git pull +
-# docker compose pull + up -d。首次运行会在 ghcr.io 创建同名包；若拉取被拒，
-# 可在 GitHub Packages 设置里将包改为 public，或在服务器 docker login ghcr.io 一次。
+# 发布包含双 Go 二进制与 WebUI 的完整镜像。
 
 on:
   push:

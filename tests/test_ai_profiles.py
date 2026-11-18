@@ -265,7 +265,7 @@ def test_invalid_profile_secrets_never_escape_runtime_or_legacy_endpoint(monkeyp
 def parity_cases():
     from pathlib import Path
 
-    path = Path(__file__).parents[1] / "qa-bot-go/internal/config/testdata/ai_profiles_parity.json"
+    path = Path(__file__).parents[1] / "internal/config/testdata/ai_profiles_parity.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
