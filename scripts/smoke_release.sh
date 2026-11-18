@@ -38,10 +38,10 @@ for format in zip tar; do
         version=$(tr -d '\r\n' < VERSION)
         local_image="sakura-bot:release-smoke-$format"
         SAKURA_BOT_IMAGE="$local_image" docker compose build
-        bash "$smoke_image" "$local_image" "$PWD/.smoke-local"
+        bash "$smoke_image" "$local_image" "$version" "$PWD/.smoke-local"
 
         test "$(SAKURA_BOT_IMAGE="$image" docker compose config --images)" = "$image"
-        bash "$smoke_image" "$image" "$PWD/.smoke-published"
+        bash "$smoke_image" "$image" "$version" "$PWD/.smoke-published"
 
         MYSQL_TEST_DSN="root@tcp(127.0.0.1:$mysql_port)/release_smoke" \
             go test -count=1 -v ./internal/engine ./internal/handlers \

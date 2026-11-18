@@ -30,7 +30,7 @@ func TestBotIDFromToken(t *testing.T) {
 		wantID int64
 		wantOK bool
 	}{
-		{"123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", 123456789, true},
+		{"123456789:test-only", 123456789, true},
 		{"  9876543210:secret_token  ", 9876543210, true},
 		{"0:secret", 0, false},
 		{"0123:secret", 0, false},
