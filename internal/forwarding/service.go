@@ -58,6 +58,7 @@ type Service struct {
 
 	albumMu sync.Mutex
 	albums  map[string]*pendingAlbum
+	stopped bool
 	wg      sync.WaitGroup
 }
 
@@ -81,9 +82,10 @@ func NewService(deps ServiceDeps) *Service {
 // Stop 等待正在刷新的相册任务结束。
 func (s *Service) Stop() {
 	s.albumMu.Lock()
+	s.stopped = true
 	for k, pa := range s.albums {
-		if pa.timer != nil {
-			pa.timer.Stop()
+		if pa.timer.Stop() {
+			s.wg.Done()
 		}
 		delete(s.albums, k)
 	}
@@ -114,6 +116,10 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, msg *mtproto.Incomi
 
 	albumKey := fmt.Sprintf("%d_%d", msg.ChatID, msg.GroupedID)
 	s.albumMu.Lock()
+	if s.stopped {
+		s.albumMu.Unlock()
+		return
+	}
 	pa, exists := s.albums[albumKey]
 	if !exists {
 		pa = &pendingAlbum{msgs: make(map[int]*mtproto.IncomingMessage)}
@@ -270,14 +276,13 @@ func (s *Service) executeForward(
 	}
 
 	// 纯文本消息直接发送长文本
-	hasMedia := false
+	mediaMessages := make([]*mtproto.IncomingMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Media != nil {
-			hasMedia = true
-			break
+		if m.Media != nil && m.Media.Kind != "webpage" {
+			mediaMessages = append(mediaMessages, m)
 		}
 	}
-	if !hasMedia {
+	if len(mediaMessages) == 0 {
 		if strings.TrimSpace(caption) == "" {
 			return nil
 		}
@@ -288,6 +293,7 @@ func (s *Service) executeForward(
 		return err
 	}
 
+	msgs = mediaMessages
 	decision := DecideForwardStrategy(msgs, DefaultSmallFileThreshold, DefaultMediaGroupThreshold)
 	if decision.Strategy == StrategyMemory {
 		if err := s.forwardViaMemory(ctx, monCli, sendCli, msgs, targetChannel, caption); err == nil {

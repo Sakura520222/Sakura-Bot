@@ -90,10 +90,9 @@ type RecognitionResult struct {
 	Model       string
 }
 
-// IndexPublisher 在图片识别完成后将其同步到实时向量库或移除过期索引。
+// IndexPublisher 同步图片识别结果。空文本移除该任务当前对应的索引。
 type IndexPublisher interface {
 	IndexImageText(ctx context.Context, job db.MessageImageJob, combinedText string) (bool, error)
-	DeleteImageIndex(ctx context.Context, channelID string, messageID int64) (bool, error)
 }
 
 // WikiImageHook 在图片识别完成后可选通知 Wiki 采集器增量补录图片证据。
@@ -260,7 +259,7 @@ func (p *ImagePipeline) Capture(ctx context.Context, msg RemoteImageMessage) (bo
 	}
 	chID := ChannelKey(msg.ChannelID)
 	if msg.MediaID == "" {
-		return false, p.store.MarkMessageImageDeleted(ctx, chID, msg.MessageID)
+		return false, p.DeleteMessage(ctx, chID, msg.MessageID)
 	}
 	source := msg.ChannelUsername
 	if source == "" {
@@ -281,6 +280,23 @@ func (p *ImagePipeline) Capture(ctx context.Context, msg RemoteImageMessage) (bo
 		SourceLink:      fmt.Sprintf("https://t.me/%s/%d", source, msg.MessageID),
 		Caption:         msg.Caption,
 	})
+}
+
+// DeleteMessage invalidates the stored image and revokes any in-flight job.
+func (p *ImagePipeline) DeleteMessage(ctx context.Context, channelID string, messageID int64) error {
+	if p.store == nil {
+		return nil
+	}
+	return p.store.MarkMessageImageDeleted(ctx, ChannelKey(channelID), messageID)
+}
+
+// IsCurrentJob checks that an image task still owns the message revision and lease.
+func (p *ImagePipeline) IsCurrentJob(ctx context.Context, job db.MessageImageJob) (bool, error) {
+	if p.store == nil {
+		return false, nil
+	}
+	cur, err := p.store.GetMessageImage(ctx, ChannelKey(job.ChannelID), job.MessageID)
+	return cur != nil && !cur.Deleted && cur.Revision == job.Revision && sameLease(cur.LeaseToken, job.LeaseToken), err
 }
 
 // StorePollImage 将已校验的图片字节落盘到内容寻址目录并注册资产（对齐 store_poll_image）。
@@ -511,7 +527,7 @@ func (p *ImagePipeline) ProcessJob(ctx context.Context, job db.MessageImageJob) 
 	lock.Unlock()
 
 	cur, err = p.store.GetMessageImage(ctx, job.ChannelID, job.MessageID)
-	if err != nil || cur == nil || cur.Deleted || cur.Revision != job.Revision {
+	if err != nil || cur == nil || cur.Deleted || cur.Revision != job.Revision || !sameLease(cur.LeaseToken, job.LeaseToken) {
 		return err
 	}
 
@@ -528,22 +544,9 @@ func (p *ImagePipeline) ProcessJob(ctx context.Context, job db.MessageImageJob) 
 		p.wikiHook.OnImageRecognized(ctx, cur.ChannelID, cur.MessageID)
 	}
 	if p.publisher != nil {
-		var ok bool
-		if text == "" {
-			ok, err = p.publisher.DeleteImageIndex(ctx, cur.ChannelID, cur.MessageID)
-		} else {
-			ok, err = p.publisher.IndexImageText(ctx, *cur, text)
-		}
+		ok, err := p.publisher.IndexImageText(ctx, *cur, text)
 		if err != nil || !ok {
 			return fmt.Errorf("image_index_unavailable")
-		}
-		latest, _ := p.store.GetMessageImage(ctx, cur.ChannelID, cur.MessageID)
-		if latest == nil || latest.Deleted {
-			_, _ = p.publisher.DeleteImageIndex(ctx, cur.ChannelID, cur.MessageID)
-			return nil
-		}
-		if latest.Revision != cur.Revision {
-			return nil
 		}
 	}
 	return p.store.MarkAssetCompleted(ctx, job, digest, "", "", "")

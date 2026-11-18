@@ -407,6 +407,7 @@ func (m *Manager) MarkMessageImageDeleted(ctx context.Context, channelID string,
 		    status = 'deleted',
 		    revision = ?,
 		    caption = '',
+		    lease_until = NULL,
 		    lease_token = NULL
 		WHERE channel_id = ? AND message_id = ?
 	`, newHexToken32(), channelID, messageID)

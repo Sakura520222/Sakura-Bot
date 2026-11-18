@@ -536,14 +536,28 @@ func (s *Store) findExistingMessageDocIDs(ctx context.Context, parentIDs []strin
 //   - 消息编辑导致分块数缩减（或长文改短文 / 短文改长文）时，自动清理残余旧分块或旧单条 ID；
 //   - 嵌入网络调用在锁外一次批量完成，任一向量失败或维度不符绝不覆盖既有可用版本。
 func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []MessageItem) (int, error) {
-	if err := ctx.Err(); err != nil {
+	commit, err := s.PrepareMessageUpsert(ctx, embedFn, items)
+	if err != nil || commit == nil {
 		return 0, err
 	}
+	return commit(nil)
+}
+
+// MessageUpsert commits an embedded batch. A non-nil keep predicate selects
+// which parent messages to write and remove obsolete chunks for.
+type MessageUpsert func(keep func(channelID string, messageID int64) bool) (int, error)
+
+// PrepareMessageUpsert performs embedding before returning the database write.
+// Callers can synchronize that write with message edits and deletions.
+func (s *Store) PrepareMessageUpsert(ctx context.Context, embedFn EmbedFunc, items []MessageItem) (MessageUpsert, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.readOnly {
-		return 0, ErrReadOnly
+		return nil, ErrReadOnly
 	}
 	if len(items) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	type itemPlan struct {
@@ -555,12 +569,9 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 
 	plans := make([]itemPlan, 0, len(items))
 	var textsToEmbed []string
-	seenParents := make(map[string]struct{}, len(items))
-	parentList := make([]string, 0, len(items))
-
 	for _, item := range items {
 		if strings.TrimSpace(item.ChannelID) == "" || item.MessageID <= 0 {
-			return 0, fmt.Errorf("无效的消息标识: channel_id=%q message_id=%d", item.ChannelID, item.MessageID)
+			return nil, fmt.Errorf("无效的消息标识: channel_id=%q message_id=%d", item.ChannelID, item.MessageID)
 		}
 		if strings.TrimSpace(item.Text) == "" {
 			continue
@@ -579,11 +590,6 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 		}
 
 		parentID := fmt.Sprintf("%s:%d", item.ChannelID, item.MessageID)
-		if _, dup := seenParents[parentID]; !dup {
-			seenParents[parentID] = struct{}{}
-			parentList = append(parentList, parentID)
-		}
-
 		plan := itemPlan{
 			item:     item,
 			parentID: parentID,
@@ -592,7 +598,7 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 		}
 		if len(chunks) == 1 && len(item.Vector) > 0 {
 			if len(item.Vector) != s.expectedDim {
-				return 0, fmt.Errorf("%w: 期望 %d，实际 %d", ErrDimensionMismatch, s.expectedDim, len(item.Vector))
+				return nil, fmt.Errorf("%w: 期望 %d，实际 %d", ErrDimensionMismatch, s.expectedDim, len(item.Vector))
 			}
 		} else {
 			plan.embStart = len(textsToEmbed)
@@ -602,25 +608,25 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 	}
 
 	if len(plans) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	var computedVecs [][]float32
 	if len(textsToEmbed) > 0 {
 		if embedFn == nil {
-			return 0, errors.New("embedFn 不能为空")
+			return nil, errors.New("embedFn 不能为空")
 		}
 		var err error
 		computedVecs, err = embedFn(ctx, textsToEmbed)
 		if err != nil {
-			return 0, fmt.Errorf("批量生成消息向量失败: %w", err)
+			return nil, fmt.Errorf("批量生成消息向量失败: %w", err)
 		}
 		if len(computedVecs) != len(textsToEmbed) {
-			return 0, fmt.Errorf("消息向量返回数量不匹配: 期望 %d，实际 %d", len(textsToEmbed), len(computedVecs))
+			return nil, fmt.Errorf("消息向量返回数量不匹配: 期望 %d，实际 %d", len(textsToEmbed), len(computedVecs))
 		}
 		for i, v := range computedVecs {
 			if len(v) != s.expectedDim {
-				return 0, fmt.Errorf("%w: 第 %d 块向量期望 %d，实际 %d", ErrDimensionMismatch, i, s.expectedDim, len(v))
+				return nil, fmt.Errorf("%w: 第 %d 块向量期望 %d，实际 %d", ErrDimensionMismatch, i, s.expectedDim, len(v))
 			}
 		}
 	}
@@ -631,8 +637,7 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 		latestPlanIdx[p.parentID] = idx
 	}
 
-	var writeRows []WriteRow
-	newIDSet := make(map[string]struct{}, len(plans)*2)
+	parentRows := make(map[string][]WriteRow, len(latestPlanIdx))
 	nowISO := formatISOUTC(time.Now().UTC())
 
 	for idx, p := range plans {
@@ -688,16 +693,37 @@ func (s *Store) UpsertMessages(ctx context.Context, embedFn EmbedFunc, items []M
 			meta["total_chunks"] = totalChunks
 			meta["chunk_count"] = totalChunks
 
-			writeRows = append(writeRows, WriteRow{
+			parentRows[p.parentID] = append(parentRows[p.parentID], WriteRow{
 				ID:       docID,
 				Vector:   vec,
 				Document: chunkText,
 				Metadata: meta,
 			})
-			newIDSet[docID] = struct{}{}
 		}
 	}
 
+	return func(keep func(string, int64) bool) (int, error) {
+		var writeRows []WriteRow
+		parentList := make([]string, 0, len(parentRows))
+		for idx, p := range plans {
+			if latestPlanIdx[p.parentID] != idx || (keep != nil && !keep(p.item.ChannelID, p.item.MessageID)) {
+				continue
+			}
+			parentList = append(parentList, p.parentID)
+			writeRows = append(writeRows, parentRows[p.parentID]...)
+		}
+		return s.commitMessageUpsert(ctx, parentList, writeRows)
+	}, nil
+}
+
+func (s *Store) commitMessageUpsert(ctx context.Context, parentList []string, writeRows []WriteRow) (int, error) {
+	if len(writeRows) == 0 {
+		return 0, nil
+	}
+	newIDSet := make(map[string]struct{}, len(writeRows))
+	for _, row := range writeRows {
+		newIDSet[row.ID] = struct{}{}
+	}
 	// 先查出已存在的旧 ID，完整写入新块后再清理陈旧尾块/旧单条 ID（防中断半空窗）。
 	existingIDs, err := s.findExistingMessageDocIDs(ctx, parentList)
 	if err != nil {

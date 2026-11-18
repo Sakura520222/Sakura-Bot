@@ -118,8 +118,8 @@ func TestThreeStageFiltersAndStrategies(t *testing.T) {
 	}
 }
 
-func TestUncaptionedFirstPhotoAlbumAndFooter(t *testing.T) {
-	dir := t.TempDir()
+func testForwardingConfig(t *testing.T, dir string) *config.Config {
+	t.Helper()
 	envPath := filepath.Join(dir, ".env")
 	jsonPath := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(envPath, []byte("QA_BOT_USERNAME=sakura_qa_bot\n"), 0o644)
@@ -140,7 +140,12 @@ func TestUncaptionedFirstPhotoAlbumAndFooter(t *testing.T) {
 	if err := cfg.Init(); err != nil {
 		t.Fatalf("cfg.Init: %v", err)
 	}
+	return cfg
+}
 
+func TestUncaptionedFirstPhotoAlbumAndFooter(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testForwardingConfig(t, dir)
 	repo := &fakeFwdRepo{}
 	cli := &fakeFwdMessenger{}
 	svc := NewService(ServiceDeps{
@@ -186,5 +191,56 @@ func TestUncaptionedFirstPhotoAlbumAndFooter(t *testing.T) {
 	}
 	if len(repo.records) != 1 || repo.records[0].MessageKey != "group_777888" {
 		t.Fatalf("expected dedup key group_777888, got %+v", repo.records)
+	}
+}
+
+func TestStopCancelsPendingAlbum(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(ServiceDeps{
+		Config:           testForwardingConfig(t, dir),
+		CacheDir:         filepath.Join(dir, "cache"),
+		AlbumSettleDelay: time.Hour,
+	})
+	msg := &mtproto.IncomingMessage{
+		ID: 10, ChatID: -1001, ChatUsername: "src_ch", IsBroadcast: true, GroupedID: 777888,
+	}
+	svc.HandleIncomingMessage(t.Context(), msg)
+	if len(svc.albums) != 1 {
+		t.Fatal("expected a pending album")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not complete after cancelling an album")
+	}
+	svc.HandleIncomingMessage(t.Context(), msg)
+	if len(svc.albums) != 0 {
+		t.Fatal("album was scheduled after shutdown")
+	}
+}
+
+func TestForwardWebpagePreviewAsText(t *testing.T) {
+	for _, copyMode := range []bool{false, true} {
+		cli := &fakeFwdMessenger{}
+		svc := NewService(ServiceDeps{
+			SendingClient: func() mtproto.Messenger { return cli },
+			CacheDir:      t.TempDir(),
+		})
+		link := "https://example.org/news"
+		msg := &mtproto.IncomingMessage{
+			ID: 10, ChatID: -1001, ChatUsername: "src_ch", Text: link,
+			Media: &mtproto.MediaAttachment{Kind: "webpage"},
+		}
+		err := svc.executeForward(t.Context(), []*mtproto.IncomingMessage{msg}, "src_ch", "target_ch",
+			config.ForwardingRule{CopyMode: copyMode}, true)
+		if err != nil || len(cli.texts) != 1 || !strings.Contains(cli.texts[0], link) || !strings.Contains(cli.texts[0], "[Source]") {
+			t.Fatalf("copy mode %v: expected link and footer in text delivery, got %v (%v)", copyMode, cli.texts, err)
+		}
 	}
 }

@@ -12,6 +12,7 @@ package rag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -35,7 +36,7 @@ const (
 
 // VectorWriter 抽象实时消息向量写入与删除接口（由 *vectors.Store 实现）。
 type VectorWriter interface {
-	UpsertMessages(ctx context.Context, embedFn vectors.EmbedFunc, items []vectors.MessageItem) (int, error)
+	PrepareMessageUpsert(ctx context.Context, embedFn vectors.EmbedFunc, items []vectors.MessageItem) (vectors.MessageUpsert, error)
 	DeleteMessages(ctx context.Context, channelID string, messageIDs []int64) (int, error)
 }
 
@@ -49,6 +50,7 @@ type ragQueueItem struct {
 	senderID        int64
 	text            string
 	createdAt       time.Time
+	imageJob        *db.MessageImageJob
 }
 
 // Stats 暴露实时 RAG 队列运行统计。
@@ -78,15 +80,18 @@ type Deps struct {
 type Handler struct {
 	deps Deps
 
+	runMu    sync.Mutex
 	mu       sync.Mutex
 	running  bool
 	queue    chan ragQueueItem
 	cancelBg context.CancelFunc
 	wg       sync.WaitGroup
 
+	// Serializes message revisions, archive changes and vector commits.
+	// Embedding runs outside this lock.
 	genMu       sync.Mutex
 	generations map[string]uint64
-	genSeq      atomic.Uint64
+	genSeq      uint64
 
 	processed atomic.Int64
 	failed    atomic.Int64
@@ -119,6 +124,8 @@ func (h *Handler) SetImagePipeline(pipeline *media.ImagePipeline) {
 
 // Start 启动批量消费协程。
 func (h *Handler) Start(ctx context.Context) {
+	h.runMu.Lock()
+	defer h.runMu.Unlock()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.running {
@@ -138,6 +145,8 @@ func (h *Handler) Start(ctx context.Context) {
 
 // Stop 优雅排空队列（最多等待 30 秒）并停止后台协程。
 func (h *Handler) Stop() {
+	h.runMu.Lock()
+	defer h.runMu.Unlock()
 	h.mu.Lock()
 	if !h.running {
 		h.mu.Unlock()
@@ -146,9 +155,8 @@ func (h *Handler) Stop() {
 	h.running = false
 	ch := h.queue
 	cancel := h.cancelBg
-	h.mu.Unlock()
-
 	close(ch)
+	h.mu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		h.wg.Wait()
@@ -167,6 +175,9 @@ func (h *Handler) Stop() {
 	}
 	if cancel != nil {
 		cancel()
+	}
+	for item := range ch {
+		h.clearGenIfMatch(item.vectorID, item.generation)
 	}
 }
 
@@ -205,6 +216,9 @@ func (h *Handler) HandleIncomingMessage(ctx context.Context, msg *mtproto.Incomi
 		chName = chID
 	}
 
+	h.genMu.Lock()
+	defer h.genMu.Unlock()
+
 	// 先登记或刷新图片流水线（无图编辑会自动使旧图片识别失效）。
 	textToEnqueue := msg.Text
 	if h.deps.ImagePipeline != nil {
@@ -220,7 +234,7 @@ func (h *Handler) HandleIncomingMessage(ctx context.Context, msg *mtproto.Incomi
 		if msg.GroupedID != 0 {
 			grouped = strconv.FormatInt(msg.GroupedID, 10)
 		}
-		_, _ = h.deps.ImagePipeline.Capture(ctx, media.RemoteImageMessage{
+		_, err := h.deps.ImagePipeline.Capture(ctx, media.RemoteImageMessage{
 			ChannelID:       chID,
 			ChannelTitle:    chName,
 			ChannelUsername: msg.ChatUsername,
@@ -232,7 +246,9 @@ func (h *Handler) HandleIncomingMessage(ctx context.Context, msg *mtproto.Incomi
 			Date:            msg.Date,
 			RawMedia:        raw,
 		})
-		if mediaID != "" {
+		if err != nil {
+			h.deps.Logger.Error("登记频道图片任务失败", "channel_id", chID, "message_id", msg.ID, "error", err)
+		} else if mediaID != "" {
 			if ocr, desc, ok, err := h.lookupRecognizedText(ctx, chID, int64(msg.ID)); err == nil && ok {
 				textToEnqueue = media.CombinedText(msg.Text, ocr, desc)
 			}
@@ -242,11 +258,11 @@ func (h *Handler) HandleIncomingMessage(ctx context.Context, msg *mtproto.Incomi
 	if strings.TrimSpace(textToEnqueue) == "" {
 		// 编辑移除了全部文字且无有效图片识别时，清理旧向量。
 		if msg.EditDate != nil {
-			_, _ = h.HandleMessageDelete(ctx, chID, int64(msg.ID))
+			_, _ = h.deleteIndexLocked(ctx, chID, int64(msg.ID))
 		}
 		return false
 	}
-	return h.EnqueueMessage(chID, chName, msg.ChatUsername, int64(msg.ID), msg.SenderID, textToEnqueue, msg.Date)
+	return h.enqueueMessageLocked(chID, chName, msg.ChatUsername, int64(msg.ID), msg.SenderID, textToEnqueue, msg.Date)
 }
 
 // HandleDeletedEvent 处理频道消息删除事件。
@@ -272,14 +288,24 @@ func (h *Handler) EnqueueMessage(
 	text string,
 	createdAt time.Time,
 ) bool {
+	h.genMu.Lock()
+	defer h.genMu.Unlock()
+	return h.enqueueMessageLocked(channelID, channelName, channelUsername, messageID, senderID, text, createdAt)
+}
+
+func (h *Handler) enqueueMessageLocked(
+	channelID, channelName, channelUsername string,
+	messageID, senderID int64,
+	text string,
+	createdAt time.Time,
+) bool {
 	if strings.TrimSpace(text) == "" || messageID <= 0 {
 		return false
 	}
 	h.mu.Lock()
-	running := h.running
+	defer h.mu.Unlock()
 	q := h.queue
-	h.mu.Unlock()
-	if !running || q == nil {
+	if !h.running || q == nil {
 		return false
 	}
 
@@ -290,7 +316,7 @@ func (h *Handler) EnqueueMessage(
 		createdAt = createdAt.UTC()
 	}
 	vecID := fmt.Sprintf("%s:%d", chKey, messageID)
-	gen := h.nextGen(vecID)
+	gen := h.nextGenLocked(vecID)
 	h.archiveMessage(chKey, channelName, channelUsername, messageID, senderID, text, createdAt)
 
 	item := ragQueueItem{
@@ -308,7 +334,7 @@ func (h *Handler) EnqueueMessage(
 	case q <- item:
 		return true
 	default:
-		h.clearGenIfMatch(vecID, gen)
+		delete(h.generations, vecID)
 		h.deps.Logger.Warn("实时 RAG 队列已满，背压丢弃消息", "channel_id", chKey, "message_id", messageID)
 		return false
 	}
@@ -316,10 +342,20 @@ func (h *Handler) EnqueueMessage(
 
 // IndexImageText 实现 media.IndexPublisher，同步等待分块向量写入完成（供图片识别后台任务持久化调用）。
 func (h *Handler) IndexImageText(ctx context.Context, job db.MessageImageJob, combinedText string) (bool, error) {
-	if strings.TrimSpace(combinedText) == "" {
-		return false, nil
-	}
 	chKey := media.ChannelKey(job.ChannelID)
+	h.genMu.Lock()
+	if pipeline := h.deps.ImagePipeline; pipeline != nil {
+		current, err := pipeline.IsCurrentJob(ctx, job)
+		if err != nil || !current {
+			h.genMu.Unlock()
+			return err == nil, err
+		}
+	}
+	if strings.TrimSpace(combinedText) == "" {
+		_, err := h.deleteIndexLocked(ctx, chKey, job.MessageID)
+		h.genMu.Unlock()
+		return err == nil, err
+	}
 	created := job.SourceDate
 	if created.IsZero() {
 		created = time.Now().UTC()
@@ -329,8 +365,9 @@ func (h *Handler) IndexImageText(ctx context.Context, job db.MessageImageJob, co
 		chUser = *job.ChannelUsername
 	}
 	vecID := fmt.Sprintf("%s:%d", chKey, job.MessageID)
-	gen := h.nextGen(vecID)
+	gen := h.nextGenLocked(vecID)
 	h.archiveMessage(chKey, job.ChannelName, chUser, job.MessageID, 0, combinedText, created)
+	h.genMu.Unlock()
 
 	ok, err := h.processBatch(ctx, []ragQueueItem{{
 		vectorID:        vecID,
@@ -341,34 +378,39 @@ func (h *Handler) IndexImageText(ctx context.Context, job db.MessageImageJob, co
 		messageID:       job.MessageID,
 		text:            combinedText,
 		createdAt:       created,
+		imageJob:        &job,
 	}})
 	return ok, err
 }
 
-// DeleteImageIndex 实现 media.IndexPublisher，移除已删除或失效图片消息的向量与原文归档。
-func (h *Handler) DeleteImageIndex(ctx context.Context, channelID string, messageID int64) (bool, error) {
-	return h.HandleMessageDelete(ctx, channelID, messageID)
-}
-
-// HandleMessageDelete 从生成代数表、原文归档目录与向量库中删除指定消息。
+// HandleMessageDelete invalidates image work and removes the message from RAG.
 func (h *Handler) HandleMessageDelete(ctx context.Context, channelID string, messageID int64) (bool, error) {
 	chKey := media.ChannelKey(channelID)
-	vecID := fmt.Sprintf("%s:%d", chKey, messageID)
 	h.genMu.Lock()
-	delete(h.generations, vecID)
-	h.genMu.Unlock()
+	defer h.genMu.Unlock()
 
-	_ = vectors.DeleteSource(h.resolveArchiveDir(), chKey, messageID)
+	if pipeline := h.deps.ImagePipeline; pipeline != nil {
+		if err := pipeline.DeleteMessage(ctx, chKey, messageID); err != nil {
+			h.deps.Logger.Error("撤销频道图片任务失败", "channel_id", chKey, "message_id", messageID, "error", err)
+			return false, err
+		}
+	}
+	return h.deleteIndexLocked(ctx, chKey, messageID)
+}
+
+func (h *Handler) deleteIndexLocked(ctx context.Context, chKey string, messageID int64) (bool, error) {
+	vecID := fmt.Sprintf("%s:%d", chKey, messageID)
+	delete(h.generations, vecID)
+	sourceErr := vectors.DeleteSource(h.resolveArchiveDir(), chKey, messageID)
 	if h.deps.VectorStore == nil {
-		return false, nil
+		return false, sourceErr
 	}
 	n, err := h.deps.VectorStore.DeleteMessages(ctx, chKey, []int64{messageID})
 	if err != nil {
 		h.deps.Logger.Error("删除实时消息向量失败", "vector_id", vecID, "error", err)
-		return false, err
+		return false, errors.Join(sourceErr, err)
 	}
-	_ = vectors.DeleteSource(h.resolveArchiveDir(), chKey, messageID)
-	return n > 0, nil
+	return n > 0, sourceErr
 }
 
 func (h *Handler) workerLoop(ctx context.Context) {
@@ -407,6 +449,11 @@ func (h *Handler) workerLoop(ctx context.Context) {
 }
 
 func (h *Handler) processBatch(ctx context.Context, rawBatch []ragQueueItem) (bool, error) {
+	defer func() {
+		for _, item := range rawBatch {
+			h.clearGenIfMatch(item.vectorID, item.generation)
+		}
+	}()
 	if len(rawBatch) == 0 || h.deps.VectorStore == nil || h.deps.EmbedFn == nil {
 		return false, nil
 	}
@@ -435,21 +482,48 @@ func (h *Handler) processBatch(ctx context.Context, rawBatch []ragQueueItem) (bo
 		})
 	}
 
-	_, err := h.deps.VectorStore.UpsertMessages(ctx, h.deps.EmbedFn, msgItems)
+	commit, err := h.deps.VectorStore.PrepareMessageUpsert(ctx, h.deps.EmbedFn, msgItems)
+	if err == nil && commit == nil {
+		return true, nil
+	}
+	committed := 0
+	if err == nil {
+		committed, err = h.commitCurrentMessages(ctx, active, commit)
+	}
 	if err != nil {
 		h.failed.Add(int64(len(active)))
 		h.deps.Logger.Error("批量写入实时 RAG 消息向量失败", "count", len(active), "error", err)
 		return false, err
 	}
 
-	// 若写入期间发生了并发删除或更新，立即对已被淘汰的项补偿清理。
-	for _, it := range active {
-		if !h.hasAnyGen(it.vectorID) {
-			_, _ = h.deps.VectorStore.DeleteMessages(ctx, it.channelID, []int64{it.messageID})
-		}
-	}
-	h.processed.Add(int64(len(active)))
+	h.processed.Add(int64(committed))
 	return true, nil
+}
+
+func (h *Handler) commitCurrentMessages(ctx context.Context, active []ragQueueItem, commit vectors.MessageUpsert) (int, error) {
+	h.genMu.Lock()
+	defer h.genMu.Unlock()
+
+	current := make(map[string]bool, len(active))
+	for _, item := range active {
+		if h.generations[item.vectorID] != item.generation {
+			continue
+		}
+		if pipeline := h.deps.ImagePipeline; pipeline != nil && item.imageJob != nil {
+			valid, err := pipeline.IsCurrentJob(ctx, *item.imageJob)
+			if err != nil {
+				return 0, err
+			}
+			if !valid {
+				continue
+			}
+		}
+		current[item.vectorID] = true
+	}
+	_, err := commit(func(channelID string, messageID int64) bool {
+		return current[fmt.Sprintf("%s:%d", channelID, messageID)]
+	})
+	return len(current), err
 }
 
 func (h *Handler) isWhitelistedChannel(msg *mtproto.IncomingMessage) bool {
@@ -516,12 +590,10 @@ func (h *Handler) resolveArchiveDir() string {
 	return config.DefaultMessageSourceDir
 }
 
-func (h *Handler) nextGen(vecID string) uint64 {
-	gen := h.genSeq.Add(1)
-	h.genMu.Lock()
-	h.generations[vecID] = gen
-	h.genMu.Unlock()
-	return gen
+func (h *Handler) nextGenLocked(vecID string) uint64 {
+	h.genSeq++
+	h.generations[vecID] = h.genSeq
+	return h.genSeq
 }
 
 func (h *Handler) clearGenIfMatch(vecID string, gen uint64) {
@@ -537,11 +609,4 @@ func (h *Handler) isCurrentGen(vecID string, gen uint64) bool {
 	cur := h.generations[vecID]
 	h.genMu.Unlock()
 	return cur == gen && cur > 0
-}
-
-func (h *Handler) hasAnyGen(vecID string) bool {
-	h.genMu.Lock()
-	_, ok := h.generations[vecID]
-	h.genMu.Unlock()
-	return ok
 }
