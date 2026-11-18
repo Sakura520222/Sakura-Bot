@@ -5,7 +5,7 @@ RUN npm ci --include=dev
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.27-alpine AS go-builder
+FROM golang:1.27.4-alpine AS go-builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 WORKDIR /src

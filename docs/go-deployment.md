@@ -71,4 +71,4 @@ docker compose up -d --no-build
 
 ## 本地源码运行
 
-安装 Go 1.27+ 和 Node.js 22+。编辑 `data/.env`，在 Linux 或 macOS 执行 `bash start.sh`，在 Windows 执行 `start.bat`。构建后可在仓库根目录直接执行 `bin/sakura-main` 或 `bin\sakura-main.exe`，添加 `--login-userbot` 可首次授权。启用助手后，主进程管理同目录的 `sakura-qa` 子进程。
+安装 Go 1.27.4 或更高版本，以及 Node.js 22 或更高版本。编辑 `data/.env`，在 Linux 或 macOS 执行 `bash start.sh`，在 Windows 执行 `start.bat`。构建后可在仓库根目录直接执行 `bin/sakura-main` 或 `bin\sakura-main.exe`，添加 `--login-userbot` 可首次授权。启用助手后，主进程管理同目录的 `sakura-qa` 子进程。

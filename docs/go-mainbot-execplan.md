@@ -14,8 +14,8 @@
 - [ ] 验证所有领域功能。覆盖 MTProto 登录和会话迁移、回溯、实时事件、群管、Wiki 任务和数据重建。
 - [x] 更新双二进制构建、启动脚本、Go 容器产物、镜像部署器、发行归档和 GitHub Actions。工作分支未部署。
 - [x] 在 Linux Docker 29.9.3 执行生产镜像最终阶段和容器冒烟。构建输入为独立交叉编译的 Linux amd64 Go 二进制和 Vue 产物。
-- [ ] 执行完整的 Docker 多阶段源码构建，记录 GitHub Actions 结果。
-- [x] Draft PR #180 首轮 CI 已执行完整 Docker 多阶段源码构建，镜像与 WebUI 冒烟通过。发布附件检查发现两个调用缺少版本参数，已修正并等待复测。
+- [x] Draft PR #180 首轮 CI 已执行完整 Docker 多阶段源码构建，镜像与 WebUI 冒烟通过。发布附件检查发现两个调用缺少版本参数，已修正。
+- [ ] 确认 Draft PR 当前提交的 GitHub Actions 全部通过，包括完整 Docker 构建和两个发布附件。
 - [x] 运行全包测试、vet、race、前端构建和容器冒烟；记录相同条件下的 Python/Go 性能数据。
 
 ## 决策
@@ -39,13 +39,14 @@
 - Go WebUI 的健康检查和 Vue 的 `/login` 直达路由均返回 HTTP 200。
 - Vue 类型检查与生产构建通过。44 项前端测试通过，Wiki 和助手的浏览器回归通过。Wiki 移动端滚动用例在 Windows Chrome 上两次超时后，使用项目锁定的 Playwright Chromium 复测通过。
 - `go test ./...` 在隔离 MySQL 8.4.13 上通过，包括消息级计费、签到、退款、独立进程锁、评论回填、旧 Guard 验证通知恢复和 Wiki 删除事件重放。全包 `go vet ./...`、Linux amd64 双二进制交叉构建及 `go mod verify` 通过。Windows Clang 最终 `go test -race -p 1 -count=1 ./...` 通过。前一轮并行 race 的配置包单次失败，单包和整仓串行复测通过。LLVM 有非致命的 LNK4217 链接警告。
-- Linux 候选镜像 `sakura-bot:go-proof-tggtq85n` 使用未改动的 Dockerfile 最终阶段构建。在无外网、无端口映射的容器内验证两个 Go 可执行文件、版本、现有配置保留、全新配置初始化、无 Python/pip，以及 SIGTERM 后退出码 0。完整多阶段源码构建已配置在 CI 中，尚无远程运行结果。
+- Linux 候选镜像 `sakura-bot:go-proof-tggtq85n` 使用 Dockerfile 最终阶段构建。在无外网、无端口映射的容器内验证两个 Go 可执行文件、版本、现有配置保留、全新配置初始化、无 Python/pip，以及 SIGTERM 后退出码 0。随后 Draft PR 的 CI 验证了完整多阶段源码构建和镜像冒烟。
 - 用户授权在 `linux-server` 备份并直接验证。完整备份位于 `/root/Sakura-Bot-backups/pre-go-migration-20261118T125105Z`，包括 MySQL 单事务转储、4 个 SQLite 在线备份、运行文件、旧镜像、已跟踪改动和 SHA-256 清单。4 个 SQLite 快照均通过 `PRAGMA quick_check`，压缩归档通过 `gzip -t`，并已用 `sha256sum -c` 复核备份清单。
 - 用备份会话在服务器执行只读 Telegram 验证。gotd 成功导入主 Bot 和 UserBot 的 Telethon 会话，验证账号身份、读取 5 条频道历史消息并完成 Guard 成员权限 RPC。SQLite 副本可读取 290 条摘要向量和 17,035 条消息向量。
 - 将 MySQL 转储恢复到无外网、无端口映射的独立 MySQL 8.4.10 容器，运行主 Bot、Guard、Wiki 和助手计费的 Go 初始化。比对的 9 张表行数一致，覆盖摘要、用户、配额、对话、转发、图片资产和任务、帖子与评论。验证容器和测试数据已清理。生产容器健康，镜像 ID 与备份时一致。
 - 最终验收还包括 GitHub Actions 实际通过和真实 Telegram 写操作链路，例如新入群验证、群管动作、投稿发布、投票和外部 AI 响应。Python 源代码与回归测试仍可用于这些验收和旧运行时回滚。
 - 旧 Guard 待办缺少关联案件或授权凭据时保留为待人工复核，具备原始授权记录的旧待办可恢复运行。
 - PR #180 首轮 Go 依赖扫描发现 GO-2026-6888、GO-2026-6865 和 GO-2026-6860。已升级到公告列出的修复版本，继续用原扫描命令复验。测试中的 Telegram Token 样例已改为明确的测试占位符，保留 Bot ID 解析断言。
+- 本地扫描另外发现 Go 1.27.3 标准库中的 GO-2026-6859。模块最低版本、Docker 构建镜像和部署说明统一使用 Go 1.27.4。
 
 ## WebUI 性能
 
