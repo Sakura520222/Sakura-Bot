@@ -125,7 +125,7 @@ func (c *Config) QABotUsername() string { return c.Env.QABotUsername() }
 
 // SummaryContextTokens 返回 SUMMARY_CONTEXT_TOKENS（默认 1000000，对齐 summary_pipeline.py:66）。
 func (e *Env) SummaryContextTokens() int {
-	n := int(e.GetIntDef(KeySummaryContextTokens, DefaultSummaryContextTokens))
+	n := e.GetNativeIntDef(KeySummaryContextTokens, DefaultSummaryContextTokens)
 	if n <= 0 {
 		return DefaultSummaryContextTokens
 	}
@@ -137,7 +137,7 @@ func (c *Config) SummaryContextTokens() int { return c.Env.SummaryContextTokens(
 
 // SummaryOutputTokens 返回 SUMMARY_OUTPUT_TOKENS（默认 64000，对齐 summary_pipeline.py:67）。
 func (e *Env) SummaryOutputTokens() int {
-	n := int(e.GetIntDef(KeySummaryOutputTokens, DefaultSummaryOutputTokens))
+	n := e.GetNativeIntDef(KeySummaryOutputTokens, DefaultSummaryOutputTokens)
 	if n <= 0 {
 		return DefaultSummaryOutputTokens
 	}
@@ -200,7 +200,7 @@ func (c *Config) WebUIHost() string { return c.Env.WebUIHost() }
 
 // WebUIPort 返回 WEBUI_PORT（默认 8080，合法范围 1..65535）。
 func (e *Env) WebUIPort() int {
-	p := int(e.GetIntDef(KeyWebUIPort, DefaultWebUIPort))
+	p := e.GetNativeIntDef(KeyWebUIPort, DefaultWebUIPort)
 	if p < 1 || p > 65535 {
 		return DefaultWebUIPort
 	}
@@ -303,7 +303,7 @@ func (c *Config) WikiAssistantCheckinEnabled() bool {
 
 // WikiAssistantPort 返回环境变量 WIKI_ASSISTANT_PORT（默认 8091，范围 1..65535）。
 func (e *Env) WikiAssistantPort() int {
-	p := int(e.GetIntDef(KeyWikiAssistantPort, DefaultWikiAssistantPort))
+	p := e.GetNativeIntDef(KeyWikiAssistantPort, DefaultWikiAssistantPort)
 	if p < 1 || p > 65535 {
 		return DefaultWikiAssistantPort
 	}
@@ -330,7 +330,7 @@ func (c *Config) VectorDBPath() string { return c.Env.VectorDBPath() }
 
 // EmbeddingDimension 返回 EMBEDDING_DIMENSION（默认 1024，对齐 vector_store.py:98）。
 func (e *Env) EmbeddingDimension() int {
-	d := int(e.GetIntDef(KeyEmbeddingDimension, DefaultEmbeddingDimension))
+	d := e.GetNativeIntDef(KeyEmbeddingDimension, DefaultEmbeddingDimension)
 	if d <= 0 {
 		return DefaultEmbeddingDimension
 	}

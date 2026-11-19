@@ -22,7 +22,7 @@ func stripEmojiSpans(text string, spans []EntitySpan) (string, []EntitySpan) {
 	chars := []rune(text)
 	var positions []int
 	if len(spans) > 0 {
-		positions = make([]int, 1, len(chars)+1)
+		positions = []int{0}
 	}
 	var cleaned strings.Builder
 	cleaned.Grow(len(text))

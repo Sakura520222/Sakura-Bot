@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/contracts"
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 )
 
 // 模型列表与连接测试默认超时（对齐 core/web_api/routes/ai_profiles.py:158,188）。
@@ -308,12 +308,11 @@ func validateEndpointBaseURL(raw string) (string, error) {
 	if trimmed == "" || len(trimmed) > 2048 || hasControlChars(trimmed) {
 		return "", fmt.Errorf("无效的 HTTP(S) 服务地址")
 	}
-	u, err := url.Parse(trimmed)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
-		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	u, err := netpolicy.ParseHTTPURL(trimmed)
+	if err != nil || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("无效的 HTTP(S) 服务地址")
 	}
-	return strings.TrimRight(trimmed, "/"), nil
+	return strings.TrimRight(u.String(), "/"), nil
 }
 
 func isSafeModelID(id string) bool {

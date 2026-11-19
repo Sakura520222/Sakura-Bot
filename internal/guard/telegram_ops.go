@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -254,6 +255,15 @@ func rowInt64(row map[string]any, key string) int64 {
 	default:
 		return 0
 	}
+}
+
+// rowInt reads a signed INT column or a legacy JSON value stored at the same width.
+func rowInt(row map[string]any, key string) int {
+	value := rowInt64(row, key)
+	if value < math.MinInt32 || value > math.MaxInt32 {
+		return 0
+	}
+	return int(value)
 }
 
 func rowBool(row map[string]any, key string) bool {

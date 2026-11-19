@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/contracts"
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 )
 
 // AIPurposes 列出系统支持的全部 AI 用途（与 core/config/ai_profiles.py:PURPOSES 顺序一致）。
@@ -562,61 +563,58 @@ func (c *Config) SaveAIProviders(body map[string]any) (*PublicAIProvidersView, e
 
 // ────────────────────────────── 连接参数解析 & 旧版 AI 配置辅助 ──────────────────────────────
 
+// AIConnection contains the parameters and origin policy for a WebUI connection test.
+type AIConnection struct {
+	BaseURL     string
+	APIKey      string
+	Model       string
+	SavedOrigin bool
+}
+
 // ResolveProfileConnection 解析 v1 档案列模型/测试使用的连接参数（草稿优先，缺省沿用已保存档案）。
-func (c *Config) ResolveProfileConnection(profileID string, body map[string]any) (baseURL, apiKey, savedModel string, err error) {
+func (c *Config) ResolveProfileConnection(profileID string, body map[string]any) (AIConnection, error) {
 	parsed, parseErr := parseAIProfiles(c.RawSnapshot())
 	if parseErr != nil {
-		return "", "", "", fmt.Errorf("%w: %v", ErrConfigValidation, parseErr)
+		return AIConnection{}, fmt.Errorf("%w: %v", ErrConfigValidation, parseErr)
 	}
-	saved, hasSaved := parsed.profiles[profileID]
-	if hasSaved {
-		savedModel = saved.model
-	}
-
-	draftURL, draftKey, hasDraft, draftErr := parseDraftConnection(body)
-	if draftErr != nil {
-		return "", "", "", draftErr
-	}
-	if !hasDraft {
-		if !hasSaved {
-			return "", "", "", fmt.Errorf("%w: %s", ErrProfileNotFound, profileID)
-		}
-		return saved.baseURL, saved.apiKey, saved.model, nil
-	}
-	if draftKey == "" && hasSaved {
-		draftKey = saved.apiKey
-	}
-	return draftURL, draftKey, savedModel, nil
+	saved := parsed.profiles[profileID]
+	return resolveAIConnection(profileID, body, saved.baseURL, saved.apiKey, saved.model)
 }
 
 // ResolveProviderConnection 解析 v2 厂商列模型/测试使用的连接参数（支持 clear_api_key: true）。
-func (c *Config) ResolveProviderConnection(providerID string, body map[string]any) (baseURL, apiKey string, err error) {
+func (c *Config) ResolveProviderConnection(providerID string, body map[string]any) (AIConnection, error) {
 	migrated, migErr := migrateAIProvidersInternal(c.RawSnapshot(), c.Env)
 	if migErr != nil {
-		return "", "", migErr
+		return AIConnection{}, migErr
 	}
-	saved, hasSaved := migrated.providers[providerID]
+	saved := migrated.providers[providerID]
+	return resolveAIConnection(providerID, body, saved.baseURL, saved.apiKey, "")
+}
 
-	draftURL, draftKey, hasDraft, draftErr := parseDraftConnection(body)
-	if draftErr != nil {
-		return "", "", draftErr
+func resolveAIConnection(id string, body map[string]any, savedURL, savedKey, model string) (AIConnection, error) {
+	baseURL, apiKey, draft, err := parseDraftConnection(body)
+	if err != nil {
+		return AIConnection{}, err
 	}
-	if !hasDraft && !hasSaved {
-		return "", "", fmt.Errorf("%w: %s", ErrProfileNotFound, providerID)
-	}
-
-	if hasDraft {
-		baseURL, apiKey = draftURL, draftKey
-	} else {
-		baseURL, apiKey = saved.baseURL, saved.apiKey
+	if !draft {
+		if savedURL == "" {
+			return AIConnection{}, fmt.Errorf("%w: %s", ErrProfileNotFound, id)
+		}
+		baseURL = savedURL
 	}
 
+	target, targetErr := netpolicy.ParseHTTPURL(baseURL)
+	if targetErr != nil {
+		return AIConnection{}, fmt.Errorf("%w: base_url 无效", ErrConfigValidation)
+	}
+	saved, savedErr := netpolicy.ParseHTTPURL(savedURL)
+	savedOrigin := savedErr == nil && netpolicy.SameOrigin(target, saved)
 	if clearKey, ok := body["clear_api_key"].(bool); ok && clearKey {
 		apiKey = ""
-	} else if apiKey == "" && hasSaved {
-		apiKey = saved.apiKey
+	} else if apiKey == "" && savedOrigin {
+		apiKey = savedKey
 	}
-	return baseURL, apiKey, nil
+	return AIConnection{BaseURL: baseURL, APIKey: apiKey, Model: model, SavedOrigin: savedOrigin}, nil
 }
 
 // LegacyAIConfigView 对齐 GET /api/ai/config 的脱敏视图。

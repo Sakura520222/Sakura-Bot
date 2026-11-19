@@ -856,7 +856,7 @@ func (c *ChatCleanup) runJob(ctx context.Context, prev cleanupPreview, audit Aud
 		c.mu.Lock()
 		curResults, _ := c.job["results"].([]map[string]any)
 		c.job["results"] = append(curResults, resRow)
-		c.job["checked"] = int(rowInt64(c.job, "checked")) + 1
+		c.job["checked"] = rowInt64(c.job, "checked") + 1
 		c.mu.Unlock()
 
 		if audit != nil {
@@ -1245,10 +1245,10 @@ func (dc *DeletedUserCleanup) Step(ctx context.Context) {
 
 		payload := rowPayload(job)
 		rawGroups, _ := payload["groups"].([]any)
-		idx := int(rowInt64(payload, "group_index"))
+		idx := rowInt64(payload, "group_index")
 		jobID := rowStr(job, "id")
 
-		if idx >= len(rawGroups) {
+		if idx < 0 || idx >= int64(len(rawGroups)) {
 			job["status"] = "completed"
 			_ = st.SaveDeletedCleanupJob(ctx, job)
 			dc.releaseDirectory()
@@ -1267,7 +1267,7 @@ func (dc *DeletedUserCleanup) Step(ctx context.Context) {
 
 		switch gStatus {
 		case "scanning":
-			offset := int(rowInt64(grpMap, "offset"))
+			offset := rowInt(grpMap, "offset")
 			page, err := dc.svc.ops.ScanDeletedParticipants(ctx, chatID, offset, 200)
 			if err != nil || page == nil {
 				grpMap["status"] = "failed"
@@ -1286,7 +1286,7 @@ func (dc *DeletedUserCleanup) Step(ctx context.Context) {
 			}
 			_ = st.AddDeletedCleanupCandidates(ctx, jobID, chatID, cands)
 			grpMap["offset"] = page.NextOffset
-			grpMap["scanned"] = int(rowInt64(grpMap, "scanned")) + page.Scanned
+			grpMap["scanned"] = rowInt64(grpMap, "scanned") + int64(page.Scanned)
 			if page.Done {
 				grpMap["status"] = "removing"
 			}

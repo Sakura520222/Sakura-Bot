@@ -417,7 +417,7 @@ func (s *Server) handleRecentSystemLogs(w http.ResponseWriter, r *http.Request) 
 
 // Scan the last three pages of lines without reading a full rotated file.
 func recentLogLines(path string, count int, level, keyword string) ([]string, error) {
-	selected := make([]string, 0, count)
+	selected := []string{}
 	file, err := os.Open(path)
 	if err != nil {
 		return selected, err

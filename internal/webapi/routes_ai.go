@@ -24,6 +24,7 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/internal/config"
 	"github.com/Sakura520222/Sakura-Bot/internal/db"
 	"github.com/Sakura520222/Sakura-Bot/internal/llm"
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 	"github.com/Sakura520222/Sakura-Bot/internal/tg"
 	"github.com/go-telegram/bot/models"
 )
@@ -104,7 +105,7 @@ func (s *Server) handlePostAIProfileModels(w http.ResponseWriter, r *http.Reques
 	profileID := r.PathValue("profile_id")
 	var body map[string]any
 	_ = readJSONBody(r, &body, 128*1024)
-	baseURL, apiKey, _, err := s.deps.Config.ResolveProfileConnection(profileID, body)
+	conn, err := s.deps.Config.ResolveProfileConnection(profileID, body)
 	if err != nil {
 		if errors.Is(err, config.ErrProfileNotFound) {
 			writeHTTPError(w, http.StatusNotFound, "档案不存在")
@@ -113,9 +114,13 @@ func (s *Server) handlePostAIProfileModels(w http.ResponseWriter, r *http.Reques
 		writeHTTPError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	upstream := s.aiProbeHTTP(w, conn)
+	if upstream == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	modelsList, lerr := llm.ListModels(ctx, baseURL, apiKey, s.deps.UpstreamHTTP)
+	modelsList, lerr := llm.ListModels(ctx, conn.BaseURL, conn.APIKey, upstream)
 	if lerr != nil {
 		writeHTTPError(w, http.StatusBadGateway, lerr.Error())
 		return
@@ -134,7 +139,7 @@ func (s *Server) handlePostAIProfileTest(w http.ResponseWriter, r *http.Request)
 		writeHTTPError(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	baseURL, apiKey, savedModel, err := s.deps.Config.ResolveProfileConnection(profileID, body)
+	conn, err := s.deps.Config.ResolveProfileConnection(profileID, body)
 	if err != nil {
 		if errors.Is(err, config.ErrProfileNotFound) {
 			writeHTTPError(w, http.StatusNotFound, "档案不存在")
@@ -149,11 +154,15 @@ func (s *Server) handlePostAIProfileTest(w http.ResponseWriter, r *http.Request)
 	}
 	modelName, _ := body["model"].(string)
 	if strings.TrimSpace(modelName) == "" {
-		modelName = savedModel
+		modelName = conn.Model
+	}
+	upstream := s.aiProbeHTTP(w, conn)
+	if upstream == nil {
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := llm.TestConnection(ctx, baseURL, apiKey, strings.TrimSpace(modelName), kind, s.deps.UpstreamHTTP); err != nil {
+	if err := llm.TestConnection(ctx, conn.BaseURL, conn.APIKey, strings.TrimSpace(modelName), kind, upstream); err != nil {
 		if kind != "connection" && kind != "call" {
 			writeHTTPError(w, http.StatusBadRequest, err.Error())
 			return
@@ -208,7 +217,7 @@ func (s *Server) handlePostAIProviderModels(w http.ResponseWriter, r *http.Reque
 	providerID := r.PathValue("provider_id")
 	var body map[string]any
 	_ = readJSONBody(r, &body, 128*1024)
-	baseURL, apiKey, err := s.deps.Config.ResolveProviderConnection(providerID, body)
+	conn, err := s.deps.Config.ResolveProviderConnection(providerID, body)
 	if err != nil {
 		if errors.Is(err, config.ErrProfileNotFound) {
 			writeHTTPError(w, http.StatusNotFound, "厂商不存在")
@@ -217,9 +226,13 @@ func (s *Server) handlePostAIProviderModels(w http.ResponseWriter, r *http.Reque
 		writeHTTPError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	upstream := s.aiProbeHTTP(w, conn)
+	if upstream == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	modelsList, lerr := llm.ListModels(ctx, baseURL, apiKey, s.deps.UpstreamHTTP)
+	modelsList, lerr := llm.ListModels(ctx, conn.BaseURL, conn.APIKey, upstream)
 	if lerr != nil {
 		writeHTTPError(w, http.StatusBadGateway, lerr.Error())
 		return
@@ -238,7 +251,7 @@ func (s *Server) handlePostAIProviderTest(w http.ResponseWriter, r *http.Request
 		writeHTTPError(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	baseURL, apiKey, err := s.deps.Config.ResolveProviderConnection(providerID, body)
+	conn, err := s.deps.Config.ResolveProviderConnection(providerID, body)
 	if err != nil {
 		if errors.Is(err, config.ErrProfileNotFound) {
 			writeHTTPError(w, http.StatusNotFound, "厂商不存在")
@@ -252,9 +265,13 @@ func (s *Server) handlePostAIProviderTest(w http.ResponseWriter, r *http.Request
 		kind = "connection"
 	}
 	modelName, _ := body["model"].(string)
+	upstream := s.aiProbeHTTP(w, conn)
+	if upstream == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := llm.TestConnection(ctx, baseURL, apiKey, strings.TrimSpace(modelName), kind, s.deps.UpstreamHTTP); err != nil {
+	if err := llm.TestConnection(ctx, conn.BaseURL, conn.APIKey, strings.TrimSpace(modelName), kind, upstream); err != nil {
 		if kind != "connection" && kind != "call" {
 			writeHTTPError(w, http.StatusBadRequest, err.Error())
 			return
@@ -264,6 +281,39 @@ func (s *Server) handlePostAIProviderTest(w http.ResponseWriter, r *http.Request
 	}
 	writeEnvelopeOK(w, nil, "连接测试通过")
 }
+
+// aiProbeHTTP permits private destinations only for the configured provider origin.
+func (s *Server) aiProbeHTTP(w http.ResponseWriter, conn config.AIConnection) *http.Client {
+	if !conn.SavedOrigin {
+		if _, err := netpolicy.PublicURL(conn.BaseURL); err != nil {
+			writeHTTPError(w, http.StatusBadRequest, "草稿仅可测试公网服务。请先保存内网地址或非标准端口的厂商配置")
+			return nil
+		}
+		return netpolicy.NewPublicHTTPClient(llm.DefaultTestConnectionTimeout, nil)
+	}
+
+	client := http.Client{Transport: directAIProbeTransport}
+	if s.deps.UpstreamHTTP != nil {
+		client = *s.deps.UpstreamHTTP
+	}
+	checkRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 || !netpolicy.SameOrigin(req.URL, via[0].URL) || req.URL.User != nil {
+			return http.ErrUseLastResponse
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		return nil
+	}
+	return &client
+}
+
+var directAIProbeTransport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return transport
+}()
 
 // ────────────────────────────── QA Assistant (/api/ai/assistant*) ──────────────────────────────
 

@@ -238,7 +238,7 @@ func (c *Config) PollRegenThreshold() int {
 			return n
 		}
 	}
-	if n := int(c.Env.GetIntDef(KeyPollRegenThreshold, DefaultPollRegenThreshold)); n >= 1 {
+	if n := c.Env.GetNativeIntDef(KeyPollRegenThreshold, DefaultPollRegenThreshold); n >= 1 {
 		return n
 	}
 	return DefaultPollRegenThreshold

@@ -12,6 +12,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -126,20 +127,23 @@ func pyInt(v any) (int, error) {
 		if math.IsInf(t, 0) {
 			return 0, &pyErr{"OverflowError", "cannot convert float infinity to integer"}
 		}
+		if t < float64(math.MinInt) || t >= -float64(math.MinInt) {
+			return 0, &pyErr{"OverflowError", "integer out of range"}
+		}
 		return int(math.Trunc(t)), nil
 	case string:
 		s := strings.TrimSpace(t)
-		n, err := strconv.ParseInt(s, 10, 64)
+		n, err := strconv.Atoi(s)
 		if err != nil {
 			return 0, &pyErr{"ValueError", fmt.Sprintf("invalid literal for int() with base 10: %q", t)}
 		}
-		return int(n), nil
+		return n, nil
 	case json.Number:
-		n, err := strconv.ParseInt(string(t), 10, 64)
+		n, err := strconv.Atoi(string(t))
 		if err != nil {
 			return 0, &pyErr{"ValueError", fmt.Sprintf("invalid literal for int() with base 10: %q", string(t))}
 		}
-		return int(n), nil
+		return n, nil
 	default:
 		return 0, &pyErr{"TypeError", fmt.Sprintf("int() argument must be a string, a bytes-like object or a real number, not '%s'", pyTypeName(v))}
 	}
@@ -403,18 +407,25 @@ func dictKeyID(v any) (id int, ok bool, err error) {
 	case int:
 		return t, true, nil
 	case int64:
+		if t < math.MinInt || t > math.MaxInt {
+			return 0, false, nil
+		}
 		return int(t), true, nil
 	case float64:
-		if t == math.Trunc(t) && !math.IsInf(t, 0) {
+		if t == math.Trunc(t) && t >= float64(math.MinInt) && t < -float64(math.MinInt) {
 			return int(t), true, nil
 		}
 		return 0, false, nil
 	case json.Number:
-		if n, perr := strconv.ParseInt(t.String(), 10, 64); perr == nil {
-			return int(n), true, nil
+		n, perr := strconv.Atoi(t.String())
+		if perr == nil {
+			return n, true, nil
 		}
-		if f, perr := t.Float64(); perr == nil && f == math.Trunc(f) {
-			return int(f), true, nil
+		if errors.Is(perr, strconv.ErrRange) {
+			return 0, false, nil
+		}
+		if f, err := t.Float64(); err == nil {
+			return dictKeyID(f)
 		}
 		return 0, false, nil
 	default:

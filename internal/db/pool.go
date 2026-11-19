@@ -151,10 +151,10 @@ func mainPoolParams(cfg *config.Config) (poolSize, maxOverflow int) {
 	poolSize = 5
 	maxOverflow = 10
 	if cfg != nil && cfg.Env != nil {
-		if v := int(cfg.Env.GetIntDef(config.KeyMySQLPoolSize, 5)); v > 0 {
+		if v := cfg.Env.GetNativeIntDef(config.KeyMySQLPoolSize, 5); v > 0 {
 			poolSize = v
 		}
-		if v := int(cfg.Env.GetIntDef(config.KeyMySQLMaxOverflow, 10)); v >= 0 {
+		if v := cfg.Env.GetNativeIntDef(config.KeyMySQLMaxOverflow, 10); v >= 0 {
 			maxOverflow = v
 		}
 	}

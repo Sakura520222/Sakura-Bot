@@ -46,7 +46,7 @@ func (n *Notifier) syncCaseNotices(ctx context.Context, st *guarddb.Store, row g
 			if retiredNotice(notice) {
 				continue
 			}
-			if err := st.UpsertCaseNotice(ctx, id, rowInt64(notice, "target_id"), noticeMessageID(notice), nil, nil, int(rowInt64(notice, "attempts"))); err != nil {
+			if err := st.UpsertCaseNotice(ctx, id, rowInt64(notice, "target_id"), noticeMessageID(notice), nil, nil, rowInt(notice, "attempts")); err != nil {
 				return err
 			}
 			notice["synced_status"], notice["error"] = nil, nil
@@ -210,7 +210,7 @@ func (n *Notifier) deliverCaseNotice(ctx context.Context, st *guarddb.Store, row
 	}
 	if err == nil {
 		if mid != nil {
-			err = n.svc.ops.EditMessage(ctx, target, int(*mid), text, opts)
+			err = n.svc.ops.EditMessage(ctx, target, mtproto.MessageID(*mid), text, opts)
 			if tgerr.Is(err, "MESSAGE_NOT_MODIFIED") {
 				err = nil
 			}
@@ -233,7 +233,7 @@ func (n *Notifier) deliverCaseNotice(ctx context.Context, st *guarddb.Store, row
 			oldStatus = &previousStatus
 		}
 		n.svc.logger.Warn("Guard 通知投递失败", "case", id, "target", target, "error", err)
-		return false, st.MarkCaseNoticeFailed(ctx, id, target, mid, oldStatus, err.Error(), int(rowInt64(previous, "attempts"))+1)
+		return false, st.MarkCaseNoticeFailed(ctx, id, target, mid, oldStatus, err.Error(), rowInt(previous, "attempts")+1)
 	}
 	return true, st.MarkCaseNoticeSynced(ctx, id, target, mid, status)
 }
@@ -269,7 +269,7 @@ func updateCaseNoticePayload(ctx context.Context, st *guarddb.Store, row guarddb
 }
 
 func noticeMessageID(row guarddb.Row) *int64 {
-	if mid := rowInt64(row, "message_id"); mid > 0 {
+	if mid := rowInt64(row, "message_id"); mtproto.MessageID(mid) > 0 {
 		return &mid
 	}
 	return nil
@@ -431,14 +431,14 @@ func (n *Notifier) cleanupVerificationNotices(ctx context.Context, st *guarddb.S
 				continue
 			}
 		}
-		attempts := int(rowInt64(oldNotice, "attempts"))
+		attempts := rowInt(oldNotice, "attempts")
 		messageID := noticeMessageID(oldNotice)
 		deleting := "deleting"
 		if err := st.UpsertCaseNotice(ctx, oldID, target, messageID, &deleting, nil, attempts); err != nil {
 			return err
 		}
 		if messageID != nil && *messageID != rowInt64(replacementNotice, "message_id") {
-			if err := n.svc.ops.DeleteMessages(ctx, target, []int{int(*messageID)}); err != nil && !missingTelegramMessage(err) {
+			if err := n.svc.ops.DeleteMessages(ctx, target, []int{mtproto.MessageID(*messageID)}); err != nil && !missingTelegramMessage(err) {
 				detail := "cleanup:" + err.Error()
 				if err := st.MarkCaseNoticeFailed(ctx, oldID, target, messageID, &deleting, detail, attempts+1); err != nil {
 					return err
@@ -470,7 +470,7 @@ func (n *Notifier) cleanupVerificationNotices(ctx context.Context, st *guarddb.S
 
 func (n *Notifier) forwardReportEvidence(ctx context.Context, st *guarddb.Store, row guarddb.Row, target int64) (bool, error) {
 	p := rowPayload(row)
-	message := rowInt64(p, "message_id")
+	message := mtproto.MessageID(rowInt64(p, "message_id"))
 	if rowStr(row, "action") != "report" || message <= 0 {
 		return false, nil
 	}
@@ -484,7 +484,7 @@ func (n *Notifier) forwardReportEvidence(ctx context.Context, st *guarddb.Store,
 	}
 	result := "forwarded"
 	randomID := mtproto.StableRandomID(fmt.Sprintf("guard-report-evidence:%s:%d", rowStr(row, "id"), target))
-	if err := n.svc.ops.ForwardOnce(ctx, target, rowInt64(row, "chat_id"), int(message), randomID); err != nil {
+	if err := n.svc.ops.ForwardOnce(ctx, target, rowInt64(row, "chat_id"), message, randomID); err != nil {
 		if !tgerr.Is(err, "CHAT_FORWARDS_RESTRICTED", "MESSAGE_ID_INVALID", "MESSAGE_IDS_EMPTY", "MESSAGE_EMPTY", "CHANNEL_PRIVATE") &&
 			!missingTelegramMessage(err) {
 			var rpc *mtproto.TelegramActionError

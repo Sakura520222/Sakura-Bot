@@ -32,8 +32,8 @@ func verificationCard(id string, userID int64, status string, payload map[string
 		key = "guard.challenge_assistant_unavailable"
 		username := strings.TrimPrefix(rowStr(assistant, "username"), "@")
 		secret := rowStr(assistant, "secret")
-		if value := rowInt64(assistant, "max_attempts"); value > 0 {
-			attempts = int(value)
+		if value := rowInt(assistant, "max_attempts"); value > 0 {
+			attempts = value
 		}
 		if rowInt64(assistant, "bot_id") > 0 && username != "" && assistantReceipt.MatchString(secret) {
 			key = "guard.challenge_assistant"
@@ -123,7 +123,7 @@ func legacyChallengeText(text string) string {
 
 func (vm *VerificationManager) refreshVerificationCard(ctx context.Context, st *guarddb.Store, session guarddb.Row, grp GuardGroup) error {
 	status := rowStr(session, "status")
-	messageID := rowInt64(session, "message_id")
+	messageID := mtproto.MessageID(rowInt64(session, "message_id"))
 	if !grp.Enabled || vm.svc.ops == nil || messageID <= 0 || (status != "waiting" && status != "held") {
 		return nil
 	}
@@ -152,7 +152,7 @@ func (vm *VerificationManager) refreshVerificationCard(ctx context.Context, st *
 		return nil
 	}
 	text, buttons := verificationCard(rowStr(session, "id"), rowInt64(session, "user_id"), status, p, expiresAt, now, grp)
-	if err := vm.svc.ops.EditMessage(ctx, rowInt64(session, "chat_id"), int(messageID), text, mtproto.SendOptions{
+	if err := vm.svc.ops.EditMessage(ctx, rowInt64(session, "chat_id"), messageID, text, mtproto.SendOptions{
 		ParseMode: "plain", NoWebpage: true, Buttons: buttons,
 	}); err != nil && !missingTelegramMessage(err) {
 		return err

@@ -137,7 +137,7 @@ func (vm *VerificationManager) resumeVerificationAdmission(ctx context.Context, 
 	}
 	save := guarddb.VerificationSessionSave{
 		ID: rowStr(row, "id"), ChatID: rowInt64(row, "chat_id"), UserID: rowInt64(row, "user_id"),
-		Status: "preparing", Payload: p, Attempts: int(rowInt64(row, "attempts")),
+		Status: "preparing", Payload: p, Attempts: rowInt(row, "attempts"),
 		ExpiresAt: parseRowTimeOrNow(row, "expires_at", time.Time{}),
 	}
 	if persistLegacyStage {

@@ -49,6 +49,7 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/internal/db"
 	"github.com/Sakura520222/Sakura-Bot/internal/db/guard"
 	"github.com/Sakura520222/Sakura-Bot/internal/i18n"
+	"github.com/Sakura520222/Sakura-Bot/internal/mtproto"
 	"github.com/Sakura520222/Sakura-Bot/internal/tg"
 )
 
@@ -1496,13 +1497,13 @@ func (h *AppealHandler) editOrSend(ctx context.Context, chatID int64, text strin
 		}
 		return int64(msg.ID), nil
 	}
-	if messageID != 0 {
+	if mid := mtproto.MessageID(messageID); mid != 0 {
 		if h.tg == nil {
 			return 0, errors.New("telegram 客户端未装配")
 		}
 		_, err := h.tg.EditMessageTextWithTimeout(ctx, tg.AppealCardTimeout, &bot.EditMessageTextParams{
 			ChatID:             chatID,
-			MessageID:          int(messageID),
+			MessageID:          mid,
 			Text:               text,
 			ParseMode:          models.ParseModeHTML,
 			ReplyMarkup:        markup,
@@ -2234,10 +2235,7 @@ func stripTagsUnescape(s string) string {
 // sha256(json.dumps([id, action, status, payload.review_generation 默认 0]))。
 // Python json.dumps 默认分隔符为 ", " / ": "，逐字保留。
 func sourceSignature(caseRow guard.Row) string {
-	generation := 0
-	if v, ok := asMap(caseRow["payload"])["review_generation"]; ok && v != nil {
-		generation = int(pyInt(v))
-	}
+	generation := pyInt(asMap(caseRow["payload"])["review_generation"])
 	raw := fmt.Sprintf(`["%s", "%s", "%s", %d]`,
 		rowStr(caseRow, "id"), rowStr(caseRow, "action"), rowStr(caseRow, "status"), generation)
 	sum := sha256.Sum256([]byte(raw))

@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 )
 
 const (
@@ -101,7 +103,7 @@ func (p *ProposalInput) ValidateAndNormalize() error {
 	}
 	normalizedURLs := make([]string, 0, len(p.Sources))
 	for _, rawURL := range p.Sources {
-		cleanURL, err := PublicURL(rawURL)
+		cleanURL, err := netpolicy.PublicURL(rawURL)
 		if err != nil {
 			return fmt.Errorf("来源链接无效: %w", err)
 		}
@@ -455,7 +457,7 @@ func (c *CommunityService) EditAndApprove(ctx context.Context, proposalID, edite
 	}
 	cleanSources := make([]string, 0, len(editedSources))
 	for _, raw := range editedSources {
-		u, err := PublicURL(raw)
+		u, err := netpolicy.PublicURL(raw)
 		if err != nil {
 			return nil, fmt.Errorf("来源链接无效: %w", err)
 		}

@@ -810,7 +810,7 @@ func (s *Service) ExecuteCase(ctx context.Context, st *guarddb.Store, caseRow gu
 	}
 
 	if s.ops != nil {
-		if mid := int(rowInt64(payload, "message_id")); mid > 0 && !rowBool(payload, "verification_message") {
+		if mid := mtproto.MessageID(rowInt64(payload, "message_id")); mid > 0 && !rowBool(payload, "verification_message") {
 			if action == "ban" {
 				requestErr := s.reviews.requestMessageDeletion(ctx, st, caseRow, "system:auto_filter", true)
 				fresh, readErr := st.Case(ctx, caseID)

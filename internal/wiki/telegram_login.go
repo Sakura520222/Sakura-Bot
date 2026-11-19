@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/config"
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 	"github.com/Sakura520222/Sakura-Bot/internal/tg"
 )
 
@@ -758,7 +759,7 @@ func DownloadTelegramAvatarURL(ctx context.Context, rawURL string, customClient 
 	}
 	cli := customClient
 	if cli == nil {
-		cli = NewSSRFSafeHTTPClient(4*time.Second, nil)
+		cli = netpolicy.NewPublicHTTPClient(4*time.Second, nil)
 	} else {
 		cp := *cli
 		cli = &cp

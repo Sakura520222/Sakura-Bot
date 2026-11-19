@@ -228,7 +228,7 @@ func saveVerificationRow(ctx context.Context, st *guarddb.Store, row guarddb.Row
 	return st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
 		ID: rowStr(row, "id"), ChatID: rowInt64(row, "chat_id"), UserID: rowInt64(row, "user_id"),
 		Status: rowStr(row, "status"), Payload: rowPayload(row), MessageID: messageID, Error: errMessage,
-		Attempts: int(rowInt64(row, "attempts")), ExpiresAt: parseRowTimeOrNow(row, "expires_at", db.NowUTC()),
+		Attempts: rowInt(row, "attempts"), ExpiresAt: parseRowTimeOrNow(row, "expires_at", db.NowUTC()),
 	})
 }
 

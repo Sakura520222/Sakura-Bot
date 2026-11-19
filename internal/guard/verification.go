@@ -420,9 +420,9 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 		} else {
 			challenge, _ := payload["challenge"].(map[string]any)
 			options := parseAnyStringSlice(challenge["options"])
-			answer := int(rowInt64(challenge, "answer"))
-			valid = choice >= 0 && choice < len(options) && answer >= 0 && answer < len(options)
-			correct = choice == answer
+			answer := rowInt64(challenge, "answer")
+			valid = choice >= 0 && choice < len(options) && answer >= 0 && answer < int64(len(options))
+			correct = int64(choice) == answer
 		}
 		if !valid {
 			toast, alert = i18n.T("guard.invalid_callback", nil), true
@@ -435,7 +435,7 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 			return nil
 		}
 		payload["handled_queries"] = append(handled, query)
-		attempts := int(rowInt64(cur, "attempts"))
+		attempts := rowInt(cur, "attempts")
 
 		if correct {
 			if rerr := vm.passSession(ctx, st, cur, grp, "passed", 0); rerr != nil {
@@ -471,10 +471,11 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 		delete(payload, "answer_tokens")
 		delete(payload, "answer_context")
 		expAt := parseRowTimeOrNow(cur, "expires_at", time.Now().UTC().Add(60*time.Second))
-		if mid := rowInt64(cur, "message_id"); mid > 0 {
-			msgIDPtr = &mid
+		if mid := mtproto.MessageID(rowInt64(cur, "message_id")); mid > 0 {
+			id := int64(mid)
+			msgIDPtr = &id
 			text, rows := verificationCard(sessionID, targetUserID, "waiting", payload, expAt, time.Now(), grp)
-			_ = vm.svc.ops.EditMessage(ctx, chatID, int(mid), text, mtproto.SendOptions{Buttons: rows, ParseMode: "plain", NoWebpage: true})
+			_ = vm.svc.ops.EditMessage(ctx, chatID, mid, text, mtproto.SendOptions{Buttons: rows, ParseMode: "plain", NoWebpage: true})
 		}
 		_ = st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
 			ID:        sessionID,
@@ -558,7 +559,7 @@ func (vm *VerificationManager) failSession(
 	}
 	save := guarddb.VerificationSessionSave{
 		ID: sessionID, ChatID: chatID, UserID: userID, Status: "kicking", Payload: payload,
-		Attempts: int(rowInt64(sess, "attempts")), ExpiresAt: parseRowTimeOrNow(sess, "expires_at", time.Now().UTC()),
+		Attempts: rowInt(sess, "attempts"), ExpiresAt: parseRowTimeOrNow(sess, "expires_at", time.Now().UTC()),
 	}
 	if mid := rowInt64(sess, "message_id"); mid > 0 {
 		save.MessageID = &mid
@@ -638,7 +639,7 @@ func (vm *VerificationManager) cleanupChallengeMessage(ctx context.Context, chat
 	if vm.svc.ops == nil {
 		return nil
 	}
-	mid := int(rowInt64(sess, "message_id"))
+	mid := mtproto.MessageID(rowInt64(sess, "message_id"))
 	if mid <= 0 {
 		return nil
 	}
@@ -702,7 +703,7 @@ func (vm *VerificationManager) ProcessDueSession(ctx context.Context, rawSess gu
 			}
 			return st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
 				ID: rowStr(cur, "id"), ChatID: chatID, UserID: userID, Status: "waiting",
-				Payload: payload, MessageID: messageID, Attempts: int(rowInt64(cur, "attempts")), ExpiresAt: expiry,
+				Payload: payload, MessageID: messageID, Attempts: rowInt(cur, "attempts"), ExpiresAt: expiry,
 			})
 		}
 
@@ -874,7 +875,7 @@ func (vm *VerificationManager) restoreVerificationRights(ctx context.Context, st
 		}
 		if err := st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
 			ID: rowStr(session, "id"), ChatID: chat, UserID: user, Status: "passing", Payload: payload,
-			MessageID: messageID, Attempts: int(rowInt64(session, "attempts")),
+			MessageID: messageID, Attempts: rowInt(session, "attempts"),
 			ExpiresAt: parseRowTimeOrNow(session, "expires_at", time.Time{}),
 		}); err != nil {
 			return err

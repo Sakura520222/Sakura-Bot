@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/gotd/td/telegram/message/markup"
@@ -24,6 +25,15 @@ import (
 )
 
 const defaultLongMessageMaxRunes = 4000
+
+// MessageID converts a persisted Telegram message identifier to the protocol's
+// signed 32-bit range. Zero indicates a missing or invalid identifier.
+func MessageID(id int64) int {
+	if id <= 0 || id > math.MaxInt32 {
+		return 0
+	}
+	return int(id)
+}
 
 func cryptoRandInt64() int64 {
 	var b [8]byte

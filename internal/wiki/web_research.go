@@ -24,7 +24,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -36,6 +35,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/config"
+	"github.com/Sakura520222/Sakura-Bot/internal/netpolicy"
 )
 
 const (
@@ -89,33 +89,8 @@ var GeneralWebProviders = map[string]bool{
 }
 
 var (
-	reNumericHost = regexp.MustCompile(`^(?i:(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*\.?)$`)
-	reASCIIAlpha  = regexp.MustCompile(`[a-zA-Z]`)
-	reCJKQuery    = regexp.MustCompile(`[\x{3400}-\x{9fff}]`)
-	reHTMLTags    = regexp.MustCompile(`<[^>]*>`)
-
-	// 非公网保留网段黑名单（补充 netip 标准库方法之外的 CGNAT / IETF / TEST-NET / 文档 / 基准测试网段）
-	blockedPrefixes = []netip.Prefix{
-		netip.MustParsePrefix("0.0.0.0/8"),       // RFC 1122 "This network"
-		netip.MustParsePrefix("100.64.0.0/10"),   // RFC 6598 CGNAT (Shared Address Space)
-		netip.MustParsePrefix("127.0.0.0/8"),     // Loopback
-		netip.MustParsePrefix("169.254.0.0/16"),  // Link-local
-		netip.MustParsePrefix("192.0.0.0/24"),    // IETF Protocol Assignments
-		netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1
-		netip.MustParsePrefix("198.18.0.0/15"),   // Benchmarking
-		netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2
-		netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3
-		netip.MustParsePrefix("224.0.0.0/4"),     // Multicast
-		netip.MustParsePrefix("240.0.0.0/4"),     // Reserved Class E / Broadcast
-		netip.MustParsePrefix("::1/128"),         // IPv6 Loopback
-		netip.MustParsePrefix("fc00::/7"),        // IPv6 Unique Local (ULA)
-		netip.MustParsePrefix("fe80::/10"),       // IPv6 Link-Local
-		netip.MustParsePrefix("ff00::/8"),        // IPv6 Multicast
-		netip.MustParsePrefix("2001:db8::/32"),   // IPv6 Documentation
-		netip.MustParsePrefix("2001::/23"),       // IETF Protocol Assignments / Teredo
-		netip.MustParsePrefix("100::/64"),        // Discard-Only Prefix
-		netip.MustParsePrefix("64:ff9b:1::/48"),  // Local-Use IPv4/IPv6 Translation
-	}
+	reCJKQuery = regexp.MustCompile(`[\x{3400}-\x{9fff}]`)
+	reHTMLTags = regexp.MustCompile(`<[^>]*>`)
 )
 
 // SearchUnavailableError 表示搜索或抓取不可用（携带对齐 Python 路由的机器码）。
@@ -259,138 +234,6 @@ func MaskedSearchSettings(s SearchSettings) map[string]any {
 		"concurrency":  s.Concurrency,
 		"ttl_hours":    s.TTLHours,
 		"providers":    provs,
-	}
-}
-
-// IsPublicIP 严格判定 IP 地址是否为全球可达公网单播地址（拦截回环、RFC1918 私网、CGNAT、链路本地、组播与保留地址）。
-func IsPublicIP(addr netip.Addr) bool {
-	if !addr.IsValid() {
-		return false
-	}
-	addr = addr.Unmap()
-	if addr.IsUnspecified() || addr.IsLoopback() || addr.IsPrivate() ||
-		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
-		addr.IsMulticast() || !addr.IsGlobalUnicast() {
-		return false
-	}
-	for _, pfx := range blockedPrefixes {
-		if pfx.Contains(addr) {
-			return false
-		}
-	}
-	return true
-}
-
-// PublicURL 校验并归一化公开 HTTP/HTTPS URL（仅允许 80/443 默认端口、禁止凭据与私网/本地主机名，对齐 public_url）。
-func PublicURL(raw string) (string, error) {
-	if raw == "" || len(raw) > 2048 {
-		return "", errors.New("invalid public URL")
-	}
-	for i := 0; i < len(raw); i++ {
-		b := raw[i]
-		if b <= 0x20 || b == 0x7f || b == '\\' {
-			return "", errors.New("invalid public URL")
-		}
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return "", errors.New("invalid public URL")
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return "", errors.New("invalid public URL")
-	}
-	port := parsed.Port()
-	if port != "" {
-		if (parsed.Scheme == "https" && port != "443") || (parsed.Scheme == "http" && port != "80") {
-			return "", errors.New("invalid public URL port")
-		}
-	}
-	cleanHost := strings.TrimRight(strings.ToLower(host), ".")
-	if cleanHost == "localhost" || cleanHost == "localhost.localdomain" ||
-		strings.HasSuffix(cleanHost, ".local") ||
-		strings.HasSuffix(cleanHost, ".internal") ||
-		strings.HasSuffix(cleanHost, ".localhost") {
-		return "", errors.New("invalid public hostname")
-	}
-
-	if ip, ipErr := netip.ParseAddr(host); ipErr == nil {
-		if !IsPublicIP(ip) {
-			return "", errors.New("invalid public address")
-		}
-	} else {
-		if !strings.Contains(cleanHost, ".") || reNumericHost.MatchString(cleanHost) {
-			return "", errors.New("invalid public hostname")
-		}
-		lastDot := strings.LastIndexByte(cleanHost, '.')
-		tld := cleanHost[lastDot+1:]
-		if !reASCIIAlpha.MatchString(tld) {
-			return "", errors.New("invalid public hostname TLD")
-		}
-	}
-
-	parsed.Fragment = ""
-	return parsed.String(), nil
-}
-
-// IPResolver 抽象域名解析接口（测试中可注入自定义解析器，生产默认 net.DefaultResolver）。
-type IPResolver interface {
-	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
-}
-
-// NewSSRFSafeHTTPClient 构造在建立连接前强制校验全部 DNS 解析结果均为全球公网单播 IP 且禁用自动重定向的 *http.Client。
-func NewSSRFSafeHTTPClient(timeout time.Duration, resolver IPResolver) *http.Client {
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	if resolver == nil {
-		resolver = net.DefaultResolver
-	}
-	dialer := &net.Dialer{Timeout: min(timeout, 10*time.Second)}
-	transport := &http.Transport{
-		Proxy: nil, // 禁止读取环境代理，防止通过代理绕过内网隔离
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			if port != "80" && port != "443" {
-				return nil, errors.New("disallowed outbound port")
-			}
-			var addrs []netip.Addr
-			if ip, ipErr := netip.ParseAddr(host); ipErr == nil {
-				addrs = []netip.Addr{ip}
-			} else {
-				addrs, err = resolver.LookupNetIP(ctx, "ip", host)
-				if err != nil || len(addrs) == 0 {
-					return nil, errors.New("DNS resolution failed")
-				}
-			}
-			for _, addr := range addrs {
-				if !IsPublicIP(addr) {
-					return nil, errors.New("non-public IP address blocked")
-				}
-			}
-			// 直接拨号已核实的第一个公网 IP，彻底杜绝二次解析 DNS Rebinding TOCTOU
-			var lastErr error
-			for _, addr := range addrs {
-				conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
-				if dialErr == nil {
-					return conn, nil
-				}
-				lastErr = dialErr
-			}
-			return nil, lastErr
-		},
-		TLSHandshakeTimeout:   min(timeout, 10*time.Second),
-		ResponseHeaderTimeout: timeout,
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
 	}
 }
 
@@ -757,7 +600,7 @@ func NormalizedResults(name string, payload map[string]any, limit int, endpoint 
 			urlKey = "link"
 		}
 		rawURL, _ := row[urlKey].(string)
-		cleanURL, err := PublicURL(rawURL)
+		cleanURL, err := netpolicy.PublicURL(rawURL)
 		if err != nil || seen[cleanURL] {
 			continue
 		}
@@ -844,10 +687,9 @@ func truncateRunesSimple(s string, limit int) string {
 
 // ResearchService 提供带 SSRF 防护、MySQL 缓存、每日调用配额与 9 源回退的联网检索及公开网页提取能力。
 type ResearchService struct {
-	store          *Store
-	cfg            *config.Config
-	resolver       IPResolver
-	customClientFn func(timeout time.Duration) *http.Client
+	store    *Store
+	cfg      *config.Config
+	resolver netpolicy.IPResolver
 
 	activeMu    sync.Mutex
 	activeCond  *sync.Cond
@@ -893,10 +735,7 @@ func (r *ResearchService) CurrentSettings() SearchSettings {
 }
 
 func (r *ResearchService) httpClient(timeout time.Duration) *http.Client {
-	if r.customClientFn != nil {
-		return r.customClientFn(timeout)
-	}
-	return NewSSRFSafeHTTPClient(timeout, r.resolver)
+	return netpolicy.NewPublicHTTPClient(timeout, r.resolver)
 }
 
 func (r *ResearchService) acquireSlot(maxConcurrency int) {
@@ -1188,7 +1027,7 @@ func (r *ResearchService) Fetch(ctx context.Context, rawURL string) (map[string]
 	if !settings.Enabled {
 		return nil, &SearchUnavailableError{Code: "fetch_disabled"}
 	}
-	cleanURL, err := PublicURL(rawURL)
+	cleanURL, err := netpolicy.PublicURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -1281,7 +1120,7 @@ func (r *ResearchService) Fetch(ctx context.Context, rawURL string) (map[string]
 
 // Reachable 快速探测公开链接是否可达且返回非空响应（最多 3 次公网重定向，5 秒超时）。
 func (r *ResearchService) Reachable(ctx context.Context, rawURL string) bool {
-	target, err := PublicURL(rawURL)
+	target, err := netpolicy.PublicURL(rawURL)
 	if err != nil {
 		return false
 	}
@@ -1398,7 +1237,7 @@ func resolveRedirectURL(baseStr, location string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return PublicURL(baseU.ResolveReference(locU).String())
+	return netpolicy.PublicURL(baseU.ResolveReference(locU).String())
 }
 
 func readBoundedBody(r io.Reader, limit int64) ([]byte, error) {

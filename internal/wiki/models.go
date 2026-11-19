@@ -838,9 +838,10 @@ func computeDiffEdits(a, b []string) []diffEdit {
 	na, nb := len(midA), len(midB)
 
 	var midEdits []diffEdit
+	const maxDiffCells = 4_000_000
 	if na == 0 && nb == 0 {
 		// 无中间差异
-	} else if na*nb > 4_000_000 {
+	} else if na == 0 || nb == 0 || na >= maxDiffCells || nb >= maxDiffCells || na+1 > maxDiffCells/(nb+1) {
 		// 超大块安全退化为整段替换，防止 O(N*M) 内存爆炸
 		for i := 0; i < na; i++ {
 			midEdits = append(midEdits, diffEdit{op: '-', text: midA[i], oldIdx: prefix + i, newIdx: prefix})
@@ -849,7 +850,7 @@ func computeDiffEdits(a, b []string) []diffEdit {
 			midEdits = append(midEdits, diffEdit{op: '+', text: midB[j], oldIdx: prefix + na, newIdx: prefix + j})
 		}
 	} else {
-		dp := make([]int, (na+1)*(nb+1))
+		dp := make([]int, (int64(na)+1)*(int64(nb)+1))
 		stride := nb + 1
 		for i := na - 1; i >= 0; i-- {
 			for j := nb - 1; j >= 0; j-- {

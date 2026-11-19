@@ -247,7 +247,7 @@ func (o *ObservationEngine) InspectMessage(
 			Status:    stStr,
 			Payload:   payload,
 			MessageID: nil,
-			Attempts:  int(rowInt64(sess, "attempts")),
+			Attempts:  rowInt(sess, "attempts"),
 			ExpiresAt: parseRowTimeOrNow(sess, "expires_at", now),
 		})
 		return &Match{
@@ -267,7 +267,7 @@ func (o *ObservationEngine) InspectMessage(
 		Status:    stStr,
 		Payload:   payload,
 		MessageID: nil,
-		Attempts:  int(rowInt64(sess, "attempts")),
+		Attempts:  rowInt(sess, "attempts"),
 		ExpiresAt: parseRowTimeOrNow(sess, "expires_at", now),
 	})
 
@@ -526,7 +526,7 @@ func parseAnyIntSlice(v any) []int {
 	case []any:
 		out := make([]int, 0, len(arr))
 		for _, it := range arr {
-			out = append(out, int(rowInt64(map[string]any{"v": it}, "v")))
+			out = append(out, rowInt(map[string]any{"v": it}, "v"))
 		}
 		return out
 	default:

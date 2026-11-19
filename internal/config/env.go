@@ -233,6 +233,18 @@ func (e *Env) GetIntDef(key string, def int64) int64 {
 	return n
 }
 
+// GetNativeIntDef parses an environment value for a Go int destination.
+func (e *Env) GetNativeIntDef(key string, def int) int {
+	if e == nil {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(e.values[key]))
+	if err != nil {
+		return def
+	}
+	return n
+}
+
 // GetBoolDef 按 pydantic 宽松布尔语义解析（true/1/yes/on 与 false/0/no/off）；缺失或非法时返回 def。
 func (e *Env) GetBoolDef(key string, def bool) bool {
 	if e == nil {

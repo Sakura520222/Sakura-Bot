@@ -199,9 +199,9 @@ func (w *AIReportWorker) buildReportContext(ctx context.Context, st *guarddb.Sto
 
 	payload := rowPayload(caseRow)
 	msgSnap, _ := payload["reported_message"].(map[string]any)
-	msgID := int(rowInt64(msgSnap, "id"))
+	msgID := mtproto.MessageID(rowInt64(msgSnap, "id"))
 	if msgID <= 0 {
-		msgID = int(rowInt64(payload, "message_id"))
+		msgID = mtproto.MessageID(rowInt64(payload, "message_id"))
 	}
 	if msgID <= 0 {
 		return nil, "missing_message_id"

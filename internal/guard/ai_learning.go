@@ -509,7 +509,7 @@ func (l *AILearning) RecordWhitelist(ctx context.Context, store *guarddb.Store, 
 		})
 		if rule, err := store.GetAIRuleLocked(ctx, rid); err == nil && rule != nil {
 			if rowStr(rule, "status") == "active" &&
-				(int(rowInt64(rule, "negatives")) >= threshold || int(rowInt64(rule, "corrections")) >= threshold) {
+				(rowInt64(rule, "negatives") >= int64(threshold) || rowInt64(rule, "corrections") >= int64(threshold)) {
 				errCode := "negative_feedback_threshold"
 				_ = store.SetAIRuleStatus(ctx, rule, "disabled", guarddb.AIRuleStatusOptions{
 					Actor: "system:feedback",
@@ -880,9 +880,9 @@ func (l *AILearning) runSingleLearningJob(ctx context.Context, rawJob guarddb.Ro
 			_ = st.RefreshAIRuleStats(ctx, rowStr(upserted, "id"), linkedSamples)
 			refreshed, _ := st.GetAIRuleLocked(ctx, rowStr(upserted, "id"))
 			if refreshed != nil && cfg.Activation == "auto" && rowStr(refreshed, "status") == "candidate" {
-				if int(rowInt64(refreshed, "positives")) >= cfg.MinPositiveSamples &&
-					int(rowInt64(refreshed, "reporters")) >= cfg.MinReporters &&
-					int(rowInt64(refreshed, "target_users")) >= cfg.MinTargetUsers &&
+				if rowInt64(refreshed, "positives") >= int64(cfg.MinPositiveSamples) &&
+					rowInt64(refreshed, "reporters") >= int64(cfg.MinReporters) &&
+					rowInt64(refreshed, "target_users") >= int64(cfg.MinTargetUsers) &&
 					cand.Confidence >= cfg.MinConfidence {
 					_ = st.SetAIRuleStatus(ctx, refreshed, "active", guarddb.AIRuleStatusOptions{
 						Actor:       "system:auto_activate",

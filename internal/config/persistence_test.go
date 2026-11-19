@@ -626,12 +626,15 @@ func TestAIProfilesAndProvidersWebUIHelpersAndPythonRevisionParity(t *testing.T)
 		t.Fatalf("v1 保存后密钥保留或模型更新失败: %+v", got)
 	}
 
-	// ResolveProfileConnection 草稿覆盖 base_url 但沿用已保存 api_key
-	bURL, bKey, bModel, err := cfg.ResolveProfileConnection("primary", map[string]any{"base_url": "https://draft.example/v1"})
-	if err != nil || bURL != "https://draft.example/v1" || bKey != "primary-key" || bModel != "primary-v2" {
-		t.Fatalf("ResolveProfileConnection 不符: url=%s key=%s model=%s err=%v", bURL, bKey, bModel, err)
+	draft, err := cfg.ResolveProfileConnection("primary", map[string]any{"base_url": "https://draft.example/v1"})
+	if err != nil || draft.BaseURL != "https://draft.example/v1" || draft.SavedOrigin || draft.APIKey != "" || draft.Model != "primary-v2" {
+		t.Fatalf("ResolveProfileConnection 跨源草稿不符: url=%s saved=%t model=%s err=%v", draft.BaseURL, draft.SavedOrigin, draft.Model, err)
 	}
-	if _, _, _, err := cfg.ResolveProfileConnection("missing", nil); !errors.Is(err, ErrProfileNotFound) {
+	localDraft, err := cfg.ResolveProfileConnection("local", map[string]any{"base_url": "http://LOCALHOST:8000/alternate"})
+	if err != nil || !localDraft.SavedOrigin || localDraft.BaseURL != "http://LOCALHOST:8000/alternate" {
+		t.Fatalf("same-origin local provider should remain usable: %v", err)
+	}
+	if _, err := cfg.ResolveProfileConnection("missing", nil); !errors.Is(err, ErrProfileNotFound) {
 		t.Fatalf("不存在档案应返回 ErrProfileNotFound: %v", err)
 	}
 
@@ -693,13 +696,13 @@ func TestAIProfilesAndProvidersWebUIHelpersAndPythonRevisionParity(t *testing.T)
 	}
 
 	// ResolveProviderConnection 支持 clear_api_key: true
-	_, clearedKey, err := cfg.ResolveProviderConnection("primary", map[string]any{"clear_api_key": true})
-	if err != nil || clearedKey != "" {
-		t.Fatalf("clear_api_key=true 应清空测试密钥: key=%q err=%v", clearedKey, err)
+	cleared, err := cfg.ResolveProviderConnection("primary", map[string]any{"clear_api_key": true})
+	if err != nil || !cleared.SavedOrigin || cleared.APIKey != "" {
+		t.Fatalf("clear_api_key=true 应清空测试密钥: %v", err)
 	}
-	_, keptKey, err := cfg.ResolveProviderConnection("primary", nil)
-	if err != nil || keptKey != "primary-key" {
-		t.Fatalf("默认应保留厂商密钥: key=%q err=%v", keptKey, err)
+	kept, err := cfg.ResolveProviderConnection("primary", nil)
+	if err != nil || !kept.SavedOrigin || kept.APIKey != "primary-key" {
+		t.Fatalf("默认应保留厂商密钥: %v", err)
 	}
 
 	// LegacyAIConfig 脱敏预览

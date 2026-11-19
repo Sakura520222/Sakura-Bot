@@ -986,7 +986,7 @@ func (bh *BanHistoryCleanup) Resume(ctx context.Context, st *guarddb.Store, case
 	}
 
 	if err := bh.svc.ops.RevokeMessagesViaBotAPI(ctx, botToken, chatID, userID); err != nil {
-		attempts := int(rowInt64(cleanup, "attempts")) + 1
+		attempts := rowInt(cleanup, "attempts") + 1
 		cleanup["attempts"] = attempts
 		cleanup["error"] = err.Error()
 		if attempts >= 4 && !force {

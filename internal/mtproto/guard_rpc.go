@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -248,9 +249,12 @@ func mapInt64(m map[string]any, key string) int64 {
 }
 
 // BannedRightsToTG 将 BannedRights 转换为 tg.ChatBannedRights（已过期的 until_date 按 telegram.py:125 视作无限制）。
-func BannedRightsToTG(r BannedRights) tg.ChatBannedRights {
+func BannedRightsToTG(r BannedRights) (tg.ChatBannedRights, error) {
 	if r.UntilDate != 0 && r.UntilDate < time.Now().UTC().Unix() {
-		return tg.ChatBannedRights{}
+		return tg.ChatBannedRights{}, nil
+	}
+	if r.UntilDate < 0 || r.UntilDate > math.MaxInt32 {
+		return tg.ChatBannedRights{}, fmt.Errorf("until_date 超出 Telegram 支持的范围: %d", r.UntilDate)
 	}
 	return tg.ChatBannedRights{
 		ViewMessages:    r.ViewMessages,
@@ -274,7 +278,7 @@ func BannedRightsToTG(r BannedRights) tg.ChatBannedRights {
 		SendDocs:        r.SendDocs,
 		SendPlain:       r.SendPlain,
 		UntilDate:       int(r.UntilDate),
-	}
+	}, nil
 }
 
 // BannedRightsFromTG 从 tg.ChatBannedRights 提取 BannedRights。
@@ -599,6 +603,10 @@ func (g *GuardActions) Rights(ctx context.Context, chatID, userID int64) (Banned
 
 // SetRights 调用 channels.EditBanned 写入群成员限制位（对齐 telegram.py:set_rights）。
 func (g *GuardActions) SetRights(ctx context.Context, chatID, userID int64, rights BannedRights) error {
+	wireRights, err := BannedRightsToTG(rights)
+	if err != nil {
+		return wrapActionError(err)
+	}
 	api, err := g.api()
 	if err != nil {
 		return wrapActionError(err)
@@ -619,7 +627,7 @@ func (g *GuardActions) SetRights(ctx context.Context, chatID, userID int64, righ
 	upd, err := api.ChannelsEditBanned(callCtx, &tg.ChannelsEditBannedRequest{
 		Channel:      inputCh,
 		Participant:  participant,
-		BannedRights: BannedRightsToTG(rights),
+		BannedRights: wireRights,
 	})
 	if err != nil {
 		return wrapActionError(err)

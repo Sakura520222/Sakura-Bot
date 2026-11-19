@@ -29,6 +29,21 @@ func encodeReply(out bin.Decoder, msg bin.Encoder) error {
 	return out.Decode(&buf)
 }
 
+func TestTelegramWireIntegerBounds(t *testing.T) {
+	const maxTelegramInt = 1<<31 - 1
+	if got := MessageID(maxTelegramInt); got != maxTelegramInt {
+		t.Fatalf("maximum message ID = %d", got)
+	}
+	for _, id := range []int64{-1, 0, maxTelegramInt + 1, 1<<32 + 1} {
+		if got := MessageID(id); got != 0 {
+			t.Errorf("invalid message ID %d converted to %d", id, got)
+		}
+	}
+	if _, err := BannedRightsToTG(BannedRights{SendMessages: true, UntilDate: maxTelegramInt + 1}); err == nil {
+		t.Fatal("out-of-range expiry should fail")
+	}
+}
+
 func TestBannedRightsAlgebraAndMapConversion(t *testing.T) {
 	now := time.Now().UTC().Unix()
 
