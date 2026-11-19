@@ -51,7 +51,9 @@ func menuGroupTitle(ctx context.Context, group CategoryGroup) string {
 	if strings.HasPrefix(title, "help.section_") {
 		return group.Category
 	}
-	return strings.TrimSpace(mtproto.StripEmoji(title))
+	// Help section translations contain Markdown. Menu labels use plain text.
+	plain, _ := mtproto.ParseMarkdownSpans(title)
+	return strings.TrimSpace(mtproto.StripEmoji(plain))
 }
 
 func commandLabel(ctx context.Context, command mtproto.BotCommandDef) string {

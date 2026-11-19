@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/config"
+	"github.com/Sakura520222/Sakura-Bot/internal/i18n"
 	"github.com/Sakura520222/Sakura-Bot/internal/mtproto"
 )
 
@@ -71,6 +72,34 @@ func TestAllBotCommandsCountAndMenuBounds(t *testing.T) {
 		if !commands[command.Command] {
 			t.Errorf("%s has no menu button", command.Command)
 		}
+	}
+}
+
+func TestMenuCategoryLabelsArePlainText(t *testing.T) {
+	for _, tt := range []struct{ language, basicTitle string }{
+		{i18n.LangZhCN, "基础与核心"},
+		{i18n.LangEnUS, "Basic & Core"},
+	} {
+		t.Run(tt.language, func(t *testing.T) {
+			ctx := i18n.WithLanguage(t.Context(), tt.language)
+			for _, row := range localizedMenuKeyboard(ctx, MenuMain, true) {
+				for _, button := range row {
+					menu, ok := strings.CutPrefix(button.Data, "mainbot:menu:")
+					if !ok {
+						t.Fatalf("unexpected menu button %q", button.Data)
+					}
+					if button.Text == "" || strings.Contains(button.Text, "**") || mtproto.StripEmoji(button.Text) != button.Text {
+						t.Errorf("%s button contains formatting: %q", menu, button.Text)
+					}
+					if title := localizedMenuText(ctx, menu); title != button.Text {
+						t.Errorf("%s subpage title %q differs from button %q", menu, title, button.Text)
+					}
+				}
+			}
+			if got := localizedMenuText(ctx, MenuBasic); got != tt.basicTitle {
+				t.Errorf("basic title = %q, want %q", got, tt.basicTitle)
+			}
+		})
 	}
 }
 
