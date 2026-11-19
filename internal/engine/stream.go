@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/contracts"
@@ -119,7 +118,7 @@ func (e *Engine) agenticStream(
 		}
 
 		// 有工具调用：记录 assistant 消息（保留已输出内容与 tool_calls）
-		calls := materializeToolCalls(toolCalls)
+		calls := llm.MaterializeToolCalls(toolCalls)
 		messages = append(messages, llm.Message{
 			Role:      "assistant",
 			Content:   llm.Str(content),
@@ -315,38 +314,6 @@ func historyToMessages(history []db.HistoryItem) []llm.Message {
 		messages = messages[len(messages)-MaxHistoryMessages:]
 	}
 	return messages
-}
-
-// materializeToolCalls 把聚合槽位物化为回传给模型的 tool_calls 数组
-// （qa_engine_v3.py:352-360）：按 index 升序；缺 id 时以 call_{index} 兜底；
-// type 恒为 "function"。
-func materializeToolCalls(acc map[int]*llm.ToolCallSlot) []llm.ToolCall {
-	indexes := make([]int, 0, len(acc))
-	for idx := range acc {
-		indexes = append(indexes, idx)
-	}
-	sort.Ints(indexes)
-
-	calls := make([]llm.ToolCall, 0, len(acc))
-	for _, idx := range indexes {
-		slot := acc[idx]
-		if slot == nil {
-			continue
-		}
-		id := slot.ID
-		if id == "" {
-			id = fmt.Sprintf("call_%d", idx)
-		}
-		calls = append(calls, llm.ToolCall{
-			ID:   id,
-			Type: "function",
-			Function: llm.FunctionCall{
-				Name:      slot.Name,
-				Arguments: slot.Arguments,
-			},
-		})
-	}
-	return calls
 }
 
 var errEmptyResponse = errors.New("模型响应没有可见正文或工具调用")

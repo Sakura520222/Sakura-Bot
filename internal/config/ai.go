@@ -37,76 +37,7 @@ func (c *Config) EffectiveAIConfig(purposes ...string) contracts.AIConf {
 		// 未经 Init 的调用也必须拒绝无效配置，不能意外启用环境中的密钥。
 		return contracts.AIConf{}
 	}
-	profiles, err := parseAIProfiles(cfg)
-	if err != nil {
-		return contracts.AIConf{}
-	}
-	route := profiles.routing[purpose]
-	if route.providerID == "" && route.profileID == "" && route.model == "" {
-		switch purpose {
-		case "wiki_review":
-			purpose = "wiki"
-		case "guard":
-			purpose = "summary"
-		case "guard_vision":
-			purpose = "vision"
-		}
-	}
-	result := contracts.AIConf{
-		VisionEnabled:     profiles.vision.enabled,
-		VisionOCR:         profiles.vision.ocr,
-		VisionDescription: profiles.vision.description,
-	}
-	if route, ok := profiles.routing[purpose]; ok && route.providerID != "" {
-		provider := profiles.providers[route.providerID]
-		result.APIKey, result.BaseURL = provider.apiKey, provider.baseURL
-		result.Model, result.ProfileID = route.modelID, route.providerID
-		result.SupportsVision = provider.models[route.modelID].supportsVision
-		if route.supportsVision != nil {
-			result.SupportsVision = *route.supportsVision
-		}
-		return result
-	}
-	if route, ok := profiles.routing[purpose]; ok && route.profileID != "" {
-		profile := profiles.profiles[route.profileID]
-		result.APIKey = profile.apiKey
-		result.BaseURL = profile.baseURL
-		result.Model = profile.model
-		result.ProfileID = route.profileID
-		result.SupportsVision = profile.supportsVision
-		if route.model != "" {
-			result.Model = route.model
-		}
-		if route.supportsVision != nil {
-			result.SupportsVision = *route.supportsVision
-		}
-		return result
-	}
-
-	result.APIKey = stringField(cfg, "api_key")
-	if result.APIKey == "" {
-		result.APIKey = c.Env.Get(KeyLLMAPIKey)
-		if result.APIKey == "" {
-			result.APIKey = c.Env.Get(KeyDeepseekAPIKey)
-		}
-	}
-	result.BaseURL = stringField(cfg, "base_url")
-	if result.BaseURL == "" {
-		result.BaseURL = c.Env.GetDefault(KeyLLMBaseURL, defaultLLMBaseURL)
-	}
-	result.Model = stringField(cfg, "model")
-	if result.Model == "" {
-		result.Model = c.Env.GetDefault(KeyLLMModel, defaultLLMModel)
-	}
-	if route, ok := profiles.routing[purpose]; ok {
-		if route.model != "" {
-			result.Model = route.model
-		}
-		if route.supportsVision != nil {
-			result.SupportsVision = *route.supportsVision
-		}
-	}
-	return result
+	return resolveEffectiveFromDoc(cfg, c.Env, purpose)
 }
 
 // validAIPurpose 与 Python PURPOSES 保持一致。

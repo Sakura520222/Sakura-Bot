@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/db"
-	"github.com/Sakura520222/Sakura-Bot/internal/i18n"
 	"github.com/Sakura520222/Sakura-Bot/internal/llm"
 )
 
@@ -81,6 +80,7 @@ type VisionSettings struct {
 	APIKey            string
 	BaseURL           string
 	Model             string
+	ReasoningEffort   string
 }
 
 // RecognitionResult 表示单张图片的视觉识别产出。
@@ -371,58 +371,75 @@ func (p *ImagePipeline) DescribeForPoll(ctx context.Context, digest string, over
 	return p.store.GetAsset(ctx, digest)
 }
 
-// EnrichMessage 在拉取总结历史时非阻塞附加已完成的视觉识别结果（对齐 image_pipeline.py:enrich_message）。
-func (p *ImagePipeline) EnrichMessage(ctx context.Context, msg RemoteImageMessage) string {
-	caption := msg.Caption
-	unavailable := func(status string) string {
-		if msg.MediaID == "" {
-			return caption
-		}
-		pendingText := i18n.T("images.pending", map[string]string{"status": status})
-		if caption == "" {
-			return pendingText
-		}
-		return caption + "\n\n" + pendingText
+// EnrichSummaryImages queues the channel's images before waiting for recognition.
+// A batch shares one wait budget so a backlog cannot stall the summary indefinitely.
+func (p *ImagePipeline) EnrichSummaryImages(ctx context.Context, messages []RemoteImageMessage) (map[int64]string, error) {
+	texts := make(map[int64]string, len(messages))
+	if len(messages) == 0 {
+		return texts, nil
 	}
-
-	if p == nil || p.store == nil {
-		return unavailable("unavailable")
-	}
-	chID := ChannelKey(msg.ChannelID)
-	if !p.IsRunning() {
-		if msg.MediaID != "" {
-			rec, err := p.store.GetMessageImage(ctx, chID, msg.MessageID)
-			if err == nil && rec != nil && !rec.Deleted && rec.MediaID == msg.MediaID {
-				ocr, desc, ok, terr := p.store.GetRecognizedImageText(ctx, chID, msg.MessageID)
-				if terr == nil && ok {
-					return CombinedText(caption, ocr, desc)
-				}
+	running := p != nil && p.store != nil && p.IsRunning()
+	waitForVision := running && p.visionEnabled()
+	for _, msg := range messages {
+		texts[msg.MessageID] = msg.Caption
+		if running {
+			if _, err := p.Capture(ctx, msg); err != nil {
+				return nil, fmt.Errorf("登记消息 %d 的图片失败: %w", msg.MessageID, err)
 			}
 		}
-		return unavailable("unavailable")
+	}
+	if p == nil || p.store == nil {
+		return texts, nil
 	}
 
-	if _, err := p.Capture(ctx, msg); err != nil {
-		p.logger.Warn("登记消息图片失败，保留原始文本", "error", err)
-		return unavailable("error")
-	}
-	ocr, desc, ok, err := p.store.GetRecognizedImageText(ctx, chID, msg.MessageID)
-	if err != nil {
-		return unavailable("error")
-	}
-	text := CombinedText(caption, ocr, desc)
-	if msg.MediaID != "" && !ok {
-		status := "pending"
-		if job, jerr := p.store.GetMessageImage(ctx, chID, msg.MessageID); jerr == nil && job != nil && job.Status != "" {
-			status = job.Status
+	const waitBudget = 20 * time.Second
+	waitCtx, cancel := context.WithTimeout(ctx, waitBudget)
+	defer cancel()
+	pending := append([]RemoteImageMessage(nil), messages...)
+	waitError := func(err error) error {
+		if waitCtx.Err() != nil && ctx.Err() == nil {
+			return fmt.Errorf("仍有 %d 条消息的图片在识别，暂未生成总结，请稍后重试", len(pending))
 		}
-		pendingText := i18n.T("images.pending", map[string]string{"status": status})
-		if text == "" {
-			return pendingText
-		}
-		return text + "\n\n" + pendingText
+		return err
 	}
-	return text
+	for len(pending) != 0 {
+		next := pending[:0]
+		for _, msg := range pending {
+			channel := ChannelKey(msg.ChannelID)
+			job, err := p.store.GetMessageImage(waitCtx, channel, msg.MessageID)
+			if err != nil {
+				return nil, waitError(err)
+			}
+			if job == nil || job.Deleted || job.MediaID != msg.MediaID {
+				continue
+			}
+			ocr, desc, recognized, err := p.store.GetRecognizedImageText(waitCtx, channel, msg.MessageID)
+			if err != nil {
+				return nil, waitError(err)
+			}
+			if recognized {
+				texts[msg.MessageID] = CombinedText(msg.Caption, ocr, desc)
+				continue
+			}
+			switch job.Status {
+			case "pending", "processing", "stored":
+				if waitForVision {
+					next = append(next, msg)
+				}
+			case "failed":
+				p.logger.Warn("总结素材的图片识别失败，使用原始说明", "channel", channel, "message_id", msg.MessageID)
+			}
+		}
+		pending = next
+		if len(pending) != 0 {
+			select {
+			case <-waitCtx.Done():
+				return nil, waitError(waitCtx.Err())
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}
+	return texts, nil
 }
 
 // ProcessJob 执行单条已认领的图片下载、识别与发布流程。
@@ -651,18 +668,20 @@ func (p *ImagePipeline) runRecognizer(ctx context.Context, asset *db.ImageAsset,
 	if cli == nil {
 		cli = llm.NewClient(llm.AIConfigFunc(func() llm.AIConfig {
 			return llm.AIConfig{
-				APIKey:         vs.APIKey,
-				BaseURL:        vs.BaseURL,
-				Model:          vs.Model,
-				SupportsVision: vs.SupportsVision,
+				APIKey:          vs.APIKey,
+				BaseURL:         vs.BaseURL,
+				Model:           vs.Model,
+				SupportsVision:  vs.SupportsVision,
+				ReasoningEffort: vs.ReasoningEffort,
 			}
 		}))
 	} else {
 		ctx = llm.WithConfig(ctx, llm.AIConfig{
-			APIKey:         vs.APIKey,
-			BaseURL:        vs.BaseURL,
-			Model:          vs.Model,
-			SupportsVision: vs.SupportsVision,
+			APIKey:          vs.APIKey,
+			BaseURL:         vs.BaseURL,
+			Model:           vs.Model,
+			SupportsVision:  vs.SupportsVision,
+			ReasoningEffort: vs.ReasoningEffort,
 		})
 	}
 

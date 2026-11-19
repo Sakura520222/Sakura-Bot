@@ -11,9 +11,9 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,13 +33,13 @@ const (
 	maxCompleteBodyBytes         = 32 << 20 // 32MiB 响应上限
 )
 
-// ResponseFormat 控制非流式输出格式（如 {"type":"json_object"}）。
+// ResponseFormat 控制输出格式（如 {"type":"json_object"}）。
 type ResponseFormat struct {
 	Type       string          `json:"type"`
 	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
 }
 
-// CompleteRequest 非流式 /chat/completions 请求参数。
+// CompleteRequest /chat/completions 请求参数。
 // Temperature 与 MaxTokens 使用指针：nil 时在请求 JSON 中完全省略字段，
 // 显式传 0（如 Float64(0)）时原样编码为 0，对齐 summary_pipeline.py 与 JSON 分类器调用语义。
 type CompleteRequest struct {
@@ -52,14 +52,14 @@ type CompleteRequest struct {
 	ToolChoice     string          `json:"tool_choice,omitempty"`
 }
 
-// Usage 统计单次非流式调用的 token 用量。
+// Usage 统计单次模型调用的 token 用量。
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// CompleteResponse 非流式 /chat/completions 解析结果。
+// CompleteResponse /chat/completions 解析结果。
 type CompleteResponse struct {
 	ID           string     `json:"id"`
 	Model        string     `json:"model"`
@@ -91,10 +91,11 @@ func NewPurposeClient[C AIConfig | contracts.AIConf, P PurposeConfigProvider[C]]
 			return v
 		case contracts.AIConf:
 			return AIConfig{
-				APIKey:         v.APIKey,
-				BaseURL:        v.BaseURL,
-				Model:          v.Model,
-				SupportsVision: v.SupportsVision,
+				APIKey:          v.APIKey,
+				BaseURL:         v.BaseURL,
+				Model:           v.Model,
+				SupportsVision:  v.SupportsVision,
+				ReasoningEffort: v.ReasoningEffort,
 			}
 		default:
 			return AIConfig{}
@@ -103,124 +104,68 @@ func NewPurposeClient[C AIConfig | contracts.AIConf, P PurposeConfigProvider[C]]
 	return NewClient(provider, opts...)
 }
 
-type completeRequestWire struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	MaxTokens      *int            `json:"max_tokens,omitempty"`
-	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
-	Tools          json.RawMessage `json:"tools,omitempty"`
-	ToolChoice     string          `json:"tool_choice,omitempty"`
+type chatRequestWire struct {
+	Model           string          `json:"model"`
+	Messages        []Message       `json:"messages"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	MaxTokens       *int            `json:"max_tokens,omitempty"`
+	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Tools           json.RawMessage `json:"tools,omitempty"`
+	ToolChoice      string          `json:"tool_choice,omitempty"`
+	Stream          bool            `json:"stream"`
+	StreamOptions   *streamOptions  `json:"stream_options,omitempty"`
 }
 
-type completeResponseWire struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Message struct {
-			Content   *string    `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage Usage `json:"usage"`
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
-// CompleteChat 发起一次非流式 /chat/completions 请求（服务于总结管线、投票生成、风控分类与连通性测试）。
+// CompleteChat collects a chat completion from the shared SSE client.
+// It returns no partial response when the stream breaks or omits its terminal metadata.
 func (c *Client) CompleteChat(ctx context.Context, req CompleteRequest) (*CompleteResponse, error) {
-	cfg, pinned := PinnedConfig(ctx)
-	if !pinned {
-		cfg = c.provider.EffectiveAIConfig()
+	if _, pinned := PinnedConfig(ctx); !pinned {
+		ctx = WithConfig(ctx, c.provider.EffectiveAIConfig())
 	}
-	for _, message := range req.Messages {
-		for _, part := range message.Parts {
-			if part.Type == "image_url" && !cfg.SupportsVision {
-				return nil, fmt.Errorf("assistant model does not support images")
-			}
+	stream, err := c.openChatStream(ctx, req, true, maxCompleteBodyBytes)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode == http.StatusUnprocessableEntity) {
+		body := strings.ToLower(apiErr.Body)
+		if strings.Contains(body, "stream_options") || strings.Contains(body, "include_usage") {
+			stream, err = c.openChatStream(ctx, req, false, maxCompleteBodyBytes)
 		}
 	}
-
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = strings.TrimSpace(cfg.Model)
-	}
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if baseURL == "" {
-		return nil, fmt.Errorf("LLM base_url 未配置")
-	}
-
-	body, err := json.Marshal(completeRequestWire{
-		Model:          model,
-		Messages:       req.Messages,
-		Temperature:    req.Temperature,
-		MaxTokens:      req.MaxTokens,
-		ResponseFormat: req.ResponseFormat,
-		Tools:          req.Tools,
-		ToolChoice:     req.ToolChoice,
-	})
 	if err != nil {
-		return nil, fmt.Errorf("编码 LLM 请求失败: %w", err)
+		return nil, err
 	}
+	defer stream.Close()
 
-	reqCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	timer := time.AfterFunc(c.idle, cancel)
-	defer timer.Stop()
-
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
-		baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("构造 LLM 请求失败: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("LLM 请求失败: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: redactSecret(string(snippet), cfg.APIKey)}
-	}
-
-	reader := &idleReader{r: resp.Body, timer: timer, idle: c.idle}
-	rawBody, err := io.ReadAll(io.LimitReader(reader, maxCompleteBodyBytes))
-	if err != nil {
-		if cause := context.Cause(reqCtx); cause != nil {
-			return nil, fmt.Errorf("读取 LLM 响应失败: %w", cause)
+	var content strings.Builder
+	toolCalls := make(map[int]*ToolCallSlot)
+	for {
+		delta, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		return nil, fmt.Errorf("读取 LLM 响应失败: %w", err)
+		if err != nil {
+			return nil, err
+		}
+		for _, call := range delta.ToolCalls {
+			AccumulateToolCall(toolCalls, call)
+		}
+		content.WriteString(delta.Content)
 	}
 
-	var wire completeResponseWire
-	if err := json.Unmarshal(rawBody, &wire); err != nil {
-		return nil, fmt.Errorf("解析 LLM 响应 JSON 失败: %w", err)
+	result := stream.result
+	result.FinishReason = stream.Diagnostics().FinishReason
+	if stream.Diagnostics().MalformedChunks > 0 || result.FinishReason == "" || result.FinishReason == "unknown" {
+		return nil, fmt.Errorf("LLM 流式响应不完整（finish_reason=%q）", result.FinishReason)
 	}
-	if len(wire.Choices) == 0 {
-		return nil, fmt.Errorf("LLM 响应不包含任何 choices")
+	result.Content = content.String()
+	if len(toolCalls) > 0 {
+		result.ToolCalls = MaterializeToolCalls(toolCalls)
 	}
-
-	choice := wire.Choices[0]
-	var content string
-	if choice.Message.Content != nil {
-		content = *choice.Message.Content
-	}
-	resolvedModel := wire.Model
-	if resolvedModel == "" {
-		resolvedModel = model
-	}
-	return &CompleteResponse{
-		ID:           wire.ID,
-		Model:        resolvedModel,
-		Content:      content,
-		ToolCalls:    choice.Message.ToolCalls,
-		FinishReason: choice.FinishReason,
-		Usage:        wire.Usage,
-	}, nil
+	return &result, nil
 }
 
 // ListModels 请求 GET {baseURL}/models（15s 超时），返回去重且升序排列的合法模型 ID 列表

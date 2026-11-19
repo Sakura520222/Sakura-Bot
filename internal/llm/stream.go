@@ -32,6 +32,7 @@ type Stream struct {
 	scanner     *bufio.Scanner
 	closed      bool
 	diagnostics StreamDiagnostics
+	result      CompleteResponse
 }
 
 // Next 返回下一个增量分片。
@@ -42,6 +43,7 @@ type Stream struct {
 // choices 为空或 delta 缺失的分片被跳过（对齐 qa_engine_v3.py:452-458 的 None 分支，
 // 例如部分兼容端点在尾部追加的 usage 分片）。
 func (s *Stream) Next() (Delta, error) {
+	var eventType string
 	for {
 		if s.closed {
 			return Delta{}, io.EOF
@@ -60,9 +62,20 @@ func (s *Stream) Next() (Delta, error) {
 			return Delta{}, fmt.Errorf("SSE 流读取失败: %w", scanErr)
 		}
 
-		payload, ok := sseDataPayload(s.scanner.Text())
+		line := s.scanner.Text()
+		if line == "" {
+			eventType = ""
+		}
+		if value, ok := strings.CutPrefix(line, "event:"); ok {
+			eventType = strings.TrimSpace(value)
+		}
+		payload, ok := sseDataPayload(line)
 		if !ok {
 			continue // event:/id:/注释行按 SSE 协议忽略
+		}
+		if eventType == "error" {
+			s.Close()
+			return Delta{}, fmt.Errorf("上游返回了 SSE 错误事件")
 		}
 		if payload == "[DONE]" {
 			s.Close()
@@ -76,19 +89,33 @@ func (s *Stream) Next() (Delta, error) {
 			// 无法解析的 data 行跳过（对齐引擎逐片容错的消费方式）
 			continue
 		}
-		if len(chunk.Choices) == 0 {
-			continue
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			s.Close()
+			return Delta{}, fmt.Errorf("上游返回了 SSE 错误事件")
 		}
-		if reason := chunk.Choices[0].FinishReason; reason != "" {
-			switch reason {
-			case "stop", "length", "tool_calls", "content_filter", "function_call":
-				s.diagnostics.FinishReason = reason
-			default:
-				s.diagnostics.FinishReason = "unknown"
+		if chunk.ID != "" {
+			s.result.ID = chunk.ID
+		}
+		if chunk.Model != "" {
+			s.result.Model = chunk.Model
+		}
+		if chunk.Usage != nil {
+			s.result.Usage = *chunk.Usage
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Index != 0 {
+				continue
 			}
+			if reason := choice.FinishReason; reason != "" {
+				switch reason {
+				case "stop", "length", "tool_calls", "content_filter", "function_call":
+					s.diagnostics.FinishReason = reason
+				default:
+					s.diagnostics.FinishReason = "unknown"
+				}
+			}
+			return Delta{Content: choice.Delta.Content, ToolCalls: choice.Delta.ToolCalls}, nil
 		}
-		w := chunk.Choices[0].Delta
-		return Delta{Content: w.Content, ToolCalls: w.ToolCalls}, nil
 	}
 }
 

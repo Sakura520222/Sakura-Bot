@@ -264,7 +264,7 @@ func TestStreamChatRequestShape(t *testing.T) {
 	if !gotBody.Stream {
 		t.Fatal("stream 应恒为 true")
 	}
-	if gotBody.Temperature != 0.7 {
+	if gotBody.Temperature == nil || *gotBody.Temperature != 0.7 {
 		t.Fatalf("temperature = %v, 期望 0.7", gotBody.Temperature)
 	}
 	if gotBody.ToolChoice != "auto" {

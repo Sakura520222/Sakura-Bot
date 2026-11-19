@@ -267,7 +267,7 @@ func run() int {
 		Files:       tgClient,
 		AIConfig: func() llm.AIConfig {
 			conf := cfg.EffectiveAIConfig("assistant")
-			return llm.AIConfig{APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model, SupportsVision: conf.SupportsVision}
+			return llm.AIConfig{APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model, SupportsVision: conf.SupportsVision, ReasoningEffort: conf.ReasoningEffort}
 		},
 	})
 

@@ -47,7 +47,7 @@ type SummaryIntegrityError struct {
 func (e *SummaryIntegrityError) Error() string { return e.Message }
 func (e *SummaryIntegrityError) Unwrap() error { return e.Cause }
 
-// Completer 抽象非流式聊天补全客户端（由 *llm.Client 实现，方便单元测试注入）。
+// Completer 返回完整聚合后的聊天补全（由 *llm.Client 实现）。
 type Completer interface {
 	CompleteChat(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error)
 }

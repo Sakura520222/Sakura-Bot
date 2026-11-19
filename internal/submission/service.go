@@ -41,7 +41,7 @@ type SubmissionRepo interface {
 	EnqueueNotification(ctx context.Context, in db.NotificationInsert) (int64, error)
 }
 
-// Completer 抽象非流式 LLM 调用接口。
+// Completer 抽象聚合后的 LLM 聊天补全接口。
 type Completer interface {
 	CompleteChat(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error)
 }

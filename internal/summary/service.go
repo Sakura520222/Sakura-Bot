@@ -102,14 +102,15 @@ type ReportSendResult struct {
 
 // GenerateResult 对齐 generate_channel_summary 返回值。
 type GenerateResult struct {
-	Success      bool             `json:"success"`
-	SummaryID    int64            `json:"summary_id,omitempty"`
-	SummaryText  string           `json:"summary_text,omitempty"`
-	MessageCount int              `json:"message_count"`
-	ChannelID    string           `json:"channel_id"`
-	ChannelName  string           `json:"channel_name,omitempty"`
-	MessageIDs   ReportSendResult `json:"message_ids"`
-	Error        string           `json:"error,omitempty"`
+	Success       bool             `json:"success"`
+	NoNewMessages bool             `json:"no_new_messages,omitempty"`
+	SummaryID     int64            `json:"summary_id,omitempty"`
+	SummaryText   string           `json:"summary_text,omitempty"`
+	MessageCount  int              `json:"message_count"`
+	ChannelID     string           `json:"channel_id"`
+	ChannelName   string           `json:"channel_name,omitempty"`
+	MessageIDs    ReportSendResult `json:"message_ids"`
+	Error         string           `json:"error,omitempty"`
 }
 
 // ServiceDeps 注入总结核心服务所需的所有依赖。
@@ -213,6 +214,20 @@ func (s *Service) FetchChannelMessages(
 
 		formatted := make([]string, 0, len(rawList))
 		slug := channelSlug(ch, chInfo)
+		var enriched map[int64]string
+		if s.deps.ImagePipeline != nil {
+			var images []media.RemoteImageMessage
+			for _, msg := range rawList {
+				if msg != nil && !excluded[msg.ID] && msg.Media.IsStaticImage() {
+					images = append(images, summaryImage(ch, chInfo, msg))
+				}
+			}
+			var err error
+			enriched, err = s.deps.ImagePipeline.EnrichSummaryImages(ctx, images)
+			if err != nil {
+				return nil, nil, fmt.Errorf("频道 %s 图片识别: %w", ch, err)
+			}
+		}
 		for _, msg := range rawList {
 			if msg == nil {
 				continue
@@ -220,7 +235,10 @@ func (s *Service) FetchChannelMessages(
 			if excluded[msg.ID] {
 				continue
 			}
-			text := s.enrichIncomingMessage(ctx, ch, chInfo, msg)
+			text, ok := enriched[int64(msg.ID)]
+			if !ok {
+				text = msg.Text
+			}
 			if strings.TrimSpace(text) == "" {
 				continue
 			}
@@ -335,9 +353,10 @@ func (s *Service) GenerateChannelSummary(
 	messages := msgsByCh[normChannel]
 	if len(messages) == 0 {
 		return GenerateResult{
-			Success:   false,
-			ChannelID: normChannel,
-			Error:     fmt.Sprintf("频道 %s 没有新消息需要总结", normChannel),
+			Success:       false,
+			NoNewMessages: true,
+			ChannelID:     normChannel,
+			Error:         fmt.Sprintf("频道 %s 没有新消息需要总结", normChannel),
 		}
 	}
 
@@ -499,11 +518,11 @@ func (s *Service) GenerateChannelSummary(
 	}
 }
 
-func (s *Service) enrichIncomingMessage(ctx context.Context, chRef string, info *mtproto.ChannelInfo, msg *mtproto.IncomingMessage) string {
-	if s.deps.ImagePipeline == nil || msg.Media == nil || !msg.Media.IsStaticImage() {
-		return msg.Text
-	}
+func summaryImage(chRef string, info *mtproto.ChannelInfo, msg *mtproto.IncomingMessage) media.RemoteImageMessage {
 	chID := chRef
+	if msg.ChatID != 0 {
+		chID = strconv.FormatInt(msg.ChatID, 10)
+	}
 	chTitle := ""
 	chUser := ""
 	if info != nil {
@@ -517,7 +536,7 @@ func (s *Service) enrichIncomingMessage(ctx context.Context, chRef string, info 
 	if msg.GroupedID != 0 {
 		grouped = strconv.FormatInt(msg.GroupedID, 10)
 	}
-	return s.deps.ImagePipeline.EnrichMessage(ctx, media.RemoteImageMessage{
+	return media.RemoteImageMessage{
 		ChannelID:       chID,
 		ChannelTitle:    chTitle,
 		ChannelUsername: chUser,
@@ -528,7 +547,7 @@ func (s *Service) enrichIncomingMessage(ctx context.Context, chRef string, info 
 		Caption:         msg.Text,
 		Date:            msg.Date,
 		RawMedia:        msg.Media.Raw,
-	})
+	}
 }
 
 func (s *Service) resolveBotClient() mtproto.Messenger {

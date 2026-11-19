@@ -10,9 +10,8 @@
 
 // Package llm 实现手写 net/http 的 OpenAI 兼容流式客户端（设计文档 §6.1）。
 //
-// 仅覆盖 qa_engine_v3.py 实际使用的 /chat/completions stream=true 子集，
-// 通过 bufio.Scanner 解析 SSE 的 data: 行与 [DONE] 终止标记，不引入任何
-// OpenAI SDK（依赖白名单约束）。超时对齐设计：连接 30s、响应头 60s、
+// /chat/completions 请求统一使用 SSE，调用方可以逐片消费或等待聚合后的结果。
+// 通过 bufio.Scanner 解析 SSE 的 data: 行与 [DONE] 终止标记。连接超时 30s、响应头 60s、
 // 空闲读 120s（LLM 长思考间隙）。
 //
 // 运行时配置（key/baseURL/model）每次请求都经 AIConfigProvider 重新获取，
@@ -45,10 +44,11 @@ const (
 // AIConfig 每请求生效的 AI 运行时配置三元组。
 // 对齐 core/config/ai_runtime.py::AIConnectionSettings。
 type AIConfig struct {
-	APIKey         string
-	BaseURL        string
-	Model          string
-	SupportsVision bool
+	APIKey          string
+	BaseURL         string
+	Model           string
+	SupportsVision  bool
+	ReasoningEffort string
 }
 
 // AIConfigProvider 由消费方（main 装配）注入的窄接口：客户端在每次
@@ -106,19 +106,6 @@ func NewClient(provider AIConfigProvider, opts ...Option) *Client {
 	return c
 }
 
-// chatRequestWire 是发往服务端的请求体。
-// stream 恒为 true（本客户端只服务流式路径）；
-// Tools 用 json.RawMessage 原样透传工具 schema 数组，避免二次编解码造成漂移；
-// omitempty 保证无工具请求体与 Python 不带 tools/tool_choice 的调用点逐字段一致。
-type chatRequestWire struct {
-	Model       string          `json:"model"`
-	Messages    []Message       `json:"messages"`
-	Tools       json.RawMessage `json:"tools,omitempty"`
-	ToolChoice  string          `json:"tool_choice,omitempty"`
-	Temperature float64         `json:"temperature"`
-	Stream      bool            `json:"stream"`
-}
-
 // APIError 非 200 响应错误。
 type APIError struct {
 	StatusCode int
@@ -136,6 +123,12 @@ func (e *APIError) Error() string {
 // 成功返回 *Stream；非 200 返回 *APIError；网络/协议错误返回包装后的 error。
 // 调用方须在消费完毕后 defer stream.Close()。
 func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*Stream, error) {
+	return c.openChatStream(ctx, CompleteRequest{
+		Messages: req.Messages, Tools: req.Tools, ToolChoice: req.ToolChoice, Temperature: &req.Temperature,
+	}, false, 0)
+}
+
+func (c *Client) openChatStream(ctx context.Context, req CompleteRequest, includeUsage bool, maxBodyBytes int64) (*Stream, error) {
 	cfg, pinned := PinnedConfig(ctx)
 	if !pinned {
 		cfg = c.provider.EffectiveAIConfig()
@@ -147,15 +140,30 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*Stream, erro
 			}
 		}
 	}
-	baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("LLM base_url 未配置")
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = strings.TrimSpace(cfg.Model)
+	}
+	var options *streamOptions
+	if includeUsage {
+		options = &streamOptions{IncludeUsage: true}
+	}
 
 	body, err := json.Marshal(chatRequestWire{
-		Model:       cfg.Model,
-		Messages:    req.Messages,
-		Tools:       req.Tools,
-		ToolChoice:  req.ToolChoice,
-		Temperature: req.Temperature,
-		Stream:      true,
+		Model:           model,
+		Messages:        req.Messages,
+		Tools:           req.Tools,
+		ToolChoice:      req.ToolChoice,
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		ResponseFormat:  req.ResponseFormat,
+		ReasoningEffort: cfg.ReasoningEffort,
+		Stream:          true,
+		StreamOptions:   options,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("编码 LLM 请求失败: %w", err)
@@ -171,6 +179,7 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*Stream, erro
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
 		baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
+		timer.Stop()
 		cancel()
 		return nil, fmt.Errorf("构造 LLM 请求失败: %w", err)
 	}
@@ -180,23 +189,30 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*Stream, erro
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
+		timer.Stop()
 		cancel()
 		return nil, fmt.Errorf("LLM 请求失败: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		cancel()
+		defer cancel()
+		defer timer.Stop()
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(snippet)}
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: redactSecret(string(snippet), cfg.APIKey)}
 	}
 
+	var bodyReader io.Reader = resp.Body
+	if maxBodyBytes > 0 {
+		bodyReader = io.LimitReader(bodyReader, maxBodyBytes)
+	}
 	s := &Stream{
 		ctx:     reqCtx,
 		cancel:  cancel,
 		timer:   timer,
 		idle:    c.idle,
 		resp:    resp,
-		scanner: bufioScanner(&idleReader{r: resp.Body, timer: timer, idle: c.idle}),
+		scanner: bufioScanner(&idleReader{r: bodyReader, timer: timer, idle: c.idle}),
+		result:  CompleteResponse{Model: model},
 	}
 	return s, nil
 }

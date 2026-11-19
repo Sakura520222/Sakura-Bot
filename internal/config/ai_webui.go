@@ -115,11 +115,12 @@ type PublicAIProfile struct {
 
 // PublicAIRoute 是 v1 路由项视图。
 type PublicAIRoute struct {
-	ProfileID      string `json:"profile_id"`
-	Model          string `json:"model"`
-	ProviderID     string `json:"provider_id"`
-	ModelID        string `json:"model_id"`
-	SupportsVision *bool  `json:"supports_vision"`
+	ProfileID       string `json:"profile_id"`
+	Model           string `json:"model"`
+	ProviderID      string `json:"provider_id"`
+	ModelID         string `json:"model_id"`
+	SupportsVision  *bool  `json:"supports_vision"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // PublicAIVision 是视觉处理开关视图。
@@ -131,9 +132,10 @@ type PublicAIVision struct {
 
 // PublicEffectiveProfile 是 v1 各用途最终解析出的档案与模型摘要。
 type PublicEffectiveProfile struct {
-	ProfileID      string `json:"profile_id"`
-	Model          string `json:"model"`
-	SupportsVision bool   `json:"supports_vision"`
+	ProfileID       string `json:"profile_id"`
+	Model           string `json:"model"`
+	SupportsVision  bool   `json:"supports_vision"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // PublicAIProfilesView 对齐 GET/PUT /api/ai/profiles 的 data 响应结构。
@@ -172,20 +174,22 @@ func BuildPublicAIProfiles(doc map[string]any, env *Env) (*PublicAIProfilesView,
 	routing := make(map[string]PublicAIRoute, len(parsed.routing))
 	for purpose, r := range parsed.routing {
 		routing[purpose] = PublicAIRoute{
-			ProfileID:      r.profileID,
-			Model:          r.model,
-			ProviderID:     r.providerID,
-			ModelID:        r.modelID,
-			SupportsVision: cloneBoolPtr(r.supportsVision),
+			ProfileID:       r.profileID,
+			Model:           r.model,
+			ProviderID:      r.providerID,
+			ModelID:         r.modelID,
+			SupportsVision:  cloneBoolPtr(r.supportsVision),
+			ReasoningEffort: r.reasoningEffort,
 		}
 	}
 	effective := make(map[string]PublicEffectiveProfile, len(AIPurposes))
 	for _, purpose := range AIPurposes {
 		resolved := resolveEffectiveFromDoc(doc, env, purpose)
 		effective[purpose] = PublicEffectiveProfile{
-			ProfileID:      resolved.ProfileID,
-			Model:          resolved.Model,
-			SupportsVision: resolved.SupportsVision,
+			ProfileID:       resolved.ProfileID,
+			Model:           resolved.Model,
+			SupportsVision:  resolved.SupportsVision,
+			ReasoningEffort: resolved.ReasoningEffort,
 		}
 	}
 	return &PublicAIProfilesView{
@@ -284,18 +288,20 @@ type PublicAIProvider struct {
 	APIKeyPreview string                   `json:"api_key_preview"`
 }
 
-// PublicProviderRoute 是 v2 用途路由视图（仅输出 provider_id、model_id、supports_vision）。
+// PublicProviderRoute 是 v2 用途路由视图。
 type PublicProviderRoute struct {
-	ProviderID     string `json:"provider_id"`
-	ModelID        string `json:"model_id"`
-	SupportsVision *bool  `json:"supports_vision"`
+	ProviderID      string `json:"provider_id"`
+	ModelID         string `json:"model_id"`
+	SupportsVision  *bool  `json:"supports_vision"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // PublicEffectiveProvider 是 v2 各用途最终解析出的厂商与模型摘要。
 type PublicEffectiveProvider struct {
-	ProviderID     string `json:"provider_id"`
-	ModelID        string `json:"model_id"`
-	SupportsVision bool   `json:"supports_vision"`
+	ProviderID      string `json:"provider_id"`
+	ModelID         string `json:"model_id"`
+	SupportsVision  bool   `json:"supports_vision"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // PublicAIProvidersView 对齐 GET/PUT /api/ai/providers 的 data 响应结构。
@@ -345,7 +351,7 @@ func migrateAIProvidersInternal(doc map[string]any, env *Env) (aiProfiles, error
 	for _, purpose := range AIPurposes {
 		route := parsed.routing[purpose]
 		if route.profileID == "" && route.model == "" {
-			routing[purpose] = aiRoute{supportsVision: cloneBoolPtr(route.supportsVision)}
+			routing[purpose] = aiRoute{supportsVision: cloneBoolPtr(route.supportsVision), reasoningEffort: route.reasoningEffort}
 			continue
 		}
 		var (
@@ -398,9 +404,10 @@ func migrateAIProvidersInternal(doc map[string]any, env *Env) (aiProfiles, error
 		}
 		providers[provID] = prov
 		routing[purpose] = aiRoute{
-			providerID:     provID,
-			modelID:        modelID,
-			supportsVision: cloneBoolPtr(route.supportsVision),
+			providerID:      provID,
+			modelID:         modelID,
+			supportsVision:  cloneBoolPtr(route.supportsVision),
+			reasoningEffort: route.reasoningEffort,
 		}
 	}
 
@@ -447,9 +454,10 @@ func BuildPublicAIProviders(doc map[string]any, env *Env) (*PublicAIProvidersVie
 	routingView := make(map[string]PublicProviderRoute, len(migrated.routing))
 	for purpose, r := range migrated.routing {
 		routingView[purpose] = PublicProviderRoute{
-			ProviderID:     r.providerID,
-			ModelID:        r.modelID,
-			SupportsVision: cloneBoolPtr(r.supportsVision),
+			ProviderID:      r.providerID,
+			ModelID:         r.modelID,
+			SupportsVision:  cloneBoolPtr(r.supportsVision),
+			ReasoningEffort: r.reasoningEffort,
 		}
 	}
 
@@ -466,9 +474,10 @@ func BuildPublicAIProviders(doc map[string]any, env *Env) (*PublicAIProvidersVie
 	for _, purpose := range AIPurposes {
 		resolved := resolveEffectiveFromDoc(resolvedDoc, env, purpose)
 		effectiveView[purpose] = PublicEffectiveProvider{
-			ProviderID:     resolved.ProfileID,
-			ModelID:        resolved.Model,
-			SupportsVision: resolved.SupportsVision,
+			ProviderID:      resolved.ProfileID,
+			ModelID:         resolved.Model,
+			SupportsVision:  resolved.SupportsVision,
+			ReasoningEffort: resolved.ReasoningEffort,
 		}
 	}
 
@@ -679,6 +688,7 @@ func resolveEffectiveFromDoc(doc map[string]any, env *Env, purpose string) contr
 		}
 	}
 	result := contracts.AIConf{
+		ReasoningEffort:   route.reasoningEffort,
 		VisionEnabled:     profiles.vision.enabled,
 		VisionOCR:         profiles.vision.ocr,
 		VisionDescription: profiles.vision.description,
@@ -799,13 +809,17 @@ func dumpNormalizedRoutes(routes map[string]aiRoute) map[string]any {
 		if r.supportsVision != nil {
 			sv = *r.supportsVision
 		}
-		out[purpose] = map[string]any{
+		route := map[string]any{
 			"profile_id":      r.profileID,
 			"model":           r.model,
 			"provider_id":     r.providerID,
 			"model_id":        r.modelID,
 			"supports_vision": sv,
 		}
+		if r.reasoningEffort != "" {
+			route["reasoning_effort"] = r.reasoningEffort
+		}
+		out[purpose] = route
 	}
 	return out
 }

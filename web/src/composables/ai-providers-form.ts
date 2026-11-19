@@ -36,6 +36,7 @@ export function providersPayload(draft: AIProvidersDraft): AIProvidersInput {
     routing: Object.fromEntries(aiPurposes.map(({ key }) => [key, {
       provider_id: draft.routing[key].provider_id, model_id: draft.routing[key].model_id,
       ...(typeof draft.routing[key].supports_vision === "boolean" ? { supports_vision: draft.routing[key].supports_vision } : {}),
+      ...(draft.routing[key].reasoning_effort ? { reasoning_effort: draft.routing[key].reasoning_effort } : {}),
     }])) as Record<AIPurpose, AIProviderRoute>,
     vision: { ...draft.vision }, revision: draft.revision,
   };

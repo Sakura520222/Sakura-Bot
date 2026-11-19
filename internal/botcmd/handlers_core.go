@@ -13,6 +13,7 @@ package botcmd
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -371,17 +372,25 @@ func (r *Router) cmdManualSummary(ctx context.Context, bot mtproto.Messenger, ch
 		r.reply(ctx, bot, chatID, replyTo, i18n.Text(ctx, "summary.no_channels", nil))
 		return
 	}
-	r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("⏳ 开始为 %d 个频道生成总结，请稍候...", len(targets)))
+	r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("开始为 %d 个频道生成总结，请稍候。", len(targets)))
 	var lines []string
 	for _, ch := range targets {
 		res := r.deps.SummaryService.GenerateChannelSummary(ctx, ch, false, "manual")
-		if res.Success {
-			lines = append(lines, fmt.Sprintf("✅ %s（%d 条消息）", res.ChannelName, res.MessageCount))
-		} else {
-			lines = append(lines, fmt.Sprintf("⚠️ %s：%s", ch, res.Error))
+		name := res.ChannelName
+		if name == "" {
+			name = ch
+		}
+		switch {
+		case res.Success:
+			lines = append(lines, fmt.Sprintf("%s（%d 条消息）", name, res.MessageCount))
+		case res.NoNewMessages:
+			lines = append(lines, name+"：无新消息")
+		default:
+			lines = append(lines, fmt.Sprintf("%s：%s", name, res.Error))
 		}
 	}
-	r.reply(ctx, bot, chatID, 0, "📋 **手动总结执行完毕**\n"+strings.Join(lines, "\n"))
+	_, _ = bot.SendLongMessage(ctx, chatID, "<b>手动总结执行完毕</b>\n\n"+html.EscapeString(strings.Join(lines, "\n")),
+		mtproto.SendOptions{ParseMode: "html", NoWebpage: true})
 }
 
 func (r *Router) cmdShowChannels(ctx context.Context, bot mtproto.Messenger, chatID int64, replyTo int) {

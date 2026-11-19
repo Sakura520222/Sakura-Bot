@@ -25,6 +25,8 @@ type AIConf struct {
 	BaseURL string
 	// Model 例如 deepseek-chat
 	Model string
+	// ReasoningEffort is empty when the request should use the model default.
+	ReasoningEffort string
 	// ProfileID 为空表示兼容旧的 config.json / env 配置。
 	ProfileID string
 	// SupportsVision 是服务档案与用途覆盖合并后的能力声明。

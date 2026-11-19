@@ -28,11 +28,12 @@ type aiProfile struct {
 }
 
 type aiRoute struct {
-	profileID      string
-	model          string
-	providerID     string
-	modelID        string
-	supportsVision *bool
+	profileID       string
+	model           string
+	providerID      string
+	modelID         string
+	supportsVision  *bool
+	reasoningEffort string
 }
 
 type aiVision struct {
@@ -159,7 +160,7 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 		if !ok {
 			return result, fmt.Errorf("ai_routing: 路由必须为对象")
 		}
-		if err := aiKnownFields(route, "ai_routing", "profile_id", "model", "provider_id", "model_id", "supports_vision"); err != nil {
+		if err := aiKnownFields(route, "ai_routing", "profile_id", "model", "provider_id", "model_id", "supports_vision", "reasoning_effort"); err != nil {
 			return result, err
 		}
 		id := ""
@@ -178,6 +179,15 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 		model, err := aiString(route, "model", "ai_routing", false, 256)
 		if err != nil {
 			return result, err
+		}
+		effort, err := aiString(route, "reasoning_effort", "ai_routing", false, 16)
+		if err != nil {
+			return result, err
+		}
+		switch effort {
+		case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		default:
+			return result, fmt.Errorf("ai_routing.reasoning_effort: 不支持的思考等级")
 		}
 		var vision *bool
 		if rawVision, exists := route["supports_vision"]; exists && rawVision != nil {
@@ -209,7 +219,7 @@ func parseAIProfiles(cfg map[string]any) (aiProfiles, error) {
 		if version == 2 && (id != "" || model != "") {
 			return result, fmt.Errorf("ai_routing: 旧路由不能写入新版配置")
 		}
-		result.routing[purpose] = aiRoute{profileID: id, model: model, providerID: providerID, modelID: modelID, supportsVision: vision}
+		result.routing[purpose] = aiRoute{profileID: id, model: model, providerID: providerID, modelID: modelID, supportsVision: vision, reasoningEffort: effort}
 	}
 
 	vision, err := aiObject(cfg, "ai_vision")

@@ -168,10 +168,11 @@ func NewConfigLLMProvider(cfg *config.Config) LLMRouteProvider {
 		}
 		eff := cfg.EffectiveAIConfig(purpose)
 		aiCfg := llm.AIConfig{
-			APIKey:         eff.APIKey,
-			BaseURL:        eff.BaseURL,
-			Model:          eff.Model,
-			SupportsVision: eff.SupportsVision,
+			APIKey:          eff.APIKey,
+			BaseURL:         eff.BaseURL,
+			Model:           eff.Model,
+			SupportsVision:  eff.SupportsVision,
+			ReasoningEffort: eff.ReasoningEffort,
 		}
 		return LLMRoute{
 			Caller:   &configLLMCaller{aiCfg: aiCfg},

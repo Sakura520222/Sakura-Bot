@@ -116,6 +116,35 @@ func TestAIProfilesDefaultsAndTrimming(t *testing.T) {
 	}
 }
 
+func TestPurposeReasoningEffortSurvivesProviderMigration(t *testing.T) {
+	document := profileTestConfig()
+	routes := document["ai_routing"].(map[string]any)
+	routes["summary"] = map[string]any{"profile_id": "primary", "reasoning_effort": "high"}
+	routes["assistant"].(map[string]any)["reasoning_effort"] = "low"
+	routes["guard"] = map[string]any{"reasoning_effort": "none"}
+	cfg := newTestConfig(t, nil, profileJSON(t, document), t.TempDir())
+
+	view, err := cfg.PublicAIProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for purpose, want := range map[string]string{"summary": "high", "assistant": "low", "guard": "none", "wiki": ""} {
+		if got := cfg.EffectiveAIConfig(purpose).ReasoningEffort; got != want {
+			t.Errorf("%s runtime effort = %q, want %q", purpose, got, want)
+		}
+		if got := view.Routing[purpose].ReasoningEffort; got != want {
+			t.Errorf("%s stored effort = %q, want %q", purpose, got, want)
+		}
+		if got := view.Effective[purpose].ReasoningEffort; got != want {
+			t.Errorf("%s effective effort = %q, want %q", purpose, got, want)
+		}
+	}
+	routes["guard"] = map[string]any{"reasoning_effort": "unsupported"}
+	if _, err := parseAIProfiles(document); err == nil || !strings.Contains(err.Error(), "ai_routing.reasoning_effort") {
+		t.Fatalf("invalid reasoning level was accepted: %v", err)
+	}
+}
+
 func TestAIProfilesRejectInvalidConfiguration(t *testing.T) {
 	profileField := func(field string, value any) func(map[string]any) {
 		return func(data map[string]any) {

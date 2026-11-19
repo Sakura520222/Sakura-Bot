@@ -45,7 +45,7 @@ var domainDenylist = map[string]bool{
 
 var unanchoredCapturingGroupRE = regexp.MustCompile(`(^|[^\\])\(([^?]|$)`)
 
-// Completer 抽象非流式聊天补全接口。
+// Completer 抽象聚合后的聊天补全接口。
 type Completer interface {
 	CompleteChat(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error)
 }

@@ -21,7 +21,7 @@ import (
 func aiConfig(cfg *config.Config, purpose string) llm.AIConfig {
 	conf := cfg.EffectiveAIConfig(purpose)
 	return llm.AIConfig{
-		APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model, SupportsVision: conf.SupportsVision,
+		APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model, SupportsVision: conf.SupportsVision, ReasoningEffort: conf.ReasoningEffort,
 	}
 }
 
@@ -30,6 +30,7 @@ func visionSettings(cfg *config.Config) media.VisionSettings {
 	return media.VisionSettings{
 		VisionEnabled: conf.VisionEnabled, VisionOCR: conf.VisionOCR, VisionDescription: conf.VisionDescription,
 		SupportsVision: conf.SupportsVision, APIKey: conf.APIKey, BaseURL: conf.BaseURL, Model: conf.Model,
+		ReasoningEffort: conf.ReasoningEffort,
 	}
 }
 

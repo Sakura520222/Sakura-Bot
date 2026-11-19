@@ -10,7 +10,11 @@
 
 package llm
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+)
 
 // Message 对齐 OpenAI chat/completions 的消息结构（qa_engine_v3.py:307-309、352-380）。
 //
@@ -101,9 +105,14 @@ type FunctionDelta struct {
 	Arguments *string `json:"arguments,omitempty"`
 }
 
-// streamChunk 是单条 SSE data 载荷的解析载体，只需 choices[0].delta。
+// streamChunk is the data payload of an OpenAI-compatible SSE event.
 type streamChunk struct {
+	ID      string          `json:"id"`
+	Model   string          `json:"model"`
+	Usage   *Usage          `json:"usage"`
+	Error   json.RawMessage `json:"error"`
 	Choices []struct {
+		Index        int       `json:"index"`
 		Delta        deltaWire `json:"delta"`
 		FinishReason string    `json:"finish_reason"`
 	} `json:"choices"`
@@ -152,4 +161,36 @@ func AccumulateToolCall(acc map[int]*ToolCallSlot, tc ToolCallDelta) {
 			slot.Arguments += *tc.Function.Arguments
 		}
 	}
+}
+
+// MaterializeToolCalls 把聚合槽位物化为回传给模型的 tool_calls 数组
+// （qa_engine_v3.py:352-360）：按 index 升序；缺 id 时以 call_{index} 兜底；
+// type 恒为 "function"。
+func MaterializeToolCalls(acc map[int]*ToolCallSlot) []ToolCall {
+	indexes := make([]int, 0, len(acc))
+	for idx := range acc {
+		indexes = append(indexes, idx)
+	}
+	sort.Ints(indexes)
+
+	calls := make([]ToolCall, 0, len(acc))
+	for _, idx := range indexes {
+		slot := acc[idx]
+		if slot == nil {
+			continue
+		}
+		id := slot.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", idx)
+		}
+		calls = append(calls, ToolCall{
+			ID:   id,
+			Type: "function",
+			Function: FunctionCall{
+				Name:      slot.Name,
+				Arguments: slot.Arguments,
+			},
+		})
+	}
+	return calls
 }

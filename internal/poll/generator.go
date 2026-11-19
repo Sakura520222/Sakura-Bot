@@ -38,7 +38,7 @@ type PollSpec struct {
 	Options  []string `json:"options"`
 }
 
-// Completer 抽象非流式聊天补全接口。
+// Completer 抽象聚合后的聊天补全接口。
 type Completer interface {
 	CompleteChat(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error)
 }
@@ -149,6 +149,7 @@ func GeneratePollFromSummary(
 					APIKey:            vc.APIKey,
 					BaseURL:           vc.BaseURL,
 					Model:             vc.Model,
+					ReasoningEffort:   vc.ReasoningEffort,
 				}
 			}
 			descs, derr := media.SavedPollDescriptions(ctx, opts.Pipeline, images, visOverride)

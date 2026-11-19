@@ -69,3 +69,15 @@ test("model IDs remain data even when they name object prototype properties", ()
   assert.equal(providersPayload(draft).providers.p.models.__proto__.supports_vision, false);
   assert.equal(validateProviders(draft), undefined);
 });
+
+test("reasoning effort round-trips per purpose even when two purposes share a model", () => {
+  const config = snapshot();
+  config.routing.summary = { provider_id: "p", model_id: "A", reasoning_effort: "high" };
+  config.routing.assistant = { provider_id: "p", model_id: "A", reasoning_effort: "low" };
+  const draft = createProvidersDraft(config);
+  assert.equal(providersPayload(draft).routing.summary.reasoning_effort, "high");
+  assert.equal(providersPayload(draft).routing.assistant.reasoning_effort, "low");
+  delete draft.routing.summary.reasoning_effort;
+  assert.equal("reasoning_effort" in providersPayload(draft).routing.summary, false);
+  assert.equal(providersPayload(draft).routing.assistant.reasoning_effort, "low");
+});

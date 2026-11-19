@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,14 @@ func (s contractsPurposeStub) EffectiveAIConfig(purposes ...string) contracts.AI
 	return s.byPurpose[p]
 }
 
+func writeCompletionStream(w http.ResponseWriter, chunks ...string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, chunk := range chunks {
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+	}
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
 func TestCompleteChatTemperatureNilAndZeroResponseFormatMaxTokens(t *testing.T) {
 	var rawRequests []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,21 +73,15 @@ func TestCompleteChatTemperatureNilAndZeroResponseFormatMaxTokens(t *testing.T) 
 		}
 		rawRequests = append(rawRequests, m)
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id":"chatcmpl-123",
-			"model":"override-model",
-			"choices":[{
-				"index":0,
-				"message":{
-					"role":"assistant",
-					"content":"{\"decision\":\"ban\"}",
-					"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]
-				},
-				"finish_reason":"stop"
-			}],
-			"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}
-		}`))
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("unexpected Accept header: %q", r.Header.Get("Accept"))
+		}
+		writeCompletionStream(w,
+			`{"id":"chatcmpl-123","model":"override-model","choices":[{"index":1,"delta":{"content":"ignore me"}},{"index":0,"delta":{"content":"{\"decision\":","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{"}}]}}]}`,
+			`{"choices":[{"index":0,"delta":{"content":"\"ban\"}","tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}`,
+		)
 	}))
 	defer srv.Close()
 
@@ -101,8 +104,8 @@ func TestCompleteChatTemperatureNilAndZeroResponseFormatMaxTokens(t *testing.T) 
 	if rawRequests[0]["max_tokens"] != float64(64000) {
 		t.Fatalf("max_tokens 不符: %v", rawRequests[0]["max_tokens"])
 	}
-	if _, hasStream := rawRequests[0]["stream"]; hasStream {
-		t.Fatalf("CompleteChat 不应发送 stream=true: %+v", rawRequests[0])
+	if rawRequests[0]["stream"] != true {
+		t.Fatalf("CompleteChat must request SSE: %+v", rawRequests[0])
 	}
 	if resp1.ID != "chatcmpl-123" || resp1.Model != "override-model" || resp1.Content != `{"decision":"ban"}` || resp1.FinishReason != "stop" {
 		t.Fatalf("响应解析不符: %+v", resp1)
@@ -110,7 +113,7 @@ func TestCompleteChatTemperatureNilAndZeroResponseFormatMaxTokens(t *testing.T) 
 	if resp1.Usage.PromptTokens != 12 || resp1.Usage.CompletionTokens != 8 || resp1.Usage.TotalTokens != 20 {
 		t.Fatalf("Usage 解析不符: %+v", resp1.Usage)
 	}
-	if len(resp1.ToolCalls) != 1 || resp1.ToolCalls[0].Function.Name != "lookup" {
+	if len(resp1.ToolCalls) != 1 || resp1.ToolCalls[0].Function.Name != "lookup" || resp1.ToolCalls[0].Function.Arguments != "{}" {
 		t.Fatalf("ToolCalls 解析不符: %+v", resp1.ToolCalls)
 	}
 
@@ -155,8 +158,7 @@ func TestCompleteChatMultimodalVisionGuardAndErrors(t *testing.T) {
 			http.Error(w, "upstream failure sk-secret-123", http.StatusBadGateway)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"v1","model":"vl","choices":[{"message":{"role":"assistant","content":"一只猫"},"finish_reason":"stop"}]}`))
+		writeCompletionStream(w, `{"id":"v1","model":"vl","choices":[{"delta":{"content":"一只猫"},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 
@@ -216,7 +218,7 @@ func TestNewPurposeClientSupportsBothSignatures(t *testing.T) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		seenModels = append(seenModels, body["model"].(string))
-		_, _ = w.Write([]byte(`{"id":"1","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+		writeCompletionStream(w, `{"id":"1","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 
@@ -275,7 +277,7 @@ func TestListModelsAndTestConnection(t *testing.T) {
 				return
 			}
 			_ = json.NewDecoder(r.Body).Decode(&lastCompletion)
-			_, _ = w.Write([]byte(`{"id":"ok1","model":"deepseek-chat","choices":[{"message":{"content":"OK"},"finish_reason":"stop"}]}`))
+			writeCompletionStream(w, `{"id":"ok1","model":"deepseek-chat","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -323,5 +325,57 @@ func TestListModelsAndTestConnection(t *testing.T) {
 	}
 	if err := TestConnection(context.Background(), baseURL, "sk-live", "deepseek-chat", "unknown", srv.Client()); err == nil {
 		t.Fatal("未知 kind 应失败")
+	}
+}
+
+func TestCompleteChatRejectsIncompleteSSE(t *testing.T) {
+	const content = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+	const stop = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+	const done = "data: [DONE]\n\n"
+	for name, wire := range map[string]string{
+		"missing done":          content + stop,
+		"missing finish reason": content + done,
+		"malformed chunk":       content + "data: invalid-json\n\n" + stop + done,
+		"upstream error":        content + "event: error\ndata: {\"message\":\"inference failed\"}\n\n" + stop + done,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, wire)
+			}))
+			defer server.Close()
+			resp, err := newTestClient(t, server.URL).CompleteChat(t.Context(), CompleteRequest{})
+			if resp != nil || err == nil {
+				t.Fatalf("incomplete SSE returned %+v, %v", resp, err)
+			}
+		})
+	}
+}
+
+func TestCompleteChatRetainsSSEAndReasoningAcrossUsageFallback(t *testing.T) {
+	var reqs = make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("invalid request: %v", err)
+		}
+		reqs <- request
+		if _, ok := request["stream_options"]; ok {
+			http.Error(w, "unsupported stream_options", http.StatusBadRequest)
+			return
+		}
+		writeCompletionStream(w, `{"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}`)
+	}))
+	defer server.Close()
+	ctx := WithConfig(t.Context(), AIConfig{BaseURL: server.URL, Model: "same-model", ReasoningEffort: "high"})
+	resp, err := newTestClient(t, server.URL).CompleteChat(ctx, CompleteRequest{})
+	if err != nil || resp == nil || resp.FinishReason != "length" || resp.Model != "same-model" {
+		t.Fatalf("unexpected completion: %+v %v", resp, err)
+	}
+	for i := 0; i < 2; i++ {
+		request := <-reqs
+		if request["stream"] != true || request["reasoning_effort"] != "high" {
+			t.Fatalf("request %d lost stream or effort: %+v", i, request)
+		}
 	}
 }

@@ -16,12 +16,60 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/db"
 	"github.com/makiuchi-d/gozxing"
 	"github.com/makiuchi-d/gozxing/qrcode"
 )
+
+type summaryImageRepo struct {
+	ImageRepo
+	registered map[int64]string
+	reads      map[int64]int
+}
+
+func (r *summaryImageRepo) LinkMessageImage(_ context.Context, msg db.MessageImageInput) (bool, error) {
+	r.registered[msg.MessageID] = msg.MediaID
+	return true, nil
+}
+
+func (r *summaryImageRepo) GetMessageImage(_ context.Context, _ string, id int64) (*db.MessageImageJob, error) {
+	return &db.MessageImageJob{MediaID: r.registered[id], Status: "pending"}, nil
+}
+
+func (r *summaryImageRepo) GetRecognizedImageText(_ context.Context, _ string, id int64) (string, string, bool, error) {
+	r.reads[id]++
+	if len(r.registered) != 2 || r.reads[id] == 1 {
+		return "", "", false, nil
+	}
+	return "可见文字", "图片描述", true, nil
+}
+
+func TestSummaryQueuesBatchAndWaitsForImageText(t *testing.T) {
+	repo := &summaryImageRepo{registered: make(map[int64]string), reads: make(map[int64]int)}
+	pipeline := NewImagePipeline(PipelineOptions{
+		Store: repo, VisionProvider: func() VisionSettings { return VisionSettings{VisionEnabled: true, SupportsVision: true} },
+	})
+	pipeline.running = true
+	got, err := pipeline.EnrichSummaryImages(t.Context(), []RemoteImageMessage{
+		{ChannelID: "42", MessageID: 1, MediaID: "photo-1", Caption: "频道说明"},
+		{ChannelID: "42", MessageID: 2, MediaID: "photo-2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, text := range got {
+		if !strings.Contains(text, "可见文字") || !strings.Contains(text, "图片描述") ||
+			strings.Contains(text, "images.pending") || repo.reads[id] != 2 {
+			t.Errorf("message %d was not enriched after the worker finished: %q", id, text)
+		}
+	}
+	if len(got) != 2 || !strings.Contains(got[1], "频道说明") {
+		t.Fatalf("source caption or an image-only message was lost: %+v", got)
+	}
+}
 
 func makeTinyPNG(t *testing.T, c color.Color) []byte {
 	t.Helper()

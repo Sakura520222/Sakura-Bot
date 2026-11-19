@@ -88,10 +88,13 @@ export interface AIProfile {
 
 export type AIProfileInput = Omit<AIProfile, "api_key_set" | "api_key_preview"> & { api_key?: string };
 
+export type AIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface AIPurposeRoute {
   profile_id: string;
   model?: string;
   supports_vision?: boolean | null;
+  reasoning_effort?: AIReasoningEffort;
 }
 
 export interface AIVisionSettings {
@@ -105,7 +108,7 @@ export interface AIProfilesConfig {
   routing: Partial<Record<AIPurpose, AIPurposeRoute>>;
   vision: AIVisionSettings;
   revision: string;
-  effective: Record<AIPurpose, { profile_id: string; model: string; supports_vision: boolean }>;
+  effective: Record<AIPurpose, { profile_id: string; model: string; supports_vision: boolean; reasoning_effort?: AIReasoningEffort }>;
 }
 
 export interface AIProfilesInput {
@@ -158,13 +161,18 @@ export interface AIProvider {
   api_key_preview: string;
   models: Record<string, AIModel>;
 }
-export interface AIProviderRoute { provider_id: string; model_id: string; supports_vision?: boolean | null }
+export interface AIProviderRoute {
+  provider_id: string;
+  model_id: string;
+  supports_vision?: boolean | null;
+  reasoning_effort?: AIReasoningEffort;
+}
 export interface AIProvidersConfig {
   version: 2;
   providers: Record<string, AIProvider>;
   routing: Partial<Record<AIPurpose, AIProviderRoute>>;
   vision: AIVisionSettings;
-  effective: Record<AIPurpose, { provider_id: string; model_id: string; supports_vision: boolean }>;
+  effective: Record<AIPurpose, AIProviderRoute>;
   revision: string;
 }
 export interface AIProvidersInput {
