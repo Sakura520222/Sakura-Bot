@@ -64,6 +64,10 @@ func TestJobFailureUsesRateLimitWithoutExposingResponseBody(t *testing.T) {
 	if _, _, delay := jobFailure(errors.New("transient"), 100); delay != 10 {
 		t.Fatalf("unbounded backoff: %d", delay)
 	}
+	detail, code, _ = jobFailure(&mysql.MySQLError{Number: 1452, Message: "private database text"}, 0)
+	if detail != "Wiki 数据库处理失败（MySQL 1452），已保留当前进度" || code != "DatabaseError" {
+		t.Fatalf("unexpected database diagnostic %q %s", detail, code)
+	}
 }
 
 func TestRuntimeReplaysUnacknowledgedDeletionOnRestart(t *testing.T) {

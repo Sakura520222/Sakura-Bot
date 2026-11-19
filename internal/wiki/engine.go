@@ -559,6 +559,12 @@ func (e *Engine) extractionKey(job *JobRecord, cfg WikiConfig, chunk Chunk, rout
 	return Digest("wiki-markdown-1", scope, route.Model, route.BaseURL, cfg.Language, chunk.ID)
 }
 
+// Raw Markdown cache keys use the Go content fingerprint. This keeps existing
+// cached responses reusable while citations use the actual stored chunk ID.
+func chunkCacheFingerprint(chunk Chunk) string {
+	return Digest(chunk.SourceID, chunk.ContentHash, chunk.Start, chunk.End)
+}
+
 // ExtractMany 批量提取分块知识，遇到内容审核拒绝时自动二分拆批隔离单条敏感消息（对齐 engine.py:extract_many）。
 func (e *Engine) ExtractMany(ctx context.Context, job *JobRecord, cfg WikiConfig, batch []Chunk, route LLMRoute) ([]bool, error) {
 	res, err := e.extractManyOnce(ctx, job, cfg, batch, route)
@@ -693,7 +699,7 @@ func (e *Engine) extractManyOnce(ctx context.Context, job *JobRecord, cfg WikiCo
 		}
 		missingIDs := make([]string, len(missing))
 		for i, m := range missing {
-			missingIDs[i] = m.ID
+			missingIDs[i] = chunkCacheFingerprint(m)
 		}
 		rawKey := Digest("wiki-markdown-batch-1", scope, cfg.Language, route.Model, route.BaseURL, missingIDs)
 
@@ -887,7 +893,9 @@ func (e *Engine) sourceConditions(job *JobRecord) (string, []any) {
 	} else {
 		conds = append(conds, "s.source_type<>'summary'")
 		if incrementalJobKinds[job.Kind] {
-			conds = append(conds, "s.verified=TRUE AND EXISTS (SELECT 1 FROM wiki_chunks ch WHERE ch.source_id=s.id AND ch.content_hash=s.content_hash AND ch.applied_key='')")
+			conds = append(conds, `s.verified=TRUE AND s.body<>''
+				AND (EXISTS (SELECT 1 FROM wiki_chunks ch WHERE ch.source_id=s.id AND ch.content_hash=s.content_hash AND ch.applied_key='')
+				  OR NOT EXISTS (SELECT 1 FROM wiki_chunks ch WHERE ch.source_id=s.id AND ch.content_hash=s.content_hash))`)
 		}
 	}
 	return strings.Join(conds, " AND "), args
@@ -1019,13 +1027,14 @@ func (e *Engine) Generate(ctx context.Context, job *JobRecord, channel *ChannelR
 
 		identifiers := make([]string, len(sources))
 		remaining := make(map[string]int, len(sources))
+		chunks, err := e.Store.sourceChunks(ctx, job, sources)
+		if err != nil {
+			return err
+		}
 		var pendingChunks []Chunk
 		for i, src := range sources {
 			identifiers[i] = src.ID
-			var parts []Chunk
-			if src.Verified {
-				parts, _ = BuildSourceChunks(src.ID, src.Body, src.ContentHash, DefaultChunkSize, DefaultChunkOverlap)
-			}
+			parts := chunks[src.ID]
 			remaining[src.ID] = len(parts)
 			pendingChunks = append(pendingChunks, parts...)
 		}
@@ -1239,21 +1248,25 @@ func (e *Engine) GenerateAlbum(ctx context.Context, job *JobRecord, cfg WikiConf
 	)
 
 	if len(material) > 0 {
+		chunks, err := e.Store.sourceChunks(ctx, job, material)
+		if err != nil {
+			return err
+		}
 		parts := make([]Chunk, 0, len(material))
 		excerpts := make([]string, 0, len(material))
 		partIDs := make([]string, 0, len(material))
 		albumPayload := make([]map[string]any, 0, len(material))
 
 		for _, s := range material {
-			srcChunks, cErr := BuildSourceChunks(s.ID, s.Body, s.ContentHash, DefaultChunkSize, DefaultChunkOverlap)
-			if cErr != nil || len(srcChunks) == 0 {
+			srcChunks := chunks[s.ID]
+			if len(srcChunks) == 0 {
 				continue
 			}
 			first := srcChunks[0]
 			exc := truncateRunesSimple(first.Text, excerptLimit)
 			parts = append(parts, first)
 			excerpts = append(excerpts, exc)
-			partIDs = append(partIDs, first.ID)
+			partIDs = append(partIDs, chunkCacheFingerprint(first))
 			itemType := "图片识别"
 			if s.SourceType == "message" {
 				itemType = "配文"

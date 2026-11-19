@@ -737,11 +737,15 @@ func (s *Store) PutSource(ctx context.Context, in PutSourceInput) (string, error
 			return err
 		}
 
-		old, err := getSourceForUpdateTx(ctx, tx, sourceID)
+		old, err := sourceByIdentity(ctx, tx, in.ChannelID, in.SourceType, in.ExternalID, true)
 		if err != nil {
 			return err
 		}
 		if old != nil {
+			sourceID = old.ID
+			if old.Body == in.Body && old.MediaKey == in.MediaKey {
+				contentHash = old.ContentHash
+			}
 			if old.Deleted ||
 				(changedAt.Before(old.EditedAt) && (old.Verified || !in.Verified)) ||
 				(old.Verified && !in.Verified) {
@@ -757,12 +761,12 @@ func (s *Store) PutSource(ctx context.Context, in PutSourceInput) (string, error
 			}
 		}
 		if in.MediaKey != "" && in.MessageID != nil && in.SourceType == "image" {
-			parentID := Digest(in.ChannelID, "message", fmt.Sprintf("%d", *in.MessageID))
 			var parentGroup sql.NullString
 			pErr := tx.QueryRowContext(ctx, `
 				SELECT media_group FROM wiki_sources
-				WHERE id=? AND media_key=? AND verified=TRUE AND deleted=FALSE
-			`, parentID, in.MediaKey).Scan(&parentGroup)
+				WHERE channel_id=? AND source_type='message' AND external_id=?
+				  AND media_key=? AND verified=TRUE AND deleted=FALSE
+			`, in.ChannelID, fmt.Sprintf("%d", *in.MessageID), in.MediaKey).Scan(&parentGroup)
 			if pErr == nil && parentGroup.Valid && parentGroup.String != "" {
 				mediaGroup = parentGroup.String
 			}
@@ -862,15 +866,8 @@ func (s *Store) PutSource(ctx context.Context, in PutSourceInput) (string, error
 			}
 		}
 
-		srcChunks, err := BuildSourceChunks(sourceID, in.Body, contentHash, DefaultChunkSize, DefaultChunkOverlap)
-		if err != nil {
-			return err
-		}
-		for _, ch := range srcChunks {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT IGNORE INTO wiki_chunks (id, source_id, content_hash, start_offset, end_offset)
-				VALUES (?, ?, ?, ?, ?)
-			`, ch.ID, sourceID, contentHash, ch.Start, ch.End); err != nil {
+		if old == nil || old.ContentHash != contentHash {
+			if err := insertSourceChunks(ctx, tx, sourceID, in.Body, contentHash); err != nil {
 				return err
 			}
 		}
@@ -912,14 +909,16 @@ func markAlbumTx(ctx context.Context, tx *sql.Tx, channelID, group string) error
 	return err
 }
 
-func getSourceForUpdateTx(ctx context.Context, tx *sql.Tx, sourceID string) (*SourceRecord, error) {
-	row := tx.QueryRowContext(ctx, `
+func sourceByIdentity(ctx context.Context, exec sqlExecutor, channelID, kind, externalID string, forUpdate bool) (*SourceRecord, error) {
+	query := `
 		SELECT id, channel_id, source_type, external_id, category, message_id, body,
 		       original_length, content_hash, revision, created_at, edited_at, observed_at,
 		       verified, deleted, hidden, excluded, media_group, media_key, exclusion_reason
-		FROM wiki_sources WHERE id=? FOR UPDATE
-	`, sourceID)
-	rec, err := scanSourceRow(row)
+		FROM wiki_sources WHERE channel_id=? AND source_type=? AND external_id=?`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
+	rec, err := scanSourceRow(exec.QueryRowContext(ctx, query, channelID, kind, externalID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

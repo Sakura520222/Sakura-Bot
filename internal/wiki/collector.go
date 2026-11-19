@@ -392,8 +392,7 @@ func (c *Collector) CaptureImage(ctx context.Context, channelID string, messageI
 		return nil
 	}
 
-	parentID := Digest(ch.ID, "message", strconv.FormatInt(messageID, 10))
-	orig, err := c.store.GetSource(ctx, parentID)
+	orig, err := sourceByIdentity(ctx, c.store.exec(ctx), ch.ID, "message", strconv.FormatInt(messageID, 10), false)
 	if err != nil || orig == nil {
 		return err
 	}
@@ -728,8 +727,7 @@ func (c *Collector) importFromVectorSQLite(ctx context.Context, sqliteFile strin
 		}
 		doc := sb.String()
 		midCopy := mid
-		existingID := Digest(channel.ID, "message", strconv.FormatInt(midCopy, 10))
-		if existing, _ := c.store.GetSource(ctx, existingID); existing != nil && existing.Body != "" {
+		if existing, _ := sourceByIdentity(ctx, c.store.exec(ctx), channel.ID, "message", strconv.FormatInt(midCopy, 10), false); existing != nil && existing.Body != "" {
 			continue
 		}
 		_, _ = c.store.PutSource(ctx, PutSourceInput{

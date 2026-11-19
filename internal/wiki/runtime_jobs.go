@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+
 	"github.com/Sakura520222/Sakura-Bot/internal/llm"
 	"github.com/Sakura520222/Sakura-Bot/internal/mtproto"
 )
@@ -299,6 +301,7 @@ func jobFailure(cause error, attempts int) (detail, code string, delay int) {
 		response *WikiResponseError
 		flood    *mtproto.FloodWaitError
 		api      *llm.APIError
+		dbErr    *mysql.MySQLError
 	)
 	delay = min(10, 2<<min(3, max(0, attempts)))
 	switch {
@@ -311,6 +314,8 @@ func jobFailure(cause error, attempts int) (detail, code string, delay int) {
 			delay = 5
 		}
 		return fmt.Sprintf("模型服务返回 HTTP %d", api.StatusCode), "APIError", delay
+	case errors.As(cause, &dbErr):
+		return fmt.Sprintf("Wiki 数据库处理失败（MySQL %d），已保留当前进度", dbErr.Number), "DatabaseError", delay
 	case errors.Is(cause, context.DeadlineExceeded):
 		return "请求长时间未返回数据，正在保留进度并安排重试", "TimeoutError", delay
 	case errors.Is(cause, ErrBudgetExceeded), errors.Is(cause, ErrPublicationAccessUnverified),
