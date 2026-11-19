@@ -1,15 +1,15 @@
 # Sakura Guard 智能群管
 
-Sakura Guard 使用主 Bot 的 Telethon 客户端、MySQL 和现有 WebUI，独立于 QA Bot。启用现有 UserBot 时可补检其他机器人的消息，处罚仍由主 Bot 执行。自动群管在所有群组默认关闭；成员举报在主 Bot 担任管理员的群中可用。历史配置会自动兼容，已有各群昵称关键词在升级时合并去重为全局词表。启动会幂等创建 `core/moderation/schema.sql` 中的 InnoDB 表，不修改既有业务表。
+Sakura Guard 通过 Go 主 Bot 的 gotd/td 客户端处理 Telegram 事件，使用 MySQL 保存群管记录，并通过现有 WebUI 管理。启用 UserBot 时可补检其他机器人的消息，处罚由主 Bot 执行。自动群管默认关闭。成员举报可在主 Bot 担任管理员的群中使用。启动时初始化群管表，升级时合并旧版各群的昵称关键词为全局词表。
 
 群内 `@admin 举报`、`@admin 上报` 由主 Bot 的 Guard 处理。普通问答由 Go 助手 Bot 提供，关联讨论群唤醒方式见[小妲助手使用指南](User-QA-Bot-Guide.md)。
 
 ## 启用
 
-1. 更新 Python 依赖：`python -m pip install -r requirements.txt`。
+1. 按[快速开始](User-Getting-Started.md)启动 Go 版主 Bot。
 2. 将主 Bot 加入超级群组并授予 **删除消息、限制/封禁成员** 权限。自动批准入群申请还需要 **邀请用户/批准入群** 权限。普通基本群必须先升级成超级群组。
 3. 在 `REPORT_ADMIN_IDS` 配置数字管理员 ID，并由管理员先启动与主 Bot 的私聊，以便接收通知。可另设通知收件人和审核备选群；收件人身份本身不会赋予审核权限。
-4. 在 **WebUI → Sakura Guard** 选择或输入负数 Telegram 群组 ID 添加，点击开关立即保存并生效；也可由授权管理员在群内执行 `/guard_on`，私聊执行 `/guard_on -1001234567890`。
+4. 在 **WebUI → Sakura Guard** 选择或输入负数 Telegram 群组 ID 添加，再开启群管。授权管理员也可在群内发送 `/guard_on` 打开面板并确认，私聊可用 `/guard_on -1001234567890` 预填群 ID。
 
 开启时默认检查昵称、验证新成员，消息过滤和全局黑名单共享默认关闭。所有成员处理默认通知管理员。停用群管或入群验证后，未执行的自动处理会取消并恢复原权限；已确认的封禁仍需单独复核解除。仅在明确配置“踢出”时执行 ban/unban 补偿，默认验证失败采用保留封禁。
 
@@ -19,7 +19,7 @@ Sakura Guard 使用主 Bot 的 Telethon 客户端、MySQL 和现有 WebUI，独�
 
 各群仍单独控制“昵称及用户名过滤”和命中动作；群管关闭的群不处理，管理员、受信任 Bot 和本群白名单继续豁免。消息与链接关键词、自定义规则仍按群配置。原先空词表的群在开启昵称过滤时也会使用全局列表。
 
-系统管理员可在主 Bot 私聊执行 `/guard_addword 关键词`、`/guard_delword 关键词`；旧命令中的可选群 ID 仍可使用，修改范围为全局。群审核员及普通群管理员不能修改全局词表。并发编辑同一词表时会提示冲突，保留页面草稿，确认后可点击重试。
+系统管理员可以在主 Bot 私聊通过 `/guard_addword 关键词`、`/guard_delword 关键词` 打开面板并确认。修改范围为全局，普通群管理员和审核员的权限按群级规则处理。并发编辑同一词表时会提示冲突并保留页面草稿。
 
 入群、直接成员加入更新、昵称及有效用户名变更、群成员或访客发言和编辑消息都会核验对应规则。管理员在 Telegram 直接解封后再次命中规则，会创建新的处罚和清理记录，不复用已结束的旧清理。
 
@@ -190,7 +190,7 @@ MySQL 按用户的连接级锁串行化跨群操作；首次有效审核先持�
 
 验证开始、结束、失败及管理员处理通知均携带对应验证消息 ID 和“验证消息链接”。公开群使用群用户名直达链接，私有超级群使用 `t.me/c/` 链接；验证消息被删除后补发时，原管理员通知原地更新为新消息链接。验证消息按配置删除后，其历史链接不能再打开已删除内容。
 
-通知中的用户姓名可点击打开 Telegram 资料，引用按 User ID 绑定，没有 `@用户名` 或更改用户名后仍可使用；缺少姓名时以用户 ID 显示。昵称中的表情及 HTML/Markdown 字符保持原样，不影响资料引用和现有管理按钮。已注销或当前机器人无法解析的账号仍会保留 ID 并正常投递通知；资料能否访问受 Telegram 账号状态和隐私设置限制。
+入群验证卡和案件通知使用 Telegram 原生 Rich Messages。通知补全可解析的群名称和公开用户名。用户资料引用按 User ID 绑定，可解析账号的姓名可点击打开资料卡。昵称等内容按纯文本安全渲染。缺少姓名时显示用户 ID。资料能否打开受 Telegram 账号状态、可见性与隐私设置限制。已结束的案件根据状态更新原通知，终态无按钮时省略键盘。
 
 默认开启“结果通知送达后删除验证开始通知”：同一轮验证通过、超时/答错处理或管理员处理后，逐个收件人确认结果通知已送达，再删除该收件人的开始通知，只保留结果通知及其管理员按钮。结果发送失败时保留原通知；旧通知删除失败会退避重试，重启后继续，已删除的原通知不会重新发送，审计记录继续保留。关闭结果通知时不会删除管理员唯一收到的开始通知。
 
@@ -248,7 +248,7 @@ AI 从样本异步提取候选规则，默认“仅生成候选，等待管理�
 
 ## 管理入口
 
-群级命令在群内可省略群 ID，私聊需要填写；全局关键词命令无需群 ID，仅系统管理员可用：
+主 Bot 的「Sakura Guard」菜单提供这些操作。斜杠命令可打开并预填面板。群级命令在群内可省略群 ID，私聊填写目标群，最后点击确认。全局关键词操作仅系统管理员可用。
 
 ```text
 /guard [群ID]
@@ -270,13 +270,11 @@ WebUI 提供按群设置、关键词和规则表单、黑白名单、待审案�
 ## 开发验证
 
 ```bash
-python -m pytest tests/moderation/ -m "not integration" --no-cov
-python -m ruff check .
-python -m ruff format --check .
+go test ./internal/guard ./internal/db/guard
 npm --prefix web run build
-npm --prefix web run test:guard  # 已在 Node.js 24 验证
+npm --prefix web run test:guard
 ```
 
-真实 MySQL 集成测试需显式配置专用 `GUARD_MYSQL_TEST_DSN=mysql://user:password@127.0.0.1:3306`，再运行 `python -m pytest tests/moderation/test_mysql.py tests/moderation/test_appeals_mysql.py --no-cov`。测试每次创建并删除随机命名的独立 schema，需要 CREATE/DROP DATABASE 权限，不读取应用的 `MYSQL_*` 凭据或操作已有业务表。常规 CI 未提供 DSN 时会跳过这些集成测试。
+MySQL 集成用例使用 `MYSQL_TEST_DSN`，应连接到独立测试实例。测试账号需要创建和删除测试数据库的权限。没有提供 DSN 时跳过相关用例。
 
 Telegram 权限、真实私聊投递与审批事件仍应在专用测试群内验收；单元测试使用模拟 Telegram，不会封禁真实用户。

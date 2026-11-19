@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Verify each attachment in its own directory using fixture credentials only.
+# Verify both release attachment formats with an isolated test database.
 set -euo pipefail
 
 root="${1:?Path to extracted attachments}"
 image="${2:?Locally available image reference}"
 revision="${3:?Expected Git revision}"
+smoke_image="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/smoke_image.sh"
 
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$revision"
 
@@ -32,31 +33,16 @@ for format in zip tar; do
         test ! -e .git
         test ! -e web/node_modules
         test ! -e web/dist
-        cat > data/.env <<'EOF'
-TELEGRAM_API_ID=123456
-TELEGRAM_API_HASH=release_smoke
-TELEGRAM_BOT_TOKEN=123456:release_smoke
-LLM_API_KEY=release_smoke
-QA_BOT_TOKEN=123457:release_smoke
-QA_BOT_RUNTIME=go
-EOF
+        cp data/.env.example data/.env
+
+        version=$(tr -d '\r\n' < VERSION)
         local_image="sakura-bot:release-smoke-$format"
         SAKURA_BOT_IMAGE="$local_image" docker compose build
-        docker run --rm --network none --env-file data/.env "$local_image" \
-            python -m scripts.release_archive_smoke
+        bash "$smoke_image" "$local_image" "$version" "$PWD/.smoke-local"
 
-        test ! -e web/dist
         test "$(SAKURA_BOT_IMAGE="$image" docker compose config --images)" = "$image"
-        docker run --rm --network none --env-file data/.env \
-            --mount "type=bind,source=$PWD,target=/app" \
-            --mount "type=bind,source=$PWD/data,target=/app/data" \
-            "$image" bash -ec '
-                python core/docker_runtime.py prepare
-                test ! -e web/node_modules
-                python -m scripts.release_archive_smoke
-            '
+        bash "$smoke_image" "$image" "$version" "$PWD/.smoke-published"
 
-        cd qa-bot-go
         MYSQL_TEST_DSN="root@tcp(127.0.0.1:$mysql_port)/release_smoke" \
             go test -count=1 -v ./internal/engine ./internal/handlers \
             -run '^(TestAnonymousDiscussionHistoryPersistsAcrossTurnsAndRestart|TestTelegramDiscussionFactsReachModelWithoutRewritingQuery|TestDiscussionScopeIgnoresOrdinaryReplyTarget|TestAIWorkerPreservesCommentWakeContext)$'

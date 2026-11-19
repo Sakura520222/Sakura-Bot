@@ -23,17 +23,9 @@ jobs:
       - name: 获取当前版本
         id: get_version
         run: |
-          VERSION_FILE="core/__init__.py"
-          if [ -f "$VERSION_FILE" ]; then
-            VERSION=$(sed -n "s/^[[:space:]]*__version__[[:space:]]*=[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" "$VERSION_FILE" | head -n 1)
-            if [ -z "$VERSION" ]; then
-              VERSION="unknown"
-            fi
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-            echo "当前版本: ${VERSION}"
-          else
-            echo "version=unknown" >> $GITHUB_OUTPUT
-          fi
+          VERSION=$(tr -d '\r\n' < VERSION)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "当前版本: ${VERSION}"
       
       - name: 检查 dev 分支是否存在
         id: check_dev

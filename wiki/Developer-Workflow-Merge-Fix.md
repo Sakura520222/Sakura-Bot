@@ -1,4 +1,11 @@
+---
+search: false
+---
+
 # Workflow 合并修复说明
+
+> 历史归档。现行安装步骤见 [2.6.0 升级说明](Release-2.6.0.md)，开发流程见 [开发者文档](Developer-Guide.md)。
+
 
 ## 问题描述
 

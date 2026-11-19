@@ -50,21 +50,17 @@
         <div class="stat-value">{{ botStatus.channel_count }}</div>
         <div class="stat-sub">当前接入的频道总数</div>
       </div>
-      <!-- QA Bot：运行态为主值，配置/实际运行时差异用警告药丸提示 -->
+      <!-- QA Bot 运行状态 -->
       <div class="stat-card">
         <div class="stat-top">
           <span class="icon-chip"><n-icon :component="TerminalOutlined" /></span>
           <span class="stat-label">QA Bot</span>
-          <span v-if="runtimeMismatch" class="state-pill pill-warning">
-            <span class="dot" />配置已切换，重启后生效
-          </span>
         </div>
         <div class="stat-value" :class="qaBotRunning ? 'val-success' : 'val-neutral'">
           <span class="dot" />{{ qaBotRunning ? "运行中" : "未运行" }}
         </div>
         <div class="stat-sub">
-          PID {{ qaBotPid ?? "-" }} · 配置 {{ runtimeLabels[qaConfiguredRuntime] }} / 实际
-          {{ runtimeLabels[qaActualRuntime] }}
+          PID {{ qaBotPid ?? "-" }} · Go
         </div>
       </div>
       <!-- 数据库：可用性语义色 + 版本号 -->
@@ -264,38 +260,6 @@
               </div>
             </div>
 
-            <div class="action-card">
-              <div class="action-title">切换运行时</div>
-              <p class="action-desc">
-                在 Go 与 Python 运行时间切换，切换后 QA Bot 将重启。当前配置
-                {{ runtimeLabels[qaConfiguredRuntime] }}，实际运行 {{ runtimeLabels[qaActualRuntime] }}。
-              </p>
-              <p v-if="runtimeMismatch" class="mismatch-line">
-                <span class="state-pill pill-warning"><span class="dot" />配置已切换，重启后生效</span>
-              </p>
-              <div class="action-foot foot-between">
-                <n-select
-                  v-model:value="runtimeTarget"
-                  size="small"
-                  class="card-select"
-                  placeholder="目标运行时"
-                  :options="runtimeOptions"
-                />
-                <n-popconfirm @positive-click="onRuntimeConfirm">
-                  <template #trigger>
-                    <n-button
-                      size="small"
-                      type="primary"
-                      :loading="runtimeSwitching !== null"
-                      :disabled="!runtimeTarget || runtimeTarget === qaConfiguredRuntime || runtimeSwitching !== null"
-                    >
-                      切换
-                    </n-button>
-                  </template>
-                  {{ runtimeConfirmText }}
-                </n-popconfirm>
-              </div>
-            </div>
           </div>
         </section>
       </n-tab-pane>
@@ -544,7 +508,6 @@ import { ChannelOutlined, DatabaseOutlined, RobotOutlined, TerminalOutlined } fr
 import {
   type AuditLogItem,
   type BotStatus,
-  type QaBotRuntime,
   checkQABotHealth,
   clearDatabaseAndRestart,
   cleanupAuditLogs,
@@ -561,7 +524,6 @@ import {
   restartBot,
   restartQABot,
   resumeBot,
-  setQaBotRuntime,
   startQABot,
   stopQABot,
   updateLogLevel,
@@ -662,11 +624,6 @@ const logLevelOptions = [
   { label: "CRITICAL", value: "CRITICAL" },
 ];
 
-const runtimeOptions = [
-  { label: "Go", value: "go" },
-  { label: "Python", value: "python" },
-];
-
 const statusLabels: Record<string, string> = {
   running: "运行中",
   paused: "已暂停",
@@ -682,27 +639,11 @@ const statusToneMap: Record<string, StatusTone> = {
   unknown: "neutral",
 };
 
-const runtimeLabels: Record<string, string> = { go: "Go", python: "Python" };
-
 // ===== 派生状态 =====
 const statusLabel = computed(() => statusLabels[botStatus.status] || botStatus.status);
 const statusTone = computed<StatusTone>(() => statusToneMap[botStatus.status] ?? "neutral");
 const qaBotRunning = computed(() => Boolean(botStatus.qa_bot_running || botStatus.qa_bot?.running));
 const qaBotPid = computed(() => botStatus.qa_bot?.pid ?? null);
-
-const runtimeSwitching = ref<QaBotRuntime | null>(null);
-const qaConfiguredRuntime = computed<QaBotRuntime>(() =>
-  botStatus.qa_bot?.configured_runtime === "go" ? "go" : "python"
-);
-const qaActualRuntime = computed<QaBotRuntime>(() => (botStatus.qa_bot?.runtime === "go" ? "go" : "python"));
-const runtimeMismatch = computed(() => qaConfiguredRuntime.value !== qaActualRuntime.value);
-
-// 运行时切换确认文案：跟随所选目标运行时
-const runtimeConfirmText = computed(() =>
-  runtimeTarget.value
-    ? `确认切换到 ${runtimeLabels[runtimeTarget.value]}？切换会重启问答Bot，进行中的问答会话将被中断。`
-    : ""
-);
 
 const cacheSize = computed(() => Number(cacheInfo.value.size ?? botStatus.cache?.size ?? 0));
 const databaseAvailable = computed(() => Boolean(databaseInfo.value.available ?? botStatus.database?.available));
@@ -719,8 +660,6 @@ const botSubLabel = computed(() => {
 // ===== 新增交互状态 =====
 // 日志级别应用卡：null 表示未选择新级别
 const logLevelTarget = ref<string | null>(null);
-// QA 运行时切换卡：null 表示未选择目标运行时
-const runtimeTarget = ref<QaBotRuntime | null>(null);
 // 日志自动滚动：新日志到达时贴底，关闭后保持当前视口
 const autoScroll = ref(true);
 const logViewerRef = ref<HTMLElement | null>(null);
@@ -850,29 +789,6 @@ async function applyLogLevel() {
   } finally {
     actionLoading.logLevel = false;
   }
-}
-
-// ===== QA 运行时切换（互斥：同一时间只允许一次切换） =====
-async function switchQaRuntime(runtime: QaBotRuntime) {
-  runtimeSwitching.value = runtime;
-  try {
-    const res = await setQaBotRuntime(runtime);
-    if (res.success) {
-      message.success(res.message || `已切换问答 Bot 运行时到 ${runtimeLabels[runtime]}`);
-      runtimeTarget.value = null;
-      await refreshAll();
-    } else {
-      message.error(res.message || "切换失败");
-    }
-  } catch {
-    message.error("切换请求失败");
-  } finally {
-    runtimeSwitching.value = null;
-  }
-}
-
-function onRuntimeConfirm() {
-  if (runtimeTarget.value) void switchQaRuntime(runtimeTarget.value);
 }
 
 // ===== 危险操作确认（对话框逐级确认） =====
@@ -1269,10 +1185,6 @@ onMounted(refreshAll);
 
 .card-select {
   width: 150px;
-}
-
-.mismatch-line {
-  margin: 0;
 }
 
 /* ===== 通用面板（日志 / 审计） ===== */

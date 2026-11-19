@@ -1,4 +1,11 @@
+---
+search: false
+---
+
 # AI能力增强 - 实施总结
+
+> 历史归档。现行安装步骤见 [2.6.0 升级说明](Release-2.6.0.md)，开发流程见 [开发者文档](Developer-Guide.md)。
+
 
 > 本页保留 v2.0.0 的早期实施记录。v2.4.8 的 Go 助手架构见 [回合、计费与评论架构](Developer-QA-Turns-Billing.md)，使用与升级说明见 [v2.4.8 更新与升级](Release-2.4.8.md)。
 

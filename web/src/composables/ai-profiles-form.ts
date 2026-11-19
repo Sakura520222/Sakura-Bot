@@ -53,6 +53,7 @@ export function profilesPayload(draft: AIProfilesDraft): AIProfilesInput {
         profile_id: route.profile_id,
         ...(route.model?.trim() ? { model: route.model.trim() } : {}),
         ...(typeof route.supports_vision === "boolean" ? { supports_vision: route.supports_vision } : {}),
+        ...(route.reasoning_effort ? { reasoning_effort: route.reasoning_effort } : {}),
       }];
     })),
     vision: { ...draft.vision },

@@ -1,177 +1,53 @@
-# RAG功能快速启动指南
+# RAG 快速启动
 
-## 一、安装依赖
+Sakura-Bot 的主 Bot 维护消息与总结索引。小妲助手结合语义检索、关键词、总结和原文详情回答频道问题，并根据资料附上来源链接。业务数据在 MySQL，向量索引在 SQLite。
 
-```bash
-pip install chromadb
-```
+## 配置 Embedding
 
-## 二、配置环境变量
+在 `data/.env` 设置 Embedding 服务。Go 程序和 Docker 镜像已包含向量运行时。
 
-编辑 `data/.env` 文件，添加以下配置：
-
-```bash
-# Embedding模型（必需）
-EMBEDDING_API_KEY=你的SiliconFlow_API密钥
-EMBEDDING_API_BASE=https://api.siliconflow.cn/v1
-EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+```dotenv
+EMBEDDING_API_KEY=YOUR_EMBEDDING_KEY
+EMBEDDING_API_BASE=https://api.example.com/v1
+EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIMENSION=1024
-
-# Reranker（可选，强烈推荐）
-RERANKER_API_KEY=你的SiliconFlow_API密钥
-RERANKER_API_BASE=https://api.siliconflow.cn/v1/rerank
-RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-RERANKER_TOP_K=20
-RERANKER_FINAL=5
-
-# 向量数据库路径
 VECTOR_DB_PATH=data/vectors
 ```
 
-**获取API密钥：**
-1. 访问 [SiliconFlow](https://siliconflow.cn/)
-2. 注册账号并获取API密钥
-3. 两个配置使用相同的API密钥即可
+`EMBEDDING_API_BASE` 支持 API 基址，也支持以 `/embeddings` 结尾的完整地址。维度应与模型实际返回一致。更换 Embedding 模型时应重新生成相应索引，即使新模型的维度恰好相同。
 
-## 三、启动Bot
+### 配置可选重排序
 
-### 方式1：只启动问答Bot
+```dotenv
+RERANKER_API_KEY=YOUR_RERANKER_KEY
+RERANKER_API_BASE=https://api.example.com/v1/rerank
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_TOP_K=20
+RERANKER_FINAL=5
+```
+
+重排序处理已召回的候选。配置应与实际接口兼容，最终数量应小于或等于候选数量。
+
+## 启动与验证
+
+1. 按[快速开始](User-Getting-Started.md)重启或启动服务，确认主 Bot 与助手可运行。
+2. 添加测试频道，验证主 Bot 或 UserBot 能收到新消息。等待正文进入向量索引。在 WebUI「向量存储」中核对服务和索引状态。
+3. 在小妲助手私聊提问，或发送 `/ask @频道名 问题` 限定频道。核对回答和原帖链接。
+4. 对需要图片证据的频道开启[图片识别](images-pipeline.md)，等待 OCR 与描述写入消息索引。
+
+消息历史语义查询需要对应的向量记录。最新总结类查询可以直接使用 MySQL 中的总结。Embedding 不可用时检查页面与日志中的服务错误，随后核对索引是否有对应频道和时间范围的记录。
+
+## 从 Chroma 迁移
+
+向量目录已包含 `lite_index.sqlite3` 时直接沿用 `VECTOR_DB_PATH`。旧版仍使用 Chroma 时，在停写窗口备份整个向量目录及 MySQL，再用目标 Go 镜像转换。
 
 ```bash
-python qa_bot.py
+docker compose stop sakura-summary-bot
+docker compose run --rm --no-deps sakura-summary-bot sakura-main --migrate-vectors
+docker compose run --rm --no-deps sakura-summary-bot sakura-main --verify-vectors
+docker compose up -d --no-build sakura-summary-bot
 ```
 
-### 方式2：启动完整Bot（包含问答）
+操作过程使用与正式部署相同的 `SAKURA_BOT_IMAGE` 和 `VECTOR_DB_PATH`。转换后先验证，再检查已有频道的消息及总结检索。保留旧向量目录及其备份，便于回滚核对。
 
-```bash
-python main.py
-```
-
-## 四、测试流程
-
-### 1. 生成测试总结
-
-如果数据库中没有总结，先生成一些：
-
-```bash
-# 向Bot发送（私聊）
-/立即总结
-```
-
-这会生成总结并自动向量化。
-
-### 2. 测试问答
-
-向问答Bot发送问题：
-
-```
-频道上周发生了什么？
-```
-
-### 3. 查看日志
-
-Bot会显示详细的检索过程：
-
-```
-[QA] 语义检索: 找到 15 条结果
-[QA] RRF融合: 18 条结果
-[QA] 重排序完成: 保留 5 条结果
-[QA] AI回答生成成功，长度: 1234字符
-```
-
-## 五、验证安装
-
-### 检查向量存储
-
-```bash
-ls -la data/vectors/
-```
-
-应该看到ChromaDB创建的文件。
-
-### 查看Bot日志
-
-启动时应该看到：
-
-```
-[INFO] Embedding生成器初始化成功
-[INFO] 向量存储初始化成功: data/vectors
-[INFO] Reranker初始化成功: BAAI/bge-reranker-v2-m3
-[INFO] 问答引擎v3.0.0初始化完成
-```
-
-## 六、常见问题
-
-### Q1: Import Error: No module named 'chromadb'
-
-```bash
-pip install chromadb
-```
-
-### Q2: Embedding服务不可用
-
-检查：
-1. API密钥是否正确
-2. API地址是否可访问
-3. 网络连接是否正常
-
-### Q3: 向量搜索没有结果
-
-原因：
-- 数据库中没有总结记录
-- 向量化失败
-
-解决：
-- 先生成一些总结
-- 查看日志确认向量化成功
-
-### Q4: Reranker失败（非致命）
-
-系统会自动降级到向量搜索结果，不影响使用。
-
-## 七、性能调优
-
-### 提高准确率
-
-调整 `.env` 参数：
-
-```bash
-# 增加召回数量
-RERANKER_TOP_K=30
-
-# 增加最终结果数
-RERANKER_FINAL=10
-```
-
-### 降低延迟
-
-```bash
-# 减少召回数量
-RERANKER_TOP_K=10
-
-# 减少最终结果数
-RERANKER_FINAL=3
-```
-
-## 八、下一步
-
-- 📖 阅读 [RAG功能详细文档](Developer-RAG-Feature-V3.md)
-- 🔧 调整检索参数优化性能
-- 📊 监控日志了解检索过程
-- 🚀 开始使用自然语言查询历史总结
-
----
-
-## 总结
-
-整个RAG系统会在后台自动运行：
-
-1. ✅ 每次生成总结时自动向量化
-2. ✅ 用户查询时自动语义检索
-3. ✅ 自动重排序提升准确率
-4. ✅ 基于精选结果生成回答
-
-**你只需要：**
-- 配置API密钥
-- 启动Bot
-- 开始提问！
+[助手功能与权限](User-QA-Bot-Guide.md) · [RAG 开发参考](Developer-RAG-Feature-V3.md)

@@ -1,46 +1,40 @@
 services:
   sakura-summary-bot:
-    # 依赖镜像（Python 依赖 + Go 二进制 + 前端产物）由 GitHub Actions 构建推送
-    # （.github/workflows/docker-build.yml），服务器免本地构建；
-    # 源码仍整体挂载，代码更新走 git pull / /update 命令。
-    # fork / 本地源码部署：docker compose build && docker compose up -d
     image: ${SAKURA_BOT_IMAGE:-ghcr.io/sakura520222/sakura-bot:main}
     build: .
     container_name: sakura-bot
-    user: "root:root"
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
-      - "${WEBUI_PORT:-8080}:8080"
-    environment:
-      - TZ=Asia/Shanghai
+      - "${WEBUI_PORT:-8080}:${WEBUI_CONTAINER_PORT:-8080}"
     env_file:
       - data/.env
+    environment:
+      TZ: Asia/Shanghai
+      WEBUI_HOST: 0.0.0.0
+      WEBUI_PORT: "${WEBUI_CONTAINER_PORT:-8080}"
     volumes:
-      # 挂载源码及 .git，支持 /update；依赖与前端产物由镜像提供
-      - .:/app
-      # 持久化整个 data 目录 - 避免单文件挂载错误
       - ./data:/app/data
-    # 健康检查
+      - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      test:
+        - CMD-SHELL
+        - 'case "$$(printf %s "$${WEBUI_ENABLED:-false}" | tr "[:upper:]" "[:lower:]")" in true|1|yes|on) curl -fsS "http://127.0.0.1:$${WEBUI_PORT}/api/health" >/dev/null;; *) test -r /proc/1/cmdline;; esac'
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    # 资源限制
     deploy:
       resources:
         limits:
           memory: 1024M
         reservations:
           memory: 256M
-    # 日志配置
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
+        max-size: 10m
         max-file: "3"
-    # 网络配置
     networks:
       - sakura-network
 

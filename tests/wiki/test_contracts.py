@@ -204,9 +204,7 @@ def test_configuration_defaults_and_schedule_validation():
 
 
 def test_python_go_visibility_predicates_match():
-    source = (Path(__file__).parents[2] / "qa-bot-go/internal/db/wiki.go").read_text(
-        encoding="utf-8"
-    )
+    source = (Path(__file__).parents[2] / "internal/db/wiki.go").read_text(encoding="utf-8")
     for name, expected in [
         ("wikiChannelVisible", CHANNEL_VISIBLE),
         ("wikiRevisionVisible", REVISION_VISIBLE),

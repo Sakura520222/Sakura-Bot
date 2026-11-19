@@ -64,13 +64,21 @@
         </template>
       </template>
       <div class="heading"><h3>用途绑定</h3></div>
-      <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
-        <n-gi v-for="purpose in aiPurposes" :key="purpose.key" span="0:2 1024:1">
+      <n-grid cols="1 820:2" :x-gap="16" :y-gap="16" responsive="self">
+        <n-gi v-for="purpose in aiPurposes" :key="purpose.key">
           <n-card size="small" :title="purpose.label">
             <n-form label-placement="top" :disabled="busy">
               <n-form-item label="厂商"><n-select :value="draft.routing[purpose.key].provider_id" :options="routingOptions(purpose.key)" @update:value="setRouteProvider(purpose.key, $event)" /></n-form-item>
               <n-form-item label="已添加模型"><n-select :value="draft.routing[purpose.key].model_id || null" :options="routeModels(purpose.key)" :disabled="busy || !draft.routing[purpose.key].provider_id" filterable @update:value="setRouteModel(purpose.key, $event)" /></n-form-item>
               <n-form-item label="图片能力（默认使用该模型的开关）"><n-select :value="visionOverride(purpose.key)" :options="capabilityOptions" @update:value="setVisionOverride(purpose.key, $event)" /></n-form-item>
+              <n-form-item label="思考等级">
+                <n-select
+                  :aria-label="`${purpose.label}思考等级`"
+                  :value="draft.routing[purpose.key].reasoning_effort ?? ''"
+                  :options="reasoningOptions"
+                  @update:value="setReasoningEffort(purpose.key, $event)"
+                />
+              </n-form-item>
             </n-form>
             <n-text v-if="purpose.key === 'guard' || purpose.key === 'guard_vision'" depth="3">{{ purpose.description }}</n-text>
             <n-text v-else depth="3">{{ purpose.key === 'wiki_review' ? '可选择独立的厂商和模型。未绑定时沿用 Wiki 生成模型。' : routeCapability(purpose.key) }}</n-text>
@@ -99,7 +107,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { useDialog, useMessage } from "naive-ui";
 import { getAIProviders, updateAIProviders, getAIProviderModels, testAIProvider } from "@/api/modules";
-import type { AIProvidersConfig, AIPurpose } from "@/api/modules";
+import type { AIProvidersConfig, AIPurpose, AIReasoningEffort } from "@/api/modules";
 import { aiPurposes } from "@/composables/ai-profiles-form";
 import { addProviderModels, createProviderId, createProvidersDraft, modelAssignments, providersPayload, validateProviders } from "@/composables/ai-providers-form";
 import type { AIProvidersDraft } from "@/composables/ai-providers-form";
@@ -130,6 +138,16 @@ const candidateOptions = computed(() => (discovery.value?.models || []).map(valu
 const baseUrlPlaceholder = "https://api.openai.com/v1";
 const protocolOptions = [{ value: "openai", label: "OpenAI / OpenAI 兼容" }];
 const capabilityOptions = [{ value: "inherit", label: "使用模型的图片能力" }, { value: "enabled", label: "用途覆盖：允许图片" }, { value: "disabled", label: "用途覆盖：仅文本" }];
+const reasoningOptions: { value: AIReasoningEffort | ""; label: string }[] = [
+  { value: "", label: "模型默认" },
+  { value: "none", label: "关闭（none）" },
+  { value: "minimal", label: "最低（minimal）" },
+  { value: "low", label: "低（low）" },
+  { value: "medium", label: "中（medium）" },
+  { value: "high", label: "高（high）" },
+  { value: "xhigh", label: "更高（xhigh）" },
+  { value: "max", label: "最高（max）" },
+];
 function formatError(problem: unknown) {
   return (problem as { response?: { status?: number } }).response?.status === 409 ? "配置版本已变化，请重新加载后合并修改" : problem instanceof Error && !("isAxiosError" in problem) ? problem.message : saveError(problem);
 }
@@ -190,16 +208,31 @@ async function runTest(kind: "connection" | "call", model = "") {
   catch (e) { testResult.value = { success: false, message: formatError(e) }; } finally { testLoading.value = ""; }
 }
 function routeModels(purpose: AIPurpose) { const p = draft.value?.providers[draft.value.routing[purpose].provider_id]; return Object.entries(p?.models || {}).map(([value, m]) => ({ value, label: m.name ? `${m.name} (${value})` : value })); }
-function setRouteProvider(purpose: AIPurpose, id: string) { if (draft.value) draft.value.routing[purpose] = { provider_id: id, model_id: "" }; }
+function setRouteProvider(purpose: AIPurpose, id: string) {
+  if (!draft.value) return;
+  const { reasoning_effort } = draft.value.routing[purpose];
+  draft.value.routing[purpose] = { provider_id: id, model_id: "", reasoning_effort };
+}
 function setRouteModel(purpose: AIPurpose, id: string) { if (draft.value) { draft.value.routing[purpose].model_id = id; delete draft.value.routing[purpose].supports_vision; } }
 function visionOverride(purpose: AIPurpose) { const v = draft.value?.routing[purpose].supports_vision; return v == null ? "inherit" : v ? "enabled" : "disabled"; }
 function setVisionOverride(purpose: AIPurpose, value: string) { if (!draft.value) return; if (value === "inherit") delete draft.value.routing[purpose].supports_vision; else draft.value.routing[purpose].supports_vision = value === "enabled"; }
+function setReasoningEffort(purpose: AIPurpose, value: AIReasoningEffort | "") {
+  if (!draft.value) return;
+  const route = draft.value.routing[purpose];
+  if (value) route.reasoning_effort = value;
+  else delete route.reasoning_effort;
+}
 function routeCapability(purpose: AIPurpose) {
   if (!draft.value) return "";
   const r = draft.value.routing[purpose], m = draft.value.providers[r.provider_id]?.models[r.model_id];
   return `${r.supports_vision == null ? '来源：模型' : '来源：用途覆盖'} · ${(r.supports_vision ?? m?.supports_vision) ? '支持图片' : '仅文本'}`;
 }
-function effectiveLabel(purpose: AIPurpose) { const r = saved.value?.effective[purpose]; return r ? `${saved.value?.providers[r.provider_id]?.name || '默认配置'} / ${r.model_id} / ${r.supports_vision ? '支持图片' : '仅文本'}` : '尚未配置'; }
+function effectiveLabel(purpose: AIPurpose) {
+  const r = saved.value?.effective[purpose];
+  if (!r) return "尚未配置";
+  const effort = reasoningOptions.find((option) => option.value === r.reasoning_effort)?.label;
+  return `${saved.value?.providers[r.provider_id]?.name || "默认配置"} / ${r.model_id} / ${r.supports_vision ? "支持图片" : "仅文本"}${effort ? ` / 思考等级 ${effort}` : ""}`;
+}
 watch(selectedId, () => { manualId.value = ""; candidateIds.value = []; testResult.value = null; });
 watch(() => [selected.value?.base_url, selected.value?.api_key, selected.value?.clear_api_key], () => { candidateIds.value = []; testResult.value = null; });
 watch(() => props.legacyRevision, () => { if (dirty.value || busy.value) legacyChanged.value = true; else void load(); });

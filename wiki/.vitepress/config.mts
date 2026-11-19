@@ -46,7 +46,7 @@ export default defineConfig({
         text: '开始阅读',
         items: [
           { text: '全部文档', link: '/Home' },
-          { text: 'v2.4.8 更新与升级', link: '/Release-2.4.8' },
+          { text: 'v2.6.0 更新与升级', link: '/Release-2.6.0' },
           { text: '用户文档概览', link: '/User-Guide' },
           { text: '开发者文档概览', link: '/Developer-Guide' }
         ]
@@ -56,14 +56,21 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '快速开始', link: '/User-Getting-Started' },
-          { text: '命令参考', link: '/User-Commands' },
+          { text: '命令与操作按钮', link: '/User-Commands' },
           { text: 'WebUI 管理面板', link: '/User-WebUI-Guide' },
           { text: 'Sakura Wiki 使用与管理', link: '/User-Sakura-Wiki' },
           { text: 'Sakura Guard 智能群管', link: '/User-Sakura-Guard' },
           { text: '小妲助手', link: '/User-QA-Bot-Guide' },
-          { text: 'RAG 快速启动', link: '/User-RAG-Quickstart' },
           { text: '多轮对话', link: '/User-Multi-Turn-Conversation' },
           { text: '频道投票', link: '/User-Poll-Feature' }
+        ]
+      },
+      {
+        text: 'AI、图片与检索',
+        items: [
+          { text: 'AI 厂商、模型与用途路由', link: '/AI_PROFILES' },
+          { text: '频道图片采集与识别', link: '/images-pipeline' },
+          { text: 'RAG 快速启动', link: '/User-RAG-Quickstart' }
         ]
       },
       {
@@ -73,7 +80,7 @@ export default defineConfig({
           { text: '开发快速开始', link: '/Developer-Getting-Started' },
           { text: '系统架构', link: '/Developer-Architecture' },
           { text: '配置持久化与恢复', link: '/Developer-Configuration-Persistence' },
-          { text: 'Ruff 脚本指南', link: '/Developer-Ruff-Script-Guide' },
+          { text: 'CI/CD 工作流', link: '/Developer-Workflow-Improvements' },
           { text: '文档站维护与部署', link: '/Developer-Documentation-Site' }
         ]
       },
@@ -82,22 +89,14 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: 'Go 助手回合与计费', link: '/Developer-QA-Turns-Billing' },
-          { text: '早期问答 Bot 实施记录', link: '/Developer-QA-Bot-Implementation' },
-          { text: 'RAG 技术文档', link: '/Developer-RAG-Feature-V3' },
-          { text: '查询改写增强', link: '/Developer-Query-Rewrite-Enhancement' }
+          { text: 'RAG 实现与维护', link: '/Developer-RAG-Feature-V3' }
         ]
       },
       {
-        text: '开发记录',
+        text: '历史文档',
         collapsed: true,
         items: [
-          { text: '模块拆分总结', link: '/Developer-Module-Split-Summary' },
-          { text: '代码重构总结', link: '/Developer-Refactoring-Summary' },
-          { text: '错误处理增强', link: '/Developer-Error-Handling-Improvements' },
-          { text: '技术债务追踪', link: '/Developer-Technical-Debt' },
-          { text: 'CI/CD 工作流', link: '/Developer-Workflow-Improvements' },
-          { text: 'CI 测试修复', link: '/Developer-CI-Test-Fix' },
-          { text: '工作流合并修复', link: '/Developer-Workflow-Merge-Fix' }
+          { text: '旧版本与开发记录', link: '/Archive' }
         ]
       },
       {

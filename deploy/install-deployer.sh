@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 安装宿主机自动部署器（一次性）：/update 触及镜像层变更时自动拉取新镜像并重建容器。
+# 安装宿主机自动部署器（一次性）：/update 请求宿主机更新并重建容器。
 # 用法：bash deploy/install-deployer.sh [仓库目录，默认 /root/Sakura-Bot]
 set -euo pipefail
 
@@ -25,9 +25,9 @@ sed "s#WorkingDirectory=/root/Sakura-Bot#WorkingDirectory=$REPO_DIR#" \
 systemctl daemon-reload
 systemctl enable --now sakura-image-deploy.path
 
-# 容器内据此标记判断 deployer 已就位（跳过容器内 pip/npm 重建）
+# 容器内通过此文件确认宿主机部署器已启用。
 mkdir -p "$REPO_DIR/logs"
 touch "$REPO_DIR/data/.image_deployer_installed"
 
 systemctl status sakura-image-deploy.path --no-pager | head -5
-echo "✅ 自动部署器已安装：/update 检测到镜像层变更后会自动拉取新镜像并重建容器"
+echo "✅ 自动部署器已安装：/update 会请求宿主机拉取新镜像并重建容器"

@@ -73,7 +73,7 @@ Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放�
 
 ## Go 助手
 
-启用 Telegram 登录后，在同一设置卡启用 Wiki 小妲助手并保存。Go 助手在 WebUI 启用时监听 `127.0.0.1` 的 `WIKI_ASSISTANT_PORT`（默认 `8091`），FastAPI 在同一主机或容器内转发，并即时读取开关。反向代理只需转发 `/api/wiki/assistant/`，对该路径关闭 SSE 缓冲。网页签到开关只影响 Wiki，助手全局签到开关也适用于网页。
+启用 Telegram 登录后，在同一设置卡启用 Wiki 小妲助手并保存。Go 助手在 WebUI 启用时监听 `127.0.0.1` 的 `WIKI_ASSISTANT_PORT`（默认 `8091`），WebUI 后端在同一主机或容器内转发，并即时读取开关。反向代理只需转发 `/api/wiki/assistant/`，对该路径关闭 SSE 缓冲。网页签到开关只影响 Wiki，助手全局签到开关也适用于网页。
 
 网页与 Telegram 使用同一 Telegram 数字 ID、业务日时区、积分账本、免费次数和全站上限。网页对话历史使用独立会话范围。网页检索使用受公开权限与来源撤回约束的 Wiki 工具。断线后可用原请求继续接收，回放保留至下一轮、最多五分钟，并受进程内缓存容量限制。停止生成会结算退款。重启由现有账本恢复流程退回未结算预留。
 
@@ -103,7 +103,7 @@ Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放�
 
 程序回退前先关闭频道 Wiki，再在 AI 用途配置中移除 `wiki`、`wiki_review` 路由，之后回退 Python/Go 与前端版本。旧版本的严格 AI 用途校验不认识新增路由。无需删除新表；如要彻底清理，先通过新版管理端逐频道清除并备份。
 
-管理任务页显示来源处理数、缓存命中、输入/输出 Token、未核实预留、审校、发布状态与脱敏错误类型。API/日志不包含厂商密钥、内部路径或私人原文。`/wiki-preview/{数字频道ID}/{slug}` 提供同一 FastAPI 进程内的转义 HTML 预览；交互式 SPA 依赖 JavaScript，不能假定所有爬虫都会执行它。`/api/public/wiki/sitemap` 提供权限过滤后的分页路径列表。
+管理任务页显示来源处理数、缓存命中、输入/输出 Token、未核实预留、审校、发布状态与脱敏错误类型。API/日志不包含厂商密钥、内部路径或私人原文。`/wiki-preview/{数字频道ID}/{slug}` 提供同一 Go HTTP 进程内的转义 HTML 预览；交互式 SPA 依赖 JavaScript，不能假定所有爬虫都会执行它。`/api/public/wiki/sitemap` 提供权限过滤后的分页路径列表。
 
 ## 验证
 
@@ -111,7 +111,7 @@ Wiki 启动会自动创建账户、登录流程、会话和旧 Widget 防重放�
 # 本机一次性 MySQL，禁止指向生产库；测试会创建和删除 wiki_test_* 数据库。
 $env:WIKI_TEST_PORT = '33490'
 python -m pytest tests/wiki --no-cov
-go -C qa-bot-go test ./...
+go test ./...
 npm --prefix web run build
 ```
 

@@ -1,16 +1,37 @@
-# AI 厂商、多模型与用途路由
+# AI 厂商、模型与用途路由
 
-WebUI 的 **AI 配置 → AI 厂商、模型与用途** 将连接凭据与具体模型分开管理。支持 OpenAI 官方与 OpenAI 兼容服务。
+在 **WebUI → AI 配置 → AI 厂商、模型与用途** 配置 OpenAI 或 OpenAI 兼容服务。
 
-1. 添加厂商，填写名称、API Base URL 和密钥。
-2. 拉取上游候选列表，搜索、多选后点击「添加所选模型」；也可以手动添加 ID。候选列表不会保存，刷新候选列表不会删除已添加模型。
-3. 在每个已添加模型上独立设置显示名称及图片输入能力。新模型默认仅文本，不根据名称猜测能力。
-4. 为总结、助手、图片识别和投票分别选择厂商及已添加模型。图片能力默认来自该模型；用途覆盖会明确标注来源。
-5. 点击页头或面板内的「保存厂商、模型与用途」。服务端原子提交、回读磁盘核对后才提示成功。旧版默认字段及提示词有各自明确的保存按钮。
+1. 添加厂商，填写显示名称、API Base URL 和密钥。
+2. 拉取候选模型并添加所需项，或手动填写模型 ID。候选列表是临时结果。刷新候选列表不会改动已保存的模型。
+3. 为每个模型设置显示名称及图片能力。新模型默认仅文本。
+4. 在「用途绑定」为各用途选厂商和模型，再按需覆盖图片能力和思考等级。
+5. 点击「保存厂商、模型与用途」。旧版全局默认连接和提示词分别保存。
 
-保存失败或版本冲突保留本地草稿。删除模型或厂商前必须改绑其全部用途。密钥读取只返回已配置状态；留空保留，勾选清除才会删除。密钥不会写入浏览器持久缓存。
+已有用途引用厂商或模型时，先改绑用途，再删除模型或厂商。编辑密钥留空表示保留。勾选清除后保存才会清除密钥。遇到版本冲突时，先重新加载并合并修改。
 
-## 新版配置与迁移
+## 用途与回退
+
+| 用途键 | WebUI 名称与行为 |
+| --- | --- |
+| `summary` | 频道总结，生成手动和定时报告 |
+| `assistant` | 助手问答，含私聊、评论、图文输入和工具调用 |
+| `vision` | 图片识别，生成频道图片 OCR 与描述 |
+| `poll` | 投票生成 |
+| `wiki` | Wiki 生成，整理来源与知识 |
+| `wiki_review` | Wiki 审校，未独立绑定时使用 Wiki 生成的连接与模型 |
+| `guard` | Guard 判定，未独立绑定时使用频道总结的连接与模型 |
+| `guard_vision` | Guard 图片判定，未独立绑定时使用图片识别的连接与模型 |
+
+绑定厂商后使用该厂商的凭据和指定模型。没有独立绑定或用途回退时，按用途规则及默认连接解析，默认值可来自 `data/config.json` 和 `data/.env`。
+
+### 思考等级
+
+每个用途单独选择「模型默认」「关闭」或一个具体等级，包括 `minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。「关闭」发送 `none`。「模型默认」省略 `reasoning_effort`，由上游决定。同一厂商下的同一模型可以让总结用高等级、助手用低等级。具体支持范围由模型和网关决定。
+
+当 Wiki 审校、Guard 或 Guard 图片判定使用另一个用途的连接和模型时，思考等级仍读取本用途设置。选择模型默认便省略该字段。
+
+## 配置示例
 
 ```json
 {
@@ -22,92 +43,41 @@ WebUI 的 **AI 配置 → AI 厂商、模型与用途** 将连接凭据与具体
       "base_url": "https://api.example.com/v1",
       "api_key": "YOUR_KEY",
       "models": {
-        "model-A": {"name": "视觉模型", "supports_vision": true},
-        "model-B": {"name": "文本模型", "supports_vision": false}
+        "text-model": {"name": "文本模型", "supports_vision": false},
+        "vision-model": {"name": "视觉模型", "supports_vision": true}
       }
     }
   },
   "ai_routing": {
-    "summary": {"provider_id": "service", "model_id": "model-A"},
-    "assistant": {"provider_id": "service", "model_id": "model-B"},
-    "vision": {"provider_id": "service", "model_id": "model-A"},
-    "poll": {"provider_id": "", "model_id": ""}
+    "summary": {"provider_id": "service", "model_id": "text-model", "reasoning_effort": "high"},
+    "assistant": {"provider_id": "service", "model_id": "text-model", "reasoning_effort": "low"},
+    "vision": {"provider_id": "service", "model_id": "vision-model"}
   },
-  "ai_vision": {"enabled": false, "ocr": true, "description": true}
+  "ai_vision": {"enabled": true, "ocr": true, "description": true}
 }
 ```
 
-厂商 ID 使用 1–64 位英文字母、数字、下划线或连字符。模型 ID 是厂商内的稳定键；同 ID 可以出现在不同厂商。一个厂商最多 500 个模型。未绑定的用途继续使用旧全局配置与环境变量。
+厂商 ID 使用 1–64 位字母、数字、下划线或连字符。模型 ID 在各厂商内独立，一个厂商最多配置 500 个模型。用途的 `supports_vision` 未配置时使用模型开关，显式配置布尔值时覆盖。
 
-升级后读取旧 `ai_profiles` 不会立即改写文件。第一次通过新版页面保存时迁移为版本 2，保留旧档案字段及配置备份。旧路由的模型覆盖会作为已添加模型保留，原有用途图片能力覆盖也会保留。旧全局凭据上的模型覆盖会迁移到独立的「默认服务（迁移）」厂商；此后编辑该厂商即可修改其凭据。无覆盖、未绑定的用途继续使用全局配置及环境变量。
+读取旧版 `ai_profiles` 时可以生成兼容视图。首次通过新版页面保存时迁移到配置版本 2，保留旧档案与配置备份。模型覆盖会迁移为厂商下的模型。已升级的配置使用 `GET/PUT /api/ai/providers`，旧版 `/api/ai/profiles` 写入会收到冲突响应。
 
-新版 API 使用 `GET/PUT /api/ai/providers`，保存请求包含 `version/providers/routing/vision/revision`。模型发现及测试为 `POST /api/ai/providers/{id}/models` 与 `/test`。版本 2 配置拒绝旧 `/profiles` 写入（409），旧页面需要重新加载，以免单模型 payload 覆盖厂商下其他模型。Python 与 Go 使用共享的路由回归样本验证解析一致性，当前请求的凭据和模型固定至工具循环及降级结束。
+保存请求包含 `version`、`providers`、`routing`、`vision` 和 `revision`。模型发现与测试使用 `POST /api/ai/providers/{id}/models` 和 `POST /api/ai/providers/{id}/test`。列表测试使用模型列表接口。调用测试会向上游发送一条简短请求。
 
-## 助手图片问答
+## SSE 和超时
 
-Telegram 助手的 Python、Go 运行时均支持照片、PNG/JPEG 图片文档及 Caption。
+Go 版通过共用客户端发出 `stream: true` 的 `/chat/completions` 请求，支持内容、图文和工具片段。总结、图片识别、Wiki 等需要完整结果的用途在内部聚合流，核对结束标记与本次用途要求的结束原因后采用结果。助手可以在生成过程中展示预览。
 
-- 无 Caption 图片先暂存，下一条问题自动结合这批图片。可先连续发多张图；相册按消息 ID 排序，等待 900 毫秒没有新成员后处理 Caption。
-- 新图片批次替换上一批；完成一轮后，「它 / 上图 / 图片 / image / it」等明确追问或回复消息可以继续引用有效图片。无关问题不会自动附加旧图。
-- 只使用 `assistant` 用途模型及其生效的图片能力，独立于频道 OCR/描述开关。能力关闭、下载失败或上游拒绝图片时明确报错，不静默改成纯文字问答。
-- 默认 TTL 300 秒，可用 `QA_IMAGE_CONTEXT_TTL_SECONDS` 配置为 30–600 秒。到期、清除会话或会话更换后清理引用；进程重启也会清空图片暂存。
-- 每轮最多 4 张，单张最多 8 MiB、1200 万像素、单边 8192 像素。只从 Telegram Bot API 下载并验证实际文件类型，最多同时处理两轮图片请求。
-- 跨轮只保留短期 Telegram 文件引用。原始图片及 Data URL/Base64 仅在当前模型请求中存在，不存入 MySQL 历史或普通日志。
+共用客户端默认 TCP 连接超时 30 秒、等待响应头 60 秒、读取空闲 120 秒。Wiki 等用途还受自己的请求超时与预算约束。在收到响应头之前报错时，检查上游首包与网关。已开始生成后长时间没有分片，则看读取空闲或用途的总时限。Embedding、Reranker 和模型列表使用各自的结构化响应。
 
-## 自动趣味投票识图
+## 总结提示词
 
-开启自动趣味投票后，照片、PNG/JPEG 图片文件和相册均可作为投票素材，纯图片不再要求附加至少十个字的说明。
+在 AI 配置的提示词区域单独保存总结提示词。默认使用普通 Markdown，按主题归类并精炼消息。原帖链接放在对应的内容标题上。摘要保留可核实的信息，省略标签、来源尾注及无关的前后说明。
 
-- 「投票生成」所选模型支持图片输入时，原帖文字和图片直接交给该模型。
-- 投票模型为仅文本时，优先读取图片库中已保存的 OCR 和描述；缺失时用「图片识别」用途的视觉模型识别并保存，再将结果和原帖文字交给投票模型。投票与频道识图共享同一份结果及并发控制，避免重复请求。只依据显式图片能力开关选择路径。
-- 趣味投票识图独立于频道 OCR/描述总开关。使用外挂模型时，需要为图片识别用途选择支持图片输入的模型。
-- 相册按消息顺序合并，一组只发送一条投票。每组最多十张、单张最多 8 MiB、合计最多 20 MiB，限制单边 8192 像素及 1200 万像素，并验证实际格式。校验后的频道图片按内容哈希存入 `data/images`；OCR 和描述持久化到 MySQL，并按原帖日期、链接写入助手检索索引，也供频道总结读取。投票记录与普通日志不保存 Data URL/Base64。
-- 识图沿用模型客户端的超时配置，不额外添加 60 秒或其他整段请求截断。检索索引暂时不可用时，已入库的结果仍可生成投票，索引发布在后台重试；图片 worker 暂停时，总结仍可读取已保存的识图内容。
-- 原消息删除、图片损坏、下载或识图失败时跳过该条投票；关闭该频道的趣味投票后，发送前会再次拦截。普通纯文本投票沿用原有行为。
+## 图片与检索
 
-## 历史消息检索的 Embedding 地址
+- 助手私聊收图依据 `assistant` 的图片能力。无说明的图片可短期留待下一条问题使用。图片暂存、限制和会话规则见[小妲助手](User-QA-Bot-Guide.md)。
+- 频道 OCR 和图片描述使用 `vision` 路由。可分别开启 OCR 和描述。图片任务、持久化及历史补录见[频道图片采集与识别](images-pipeline.md)。
+- 自动趣味投票根据投票模型图片能力选择直接图文生成或使用已入库的 OCR/描述。未命中的识别结果可使用独立视觉模型补齐。详情见[投票指南](User-Poll-Feature.md)。
+- `EMBEDDING_API_BASE` 可用 API 基址或带 `/embeddings` 的完整地址，程序保证只拼接一次。模型、维度和索引的关系见 [RAG 快速启动](User-RAG-Quickstart.md)。
 
-`EMBEDDING_API_BASE` 可填写 OpenAI 兼容的 API 基址（例如 `https://api.siliconflow.cn/v1`），也兼容旧版完整端点（末尾含 `/embeddings`）。Python 与 Go 都会确保实际请求只有一个 `/embeddings` 后缀。
-
-历史消息语义检索依赖 Embedding；最近总结查询则直接读取数据库。Embedding 请求失败时，助手会收到检索服务错误，不能把异常当作“没有历史记录”。清除对话记忆不会清空频道消息或总结索引。
-
-## 旧版兼容格式（升级前）
-
-旧配置仍可直接读取，以下格式说明用于维护升级前的部署。
-
-1. 新增档案，填写名称、API 地址、密钥、默认模型及图片输入能力，保存。
-2. 对已保存档案刷新模型列表，或直接手动输入模型 ID。列表接口不可用不会改变配置，也不妨碍模型调用测试。连接测试调用 `models`；调用测试发送简短文本，可能产生服务商费用。
-3. 分别为总结、助手、图片识别与投票绑定档案，可覆盖模型及其图片输入能力。未绑定用途继续使用原有单模型配置与环境变量。绑定后只使用该档案的凭据，不会回退到其他档案或旧配置。
-4. 图片识别总开关默认关闭，OCR 与描述默认开启。图片能力必须与实际模型一致；纯文本模型应通过独立视觉用途进行 OCR/描述。
-
-密钥只显示是否已设置；编辑时留空保留。后端支持显式空串清空，档案删除前必须解除用途绑定。密钥保存在现有受权限保护的 `data/config.json` 及其配置备份中，不是加密保险库；请限制目录与备份访问。API 返回与普通日志不包含完整密钥。
-
-保存使用乐观版本检测和现有原子配置存储，发现另一管理员修改时请重新加载。主程序与 Python/Go 助手在下一次请求读取新配置；在途请求继续使用原有客户端与模型。配置文件非法时沿用最近一次有效配置；首次启动就非法则直接失败，不借用环境变量凭据。
-
-## 配置格式
-
-```json
-{
-  "ai_profiles": {
-    "quality": {
-      "name": "总结服务",
-      "provider": "openai",
-      "base_url": "https://api.openai.com/v1",
-      "api_key": "YOUR_KEY",
-      "model": "YOUR_MODEL",
-      "supports_vision": false
-    }
-  },
-  "ai_routing": {
-    "summary": {"profile_id": "quality"},
-    "assistant": {"profile_id": ""},
-    "vision": {"profile_id": "quality", "model": "YOUR_VISION_MODEL", "supports_vision": true},
-    "poll": {"profile_id": "quality"}
-  },
-  "ai_vision": {"enabled": false, "ocr": true, "description": true}
-}
-```
-
-档案 ID 为 1-64 位英文字母、数字、下划线或连字符。路由不存在或 `profile_id` 为空表示回退；覆盖模型为空表示使用档案默认模型；`supports_vision` 缺省或 null 表示继承档案。
-
-统一 Python 入口为 `effective_ai_config(config=None, purpose="summary")`，客户端入口为 `get_ai_runtime(purpose)` / `get_async_ai_runtime(purpose)`。Go `EffectiveAIConfig()` 默认助手用途，也接受用途参数。四种用途按同一套 JSON 规则解析。
+密钥保存在受权限保护的应用配置和配置备份中。WebUI 读取只显示配置状态和脱敏预览。

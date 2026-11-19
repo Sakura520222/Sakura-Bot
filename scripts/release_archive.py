@@ -21,21 +21,21 @@ REQUIRED = PUBLIC_DATA | {
     "Dockerfile",
     "docker-compose.yml",
     "docker-entrypoint.sh",
-    "main.py",
-    "qa_bot.py",
-    "requirements.txt",
-    "core/docker_runtime.py",
-    "core/moderation/schema.sql",
+    "VERSION",
+    "go.mod",
+    "go.sum",
+    "cmd/sakura-main/main.go",
+    "cmd/sakura-qa/main.go",
+    "internal/db/guard/schema.sql",
+    "internal/guard/opencc/LICENSE",
+    "internal/guard/opencc/NOTICE",
+    "internal/tools/tool_schemas.json",
     "web/package.json",
     "web/package-lock.json",
     "web/index.html",
     "web/src/main.ts",
-    "qa-bot-go/go.mod",
-    "qa-bot-go/go.sum",
-    "qa-bot-go/cmd/sakura-qa/main.go",
-    "qa-bot-go/internal/db/guard/schema.sql",
-    "qa-bot-go/internal/tools/tool_schemas.json",
     "scripts/deploy.sh",
+    "scripts/smoke_image.sh",
     "deploy/install-deployer.sh",
     "docs/release-archives.md",
 }
@@ -162,13 +162,10 @@ def main():
     parser.add_argument("--extract-to", type=Path)
     args = parser.parse_args()
     revision = git("rev-parse", "--verify", f"{args.revision}^{{commit}}")
-    version = re.search(
-        r"""(?m)^__version__\s*=\s*["']([\w.+-]+)["']""",
-        git("show", f"{revision}:core/__init__.py"),
-    )
-    if not version:
-        raise SystemExit("Cannot determine the release version from core/__init__.py")
-    prefix = f"Sakura-Bot-v{version[1]}"
+    version = git("show", f"{revision}:VERSION")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?", version):
+        raise SystemExit("Cannot determine the release version from VERSION")
+    prefix = f"Sakura-Bot-v{version}"
     archives = [args.directory / f"{prefix}{suffix}" for suffix in (".zip", ".tar.gz")]
     checksum_file = args.directory / "SHA256SUMS"
     paths, expected = source_paths(revision)
