@@ -90,6 +90,7 @@ type LLMCallRequest struct {
 	Temperature     float64
 	MaxOutputTokens int
 	Timeout         time.Duration
+	OnProgress      func(context.Context, llm.CompletionProgress) error
 }
 
 // LLMCallResult 描述模型补全结果及精确 Token 用量。
@@ -135,7 +136,8 @@ func (c *configLLMCaller) Call(ctx context.Context, req LLMCallRequest) (*LLMCal
 			{Role: "system", Content: llm.Str(req.System)},
 			{Role: "user", Content: llm.Str(req.User)},
 		},
-		MaxTokens: llm.Int(req.MaxOutputTokens),
+		MaxTokens:  llm.Int(req.MaxOutputTokens),
+		OnProgress: req.OnProgress,
 	}
 	if !strings.HasPrefix(strings.ToLower(c.aiCfg.Model), "spark-") {
 		compReq.Temperature = llm.Float64(req.Temperature)
@@ -317,6 +319,9 @@ func (e *Engine) Request(ctx context.Context, job *JobRecord, cfg WikiConfig, ro
 		Temperature:     cfg.Temperature,
 		MaxOutputTokens: outputLimit,
 		Timeout:         time.Duration(cfg.TimeoutSeconds) * time.Second,
+		OnProgress: func(ctx context.Context, progress llm.CompletionProgress) error {
+			return e.recordModelProgress(ctx, job, meta, started, progress)
+		},
 	})
 
 	elapsed := time.Since(started).Seconds()
@@ -338,7 +343,7 @@ func (e *Engine) Request(ctx context.Context, job *JobRecord, cfg WikiConfig, ro
 		meta["state"] = "完成"
 		outChars := utf8.RuneCountInString(res.Content)
 		meta["output_chars"] = outChars
-		meta["received_chars"] = outChars
+		meta["received_chars"] = max(outChars, mapInt(meta, "received_chars"))
 	} else if errors.Is(callErr, context.Canceled) || errors.Is(callErr, ErrLeaseLost) {
 		meta["state"] = "中断"
 	} else {
@@ -392,6 +397,41 @@ func (e *Engine) Request(ctx context.Context, job *JobRecord, cfg WikiConfig, ro
 		return "", callErr
 	}
 	return strings.TrimSpace(res.Content), nil
+}
+
+const modelProgressInterval = 2 * time.Second
+
+func (e *Engine) recordModelProgress(ctx context.Context, job *JobRecord, meta map[string]any, started time.Time, progress llm.CompletionProgress) error {
+	now := time.Now()
+	elapsed := int(math.Round(now.Sub(started).Seconds()))
+	job.Mu.Lock()
+	meta["received_chars"] = progress.ReceivedChars
+	meta["output_chars"] = progress.OutputChars
+	meta["elapsed_seconds"] = elapsed
+	meta["state"] = "模型处理中"
+	if progress.OutputChars > 0 {
+		meta["state"] = "接收正文"
+	}
+	job.Progress["ai_received_chars"] = progress.ReceivedChars
+	job.Progress["ai_elapsed_seconds"] = elapsed
+	// Concurrent model calls share one progress write budget for the job.
+	checkpoint := now.Sub(job.lastModelProgress) >= modelProgressInterval
+	if checkpoint {
+		job.lastModelProgress = now
+	}
+	job.Mu.Unlock()
+	if !checkpoint {
+		return nil
+	}
+	progressCtx, cancel := context.WithTimeout(ctx, modelProgressInterval)
+	defer cancel()
+	if err := e.Store.CheckpointJob(progressCtx, job, "", true); err != nil {
+		if errors.Is(err, ErrLeaseLost) || ctx.Err() != nil {
+			return err
+		}
+		e.Logger.Warn("Wiki 模型接收进度暂未保存", "job", job.ID, "error", err)
+	}
+	return nil
 }
 
 // PackChunks 将分块按字符上限与条数上限打包为模型请求批次（对齐 engine.py:pack_chunks）。

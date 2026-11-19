@@ -205,6 +205,8 @@ type JobRecord struct {
 	ErrorCode   string         `json:"error_code,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
+
+	lastModelProgress time.Time // Protected by Mu.
 }
 
 // Store 封装全部 34 张 wiki_* 表的持久化、一致性只读快照与租约围栏任务队列。

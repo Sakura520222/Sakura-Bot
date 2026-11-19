@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Stream 一次流式响应的增量迭代器。
@@ -114,7 +115,10 @@ func (s *Stream) Next() (Delta, error) {
 					s.diagnostics.FinishReason = "unknown"
 				}
 			}
-			return Delta{Content: choice.Delta.Content, ToolCalls: choice.Delta.ToolCalls}, nil
+			return Delta{
+				Content: choice.Delta.Content, ToolCalls: choice.Delta.ToolCalls,
+				reasoningChars: utf8.RuneCountInString(choice.Delta.ReasoningContent),
+			}, nil
 		}
 	}
 }

@@ -50,6 +50,15 @@ type CompleteRequest struct {
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 	Tools          json.RawMessage `json:"tools,omitempty"`
 	ToolChoice     string          `json:"tool_choice,omitempty"`
+
+	// OnProgress runs synchronously for each fragment containing text.
+	OnProgress func(context.Context, CompletionProgress) error `json:"-"`
+}
+
+// CompletionProgress reports cumulative Unicode character counts without retaining reasoning text.
+type CompletionProgress struct {
+	ReceivedChars int // Visible content plus reasoning.
+	OutputChars   int // Visible content only.
 }
 
 // Usage 统计单次模型调用的 token 用量。
@@ -142,6 +151,7 @@ func (c *Client) CompleteChat(ctx context.Context, req CompleteRequest) (*Comple
 
 	var content strings.Builder
 	toolCalls := make(map[int]*ToolCallSlot)
+	var progress CompletionProgress
 	for {
 		delta, err := stream.Next()
 		if errors.Is(err, io.EOF) {
@@ -154,6 +164,14 @@ func (c *Client) CompleteChat(ctx context.Context, req CompleteRequest) (*Comple
 			AccumulateToolCall(toolCalls, call)
 		}
 		content.WriteString(delta.Content)
+		if req.OnProgress != nil && (delta.Content != "" || delta.reasoningChars > 0) {
+			visible := utf8.RuneCountInString(delta.Content)
+			progress.OutputChars += visible
+			progress.ReceivedChars += visible + delta.reasoningChars
+			if err := req.OnProgress(stream.ctx, progress); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	result := stream.result

@@ -379,3 +379,29 @@ func TestCompleteChatRetainsSSEAndReasoningAcrossUsageFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestCompleteChatReportsReasoningAndVisibleCharactersSeparately(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeCompletionStream(w,
+			`{"choices":[{"delta":{"reasoning_content":"思💡"}}]}`,
+			`{"choices":[{"delta":{"content":"答"} }]}`,
+			`{"choices":[{"delta":{"content":"案","reasoning_content":"虑"},"finish_reason":"stop"}]}`,
+			`{"choices":[],"usage":{"completion_tokens":5}}`,
+		)
+	}))
+	defer server.Close()
+	var seen []CompletionProgress
+	resp, err := newTestClient(t, server.URL).CompleteChat(t.Context(), CompleteRequest{
+		OnProgress: func(_ context.Context, p CompletionProgress) error {
+			seen = append(seen, p)
+			return nil
+		},
+	})
+	if err != nil || resp == nil || resp.Content != "答案" {
+		t.Fatalf("unexpected visible completion: %+v error=%v", resp, err)
+	}
+	want := []CompletionProgress{{ReceivedChars: 2}, {ReceivedChars: 3, OutputChars: 1}, {ReceivedChars: 5, OutputChars: 2}}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("progress = %+v, want %+v", seen, want)
+	}
+}

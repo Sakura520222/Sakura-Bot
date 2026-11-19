@@ -86,6 +86,8 @@ type Delta struct {
 	Content string
 	// ToolCalls 本分片携带的 tool_call 增量；缺失时为 nil。
 	ToolCalls []ToolCallDelta
+
+	reasoningChars int
 }
 
 // ToolCallDelta 流式 tool_call 增量。指针字段保留"字段缺失"与"空值"的区别，
@@ -121,8 +123,9 @@ type streamChunk struct {
 // deltaWire 与 Delta 分离：JSON 缺失 content 字段时 Unmarshal 得到零值空串，
 // 正是消费端所需的 falsy 语义；缺失 tool_calls 时为 nil。
 type deltaWire struct {
-	Content   string          `json:"content"`
-	ToolCalls []ToolCallDelta `json:"tool_calls"`
+	Content          string          `json:"content"`
+	ReasoningContent string          `json:"reasoning_content"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls"`
 }
 
 // ToolCallSlot 单个 tool_call 的聚合槽位（qa_engine_v3.py:327-328 的 dict 值结构）。
