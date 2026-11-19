@@ -3,7 +3,7 @@
 Go 助手保留串行 Update/FSM 分发，AI 执行使用独立有界 Worker Pool。
 WebUI → AI 配置 → 小妲助手可管理积分签到、必订阅频道、评论助手和执行限制。
 频道、订阅开关、签到、时区、匿名授权与群级额度热生效。Worker 和回合容量在重启助手后生效。
-所有助手运行时新功能仅在 Go 实现；Python 负责管理配置及显式 UserBot 历史回溯。
+助手作为独立 Go 进程运行。Go 主进程负责管理配置及显式 UserBot 历史回溯。
 
 ## 配置与迁移
 
@@ -62,7 +62,7 @@ FINALIZING 与接纳使用同一把锁，关闭后消息进入下一回合，下
 即使已向 Telegram 展示部分预览也不计费。退款按原日期和来源幂等执行。
 进程启动前恢复遗留 reserved 记录；数据库命名锁防止两个 Go 实例同时运行或误退活跃回合。
 数据库中断时未完成结算会记录日志并保留 reserved，供下次启动重试。
-不要让旧 Python 助手与 Go 助手并行消费同一个 Token。
+安装或回滚时，每个助手 Token 应由单个实例消费。
 
 `/clear` 取消对应作用域的回合并清除该作用域历史和图片上下文，过期写入被拒绝；
 其他帖子/私聊继续运行。`/status` 展示免费次数、积分余额、计费日用量及回合状态。
@@ -86,7 +86,7 @@ WebUI 的“回溯历史评论”使用现有已登录 UserBot，调用
 `POST /api/ai/assistant/backfill`，参数为已启用频道、原帖 ID 和可选 limit（默认 5000）。
 后台依据 Telegram 讨论映射读取该帖可见评论，幂等插入，不覆盖实时采集记录。
 达到本次上限明确返回 truncated；超时可幂等重试。回溯结果不包括账号不可见或已删除内容。
-该功能不启动第二个 UserBot、不新增 Python 助手运行时。
+回溯运行在 Go 主进程中，并复用当前登录的 UserBot 会话。
 
 ## 匿名身份准入与计费
 
@@ -96,7 +96,7 @@ WebUI 的“回溯历史评论”使用现有已登录 UserBot，调用
 
 匿名 actor 的每日用量按群共享，计入全站上限。达到群额度后拒绝接纳，个人积分与管理员计费豁免仅用于真实账号。消息预留、并发锁、失败退款和重启恢复复用现有账本。会话仍按群、帖子或话题隔离。
 
-主 Bot 的 Guard 使用 Telethon 原始 peer 归一化身份。匿名学习上报由 `allow_anonymous_admin_report` 按群授权，默认关闭。学习样本、反馈和任务在同一事务内保存，写入期间撤权会回滚。审计保存匿名 actor 类型、群 ID、消息 ID 和来源，真实用户 ID 留空。参见 [Sakura Guard](User-Sakura-Guard.md)。
+主 Bot 的 Guard 使用 MTProto 事件中核实的发送身份。匿名学习上报由 `allow_anonymous_admin_report` 按群授权，默认关闭。学习样本、反馈和任务在同一事务内保存，写入期间撤权会回滚。审计保存匿名 actor 类型、群 ID、消息 ID 和来源，真实用户 ID 留空。参见 [Sakura Guard](User-Sakura-Guard.md)。
 
 ## Telegram 输出
 
@@ -113,7 +113,7 @@ AI 正常输出使用 `InputRichMessage.markdown`，不经过 MarkdownV1、HTML 
   幂等/跨日退款、重启恢复、评论编辑与帖子隔离。
 - 假 LLM 验证工具结果/已生成回答保留、追问顺序和单回合执行器。
 - 假 Telegram HTTP 服务验证私聊 Draft、群组编辑及 rich_message 请求字段。
-- Python 配置/权限诊断测试；WebUI 类型检查、构建及浅/深色和窄屏预览。
+- Go 配置与 WebUI API 检查，以及 WebUI 类型检查、构建和浏览器回归。
 
 真实 Telegram 权限和 Bot API 可用性仍须在部署环境通过 WebUI 诊断，数据库集成测试
 应使用专用测试库：`MYSQL_TEST_DSN=... go test ./internal/db -run 'TestMessageReservations|TestPointsCheckin|TestCommentSnapshot'`。

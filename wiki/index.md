@@ -3,51 +3,35 @@ layout: home
 title: 使用与开发文档
 hero:
   name: Sakura-Bot
-  text: 使用与开发文档
-  tagline: 从部署配置到频道管理、智能问答与群管，找到你需要的操作指南。
+  text: Telegram 频道管理与问答文档
+  tagline: 主 Bot 与小妲助手使用统一的 Go 后端。通过 WebUI 管理频道总结、图片识别、群管与 Wiki。
   actions:
     - theme: brand
       text: 快速开始
       link: /User-Getting-Started
     - theme: alt
-      text: 浏览全部文档
-      link: /Home
+      text: 升级至 2.6.0
+      link: /Release-2.6.0
     - theme: alt
-      text: 参与开发
-      link: /Developer-Getting-Started
+      text: 开发文档
+      link: /Developer-Guide
 features:
-  - icon: 🚀
-    title: 部署与配置
-    details: 了解运行环境、Docker 部署和基础配置，开始使用 Sakura-Bot。
-    link: /User-Getting-Started
-    linkText: 部署指南
-  - icon: 🌐
-    title: WebUI 管理
-    details: 在浏览器中管理频道、转发、数据库与系统设置。
+  - title: WebUI 管理
+    details: 配置频道、自动总结、投票、转发和 AI 用途。
     link: /User-WebUI-Guide
-    linkText: 管理面板指南
-  - icon: 🛡️
-    title: Sakura Guard
-    details: 配置群聊规则、入群验证、管理员通知、黑白名单与封禁申诉。
-    link: /User-Sakura-Guard
-    linkText: 智能群管指南
-  - icon: 💬
-    title: 智能问答
-    details: 使用自然语言查询频道历史，了解配额与多轮对话功能。
+  - title: 小妲助手
+    details: 在私聊或关联讨论群中检索历史消息、提问与追问。
     link: /User-QA-Bot-Guide
-    linkText: 问答 Bot 指南
-  - icon: 🔍
-    title: RAG 语义检索
-    details: 配置 Embedding 与重排序模型，检索相关历史内容。
-    link: /User-RAG-Quickstart
-    linkText: RAG 快速启动
-  - icon: 🛠️
-    title: 开发与维护
-    details: 查看架构设计、配置持久化、代码规范与功能实现文档。
-    link: /Developer-Guide
-    linkText: 开发者文档
+  - title: Sakura Guard
+    details: 配置入群验证、群管规则、审核通知与申诉。
+    link: /User-Sakura-Guard
+  - title: Sakura Wiki
+    details: 用频道素材生成词条，管理增量任务、草稿、审校和发布。
+    link: /User-Sakura-Wiki
+  - title: AI 模型与图片
+    details: 为各项用途指定厂商、模型、图片能力和思考等级。
+    link: /AI_PROFILES
+  - title: 文档目录
+    details: 按使用场景查找配置、操作与维护说明。
+    link: /Home
 ---
-
-## v2.4.8 关联讨论群与匿名管理员
-
-已启用频道的关联讨论群支持直接唤醒、@提及助手和连续追问。本群匿名管理员可按显式授权使用群级额度，并向主 Bot 举报或提交学习样本。Wiki 浏览支持本地收藏与图谱分页。[查看升级说明](Release-2.4.8.md) · [使用小妲助手](User-QA-Bot-Guide.md) · [浏览 Sakura Wiki](User-Sakura-Wiki.md)

@@ -1,6 +1,6 @@
 # 小妲助手使用指南
 
-适用于 **Sakura-Bot v2.4.8 的 Go 助手运行时**。小妲使用独立的 Telegram Bot Token，与主 Bot 共用配置、MySQL、频道检索和 Wiki 工具。主 Bot 负责启动和托管助手进程。
+适用于 Sakura-Bot 2.6.0。小妲使用独立的 Telegram Bot Token，与主 Bot 共用配置、MySQL、频道检索和 Wiki 工具。主 Bot 启动并托管独立的 `sakura-qa` 进程。
 
 ## 启用助手
 
@@ -9,14 +9,13 @@
 ```dotenv
 QA_BOT_TOKEN=your_assistant_bot_token
 QA_BOT_ENABLED=True
-QA_BOT_RUNTIME=go
 QA_BOT_USER_LIMIT=3
 QA_BOT_DAILY_LIMIT=200
 ```
 
 助手 Token 必须与主 Bot 不同。正常启动主进程或 Docker Compose 即可，不需要另建第二个助手容器。同一个助手 Token 只应有一个更新消费者。
 
-旧 Python 运行时保留兼容用途；本页的积分、订阅门槛、评论区、动态追问和原生富文本功能只在 Go 实现。
+在 WebUI 的 [AI 用途绑定](AI_PROFILES.md)里为「助手问答」选择模型、图片能力和思考等级。
 
 ## 私聊提问与追问
 
@@ -35,6 +34,12 @@ QA_BOT_DAILY_LIMIT=200
 默认单回合最多接纳 8 条消息、最长 180 秒（含排队）。队列满、消息数超限或权限不足时会明确拒绝，未接纳消息不扣费。
 
 图片输入仍取决于当前 AI 服务是否开启并支持视觉能力。无说明的图片可先进入当前作用域的图片上下文，再发送文字提问；活动回合中的图片追问会按新消息接纳。
+
+### 私聊图片与追问
+
+支持照片、PNG/JPEG 图片文档和附带说明的图片。每轮最多 4 张，单张最多 8 MiB、1200 万像素且单边不超过 8192 像素。相册按消息顺序处理。新一批图片会替换此前暂存的图片。
+
+已暂存的图片默认可在 300 秒内用「它」「上图」等明确追问继续引用。`QA_IMAGE_CONTEXT_TTL_SECONDS` 可调整此时间。`/clear` 清除当前作用域的图片上下文。图片问答使用「助手问答」的视觉能力，频道 OCR 开关见[图片管道](images-pipeline.md)。
 
 ## 免费次数、积分与签到
 

@@ -1,4 +1,11 @@
+---
+search: false
+---
+
 # 运行时占用优化与 Rust/Go 迁移评估
+
+> 历史归档。现行安装步骤见 [2.6.0 升级说明](Release-2.6.0.md)，开发流程见 [开发者文档](Developer-Guide.md)。
+
 
 > 分支 `feature/resource-optimization` · 2026-10 · 结论：**Python 主进程瘦身 + QA 子进程 Go 化**，
 > 容器总占用从 **≈400MB（RSS+swap）降至 ≈200MB 量级**（最终数字见文末实测表）。
