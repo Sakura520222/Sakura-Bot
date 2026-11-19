@@ -136,7 +136,7 @@ func (o *MTProtoTelegramOps) SendMessage(ctx context.Context, target any, text s
 }
 
 func (o *MTProtoTelegramOps) SendOnce(ctx context.Context, targetID int64, text string, opts mtproto.SendOptions, randomID int64) (int, error) {
-	return o.actions.SendOnce(ctx, targetID, text, opts.Buttons, randomID, opts.Entities)
+	return o.actions.SendOnce(ctx, targetID, text, opts, randomID)
 }
 
 func (o *MTProtoTelegramOps) EditMessage(ctx context.Context, target any, messageID int, text string, opts mtproto.SendOptions) error {

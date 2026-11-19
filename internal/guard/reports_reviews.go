@@ -283,30 +283,121 @@ func (n *Notifier) Targets(grp GuardGroup, eventCat string) []int64 {
 // RenderCaseCardHTML 渲染 HTML 格式的群管案件审核卡片。
 func RenderCaseCardHTML(caseRow guarddb.Row) string {
 	payload := rowPayload(caseRow)
-	name := html.EscapeString(rowStr(payload, "name"))
-	if name == "" {
-		name = strconv.FormatInt(rowInt64(caseRow, "user_id"), 10)
+	evidence, _ := payload["evidence"].(map[string]any)
+	reporter, _ := payload["reporter"].(map[string]any)
+	ai, _ := payload["ai_report_review"].(map[string]any)
+	action, status := rowStr(caseRow, "action"), rowStr(caseRow, "status")
+	ban := action == "ban" || rowBool(payload, "review_ban_confirmed")
+	report := action == "report" || (ai != nil && reporter != nil)
+	statusKey := "guard.status_" + status
+	switch {
+	case action == "report" && !ban && slices.Contains([]string{"pending", "ignored", "reviewing_unban"}, status):
+		statusKey = "guard.report_status_" + status
+	case slices.Contains([]string{"verify_start", "verify_pass", "verify_cancel"}, action) && rowStr(payload, "verification_state") != "":
+		statusKey = "guard.session_" + rowStr(payload, "verification_state")
+	case rowBool(payload, "release_deferred_verification"):
+		statusKey = "guard.status_release_waiting"
+	case status == "allowed" && !ban && (action == "warn" || action == "mute"):
+		statusKey = "guard.status_" + action + "_allowed"
+	case rowStr(payload, "verification_result") == "held" && (status == "done" || status == "cancelled"):
+		statusKey = "guard.session_held"
 	}
-	ev, _ := payload["evidence"].(map[string]any)
-	reason := html.EscapeString(rowStr(ev, "reason"))
-	snippet := html.EscapeString(rowStr(ev, "snippet"))
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "🛡 <b>Sakura Guard 风控通知</b>\n")
-	fmt.Fprintf(&b, "• 案件：<code>%s</code>\n", html.EscapeString(rowStr(caseRow, "id")))
-	fmt.Fprintf(&b, "• 群组：<code>%d</code>\n", rowInt64(caseRow, "chat_id"))
-	fmt.Fprintf(&b, "• 用户：%s (<code>%d</code>)\n", name, rowInt64(caseRow, "user_id"))
-	fmt.Fprintf(&b, "• 动作：<code>%s</code> | 状态：<b>%s</b>\n",
-		html.EscapeString(rowStr(caseRow, "action")),
-		html.EscapeString(rowStr(caseRow, "status")))
-	if reason != "" {
-		fmt.Fprintf(&b, "• 原因：%s\n", reason)
+	actionLabel := action
+	if status == "kicked" || status == "reviewing_kick" {
+		actionLabel = "kick"
+	} else if ban {
+		actionLabel = "ban"
 	}
-	if snippet != "" {
-		if len([]rune(snippet)) > 300 {
-			snippet = string([]rune(snippet)[:300]) + "..."
+	reason := rowStr(evidence, "reason")
+	if label := i18n.T("guard.reason_"+reason, nil); label != "guard.reason_"+reason {
+		reason = label
+	}
+	original := firstNoticeValue(rowStr(evidence, "original"), rowStr(evidence, "snippet"))
+	name := firstNoticeValue(rowStr(payload, "name"), strconv.FormatInt(rowInt64(caseRow, "user_id"), 10))
+	link := rowStr(payload, "evidence_link")
+	values := map[string]string{
+		"case_id": rowStr(caseRow, "id"), "chat": rowStr(payload, "chat_title"),
+		"chat_id": strconv.FormatInt(rowInt64(caseRow, "chat_id"), 10), "chat_link": rowStr(payload, "chat_link"),
+		"name": name, "user_id": strconv.FormatInt(rowInt64(caseRow, "user_id"), 10), "username": noticeUsername(rowStr(payload, "username")),
+		"target": rowStr(evidence, "target"), "rule": rowStr(evidence, "rule_id"), "reason": noticeExcerpt(reason, 256),
+		"original": noticeExcerpt(original, 200), "normalized": noticeExcerpt(rowStr(evidence, "normalized"), 200),
+		"action": actionLabel, "status": noticeTranslation(statusKey, status),
+		"time": firstNoticeValue(rowStr(caseRow, "created_at"), "—"), "message_id": firstNoticeValue(rowStr(payload, "message_id"), "—"),
+		"evidence_link": link, "reviewer": firstNoticeValue(rowStr(caseRow, "reviewer_actor"), rowStr(caseRow, "reviewer_id"), "—"),
+		"reviewed_at": firstNoticeValue(rowStr(caseRow, "reviewed_at"), "—"), "error": firstNoticeValue(rowStr(caseRow, "error"), "—"),
+	}
+	chatUsername := strings.TrimPrefix(rowStr(payload, "chat_username"), "@")
+	if chatUsername != "" {
+		if values["chat"] == "" {
+			values["chat"] = "@" + chatUsername
+		} else {
+			values["chat"] += " @" + chatUsername
 		}
-		fmt.Fprintf(&b, "• 摘要：<code>%s</code>\n", snippet)
+	}
+	if values["chat"] == "" {
+		values["chat"] = "—"
+	}
+	if actionLabel == "approve" || actionLabel == "reject" || actionLabel == "manual" {
+		values["action"] = i18n.T("guard.notice_action_"+actionLabel, nil)
+	}
+	if report {
+		values["chat"] = noticeExcerpt(values["chat"], 128)
+		values["name"] = noticeExcerpt(name, 80)
+		values["reason"] = noticeExcerpt(reason, 200)
+		values["original"] = noticeExcerpt(original, 1000)
+		if original == "" {
+			key := "guard.report_empty"
+			if rowBool(payload, "has_media") {
+				key = "guard.report_media"
+			}
+			values["original"] = i18n.T(key, nil)
+		}
+		values["reporter_id"] = firstNoticeValue(rowStr(reporter, "user_id"), "—")
+		values["reporter_name"] = noticeExcerpt(firstNoticeValue(rowStr(reporter, "name"), values["reporter_id"]), 80)
+		values["reporter_username"] = noticeUsername(rowStr(reporter, "username"))
+		values["report_link"] = rowStr(payload, "report_link")
+		values["message_date"] = firstNoticeValue(rowStr(payload, "message_date"), "—")
+	}
+	for k, value := range values {
+		values[k] = html.EscapeString(value)
+	}
+	if userID := rowInt64(caseRow, "user_id"); userID > 0 {
+		values["name"] = fmt.Sprintf(`<a href="tg://user?id=%d">%s</a>`, userID, values["name"])
+	}
+	if id := rowInt64(reporter, "user_id"); report && id > 0 {
+		values["reporter_name"] = fmt.Sprintf(`<a href="tg://user?id=%d">%s</a>`, id, values["reporter_name"])
+	}
+	for _, key := range []string{"chat_link", "evidence_link", "report_link"} {
+		if strings.HasPrefix(rowStr(payload, key), "https://t.me/") {
+			value := values[key]
+			values[key] = `<a href="` + value + `">` + value + `</a>`
+		}
+	}
+	if payload["verification_message"] != nil && link != "" {
+		values["evidence_link"] = i18n.T("guard.verification_link", map[string]string{"link": values["evidence_link"]})
+	}
+	key := "guard.notification"
+	if report {
+		key = "guard.report_notification"
+	}
+	text := strings.TrimPrefix(i18n.T(key, values), "🛡 ")
+	if report && status == "pending" && !ban {
+		text += "\n" + i18n.T("guard.report_ban_cleanup_hint", nil)
+	}
+	if deletion, _ := payload["report_message_deletion"].(map[string]any); deletion != nil {
+		state := "guard.report_delete_waiting"
+		if rowStr(deletion, "status") == "deleted" {
+			state = "guard.report_delete_deleted"
+		}
+		errText := firstNoticeValue(rowStr(deletion, "error"), "—")
+		if strings.HasPrefix(errText, "guard.") {
+			errText = i18n.T(errText, nil)
+		}
+		text += "\n" + i18n.T("guard.report_delete_details", map[string]string{
+			"state": i18n.T(state, nil), "actor": html.EscapeString(rowStr(deletion, "actor")),
+			"time":  html.EscapeString(firstNoticeValue(rowStr(deletion, "completed_at"), rowStr(deletion, "requested_at"))),
+			"error": html.EscapeString(errText),
+		})
 	}
 	if source, _ := payload["guest_actor"].(map[string]any); source != nil {
 		task, _ := payload["guest_ban"].(map[string]any)
@@ -320,9 +411,51 @@ func RenderCaseCardHTML(caseRow guarddb.Row) string {
 			"user_id": strconv.FormatInt(rowInt64(source, "user_id"), 10),
 			"state":   i18n.T("guard.guest_ban_"+status, nil),
 		})
-		fmt.Fprintf(&b, "• %s\n", html.EscapeString(notice))
+		text += "\n" + html.EscapeString(notice)
 	}
-	return b.String()
+	if ai != nil {
+		state := rowStr(ai, "state")
+		if !slices.Contains([]string{"queued", "executing", "applied"}, state) {
+			state = "manual"
+		}
+		verdict, _ := ai["verdict"].(map[string]any)
+		text += "\n" + strings.TrimPrefix(i18n.T("guard.ai_report_result", map[string]string{
+			"state":  i18n.T("guard.ai_report_"+state, nil),
+			"reason": html.EscapeString(noticeExcerpt(firstNoticeValue(rowStr(verdict, "reason"), i18n.T("guard.ai_report_no_decision", nil)), 300)),
+			"model":  html.EscapeString(firstNoticeValue(rowStr(ai, "model"), "—")),
+		}), "🤖 ")
+	}
+	return text
+}
+
+func firstNoticeValue(values ...string) string {
+	for _, value := range values {
+		if value != "" && value != "0" {
+			return value
+		}
+	}
+	return ""
+}
+
+func noticeExcerpt(value string, limit int) string {
+	if runes := []rune(value); len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return value
+}
+
+func noticeUsername(value string) string {
+	if value = strings.TrimPrefix(value, "@"); value != "" {
+		return "@" + value
+	}
+	return "—"
+}
+
+func noticeTranslation(key, fallback string) string {
+	if value := i18n.T(key, nil); value != key {
+		return value
+	}
+	return fallback
 }
 
 // BuildReviewButtons 构建与 Python notification.py:review_buttons 完全兼容的 sg:r:{id}:{code}:{gen} 审核按钮矩阵。
@@ -340,37 +473,41 @@ func BuildReviewButtons(caseRow guarddb.Row, grp GuardGroup) [][]mtproto.InlineB
 	gen := rowInt64(payload, "review_generation")
 	isBan := action == "ban" || rowBool(payload, "review_ban_confirmed")
 	prefix := fmt.Sprintf("sg:r:%s:", caseID)
+	add := func(code, key string) []mtproto.InlineButton {
+		return []mtproto.InlineButton{{Text: i18n.T(key, nil), Data: fmt.Sprintf("%s%s:%d", prefix, code, gen)}}
+	}
 
 	var rows [][]mtproto.InlineButton
-	if action == "report" && status == "pending" && !isBan {
+	switch {
+	case action == "report" && status == "pending" && !isBan:
 		rows = append(rows,
-			[]mtproto.InlineButton{{Text: "🙈 忽略举报", Data: fmt.Sprintf("%su:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "🚫 封禁成员", Data: fmt.Sprintf("%sk:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "⛔ 全局拉黑", Data: fmt.Sprintf("%sb:%d", prefix, gen)}},
+			add("u", "guard.report_dismiss_button"), add("k", "guard.verify_ban_button"), add("b", "guard.verify_blacklist_button"),
 		)
-	} else if isBan && status == "pending" {
+	case isBan && status == "pending":
 		rows = append(rows,
-			[]mtproto.InlineButton{{Text: "✅ 解封并加白", Data: fmt.Sprintf("%sa:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "🔓 仅解封", Data: fmt.Sprintf("%su:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "⛔ 全局拉黑", Data: fmt.Sprintf("%sb:%d", prefix, gen)}},
+			add("u", "guard.unban_button"), add("a", "guard.allow_button"), add("b", "guard.blacklist_button"),
 		)
-	} else if (action == "mute" || action == "warn") && (status == "pending" || status == "done") {
-		rows = append(rows,
-			[]mtproto.InlineButton{{Text: "✅ 解除并加白", Data: fmt.Sprintf("%sa:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "🔓 解除限制", Data: fmt.Sprintf("%su:%d", prefix, gen)}},
-			[]mtproto.InlineButton{{Text: "🚫 升级封禁", Data: fmt.Sprintf("%sk:%d", prefix, gen)}},
-		)
+	case (action == "mute" || action == "warn") && status == "done" && !rowBool(payload, "verification_failure"):
+		release, allow := "guard.ignore_warning_button", "guard.whitelist_button"
+		if action == "mute" {
+			release, allow = "guard.unmute_button", "guard.unmute_allow_button"
+		}
+		rows = append(rows, add("u", release), add("a", allow), add("k", "guard.verify_ban_button"), add("b", "guard.verify_blacklist_button"))
 	}
 
-	if grp.KickButtonEnabled && status != "kicked" && status != "executing" && !strings.HasPrefix(status, "reviewing_") {
-		if action == "report" || action == "mute" || action == "warn" {
-			rows = append(rows, []mtproto.InlineButton{{Text: "👢 踢出群聊", Data: fmt.Sprintf("%sj:%d", prefix, gen)}})
-		}
+	if grp.KickButtonEnabled && (len(rows) > 0 || action == "report") &&
+		status != "kicked" && status != "executing" && (!strings.HasPrefix(status, "reviewing_") || status == "reviewing_kick") {
+		rows = append(rows, add("j", "guard.kick_button"))
 	}
-	if action == "report" && rowInt64(payload, "message_id") > 0 {
+	if mid := rowInt64(payload, "message_id"); action == "report" && mid > 0 && mid < 1<<31 {
 		delMap, _ := payload["report_message_deletion"].(map[string]any)
-		if rowStr(delMap, "status") != "deleted" {
-			rows = append(rows, []mtproto.InlineButton{{Text: "🗑 删除被举报消息", Data: fmt.Sprintf("%sd:%d", prefix, gen)}})
+		cleanup, _ := payload["ban_message_cleanup"].(map[string]any)
+		if rowStr(delMap, "status") != "deleted" && rowStr(cleanup, "status") != "deleted" {
+			key := "guard.report_delete_button"
+			if rowStr(delMap, "error") != "" {
+				key = "guard.report_delete_retry_button"
+			}
+			rows = append(rows, add("d", key))
 		}
 	}
 	return rows

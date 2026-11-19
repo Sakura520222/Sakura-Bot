@@ -64,6 +64,17 @@ func (r *Runtime) HandleCommand(ctx context.Context, msg *mtproto.IncomingMessag
 	return true
 }
 
+// HandleWikiCommand runs a Wiki operation selected from the main Bot menu.
+func (r *Runtime) HandleWikiCommand(ctx context.Context, bot mtproto.Messenger, msg *mtproto.IncomingMessage, command, args string) error {
+	request := *msg
+	request.Text = "/" + command + " " + args
+	if !r.HandleCommand(ctx, &request) {
+		_, err := bot.SendMessage(ctx, msg.ChatID, "请输入一个频道用户名或链接。", mtproto.SendOptions{})
+		return err
+	}
+	return nil
+}
+
 func (r *Runtime) runAdminCommand(ctx context.Context, action, key, admin string) string {
 	channel, err := r.Store.GetChannel(ctx, key)
 	if err != nil {

@@ -32,8 +32,13 @@ const (
 // ErrInvalidPromptType 表示未知的提示词类型。
 var ErrInvalidPromptType = errors.New("invalid prompt type")
 
-// defaultSummaryPrompt 对齐 core/config.py:DEFAULT_PROMPT 与 core/infrastructure/utils/constants.py:78。
-const defaultSummaryPrompt = "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：\n\n"
+const defaultSummaryPrompt = `请按主题归类并总结下面的 Telegram 消息。直接输出总结正文，省略前言、备注、解释和后语。
+
+使用普通 Markdown，按内容组织标题、列表和段落。提炼每条有实质信息的消息的核心内容，合并重复信息，保留关键事实、数据、时间、条件和原文中的不确定性。
+
+把与每条内容对应的原消息链接嵌入该条标题，例如 [标题](链接)。没有可确认的对应链接时，标题直接用文字。省略单独列出的链接、Source/来源/出处字段、来源署名和 Tags/标签。
+
+用简洁的语言重述要点，忠于原文。禁止添加、推测或补全原文没有的信息。`
 
 // defaultPollPrompt 对齐 core/config.py:DEFAULT_POLL_PROMPT 与 core/infrastructure/utils/constants.py:80-97。
 const defaultPollPrompt = `根据以下内容生成一个有趣的单选投票。

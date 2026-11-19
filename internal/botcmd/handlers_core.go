@@ -103,6 +103,8 @@ type Router struct {
 	deps     Deps
 	states   *UserStateStore
 	updateMu sync.Mutex
+	menuMu   sync.Mutex
+	menuRuns map[menuActor]menuRun
 }
 
 // NewRouter 创建主 Bot 命令路由器。
@@ -111,8 +113,9 @@ func NewRouter(deps Deps) *Router {
 		deps.Logger = slog.Default()
 	}
 	return &Router{
-		deps:   deps,
-		states: NewUserStateStore(),
+		deps:     deps,
+		states:   NewUserStateStore(),
+		menuRuns: make(map[menuActor]menuRun),
 	}
 }
 
@@ -139,8 +142,7 @@ func (r *Router) HandleMessage(ctx context.Context, msg *mtproto.IncomingMessage
 		return false
 	}
 
-	// 1. 活跃 FSM 输入优先（仅私聊或管理员本人触发）
-	if r.handleFSMInput(ctx, bot, msg, text) {
+	if r.acceptMenuInput(ctx, bot, msg, text) {
 		return true
 	}
 
@@ -154,7 +156,10 @@ func (r *Router) HandleMessage(ctx context.Context, msg *mtproto.IncomingMessage
 		return false
 	}
 
-	r.dispatchCanonical(ctx, bot, msg, canonical, rawArgs, msg.ID)
+	ctx = r.menuContext(ctx, msg.SenderID)
+	if err := r.openMenuCommand(ctx, bot, msg, canonical, rawArgs); err != nil {
+		r.deps.Logger.Warn("主 Bot 命令面板发送失败", "command", canonical, "chat", msg.ChatID, "error", err)
+	}
 	return true
 }
 
@@ -174,14 +179,14 @@ func (r *Router) handleFSMInput(ctx context.Context, bot mtproto.Messenger, msg 
 			return true
 		}
 		if strings.HasPrefix(text, "/") {
-			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("prompt.error_command", nil))
+			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "prompt.error_command", nil))
 			return true
 		}
 		if r.states.ConsumePrompt(uid) && r.deps.Config != nil {
 			if err := r.deps.Config.SavePrompt(config.PromptSummary, text); err != nil {
 				r.reply(ctx, bot, msg.ChatID, msg.ID, "❌ 保存提示词失败: "+err.Error())
 			} else {
-				r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("prompt.updated", nil))
+				r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "prompt.updated", nil))
 			}
 		}
 		return true
@@ -194,14 +199,14 @@ func (r *Router) handleFSMInput(ctx context.Context, bot mtproto.Messenger, msg 
 			return true
 		}
 		if strings.HasPrefix(text, "/") {
-			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("prompt.error_command", nil))
+			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "prompt.error_command", nil))
 			return true
 		}
 		if r.states.ConsumePollPrompt(uid) && r.deps.Config != nil {
 			if err := r.deps.Config.SavePrompt(config.PromptPoll, text); err != nil {
 				r.reply(ctx, bot, msg.ChatID, msg.ID, "❌ 保存投票提示词失败: "+err.Error())
 			} else {
-				r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("poll_prompt.updated", nil))
+				r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "poll_prompt.updated", nil))
 			}
 		}
 		return true
@@ -212,19 +217,19 @@ func (r *Router) handleFSMInput(ctx context.Context, bot mtproto.Messenger, msg 
 			return false
 		}
 		if stepRes.Cancelled {
-			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("aicfg.cancelled", nil))
+			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "aicfg.cancelled", nil))
 			return true
 		}
 		if stepRes.OtherCommand {
-			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.T("aicfg.in_progress", nil))
+			r.reply(ctx, bot, msg.ChatID, msg.ID, i18n.Text(ctx, "aicfg.in_progress", nil))
 			return true
 		}
 		if !stepRes.Done {
 			switch stepRes.NextStep {
 			case "base_url":
-				r.reply(ctx, bot, msg.ChatID, msg.ID, "请输入 AI Base URL（发送 /skip 保留当前值，/cancel 取消）：")
+				r.reply(ctx, bot, msg.ChatID, msg.ID, "请输入 AI Base URL。")
 			case "model":
-				r.reply(ctx, bot, msg.ChatID, msg.ID, "请输入 AI 模型名称（发送 /skip 保留当前值，/cancel 取消）：")
+				r.reply(ctx, bot, msg.ChatID, msg.ID, "请输入 AI 模型名称。")
 			}
 			return true
 		}
@@ -278,41 +283,9 @@ func (r *Router) dispatchCanonical(
 		return
 	}
 
-	// 3. 公开基础命令：/start 与 /help
-	switch canonical {
-	case "start":
-		greeting := i18n.T("start.user_welcome", nil)
-		if r.isAdmin(msg.SenderID) {
-			greeting = i18n.T("start.admin_welcome", nil)
-		}
-		if strings.HasPrefix(greeting, "start.") {
-			greeting = BuildMenuText(MenuMain)
-		}
-		_, _ = bot.SendMessage(ctx, msg.ChatID, greeting, mtproto.SendOptions{
-			ParseMode:    "markdown",
-			ReplyToMsgID: replyTo,
-			Buttons:      BuildMenuKeyboard(MenuMain),
-			NoWebpage:    true,
-		})
-		return
-
-	case "help":
-		helpText := GenerateHelpText()
-		chunks, _ := bot.SendLongMessage(ctx, msg.ChatID, helpText, mtproto.SendOptions{
-			ParseMode: "markdown",
-			NoWebpage: true,
-		})
-		_ = chunks
-		_, _ = bot.SendMessage(ctx, msg.ChatID, BuildMenuText(MenuMain), mtproto.SendOptions{
-			Buttons:   BuildMenuKeyboard(MenuMain),
-			NoWebpage: true,
-		})
-		return
-	}
-
 	// 4. 其余管理命令严格执行 fail-closed 管理员鉴权
 	if !r.isAdmin(msg.SenderID) {
-		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.T("error.permission_denied", nil))
+		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.Text(ctx, "error.permission_denied", nil))
 		return
 	}
 
@@ -340,13 +313,13 @@ func (r *Router) dispatchCanonical(
 		_, _ = bot.SendLongMessage(ctx, msg.ChatID, "🧠 **当前总结提示词**\n\n"+p, mtproto.SendOptions{ParseMode: "markdown", NoWebpage: true})
 	case "setprompt":
 		r.states.StartPrompt(msg.SenderID)
-		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.T("prompt.enter_new", nil))
+		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.Text(ctx, "prompt.enter_new", nil))
 	case "showpollprompt":
 		p, _ := r.deps.Config.GetPrompt(config.PromptPoll)
 		_, _ = bot.SendLongMessage(ctx, msg.ChatID, "🗳 **当前投票提示词**\n\n"+p, mtproto.SendOptions{ParseMode: "markdown", NoWebpage: true})
 	case "setpollprompt":
 		r.states.StartPollPrompt(msg.SenderID)
-		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.T("poll_prompt.enter_new", nil))
+		r.reply(ctx, bot, msg.ChatID, replyTo, i18n.Text(ctx, "poll_prompt.enter_new", nil))
 	case "showaicfg":
 		eff := r.deps.Config.EffectiveAIConfig("summary")
 		preview := config.MaskLegacyAPIKeyPreview(eff.APIKey)
@@ -356,7 +329,7 @@ func (r *Router) dispatchCanonical(
 		r.reply(ctx, bot, msg.ChatID, replyTo, fmt.Sprintf("🔧 **当前 AI 配置**\n• API Key: `%s`\n• Base URL: `%s`\n• Model: `%s`", preview, eff.BaseURL, eff.Model))
 	case "setaicfg":
 		r.states.StartAIConfig(msg.SenderID)
-		r.reply(ctx, bot, msg.ChatID, replyTo, "请输入 AI API Key（发送 /skip 保留当前值，/cancel 取消）：")
+		r.reply(ctx, bot, msg.ChatID, replyTo, "请输入 AI API Key。")
 	case "channelpoll":
 		r.cmdShowChannelPoll(ctx, bot, msg.ChatID, replyTo, rawArgs)
 	case "setchannelpoll":
@@ -375,8 +348,6 @@ func (r *Router) dispatchCanonical(
 		r.cmdSetAutoPoll(ctx, bot, msg.ChatID, replyTo, rawArgs)
 	case "deleteautopoll":
 		r.cmdDeleteAutoPoll(ctx, bot, msg.ChatID, replyTo, rawArgs)
-	case "language":
-		r.cmdLanguage(ctx, bot, msg.ChatID, replyTo, rawArgs)
 	default:
 		r.dispatchOpsCommand(ctx, bot, msg, canonical, rawArgs, replyTo)
 	}
@@ -397,7 +368,7 @@ func (r *Router) cmdManualSummary(ctx context.Context, bot mtproto.Messenger, ch
 		targets = r.deps.Config.Channels()
 	}
 	if len(targets) == 0 {
-		r.reply(ctx, bot, chatID, replyTo, i18n.T("summary.no_channels", nil))
+		r.reply(ctx, bot, chatID, replyTo, i18n.Text(ctx, "summary.no_channels", nil))
 		return
 	}
 	r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("⏳ 开始为 %d 个频道生成总结，请稍候...", len(targets)))
@@ -864,31 +835,6 @@ func (r *Router) cmdDeleteAutoPoll(ctx context.Context, bot mtproto.Messenger, c
 		return nil
 	})
 	r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("✅ 已删除 `%s` 自动趣味投票独立配置", norm))
-}
-
-func (r *Router) cmdLanguage(ctx context.Context, bot mtproto.Messenger, chatID int64, replyTo int, rawArgs string) {
-	lang := strings.TrimSpace(rawArgs)
-	if lang == "" {
-		cur := r.deps.Config.Language()
-		r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("🌐 当前界面语言: `%s`（可选 `zh-CN` / `en-US`）", cur))
-		return
-	}
-	switch strings.ToLower(lang) {
-	case "zh", "zh-cn", "zh_cn":
-		lang = "zh-CN"
-	case "en", "en-us", "en_us":
-		lang = "en-US"
-	default:
-		r.reply(ctx, bot, chatID, replyTo, "❌ 不支持的语言，请使用 `zh-CN` 或 `en-US`")
-		return
-	}
-	_ = r.deps.Config.UpdateConfig(func(doc map[string]any) error {
-		doc["language"] = lang
-		return nil
-	})
-	i18n.SetLanguage(lang)
-	_ = bot.SetBotCommands(ctx, "zh", AllBotCommands())
-	r.reply(ctx, bot, chatID, replyTo, fmt.Sprintf("✅ 语言已切换为 `%s`", lang))
 }
 
 func (r *Router) isAdmin(userID int64) bool {

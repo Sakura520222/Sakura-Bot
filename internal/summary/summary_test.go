@@ -24,6 +24,7 @@ import (
 	"github.com/Sakura520222/Sakura-Bot/internal/llm"
 	"github.com/Sakura520222/Sakura-Bot/internal/mtproto"
 	"github.com/Sakura520222/Sakura-Bot/internal/tg"
+	tgbot "github.com/go-telegram/bot"
 )
 
 type fakeCompleter struct {
@@ -65,6 +66,10 @@ func TestSummarizeCompleteHierarchicalAndLengthExpansion(t *testing.T) {
 	comp := &fakeCompleter{
 		fn: func(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
 			calls++
+			system := *req.Messages[0].Content
+			if !strings.Contains(system, "普通 Markdown 总结正文") || strings.Contains(system, "保留关键事实、来源编号") {
+				t.Fatalf("unexpected summary system instruction: %s", system)
+			}
 			if req.MaxTokens != nil {
 				seenMaxTokens = append(seenMaxTokens, *req.MaxTokens)
 			}
@@ -214,7 +219,7 @@ type fakeBotAPISender struct {
 	sentTo []any
 }
 
-func (b *fakeBotAPISender) SendMessage(_ context.Context, _ string, req tg.DirectSendMessageParams) (int64, error) {
+func (b *fakeBotAPISender) SendRichMessage(_ context.Context, _ string, req tgbot.SendRichMessageParams) (int64, error) {
 	if req.ChatID == int64(2002) {
 		return 0, &tg.BadRequestError{BotAPIError: tg.BotAPIError{Description: "Forbidden: bot was blocked by the user"}}
 	}

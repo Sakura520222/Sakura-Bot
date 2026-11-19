@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
@@ -46,6 +47,33 @@ func TestBotIDFromToken(t *testing.T) {
 		if ok != tc.wantOK || id != tc.wantID {
 			t.Fatalf("BotIDFromToken(%q) = (%d, %v), want (%d, %v)", tc.token, id, ok, tc.wantID, tc.wantOK)
 		}
+	}
+}
+
+func TestDirectBotAPISendRichMessage(t *testing.T) {
+	const token = "555666777:test-only"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot"+token+"/sendRichMessage" {
+			t.Errorf("unexpected method %s", r.URL.Path)
+		}
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		var rich models.InputRichMessage
+		if err := json.Unmarshal(body["rich_message"], &rich); err != nil || rich.HTML != "<p>通知</p>" || body["text"] != nil {
+			t.Errorf("expected native rich payload, got %v (%v)", body, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":42}}`))
+	}))
+	defer srv.Close()
+	client := NewDirectBotAPI(WithDirectBaseURL(srv.URL))
+	id, err := client.SendRichMessage(t.Context(), token, bot.SendRichMessageParams{
+		ChatID: int64(7), RichMessage: models.InputRichMessage{HTML: "<p>通知</p>"},
+	})
+	if err != nil || id != 42 {
+		t.Fatalf("unexpected send result %d, %v", id, err)
 	}
 }
 

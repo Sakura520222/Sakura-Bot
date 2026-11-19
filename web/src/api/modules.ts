@@ -1,3 +1,4 @@
+import { isAxiosError } from "axios";
 import apiClient from "./client";
 
 // ==================== 通用类型 ====================
@@ -596,9 +597,47 @@ export async function userBotListChannels() {
 
 // ==================== 总结生成 ====================
 
-export async function generateSummary(channel: string) {
-  const res = await apiClient.post(`/summaries/${encodeURIComponent(channel)}/summarize`);
-  return res.data;
+interface SummaryJob {
+  job_id: string;
+  status: "running" | "succeeded" | "failed";
+  result?: ApiResponse;
+}
+
+export async function generateSummary(channel: string): Promise<ApiResponse> {
+  let job: SummaryJob;
+  try {
+    const res = await apiClient.post<ApiResponse<SummaryJob>>(
+      `/summaries/${encodeURIComponent(channel)}/summarize`,
+      undefined,
+      { params: { async: 1 } },
+    );
+    if (!res.data.success || !res.data.data) return res.data;
+    job = res.data.data;
+  } catch (err) {
+    if (isAxiosError<{ detail?: string }>(err) && err.response?.data?.detail) {
+      return { success: false, message: err.response.data.detail };
+    }
+    throw err;
+  }
+
+  const deadline = Date.now() + 30 * 60_000;
+  let pollFailures = 0;
+  while (job.status === "running" && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    try {
+      const res = await apiClient.get<ApiResponse<SummaryJob>>(`/summaries/jobs/${job.job_id}`);
+      if (!res.data.success || !res.data.data) return res.data;
+      job = res.data.data;
+      pollFailures = 0;
+    } catch (err) {
+      const response = isAxiosError<{ detail?: string }>(err) ? err.response : undefined;
+      if (response && response.status < 500) {
+        return { success: false, message: response.data?.detail || "无法查询总结任务" };
+      }
+      if (++pollFailures >= 3) break;
+    }
+  }
+  return job.result || { success: false, message: `暂时无法确认总结结果。请在服务日志中查找任务 ${job.job_id}` };
 }
 
 // ==================== 仪表板 ====================

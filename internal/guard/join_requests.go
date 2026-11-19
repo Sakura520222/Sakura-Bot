@@ -82,13 +82,6 @@ func (s *Service) HandleJoinRequest(ctx context.Context, ev mtproto.JoinRequestE
 			"name":               name,
 			"username":           profile.Username,
 			"notification_event": "join_request",
-			"request_profile": map[string]any{
-				"first_name": profile.FirstName,
-				"last_name":  profile.LastName,
-				"username":   profile.Username,
-				"bio":        profile.Bio,
-				"has_photo":  profile.HasPhoto,
-			},
 			"evidence": map[string]any{
 				"target": "join_request", "rule_id": rule, "reason": reason, "snippet": snippet,
 			},
@@ -152,15 +145,8 @@ func (s *Service) executeJoinRequest(ctx context.Context, st *guarddb.Store, row
 		}
 	}
 	if action == "approve" && grp.VerifyJoin {
-		profile, _ := payload["request_profile"].(map[string]any)
-		return s.verification.StartVerification(ctx, st, chat, mtproto.ProfileSummary{
-			ID:        user,
-			FirstName: rowStr(profile, "first_name"),
-			LastName:  rowStr(profile, "last_name"),
-			Username:  rowStr(profile, "username"),
-			Bio:       rowStr(profile, "bio"),
-			HasPhoto:  rowBool(profile, "has_photo"),
-		}, grp, "request:"+rowStr(row, "id"))
+		// Telegram can acknowledge approval before the participant is visible.
+		return s.verification.queueVerificationCheck(ctx, st, chat, user, grp, "request:"+rowStr(row, "id"), false)
 	}
 	return nil
 }

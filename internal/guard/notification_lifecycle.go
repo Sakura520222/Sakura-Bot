@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -97,11 +98,11 @@ func (n *Notifier) syncCaseNotices(ctx context.Context, st *guarddb.Store, row g
 		}
 		return st.MarkCaseNoticeSynced(ctx, id, 0, nil, status)
 	}
-	text := RenderCaseCardHTML(row)
+	card := maps.Clone(row)
+	card["payload"] = maps.Clone(rowPayload(row))
+	n.fillNoticeGroup(ctx, card)
+	text := RenderCaseCardHTML(card)
 	buttons := BuildReviewButtons(row, grp)
-	if buttons == nil {
-		buttons = [][]mtproto.InlineButton{}
-	}
 	opts := mtproto.SendOptions{ParseMode: "html", Buttons: buttons, NoWebpage: true}
 	failed := len(current) == 0
 	alreadyDelivered := make(map[int64]bool, len(targets))
@@ -123,6 +124,39 @@ func (n *Notifier) syncCaseNotices(ctx context.Context, st *guarddb.Store, row g
 		delete(potential, fallback)
 	}
 	return n.cleanupVerificationNotices(ctx, st, row, old, potential)
+}
+
+func (n *Notifier) fillNoticeGroup(ctx context.Context, row guarddb.Row) {
+	p := rowPayload(row)
+	if rowStr(p, "chat_title") != "" && rowStr(p, "chat_username") != "" {
+		return
+	}
+	chatID := rowInt64(row, "chat_id")
+	if chatID >= 0 {
+		return
+	}
+	var title, username string
+	for _, peer := range n.svc.ops.KnownGroupPeers() {
+		if peer.MarkedID == chatID {
+			title, username = peer.Title, peer.Username
+			break
+		}
+	}
+	if title == "" && (rowStr(p, "chat_title") == "" || rowStr(p, "chat_username") == "") {
+		group, err := n.svc.ops.ResolveChannel(ctx, strconv.FormatInt(chatID, 10))
+		if err == nil && group != nil {
+			title, username = group.Title, group.Username
+		}
+	}
+	if rowStr(p, "chat_title") == "" && title != "" {
+		p["chat_title"] = title
+	}
+	if username = strings.TrimPrefix(username, "@"); username != "" {
+		p["chat_username"] = username
+		if rowStr(p, "chat_link") == "" {
+			p["chat_link"] = "https://t.me/" + username
+		}
+	}
 }
 
 func notificationCategory(row guarddb.Row) string {

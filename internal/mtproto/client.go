@@ -110,6 +110,16 @@ func WithLogger(l *slog.Logger) ClientOption {
 	}
 }
 
+// WithRichMessages sends and edits text using Telegram's native rich payload.
+func WithRichMessages() ClientOption {
+	return func(c *Client) { c.richMessages = true }
+}
+
+// WithNoEmoji filters emoji out of outbound text and button labels.
+func WithNoEmoji() ClientOption {
+	return func(c *Client) { c.noEmoji = true }
+}
+
 // WithSessionStorage 注入 HybridSessionStorage。
 func WithSessionStorage(s *HybridSessionStorage) ClientOption {
 	return func(c *Client) {
@@ -128,6 +138,8 @@ func WithSelf(id int64, username string) ClientOption {
 
 // Client 实现 Messenger 接口，既可驱动在线 telegram.Client，也可包裹任意 tg.Invoker 进行离线单元测试。
 type Client struct {
+	richMessages bool
+	noEmoji      bool
 	mu           sync.RWMutex
 	tgClient     *telegram.Client
 	raw          *tg.Client

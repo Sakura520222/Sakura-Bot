@@ -39,7 +39,7 @@ type indexedVectors struct {
 }
 
 func (v indexedVectors) AddSummary(ctx context.Context, id int64, channelID, name, text string, start, end, created time.Time, count int) error {
-	return v.Store.AddSummary(ctx, v.embed, id, channelID, name, text, start, end, created, count)
+	return v.Store.UpsertSummary(ctx, v.embed, id, channelID, name, text, start, end, created, count)
 }
 
 func (v indexedVectors) ClearAllCollections(ctx context.Context) error {

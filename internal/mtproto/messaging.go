@@ -92,6 +92,13 @@ func (c *Client) prepareTextAndEntities(ctx context.Context, text string, parseM
 
 // SendMessage 发送单条文本消息，返回发送成功后的 Telegram 消息 ID。
 func (c *Client) SendMessage(ctx context.Context, target any, text string, opts SendOptions) (int, error) {
+	return c.sendMessageWithID(ctx, target, text, opts, cryptoRandInt64())
+}
+
+func (c *Client) sendMessageWithID(ctx context.Context, target any, text string, opts SendOptions, randomID int64) (int, error) {
+	if c.noEmoji {
+		text, opts = cleanMessageEmoji(text, opts)
+	}
 	api := c.API()
 	if api == nil {
 		return 0, errors.New("mtproto client not initialized")
@@ -102,27 +109,33 @@ func (c *Client) SendMessage(ctx context.Context, target any, text string, opts 
 		return 0, err
 	}
 
-	sendText, entities := c.prepareTextAndEntities(ctx, text, opts.ParseMode, opts.Entities)
-	randomID := cryptoRandInt64()
-
 	req := &tg.MessagesSendMessageRequest{
 		NoWebpage: opts.NoWebpage,
 		Silent:    opts.Silent,
 		Peer:      peer,
-		Message:   sendText,
 		RandomID:  randomID,
 	}
 	if opts.ReplyToMsgID > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: opts.ReplyToMsgID})
 	}
-	if markup := BuildInlineMarkup(opts.Buttons); markup != nil {
+	if markup := BuildInlineMarkup(c.cleanButtons(opts.Buttons)); markup != nil {
 		req.SetReplyMarkup(markup)
 	}
-	if len(entities) > 0 {
-		req.SetEntities(entities)
+	if c.richMessages {
+		req.SetRichMessage(c.inputRichMessage(ctx, text, opts))
+	} else {
+		sendText, entities := c.prepareTextAndEntities(ctx, text, opts.ParseMode, opts.Entities)
+		req.Message = sendText
+		if len(entities) > 0 {
+			req.SetEntities(entities)
+		}
 	}
 
 	upd, err := api.MessagesSendMessage(ctx, req)
+	if c.richMessages && isRichFormattingError(err) && isRichMarkupMode(opts) {
+		req.SetRichMessage(plainRichMessage(richMarkupPlainText(text, opts.ParseMode)))
+		upd, err = api.MessagesSendMessage(ctx, req)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -160,6 +173,12 @@ func (c *Client) SendLongMessage(ctx context.Context, target any, text string, o
 
 func (c *Client) sendChunkWithFallback(ctx context.Context, target any, chunk string, opts SendOptions) (int, error) {
 	mode := strings.ToLower(strings.TrimSpace(opts.ParseMode))
+	if c.richMessages {
+		if mode == "" && len(opts.Entities) == 0 {
+			opts.ParseMode = "markdown"
+		}
+		return c.SendMessage(ctx, target, chunk, opts)
+	}
 	if len(opts.Entities) > 0 || mode == "plain" {
 		return c.SendMessage(ctx, target, chunk, opts)
 	}
@@ -225,6 +244,9 @@ func isEntityFormatRPCError(err error) bool {
 
 // EditMessage 编辑已发送消息的正文、实体或内联按钮（MESSAGE_NOT_MODIFIED 视为幂等成功）。
 func (c *Client) EditMessage(ctx context.Context, target any, messageID int, text string, opts SendOptions) error {
+	if c.noEmoji {
+		text, opts = cleanMessageEmoji(text, opts)
+	}
 	api := c.API()
 	if api == nil {
 		return errors.New("mtproto client not initialized")
@@ -235,23 +257,32 @@ func (c *Client) EditMessage(ctx context.Context, target any, messageID int, tex
 		return err
 	}
 
-	editText, entities := c.prepareTextAndEntities(ctx, text, opts.ParseMode, opts.Entities)
 	req := &tg.MessagesEditMessageRequest{
 		NoWebpage: opts.NoWebpage,
 		Peer:      peer,
 		ID:        messageID,
 	}
-	req.SetMessage(editText)
-	if markup := BuildInlineMarkup(opts.Buttons); markup != nil {
+	if text != "" || opts.Buttons == nil {
+		if c.richMessages {
+			req.SetRichMessage(c.inputRichMessage(ctx, text, opts))
+		} else {
+			editText, entities := c.prepareTextAndEntities(ctx, text, opts.ParseMode, opts.Entities)
+			req.SetMessage(editText)
+			if len(entities) > 0 {
+				req.SetEntities(entities)
+			}
+		}
+	}
+	if markup := BuildInlineMarkup(c.cleanButtons(opts.Buttons)); markup != nil {
 		req.SetReplyMarkup(markup)
-	} else if opts.Buttons != nil {
+	} else if opts.Buttons != nil && !c.richMessages {
 		req.SetReplyMarkup(&tg.ReplyInlineMarkup{})
 	}
-	if len(entities) > 0 {
-		req.SetEntities(entities)
-	}
-
 	upd, err := api.MessagesEditMessage(ctx, req)
+	if c.richMessages && req.RichMessage != nil && isRichFormattingError(err) && isRichMarkupMode(opts) {
+		req.SetRichMessage(plainRichMessage(richMarkupPlainText(text, opts.ParseMode)))
+		upd, err = api.MessagesEditMessage(ctx, req)
+	}
 	if err != nil {
 		if tgerr.Is(err, "MESSAGE_NOT_MODIFIED") {
 			return nil
@@ -378,10 +409,22 @@ func (c *Client) SendPoll(ctx context.Context, target any, opts PollSendOptions)
 	}
 
 	question := truncateRunes(strings.TrimSpace(opts.Question), 250)
+	if c.noEmoji {
+		question = strings.TrimSpace(StripEmoji(question))
+		if question == "" {
+			question = "Poll"
+		}
+	}
 	maxOpts := min(len(opts.Options), 10)
 	answers := make([]tg.PollAnswerClass, 0, maxOpts)
 	for i := 0; i < maxOpts; i++ {
 		optClean := truncateRunes(strings.TrimSpace(opts.Options[i]), 100)
+		if c.noEmoji {
+			optClean = strings.TrimSpace(StripEmoji(optClean))
+			if optClean == "" {
+				optClean = fmt.Sprintf("%d", i+1)
+			}
+		}
 		answers = append(answers, &tg.PollAnswer{
 			Text:   tg.TextWithEntities{Text: optClean},
 			Option: []byte{byte(i)},
@@ -407,7 +450,7 @@ func (c *Client) SendPoll(ctx context.Context, target any, opts PollSendOptions)
 	if opts.ReplyToMsgID > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: opts.ReplyToMsgID})
 	}
-	if markup := BuildInlineMarkup(opts.Buttons); markup != nil {
+	if markup := BuildInlineMarkup(c.cleanButtons(opts.Buttons)); markup != nil {
 		req.SetReplyMarkup(markup)
 	}
 
@@ -421,6 +464,9 @@ func (c *Client) SendPoll(ctx context.Context, target any, opts PollSendOptions)
 
 // AnswerCallback 响应内联键盘按钮回调查询。
 func (c *Client) AnswerCallback(ctx context.Context, queryID int64, message string, alert bool) error {
+	if c.noEmoji {
+		message = strings.TrimSpace(StripEmoji(message))
+	}
 	api := c.API()
 	if api == nil {
 		return errors.New("mtproto client not initialized")

@@ -149,12 +149,10 @@ func BuildLegacyChallenge(questionType string) (string, []string, int) {
 		indices := cryptoPerm(len(captchaWords), 4)
 		posIdx := cryptoIntn(4)
 		options := make([]string, 4)
-		labels := make([]string, 4)
 		for i, idx := range indices {
-			options[i] = captchaWords[idx].Emoji
-			labels[i] = captchaWords[idx].Emoji
+			options[i] = captchaWords[idx].Label
 		}
-		prompt := fmt.Sprintf("请点击下方第 %d 个图标（排列：%s）", posIdx+1, strings.Join(labels, " "))
+		prompt := fmt.Sprintf("请点击下方第 %d 个词语（排列：%s）", posIdx+1, strings.Join(options, " "))
 		return prompt, options, posIdx
 	}
 
@@ -163,7 +161,7 @@ func BuildLegacyChallenge(questionType string) (string, []string, int) {
 	target := captchaWords[indices[ansPos]]
 	options := make([]string, 4)
 	for i, idx := range indices {
-		options[i] = captchaWords[idx].Emoji + " " + captchaWords[idx].Label
+		options[i] = captchaWords[idx].Label
 	}
 	prompt := fmt.Sprintf("请在规定时间内点击包含「%s」的按钮完成入群验证：", target.Label)
 	return prompt, options, ansPos
@@ -253,7 +251,6 @@ func (vm *VerificationManager) StartVerification(
 	expiresAt := now.Add(time.Duration(grp.VerificationTimeout) * time.Second)
 	if rowStr(existing, "status") == "checking" {
 		sessionID = rowStr(existing, "id")
-		expiresAt = parseRowTimeOrNow(existing, "expires_at", expiresAt)
 	}
 	fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
 	if fullName == "" {
@@ -278,8 +275,6 @@ func (vm *VerificationManager) StartVerification(
 	}
 
 	status := "waiting"
-	var text string
-	var rows [][]mtproto.InlineButton
 
 	assistantUsername := ""
 	if grp.VerificationMode == "assistant" {
@@ -293,9 +288,7 @@ func (vm *VerificationManager) StartVerification(
 
 	if holdForAdmin {
 		status = "held"
-		text = fmt.Sprintf("⚠️ 新成员 %s 触发高风险入群拦截（风险分 %d），已冻结发言等待管理员人工审核。", fullName, score)
-		rows = vm.buildAdminButtons(sessionID, grp)
-	} else if grp.VerificationMode == "assistant" && assistantUsername != "" {
+	} else if grp.VerificationMode == "assistant" {
 		var secretBytes [12]byte
 		if _, err := rand.Read(secretBytes[:]); err != nil {
 			return err
@@ -315,11 +308,6 @@ func (vm *VerificationManager) StartVerification(
 			"actor_id":       user.ID,
 			"receipts":       []string{},
 		}
-		text = fmt.Sprintf("👋 欢迎 %s 加入本群！\n请在 %d 秒内点击下方按钮前往验证助手完成人机验证：", fullName, grp.VerificationTimeout)
-		rows = append(rows, []mtproto.InlineButton{
-			{Text: "🔐 前往助手完成验证", URL: fmt.Sprintf("https://t.me/%s?start=verify_%s%s", assistantUsername, sessionID, secret)},
-		})
-		rows = append(rows, vm.buildAdminButtons(sessionID, grp)...)
 	} else {
 		qType := "word"
 		if len(grp.VerificationQuestionTypes) > 0 {
@@ -331,12 +319,9 @@ func (vm *VerificationManager) StartVerification(
 			"options": options,
 			"answer":  answer,
 		}
-		text = fmt.Sprintf("👋 欢迎 %s！%s（剩余 %d 秒）", fullName, prompt, grp.VerificationTimeout)
-		rows = append(rows, legacyChallengeButtons(sessionID, options)...)
-		rows = append(rows, vm.buildAdminButtons(sessionID, grp)...)
 	}
 
-	admission := verificationAdmission{Status: status, Text: text, Buttons: rows}
+	admission := verificationAdmission{Status: status}
 	payload["go_admission"] = admission
 	session := guarddb.VerificationSessionSave{
 		ID:        sessionID,
@@ -362,27 +347,6 @@ func legacyChallengeButtons(sessionID string, options []string) [][]mtproto.Inli
 		rows = append(rows, row)
 	}
 	return rows
-}
-
-func (vm *VerificationManager) buildAdminButtons(sessionID string, grp GuardGroup) [][]mtproto.InlineButton {
-	var row []mtproto.InlineButton
-	for _, act := range grp.VerificationAdminActions {
-		switch act {
-		case "ban":
-			row = append(row, mtproto.InlineButton{Text: "🚫 封禁", Data: fmt.Sprintf("sg:v:a:%s:ban", sessionID)})
-		case "blacklist":
-			row = append(row, mtproto.InlineButton{Text: "⛔ 全局拉黑", Data: fmt.Sprintf("sg:v:a:%s:blacklist", sessionID)})
-		case "skip":
-			row = append(row, mtproto.InlineButton{Text: "✅ 直接放行", Data: fmt.Sprintf("sg:v:a:%s:skip", sessionID)})
-		}
-	}
-	if grp.KickButtonEnabled {
-		row = append(row, mtproto.InlineButton{Text: i18n.T("guard.verify_kick_button", nil), Data: fmt.Sprintf("sg:v:a:%s:kick", sessionID)})
-	}
-	if len(row) == 0 {
-		return nil
-	}
-	return [][]mtproto.InlineButton{row}
 }
 
 // HandleCallback 处理 sg:v:{sessionID}:{choice} 与管理员按钮 sg:v:a:{sessionID}:{ban|blacklist|skip}。
@@ -479,7 +443,7 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 				alert = true
 				return nil
 			}
-			toast = "✅ 验证通过，欢迎入群！"
+			toast = "验证通过，欢迎入群！"
 			return nil
 		}
 
@@ -487,7 +451,7 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 		if attempts >= grp.VerificationMaxAttempts {
 			cur["attempts"] = attempts
 			_ = vm.failSession(ctx, st, cur, grp, grp.VerificationWrongAction, "wrong_attempts")
-			toast = "❌ 验证错误次数已达上限"
+			toast = "验证错误次数已达上限"
 			alert = true
 			return nil
 		}
@@ -504,16 +468,14 @@ func (vm *VerificationManager) handleMemberAnswer(ctx context.Context, cb *mtpro
 			"answer":  newAns,
 		}
 		var msgIDPtr *int64
-		if mid := rowInt64(cur, "message_id"); mid > 0 {
-			msgIDPtr = &mid
-			rows := append(legacyChallengeButtons(sessionID, options), vm.buildAdminButtons(sessionID, grp)...)
-			_ = vm.svc.ops.EditMessage(ctx, chatID, int(mid),
-				fmt.Sprintf("👋 欢迎 %s！%s（错误 %d/%d）", rowStr(payload, "name"), prompt, attempts, grp.VerificationMaxAttempts),
-				mtproto.SendOptions{Buttons: rows, ParseMode: "plain"})
-		}
 		delete(payload, "answer_tokens")
 		delete(payload, "answer_context")
 		expAt := parseRowTimeOrNow(cur, "expires_at", time.Now().UTC().Add(60*time.Second))
+		if mid := rowInt64(cur, "message_id"); mid > 0 {
+			msgIDPtr = &mid
+			text, rows := verificationCard(sessionID, targetUserID, "waiting", payload, expAt, time.Now(), grp)
+			_ = vm.svc.ops.EditMessage(ctx, chatID, int(mid), text, mtproto.SendOptions{Buttons: rows, ParseMode: "plain", NoWebpage: true})
+		}
 		_ = st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
 			ID:        sessionID,
 			ChatID:    chatID,
@@ -765,6 +727,9 @@ func (vm *VerificationManager) ProcessDueSession(ctx context.Context, rawSess gu
 
 		if !guarddb.IsActiveVerificationStatus(status) {
 			return vm.finishVerificationLifecycle(ctx, st, cur)
+		}
+		if err := vm.refreshVerificationCard(ctx, st, cur, grp); err != nil {
+			return err
 		}
 		return vm.syncVerificationControls(ctx, st, cur)
 	})

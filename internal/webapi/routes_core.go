@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Sakura520222/Sakura-Bot/internal/botcmd"
 	"github.com/Sakura520222/Sakura-Bot/internal/config"
@@ -53,6 +52,7 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux) {
 
 	// 手动总结触发（/api/summaries/{channel...}/summarize）
 	mux.HandleFunc("POST /api/summaries/", s.handleSummarizeChannel)
+	mux.HandleFunc("GET /api/summaries/jobs/{id}", s.handleSummaryJob)
 
 	// UserBot 管理（/api/userbot/*）
 	mux.HandleFunc("GET /api/userbot/status", s.handleUserBotStatus)
@@ -471,12 +471,13 @@ func (s *Server) handleExecuteCommand(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSummarizeChannel(w http.ResponseWriter, r *http.Request) {
 	const prefix = "/api/summaries/"
 	const suffix = "/summarize"
-	rawPath := r.URL.Path
-	if !strings.HasPrefix(rawPath, prefix) || !strings.HasSuffix(rawPath, suffix) {
+	path, hasPrefix := strings.CutPrefix(r.URL.Path, prefix)
+	channel, hasSuffix := strings.CutSuffix(path, suffix)
+	if !hasPrefix || !hasSuffix {
 		writeHTTPError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	channelRef := strings.Trim(rawPath[len(prefix):len(rawPath)-len(suffix)], "/")
+	channelRef := strings.Trim(strings.TrimSpace(channel), "/")
 	if channelRef == "" {
 		writeHTTPError(w, http.StatusBadRequest, "频道参数不能为空")
 		return
@@ -486,26 +487,22 @@ func (s *Server) handleSummarizeChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	res := s.deps.SummaryService.GenerateChannelSummary(r.Context(), channelRef, false, "manual")
-	if !res.Success {
-		errMsg := res.Error
-		if errMsg == "" {
-			errMsg = "当前时间窗口内无新消息或生成失败"
+	if r.URL.Query().Get("async") == "1" {
+		if s.summaryJobs == nil {
+			writeHTTPError(w, http.StatusServiceUnavailable, "后台总结服务不可用")
+			return
 		}
-		writeEnvelopeFail(w, errMsg, nil)
+		job, err := s.summaryJobs.start(channelRef)
+		if err != nil {
+			writeHTTPError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"success": true, "data": job})
 		return
 	}
 
-	preview := res.SummaryText
-	if utf8.RuneCountInString(preview) > 300 {
-		preview = string([]rune(preview)[:300]) + "..."
-	}
-	writeEnvelopeOK(w, map[string]any{
-		"channel_name":    res.ChannelName,
-		"message_count":   res.MessageCount,
-		"summary_preview": preview,
-		"summary_length":  utf8.RuneCountInString(res.SummaryText),
-	}, "总结生成并推送成功")
+	res := s.deps.SummaryService.GenerateChannelSummary(r.Context(), channelRef, false, "manual")
+	writeJSON(w, http.StatusOK, summaryResponse(res))
 }
 
 // ────────────────────────────── /api/userbot/* ──────────────────────────────

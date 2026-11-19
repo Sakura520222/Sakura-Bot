@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
@@ -325,6 +326,17 @@ func (d *DirectBotAPI) SendMessage(ctx context.Context, token string, req Direct
 		MessageID int64 `json:"message_id"`
 	}
 	if err := d.CallMethod(ctx, token, "sendMessage", req, &res); err != nil {
+		return 0, err
+	}
+	return res.MessageID, nil
+}
+
+// SendRichMessage sends a native Rich Message through the selected bot token.
+func (d *DirectBotAPI) SendRichMessage(ctx context.Context, token string, req bot.SendRichMessageParams) (int64, error) {
+	var res struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if err := d.CallMethod(ctx, token, "sendRichMessage", req, &res); err != nil {
 		return 0, err
 	}
 	return res.MessageID, nil

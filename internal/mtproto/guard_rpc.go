@@ -796,45 +796,19 @@ func (g *GuardActions) SendOnce(
 	ctx context.Context,
 	targetID int64,
 	text string,
-	buttons [][]InlineButton,
+	opts SendOptions,
 	randomID int64,
-	entities []EntitySpan,
 ) (int, error) {
-	api, err := g.api()
-	if err != nil {
+	if _, err := g.api(); err != nil {
 		return 0, wrapActionError(err)
 	}
 
 	callCtx, cancel := g.withTimeout(ctx)
 	defer cancel()
-
-	peer, err := g.client.Peers().ResolveInputPeer(callCtx, api, targetID)
+	msgID, err := g.client.sendMessageWithID(callCtx, targetID, text, opts, randomID)
 	if err != nil {
 		return 0, wrapActionError(err)
 	}
-
-	_, tgEntities := g.client.prepareTextAndEntities(callCtx, text, "plain", entities)
-
-	req := &tg.MessagesSendMessageRequest{
-		NoWebpage: true,
-		Peer:      peer,
-		Message:   text,
-		RandomID:  randomID,
-	}
-	if markup := BuildInlineMarkup(buttons); markup != nil {
-		req.SetReplyMarkup(markup)
-	}
-	if len(tgEntities) > 0 {
-		req.SetEntities(tgEntities)
-	}
-
-	upd, err := api.MessagesSendMessage(callCtx, req)
-	if err != nil {
-		return 0, wrapActionError(err)
-	}
-	g.client.Peers().ApplyUpdates(upd)
-
-	msgID := extractSentMessageID(upd, randomID)
 	if msgID <= 0 {
 		return 0, errors.New("Telegram did not return a notification message ID")
 	}

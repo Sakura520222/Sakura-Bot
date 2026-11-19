@@ -219,6 +219,7 @@ const columns: DataTableColumns<ChannelInfo> = [
           size: "small",
           quaternary: true,
           type: "primary",
+          "aria-label": "生成总结",
           loading: generating.value.has(row.url),
           disabled: generating.value.has(row.url),
           onClick: () => handleGenerate(row.url),
@@ -307,6 +308,7 @@ async function handleAdd() {
 
 // ── 生成总结（行级 loading，互不阻塞） ─────────────────
 async function handleGenerate(channelUrl: string) {
+  if (generating.value.has(channelUrl)) return;
   generating.value.add(channelUrl);
   try {
     const res = await generateSummary(channelUrl);

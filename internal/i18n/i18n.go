@@ -21,9 +21,29 @@
 package i18n
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 )
+
+type languageKey struct{}
+
+// WithLanguage sets the language for a single interaction.
+func WithLanguage(ctx context.Context, lang string) context.Context {
+	return context.WithValue(ctx, languageKey{}, lang)
+}
+
+// LanguageFor returns the language of this interaction or the service default.
+func LanguageFor(ctx context.Context) string {
+	if lang, ok := ctx.Value(languageKey{}).(string); ok && dictFor(lang) != nil {
+		return lang
+	}
+	return GetLanguage()
+}
+
+func Text(ctx context.Context, key string, values map[string]string) string {
+	return TLang(LanguageFor(ctx), key, values)
+}
 
 // 支持的语言（对齐 I18nManager._supported_languages）。
 const (

@@ -18,7 +18,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Sakura520222/Sakura-Bot/internal/mtproto"
 	"github.com/Sakura520222/Sakura-Bot/internal/tg"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 // SubscriberRepo 抽象总结订阅推送所需的数据库能力（由 *db.Manager 实现）。
@@ -29,7 +32,7 @@ type SubscriberRepo interface {
 
 // BotAPISender 抽象 HTTP Bot API 消息发送（由 *tg.DirectBotAPI 实现）。
 type BotAPISender interface {
-	SendMessage(ctx context.Context, token string, req tg.DirectSendMessageParams) (int64, error)
+	SendRichMessage(ctx context.Context, token string, req bot.SendRichMessageParams) (int64, error)
 }
 
 // PushHandler 通过 QA Bot Token 向订阅了频道周报的用户推送新总结通知（对齐 mainbot_push_handler.py:MainBotPushHandler）。
@@ -79,19 +82,18 @@ func (p *PushHandler) NotifySummarySubscribers(ctx context.Context, channelID, c
 		return 0
 	}
 
-	preview := truncateRunes(summaryText, 300)
+	preview := truncateRunes(mtproto.StripEmoji(summaryText), 300)
 	msgText := fmt.Sprintf(
-		"📬 <b>新总结通知</b>\n\n频道 %s 有新的总结发布了！\n\n<b>总结预览</b>:\n%s\n\n💡 使用 <code>/mysubscriptions</code> 查看您的订阅\n💡 使用 <code>/unsubscribe &lt;频道链接&gt;</code> 取消订阅",
-		html.EscapeString(channelName),
-		html.EscapeString(preview),
+		"<h3>新总结通知</h3><p>频道 %s 发布了新总结。</p><p><b>总结预览</b><br>%s</p><p>使用 <code>/mysubscriptions</code> 查看订阅<br>使用 <code>/unsubscribe &lt;频道链接&gt;</code> 取消订阅</p>",
+		html.EscapeString(mtproto.StripEmoji(channelName)),
+		strings.ReplaceAll(html.EscapeString(preview), "\n", "<br>"),
 	)
 
 	successCount := 0
 	for _, uid := range subscribers {
-		_, serr := p.botAPI.SendMessage(ctx, token, tg.DirectSendMessageParams{
-			ChatID:    uid,
-			Text:      msgText,
-			ParseMode: "HTML",
+		_, serr := p.botAPI.SendRichMessage(ctx, token, bot.SendRichMessageParams{
+			ChatID:      uid,
+			RichMessage: models.InputRichMessage{HTML: msgText},
 		})
 		if serr != nil {
 			errLower := strings.ToLower(serr.Error())

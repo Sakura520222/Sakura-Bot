@@ -447,6 +447,30 @@ func (s *Store) AddSummary(
 	startTime, endTime, createdAt time.Time,
 	messageCount int,
 ) error {
+	return s.writeSummary(ctx, embedFn, summaryID, channelID, channelName, summaryText, startTime, endTime, createdAt, messageCount, false)
+}
+
+// UpsertSummary updates the derived index from the authoritative MySQL summary.
+func (s *Store) UpsertSummary(
+	ctx context.Context,
+	embedFn EmbedFunc,
+	summaryID int64,
+	channelID, channelName, summaryText string,
+	startTime, endTime, createdAt time.Time,
+	messageCount int,
+) error {
+	return s.writeSummary(ctx, embedFn, summaryID, channelID, channelName, summaryText, startTime, endTime, createdAt, messageCount, true)
+}
+
+func (s *Store) writeSummary(
+	ctx context.Context,
+	embedFn EmbedFunc,
+	summaryID int64,
+	channelID, channelName, summaryText string,
+	startTime, endTime, createdAt time.Time,
+	messageCount int,
+	upsert bool,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -485,7 +509,12 @@ func (s *Store) AddSummary(
 		meta["end_time"] = formatISOUTC(endTime)
 	}
 
-	return s.Insert(ctx, "summaries", strconv.FormatInt(summaryID, 10), vecs[0], summaryText, meta)
+	id := strconv.FormatInt(summaryID, 10)
+	if upsert {
+		_, err := s.UpsertMany(ctx, "summaries", []WriteRow{{ID: id, Vector: vecs[0], Document: summaryText, Metadata: meta}})
+		return err
+	}
+	return s.Insert(ctx, "summaries", id, vecs[0], summaryText, meta)
 }
 
 // isMessageChunkID 报告 id 是否为指定 parentID 的分块文档 ID（兼容 "#chunk_" 与历史 Python "#chunk="）。

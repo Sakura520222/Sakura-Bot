@@ -72,7 +72,8 @@ func runBot(
 	}
 	botOpts.PeerCache = botPeers
 	botOpts.Dispatcher = mtproto.NewDispatcher(botPeers, logger)
-	bot := mtproto.NewClient(mtproto.WithDispatcher(botOpts.Dispatcher), mtproto.WithPeerCache(botPeers), mtproto.WithLogger(logger))
+	bot := mtproto.NewClient(mtproto.WithDispatcher(botOpts.Dispatcher), mtproto.WithPeerCache(botPeers),
+		mtproto.WithLogger(logger), mtproto.WithRichMessages(), mtproto.WithNoEmoji())
 	botClient := func() mtproto.Messenger { return bot }
 
 	if userOpts.Enabled {
@@ -250,7 +251,7 @@ func runBot(
 	router := botcmd.NewRouter(botcmd.Deps{
 		Config: cfg, BotClient: botClient, UserBot: func() botcmd.UserBotController { return user },
 		SummaryService: summaries, TimeManager: timeManager, Scheduler: schedulerControl{tasks},
-		QAManager: assistantControl{assistant}, DB: manager, VectorClearer: vectorIndex, GuardHandler: guardService,
+		QAManager: assistantControl{assistant}, DB: manager, VectorClearer: vectorIndex, GuardHandler: guardService, WikiHandler: wikiRuntime,
 		TriggerRestart: restart, TriggerReleaseRestart: releaseRestart, TriggerShutdown: stop, WorkDir: ".", Logger: logger,
 	})
 
@@ -289,14 +290,18 @@ func runBot(
 	}
 	if cfg.WebUIEnabled() {
 		server := webapi.New(webapi.Deps{
-			Config: cfg, DB: manager, BotClient: bot, UserBot: user, CommandRouter: router,
+			Context: runCtx,
+			Config:  cfg, DB: manager, BotClient: bot, UserBot: user, CommandRouter: router,
 			Scheduler: tasks, SummaryService: summaries, TimeManager: timeManager, PollRegenerations: polls.RegenStore(),
 			Vector: retrieval, Embedding: embedding, Images: images, HistoryClient: historyClient,
 			Guard: guardService, QAManager: assistant, TriggerRestart: restart, StartedAt: startedAt, DirectBotAPI: directBot,
 			Wiki:   wikiRuntime,
 			Logger: logger, StaticDir: webStaticDir(),
 		})
-		group.Go(func() error { return serveWeb(runCtx, cfg, logger, server) })
+		group.Go(func() error {
+			defer server.StopSummaryJobs()
+			return serveWeb(runCtx, cfg, logger, server)
+		})
 	}
 
 	ready := make(chan struct{}, 1)
@@ -336,20 +341,32 @@ func runBot(
 			logger.Warn("注册主 Bot 命令菜单失败", "error", err)
 		}
 		notifyStartup(cmdCtx, bot, cfg, logger)
+		for _, language := range []struct{ telegram, app string }{{"zh", i18n.LangZhCN}, {"en", i18n.LangEnUS}} {
+			if err := bot.SetBotCommands(cmdCtx, language.telegram, botcmd.LocalizedBotCommands(language.app)); err != nil && runCtx.Err() == nil {
+				logger.Warn("注册主 Bot 本地化命令菜单失败", "language", language.telegram, "error", err)
+			}
+		}
 		return nil
 	})
 	return group.Wait()
 }
 
 func notifyStartup(ctx context.Context, bot mtproto.Messenger, cfg *config.Config, logger *slog.Logger) {
-	message := fmt.Sprintf("🤖 **Sakura-Bot v%s 已启动**\n\n频道总结、定时任务和管理服务已就绪。\n发送 /help 查看命令列表。", version.Version)
-	for _, id := range cfg.AdminIDs() {
+	message := fmt.Sprintf("**Sakura-Bot v%s 已启动**\n\n频道总结、定时任务和管理服务已就绪。\n发送 /help 查看命令列表。", version.Version)
+	admins := cfg.AdminIDs()
+	delivered := 0
+	defer func() {
+		logger.Info("主 Bot 启动通知发送完成", "delivered", delivered, "configured", len(admins))
+	}()
+	for _, id := range admins {
 		if ctx.Err() != nil {
 			return
 		}
-		_, err := bot.SendMessage(ctx, id, message, mtproto.SendOptions{ParseMode: "markdown", NoWebpage: true})
+		messageID, err := bot.SendMessage(ctx, id, message, mtproto.SendOptions{ParseMode: "markdown", NoWebpage: true})
 		if err != nil && ctx.Err() == nil {
 			logger.Warn("发送主 Bot 启动通知失败", "admin_id", id, "error", err)
+		} else if err == nil && messageID > 0 {
+			delivered++
 		}
 	}
 }

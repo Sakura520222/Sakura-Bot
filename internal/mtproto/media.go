@@ -253,7 +253,11 @@ func (c *Client) SendMedia(ctx context.Context, target any, item MediaUpload, op
 	if parseMode == "" {
 		parseMode = opts.ParseMode
 	}
-	caption, entities := c.prepareTextAndEntities(ctx, item.Caption, parseMode, opts.Entities)
+	captionText, explicit := item.Caption, opts.Entities
+	if c.noEmoji {
+		captionText, explicit = stripEmojiSpans(captionText, explicit)
+	}
+	caption, entities := c.prepareTextAndEntities(ctx, captionText, parseMode, explicit)
 
 	randomID := cryptoRandInt64()
 	req := &tg.MessagesSendMediaRequest{
@@ -266,7 +270,7 @@ func (c *Client) SendMedia(ctx context.Context, target any, item MediaUpload, op
 	if opts.ReplyToMsgID > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: opts.ReplyToMsgID})
 	}
-	if markup := BuildInlineMarkup(opts.Buttons); markup != nil {
+	if markup := BuildInlineMarkup(c.cleanButtons(opts.Buttons)); markup != nil {
 		req.SetReplyMarkup(markup)
 	}
 	if len(entities) > 0 {
@@ -334,7 +338,11 @@ func (c *Client) SendAlbum(ctx context.Context, target any, items []MediaUpload,
 		if i == 0 {
 			explicit = opts.Entities
 		}
-		caption, entities := c.prepareTextAndEntities(ctx, item.Caption, parseMode, explicit)
+		captionText := item.Caption
+		if c.noEmoji {
+			captionText, explicit = stripEmojiSpans(captionText, explicit)
+		}
+		caption, entities := c.prepareTextAndEntities(ctx, captionText, parseMode, explicit)
 
 		rid := cryptoRandInt64()
 		randomIDs = append(randomIDs, rid)

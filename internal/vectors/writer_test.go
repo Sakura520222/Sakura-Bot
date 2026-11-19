@@ -378,6 +378,12 @@ func TestHighLevelSummaryAndMultiChunkMessageLifecycle(t *testing.T) {
 	if err := store.AddSummary(ctx, deterministicEmbed, 77, "-1001", "测试频道", "重复总结", time.Time{}, time.Time{}, now, 1); !errors.Is(err, ErrDuplicateID) {
 		t.Fatalf("重复 AddSummary 期望 ErrDuplicateID, got %v", err)
 	}
+	if err := store.UpsertSummary(ctx, deterministicEmbed, 77, "-1002", "另一频道", "新总结", time.Time{}, time.Time{}, now, 2); err != nil {
+		t.Fatalf("覆盖旧总结索引失败: %v", err)
+	}
+	if doc, err := store.GetDocument(ctx, "summaries", "77"); err != nil || doc == nil || doc.Document != "新总结" {
+		t.Fatalf("索引仍指向旧总结: %+v, %v", doc, err)
+	}
 
 	// 3) UpsertMessages：长消息分 4+ 块 -> 编辑缩减为 2 块 -> 再编辑缩减为单块短消息，验证旧尾块被彻底删除。
 	longText := strings.Repeat("第一版长文内容段落测试 ", 180) + "TAIL_MARKER"

@@ -11,6 +11,7 @@
 package botcmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -48,29 +49,6 @@ const (
 	CmdConfigHelp       = "config_help"
 	CmdGuard            = "guard"
 )
-
-// ConfigHelpText 是配置菜单点击“配置用法”时发送的只读安全说明（对齐 mainbot_keyboards.py:CONFIG_HELP_TEXT）。
-const ConfigHelpText = `⚙️ **配置入口说明**
-
-以下配置类命令通常需要参数或多步输入，按钮不会直接执行危险操作。
-
-**AI 与提示词**
-/showprompt - 查看当前总结提示词
-/setprompt - 设置总结提示词
-/showpollprompt - 查看投票提示词
-/setpollprompt - 设置投票提示词
-/showaicfg - 查看 AI 配置
-/setaicfg - 设置 AI 配置
-
-**频道与定时**
-/showchannelschedule - 查看频道时间配置
-/setchannelschedule - 设置频道时间配置
-/deletechannelschedule - 删除频道时间配置
-/channelpoll - 查看频道投票配置
-/setchannelpoll - 设置频道投票配置
-/deletechannelpoll - 删除频道投票配置
-
-**提示**：如需修改配置，请发送对应命令并按提示操作。`
 
 // CategoryGroup 表示命令目录分组（对齐 core/bot_commands.py:BOT_COMMANDS）。
 type CategoryGroup struct {
@@ -241,7 +219,7 @@ func AllBotCommands() []mtproto.BotCommandDef {
 		total += len(g.Commands)
 	}
 	out := make([]mtproto.BotCommandDef, 0, total)
-	for _, g := range BotCommandGroups {
+	for _, g := range orderedCommandGroups() {
 		out = append(out, g.Commands...)
 	}
 	return out
@@ -279,22 +257,6 @@ func GenerateHelpText() string {
 	return strings.TrimSpace(b.String())
 }
 
-var menuTitles = map[string]string{
-	MenuMain:       "🌸 Sakura Bot 主菜单",
-	MenuBasic:      "📌 基础高频功能",
-	MenuQA:         "🤖 QA Bot 控制",
-	MenuForwarding: "🔁 频道转发功能",
-	MenuConfig:     "⚙️ 配置入口",
-}
-
-var menuDescriptions = map[string]string{
-	MenuMain:       "请选择要使用的功能分类：",
-	MenuBasic:      "选择常用功能。部分功能可能需要管理员权限。",
-	MenuQA:         "管理独立运行的 QA Bot。仅管理员可用。",
-	MenuForwarding: "查看频道转发状态、统计和帮助。",
-	MenuConfig:     "配置类功能入口。为避免误操作，写入类配置只展示用法提示。",
-}
-
 // BuildMenuCallback 构造不超过 64 字节的主 Bot 内联菜单回调字符串。
 func BuildMenuCallback(action, value string) string {
 	s := fmt.Sprintf("%s:%s:%s", MenuCallbackPrefix, action, value)
@@ -304,82 +266,10 @@ func BuildMenuCallback(action, value string) string {
 	return s
 }
 
-// BuildMenuText 返回指定菜单页标题与描述。
-func BuildMenuText(menu string) string {
-	title, ok := menuTitles[menu]
-	if !ok {
-		title = menuTitles[MenuMain]
-	}
-	desc, ok := menuDescriptions[menu]
-	if !ok {
-		desc = menuDescriptions[MenuMain]
-	}
-	return title + "\n\n" + desc
-}
+// BuildMenuText returns the main Bot menu text in the default language.
+func BuildMenuText(menu string) string { return localizedMenuText(context.Background(), menu) }
 
-// BuildMenuKeyboard 返回主 Bot 指定菜单页的内联按钮矩阵（对齐 mainbot_keyboards.py:build_mainbot_menu_keyboard）。
+// BuildMenuKeyboard returns the main Bot menu buttons in the default language.
 func BuildMenuKeyboard(menu string) [][]mtproto.InlineButton {
-	switch menu {
-	case MenuBasic:
-		return [][]mtproto.InlineButton{
-			{
-				{Text: "📝 立即总结", Data: BuildMenuCallback("cmd", CmdSummary)},
-				{Text: "📚 频道列表", Data: BuildMenuCallback("cmd", CmdChannels)},
-			},
-			{
-				{Text: "📋 历史总结", Data: BuildMenuCallback("cmd", CmdHistory)},
-				{Text: "📊 统计数据", Data: BuildMenuCallback("cmd", CmdStats)},
-			},
-			{{Text: "❓ 帮助", Data: BuildMenuCallback("cmd", CmdHelp)}},
-			{{Text: "⬅️ 返回主菜单", Data: BuildMenuCallback("menu", MenuMain)}},
-		}
-	case MenuQA:
-		return [][]mtproto.InlineButton{
-			{
-				{Text: "📊 QA 状态", Data: BuildMenuCallback("cmd", CmdQAStatus)},
-				{Text: "📈 QA 统计", Data: BuildMenuCallback("cmd", CmdQAStats)},
-			},
-			{
-				{Text: "▶️ 启动 QA", Data: BuildMenuCallback("cmd", CmdQAStart)},
-				{Text: "⏹ 停止 QA", Data: BuildMenuCallback("cmd", CmdQAStop)},
-			},
-			{{Text: "🔄 重启 QA", Data: BuildMenuCallback("cmd", CmdQARestart)}},
-			{{Text: "⬅️ 返回主菜单", Data: BuildMenuCallback("menu", MenuMain)}},
-		}
-	case MenuForwarding:
-		return [][]mtproto.InlineButton{
-			{
-				{Text: "📡 转发状态", Data: BuildMenuCallback("cmd", CmdForwardingStatus)},
-				{Text: "📊 转发统计", Data: BuildMenuCallback("cmd", CmdForwardingStats)},
-			},
-			{{Text: "📖 转发帮助", Data: BuildMenuCallback("cmd", CmdForwardingHelp)}},
-			{{Text: "⬅️ 返回主菜单", Data: BuildMenuCallback("menu", MenuMain)}},
-		}
-	case MenuConfig:
-		return [][]mtproto.InlineButton{
-			{
-				{Text: "🧠 查看提示词", Data: BuildMenuCallback("cmd", CmdShowPrompt)},
-				{Text: "🔧 AI 配置", Data: BuildMenuCallback("cmd", CmdShowAIConfig)},
-			},
-			{
-				{Text: "⏰ 定时配置", Data: BuildMenuCallback("cmd", CmdShowSchedule)},
-				{Text: "🗳 投票配置", Data: BuildMenuCallback("cmd", CmdShowPoll)},
-			},
-			{{Text: "📖 配置用法", Data: BuildMenuCallback("cmd", CmdConfigHelp)}},
-			{{Text: "⬅️ 返回主菜单", Data: BuildMenuCallback("menu", MenuMain)}},
-		}
-	default:
-		return [][]mtproto.InlineButton{
-			{
-				{Text: "📌 基础功能", Data: BuildMenuCallback("menu", MenuBasic)},
-				{Text: "🤖 QA 控制", Data: BuildMenuCallback("menu", MenuQA)},
-			},
-			{
-				{Text: "🔁 频道转发", Data: BuildMenuCallback("menu", MenuForwarding)},
-				{Text: "⚙️ 配置入口", Data: BuildMenuCallback("menu", MenuConfig)},
-			},
-			{{Text: "❓ 完整帮助", Data: BuildMenuCallback("cmd", CmdHelp)}},
-			{{Text: "🛡 Sakura Guard", Data: BuildMenuCallback("cmd", CmdGuard)}},
-		}
-	}
+	return localizedMenuKeyboard(context.Background(), menu, true)
 }

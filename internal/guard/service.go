@@ -1127,7 +1127,7 @@ func (s *Service) HandleParticipant(ctx context.Context, ev mtproto.ParticipantE
 			case protectionProtected:
 				return nil
 			case protectionUnknown:
-				return s.verification.queueVerificationCheck(ctx, st, ev.ChatID, user, freshGrp, token)
+				return s.verification.queueVerificationCheck(ctx, st, ev.ChatID, user.ID, freshGrp, token, true)
 			default:
 				return s.verification.processJoinedMember(ctx, st, ev.ChatID, user, freshGrp, token)
 			}

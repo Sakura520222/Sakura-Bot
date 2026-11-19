@@ -75,9 +75,7 @@ func bindMessages(
 		// Poll senders may be waiting for this exact discussion update.
 		polls.NotifyDiscussionMessage(msg)
 		queue.submit(ctx, msg.ChatID, func(ctx context.Context) {
-			if !wikiRuntime.HandleCommand(ctx, msg) {
-				router.HandleMessage(ctx, msg)
-			}
+			router.HandleMessage(ctx, msg)
 			welcomes.HandleDiscussionMessage(ctx, msg)
 			if userClient() == nil {
 				ragHandler.HandleIncomingMessage(ctx, msg)

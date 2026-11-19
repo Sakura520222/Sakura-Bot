@@ -265,16 +265,21 @@ func TestGuardActionsRPCsViaMockInvoker(t *testing.T) {
 	msgID, err := guard.SendOnce(
 		ctx,
 		adminID,
-		"审核通知正文",
-		[][]InlineButton{{{Text: "解封", Data: "sg:r:1:u:0"}}},
+		"<b>审核通知</b> <code>正文</code>",
+		SendOptions{ParseMode: "html", NoWebpage: true, Buttons: [][]InlineButton{{{Text: "解封", Data: "sg:r:1:u:0"}}}},
 		rndSend,
-		[]EntitySpan{{Kind: "bold", Offset: 0, Length: 4}},
 	)
 	if err != nil {
 		t.Fatalf("SendOnce failed: %v", err)
 	}
 	if msgID != 8881 || gotSendOnce == nil || gotSendOnce.RandomID != rndSend || !gotSendOnce.NoWebpage {
 		t.Fatalf("unexpected SendOnce behavior: id=%d req=%#v", msgID, gotSendOnce)
+	}
+	if gotSendOnce.Message != "审核通知 正文" || len(gotSendOnce.Entities) != 2 {
+		t.Fatalf("expected parsed HTML notification, got %q with %v", gotSendOnce.Message, gotSendOnce.Entities)
+	}
+	if bold, ok := gotSendOnce.Entities[0].(*tg.MessageEntityBold); !ok || bold.Offset != 0 || bold.Length != 4 {
+		t.Fatalf("unexpected bold entity: %v", gotSendOnce.Entities[0])
 	}
 
 	// 4. ForwardOnce

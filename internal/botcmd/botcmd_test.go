@@ -23,12 +23,14 @@ import (
 
 type fakeCmdMessenger struct {
 	mtproto.Messenger
-	sent   []string
-	edited []string
+	sent    []string
+	options []mtproto.SendOptions
+	edited  []string
 }
 
-func (m *fakeCmdMessenger) SendMessage(_ context.Context, _ any, text string, _ mtproto.SendOptions) (int, error) {
+func (m *fakeCmdMessenger) SendMessage(_ context.Context, _ any, text string, opts mtproto.SendOptions) (int, error) {
 	m.sent = append(m.sent, text)
+	m.options = append(m.options, opts)
 	return len(m.sent), nil
 }
 
@@ -48,17 +50,26 @@ func (m *fakeCmdMessenger) AnswerCallback(_ context.Context, _ int64, _ string, 
 
 func TestAllBotCommandsCountAndMenuBounds(t *testing.T) {
 	all := AllBotCommands()
-	if len(all) != 79 {
+	if len(all) != 79 || all[0].Command != "start" || all[1].Command != "help" {
 		t.Fatalf("expected 79 registered BotCommands, got %d", len(all))
 	}
-	for _, menu := range []string{MenuMain, MenuBasic, MenuQA, MenuForwarding, MenuConfig} {
+	commands := make(map[string]bool)
+	for _, menu := range append([]string{MenuMain, MenuBasic, MenuQA, MenuConfig}, menuOrder...) {
 		rows := BuildMenuKeyboard(menu)
 		for _, row := range rows {
 			for _, btn := range row {
 				if len(btn.Data) > MaxCallbackBytes {
 					t.Fatalf("menu %s button %q callback exceeded 64B: %q", menu, btn.Text, btn.Data)
 				}
+				if command, ok := strings.CutPrefix(btn.Data, "mainbot:cmd:"); ok {
+					commands[command] = true
+				}
 			}
+		}
+	}
+	for _, command := range all {
+		if !commands[command.Command] {
+			t.Errorf("%s has no menu button", command.Command)
 		}
 	}
 }
@@ -92,10 +103,41 @@ func TestAdminFailClosedFSMAndWebUIDangerGate(t *testing.T) {
 		t.Fatalf("non-admin must not mutate channels, got %v", cfg.Channels())
 	}
 
-	// 管理员通过三步 /setaicfg 修改 api_key，/skip base_url 保留原值，修改 model。
+	click := func(actor int64, action string) {
+		t.Helper()
+		for _, row := range bot.options[len(bot.options)-1].Buttons {
+			for _, button := range row {
+				if strings.HasPrefix(button.Data, "mainbot:"+action+":") {
+					if err := router.HandleMenuCallback(t.Context(), mtproto.CallbackEvent{
+						ChatID: 9001, SenderID: actor, MessageID: len(bot.sent), Data: []byte(button.Data),
+					}); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+			}
+		}
+		t.Fatalf("missing %s button", action)
+	}
+	router.HandleMessage(t.Context(), &mtproto.IncomingMessage{ID: 1, ChatID: 9001, SenderID: 9001, Text: "/start"})
+	if !strings.Contains(bot.sent[len(bot.sent)-1], "Choose your language") {
+		t.Fatal("first start did not ask for language")
+	}
+	click(9001, "language")
+	router.HandleMessage(t.Context(), &mtproto.IncomingMessage{ID: 2, ChatID: 9001, SenderID: 9001, Text: "/start"})
+	if strings.Contains(bot.sent[len(bot.sent)-1], "Choose your language") {
+		t.Fatal("start asked again after language was saved")
+	}
+
+	// 修改 API Key，点击保留 Base URL，然后输入模型名。
 	router.HandleMessage(context.Background(), &mtproto.IncomingMessage{ID: 2, ChatID: 9001, SenderID: 9001, Text: "/setaicfg"})
+	click(2002, "run")
+	if router.States().Mode(9001) != FSMNone {
+		t.Fatal("another user opened the settings wizard")
+	}
+	click(9001, "run")
 	router.HandleMessage(context.Background(), &mtproto.IncomingMessage{ID: 3, ChatID: 9001, SenderID: 9001, Text: "sk-new-key-123456"})
-	router.HandleMessage(context.Background(), &mtproto.IncomingMessage{ID: 4, ChatID: 9001, SenderID: 9001, Text: "/skip"})
+	click(9001, "skip")
 	router.HandleMessage(context.Background(), &mtproto.IncomingMessage{ID: 5, ChatID: 9001, SenderID: 9001, Text: "gemini-2.5-pro"})
 
 	eff := cfg.EffectiveAIConfig("summary")

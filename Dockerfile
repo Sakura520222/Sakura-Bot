@@ -31,6 +31,7 @@ COPY --from=go-builder /out/ /usr/local/bin/
 COPY --from=web-builder /web/dist /app/web/dist
 COPY data/prompt.txt data/poll_prompt.txt data/qa_persona.txt data/config.example.json /opt/sakura/defaults/
 COPY internal/guard/opencc/LICENSE internal/guard/opencc/NOTICE /app/third-party/opencc/
+COPY internal/mtproto/unicode.LICENSE /app/third-party/unicode/LICENSE
 COPY LICENSE VERSION CHANGELOG.md ./
 COPY docker-entrypoint.sh /usr/local/bin/sakura-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/sakura-entrypoint \

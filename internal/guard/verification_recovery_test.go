@@ -125,6 +125,67 @@ func (f *recoveryTelegram) DeleteMessages(_ context.Context, _ int64, list []int
 	return nil
 }
 
+type approvingBeforeMembership struct {
+	*fakeTelegramOps
+	approvals int
+}
+
+func (f *approvingBeforeMembership) AnswerJoinRequestQuery(_ context.Context, _ int64, action string, _ float64) error {
+	if action == "approve" {
+		f.approvals++
+	}
+	return nil
+}
+
+func (f *approvingBeforeMembership) Rights(context.Context, int64, int64) (mtproto.BannedRights, error) {
+	return mtproto.BannedRights{}, errors.New("USER_NOT_PARTICIPANT")
+}
+
+func TestMySQLApprovalQueuesVerificationBeforeMembershipIsVisible(t *testing.T) {
+	repo := isolatedGuardRepository(t)
+	ctx := t.Context()
+	const chat, user = int64(-1000000000200), int64(71)
+	ops := &approvingBeforeMembership{fakeTelegramOps: newFakeOps(9)}
+	svc := NewService(repo, nil, ops, nil, nil)
+	cfg := DefaultGuardConfig()
+	grp := DefaultGuardGroup()
+	grp.Enabled, grp.VerifyJoin, grp.NotificationEnabled = true, true, false
+	cfg.Groups[strconv.FormatInt(chat, 10)] = grp
+	svc.cfgPtr.Store(&cfg)
+	id := newUUIDHex()
+	err := repo.WithLock(ctx, user, func(st *guarddb.Store) error {
+		if err := st.CreateCase(ctx, guarddb.CaseInsert{
+			ID: id, EventKey: sha256Hex(id), ChatID: chat, UserID: user, Action: "approve", Status: "executing",
+			Payload: map[string]any{"join_request_query": map[string]any{"id": "123", "expires_at": time.Now().Add(time.Minute).Unix()}},
+		}); err != nil {
+			return err
+		}
+		row, err := st.Case(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := svc.ExecuteCase(ctx, st, row); err != nil {
+			return err
+		}
+		current, err := st.Case(ctx, id)
+		if err != nil {
+			return err
+		}
+		session, err := st.VerificationSession(ctx, chat, user)
+		if err != nil {
+			return err
+		}
+		if rowStr(current, "status") != "done" || rowStr(session, "status") != "checking" ||
+			rowStr(rowPayload(session), "join_token") != "request:"+id || rowBool(rowPayload(session), "recheck_join_rules") {
+			t.Fatalf("unexpected approval state %v with session %v", current, session)
+		}
+		return nil
+	})
+	if err != nil || ops.approvals != 1 {
+		t.Fatalf("approval was not recorded once: approvals=%d, error=%v", ops.approvals, err)
+	}
+}
+
 func TestMySQLLegacyAdminPendingResumesAfterTelegramFailure(t *testing.T) {
 	repo := isolatedGuardRepository(t)
 	ctx := t.Context()

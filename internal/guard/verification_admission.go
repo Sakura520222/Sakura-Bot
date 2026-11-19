@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -18,9 +17,7 @@ import (
 )
 
 type verificationAdmission struct {
-	Status  string                   `json:"status"`
-	Text    string                   `json:"text"`
-	Buttons [][]mtproto.InlineButton `json:"buttons"`
+	Status string `json:"status"`
 }
 
 func staleMembershipEvent(ev mtproto.ParticipantEvent, joinToken string) bool {
@@ -42,8 +39,8 @@ func staleMembershipEvent(ev mtproto.ParticipantEvent, joinToken string) bool {
 	return err == nil && qts > 0 && ev.QTS <= qts
 }
 
-func (vm *VerificationManager) queueVerificationCheck(ctx context.Context, st *guarddb.Store, chatID int64, user mtproto.ProfileSummary, grp GuardGroup, token string) error {
-	session, err := st.VerificationSession(ctx, chatID, user.ID)
+func (vm *VerificationManager) queueVerificationCheck(ctx context.Context, st *guarddb.Store, chatID, userID int64, grp GuardGroup, token string, recheckJoinRules bool) error {
+	session, err := st.VerificationSession(ctx, chatID, userID)
 	if err != nil {
 		return err
 	}
@@ -51,9 +48,9 @@ func (vm *VerificationManager) queueVerificationCheck(ctx context.Context, st *g
 		return nil
 	}
 	return st.SaveVerificationSession(ctx, guarddb.VerificationSessionSave{
-		ID: newUUIDHex(), ChatID: chatID, UserID: user.ID, Status: "checking",
+		ID: newUUIDHex(), ChatID: chatID, UserID: userID, Status: "checking",
 		ExpiresAt: time.Now().UTC().Add(time.Duration(grp.VerificationTimeout) * time.Second),
-		Payload:   map[string]any{"join_token": token, "recheck_join_rules": true, "lifecycle": true},
+		Payload:   map[string]any{"join_token": token, "recheck_join_rules": recheckJoinRules, "lifecycle": true},
 	})
 }
 
@@ -161,10 +158,6 @@ func (vm *VerificationManager) legacyVerificationAdmission(ctx context.Context, 
 	id := rowStr(row, "id")
 	chat := rowInt64(row, "chat_id")
 	grp := vm.svc.Group(chat)
-	name := rowStr(p, "name")
-	if name == "" {
-		name = strconv.FormatInt(rowInt64(row, "user_id"), 10)
-	}
 	admission := verificationAdmission{Status: "waiting"}
 	now := time.Now().UTC()
 	if !grp.Enabled || !grp.VerifyJoin || !now.Before(parseRowTimeOrNow(row, "expires_at", now)) {
@@ -174,7 +167,6 @@ func (vm *VerificationManager) legacyVerificationAdmission(ctx context.Context, 
 	if assistant, _ := p["assistant"].(map[string]any); assistant != nil {
 		if rowStr(assistant, "state") == "held" {
 			admission.Status = "held"
-			admission.Text = fmt.Sprintf("⚠️ %s 的入群验证需要管理员审核。", name)
 		} else {
 			botID := vm.ConfiguredAssistantID()
 			savedBot := rowInt64(assistant, "bot_id")
@@ -187,14 +179,10 @@ func (vm *VerificationManager) legacyVerificationAdmission(ctx context.Context, 
 			}
 			user := strings.TrimPrefix(rowStr(row, "username"), "@")
 			secret := rowStr(assistant, "secret")
-			if user == "" || !assistantReceipt.MatchString(secret) {
+			if !assistantReceipt.MatchString(secret) {
 				return verificationAdmission{}, GuardError("guard.verification_release_required")
 			}
 			assistant["bot_id"], assistant["username"] = botID, user
-			admission.Text = fmt.Sprintf("👋 欢迎 %s！请在截止前前往助手完成入群验证。", name)
-			admission.Buttons = [][]mtproto.InlineButton{{
-				{Text: "🔐 前往助手完成验证", URL: fmt.Sprintf("https://t.me/%s?start=verify_%s%s", user, id, secret)},
-			}}
 		}
 	} else {
 		question := rowStr(p, "question")
@@ -208,19 +196,11 @@ func (vm *VerificationManager) legacyVerificationAdmission(ctx context.Context, 
 		}
 		p["answer_context"] = sha256Hex(string(context))
 		tokens := make(map[string]any, len(options))
-		for start := 0; start < len(options); start += 2 {
-			buttons := make([]mtproto.InlineButton, 0, 2)
-			for _, value := range options[start:min(start+2, len(options))] {
-				token := newUUIDHex()[:24]
-				tokens[token] = value
-				buttons = append(buttons, mtproto.InlineButton{Text: strconv.FormatInt(value, 10), Data: "sg:v:" + id + ":a" + token})
-			}
-			admission.Buttons = append(admission.Buttons, buttons)
+		for _, value := range options {
+			tokens[newUUIDHex()[:24]] = value
 		}
 		p["answer_tokens"] = tokens
-		admission.Text = fmt.Sprintf("👋 欢迎 %s！请选择验证题答案：%s =", name, question)
 	}
-	admission.Buttons = append(admission.Buttons, vm.buildAdminButtons(id, grp)...)
 	return admission, nil
 }
 
@@ -288,8 +268,9 @@ func (vm *VerificationManager) applyVerificationAdmission(ctx context.Context, s
 	if err := st.SaveVerificationSession(ctx, session); err != nil {
 		return err
 	}
-	message, err := vm.svc.ops.SendOnce(ctx, session.ChatID, admission.Text, mtproto.SendOptions{
-		Buttons: admission.Buttons, NoWebpage: true, ParseMode: "plain",
+	text, buttons := verificationCard(session.ID, session.UserID, admission.Status, p, session.ExpiresAt, time.Now(), grp)
+	message, err := vm.svc.ops.SendOnce(ctx, session.ChatID, text, mtproto.SendOptions{
+		Buttons: buttons, NoWebpage: true, ParseMode: "plain",
 	}, mtproto.StableRandomID("verification:"+session.ID))
 	if err != nil {
 		return err
@@ -300,6 +281,7 @@ func (vm *VerificationManager) applyVerificationAdmission(ctx context.Context, s
 	mid := int64(message)
 	session.MessageID = &mid
 	session.Status = admission.Status
+	p["go_challenge_ui_version"] = verificationCardVersion
 	delete(p, "go_admission")
 	if err := st.SaveVerificationSession(ctx, session); err != nil {
 		return err

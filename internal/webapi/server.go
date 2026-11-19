@@ -29,6 +29,7 @@ import (
 
 // Deps contains the services owned by the main Bot process.
 type Deps struct {
+	Context                  context.Context
 	Config                   *config.Config
 	DB                       *db.Manager
 	BotClient                *mtproto.Client
@@ -65,6 +66,7 @@ type Server struct {
 	wikiPublicRL *IPRateLimiter
 	handler      http.Handler
 	startedAt    time.Time
+	summaryJobs  *summaryJobs
 }
 
 // New builds the handler for both the API and the Vue application.
@@ -91,8 +93,18 @@ func New(deps Deps) *Server {
 		wikiLoginRL:  NewIPRateLimiter(60, time.Minute, 4096),
 		wikiPublicRL: NewIPRateLimiter(120, time.Minute, 4096),
 	}
+	if deps.Context != nil && deps.SummaryService != nil {
+		s.summaryJobs = newSummaryJobs(deps.Context, deps.Logger, deps.SummaryService.GenerateChannelSummary)
+	}
 	s.handler = s.wrapMiddlewares(s.routes())
 	return s
+}
+
+// StopSummaryJobs cancels outstanding WebUI summaries and waits for the workers to exit.
+func (s *Server) StopSummaryJobs() {
+	if s.summaryJobs != nil {
+		s.summaryJobs.stop()
+	}
 }
 
 func (s *Server) routes() *http.ServeMux {
