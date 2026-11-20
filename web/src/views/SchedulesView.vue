@@ -1,32 +1,39 @@
 <template>
   <div class="schedules-page">
-    <!-- 统一页头：标题 + 一句话用途 + 主操作 -->
     <header class="page-head">
       <div>
         <h2 class="page-title">定时任务</h2>
         <p class="page-subtitle">管理频道自动总结计划与总结进度，保证每次总结从正确的位置继续。</p>
       </div>
-      <n-button type="primary" @click="openCreateSchedule">
-        <template #icon><component :is="PlusIcon" /></template>
+      <n-button type="primary" round @click="openCreateSchedule">
+        <template #icon><AddOutlined /></template>
         新建任务
       </n-button>
     </header>
 
-    <n-tabs type="line" animated>
+    <n-tabs class="schedule-tabs" type="line" animated>
       <!-- ==================== Tab 1：定时任务 ==================== -->
       <n-tab-pane name="schedules" :tab="`定时任务 (${schedulesCountLabel})`">
         <n-card class="panel-card" :bordered="true">
-          <!-- 工具栏：搜索 + 周期筛选 + 刷新 -->
-          <div class="page-toolbar">
-            <div class="toolbar-left">
-              <n-input v-model:value="scheduleSearch" class="toolbar-search" placeholder="搜索频道" clearable>
-                <template #prefix><component :is="SearchIcon" /></template>
-              </n-input>
-              <n-select v-model:value="scheduleFilter" class="toolbar-filter" :options="frequencyOptions" />
-            </div>
-            <n-button quaternary circle :loading="schedulesLoading" title="刷新" @click="loadSchedules">
-              <template #icon><component :is="RefreshIcon" /></template>
+          <div class="list-heading">
+            <h3>执行计划</h3>
+            <n-button
+              quaternary circle :loading="schedulesLoading" title="刷新"
+              aria-label="刷新定时任务" @click="loadSchedules"
+            >
+              <template #icon><RefreshOutlined /></template>
             </n-button>
+          </div>
+          <div class="list-filters">
+            <n-input
+              v-model:value="scheduleSearch"
+              :input-props="{ 'aria-label': '搜索频道' }"
+              placeholder="搜索频道"
+              clearable
+            >
+              <template #prefix><SearchOutlined /></template>
+            </n-input>
+            <n-select v-model:value="scheduleFilter" :options="frequencyOptions" aria-label="执行周期" />
           </div>
 
           <!-- 异步三态：首屏骨架屏 -->
@@ -57,16 +64,47 @@
               <span v-else class="empty-hint">换个关键词或调整周期筛选试试</span>
             </template>
           </n-empty>
-          <n-data-table
-            v-else
-            size="medium"
-            :columns="scheduleColumns"
-            :data="filteredSchedules"
-            :bordered="false"
-            :loading="schedulesLoading"
-            :row-key="(row: ScheduleInfo) => row.channel"
-            :scroll-x="720"
-          />
+          <ul v-else class="entry-list" role="list" aria-label="执行计划" :aria-busy="schedulesLoading">
+            <li v-for="schedule in filteredSchedules" :key="schedule.channel" class="entry-row">
+              <div class="entry-identity">
+                <span class="entry-icon" aria-hidden="true"><ScheduleOutlined /></span>
+                <div class="entry-copy">
+                  <strong>{{ getChannelName(schedule.channel) }}</strong>
+                  <span v-if="getChannelName(schedule.channel) !== schedule.channel" class="channel-url">
+                    {{ schedule.channel }}
+                  </span>
+                  <span>{{ describeCycle(schedule) }}</span>
+                </div>
+              </div>
+              <dl class="entry-details">
+                <div>
+                  <dt>下次运行</dt>
+                  <dd>{{ formatNextRun(schedule) }}</dd>
+                </div>
+              </dl>
+              <div class="row-actions">
+                <n-button
+                  size="small" quaternary type="primary"
+                  :aria-label="`编辑 ${getChannelName(schedule.channel)}`"
+                  @click="openEditSchedule(schedule)"
+                >
+                  编辑
+                </n-button>
+                <n-popconfirm @positive-click="removeSchedule(schedule.channel)">
+                  <template #trigger>
+                    <n-button
+                      size="small" quaternary type="error"
+                      :aria-label="`删除 ${getChannelName(schedule.channel)}`"
+                      :loading="deletingChannel === schedule.channel"
+                    >
+                      删除
+                    </n-button>
+                  </template>
+                  删除后 {{ getChannelName(schedule.channel) }} 将不再按计划自动总结，确定删除？
+                </n-popconfirm>
+              </div>
+            </li>
+          </ul>
         </n-card>
 
         <!-- 未配置定时任务的频道：点击标签即按默认配置快速创建 -->
@@ -76,43 +114,54 @@
             <span>{{ unscheduled.length }} 个频道还没有定时任务</span>
           </div>
           <p class="soft-desc">点击频道名称，按默认配置（每天 09:00）快速创建，创建后可随时调整。</p>
-          <n-space>
-            <n-tag
+          <div class="channel-shortcuts">
+            <n-button
               v-for="ch in unscheduled"
               :key="ch"
               size="small"
+              secondary
               round
-              class="cursor-pointer"
+              class="channel-option"
               @click="setupScheduleFor(ch)"
             >
               {{ getChannelName(ch) }}
-            </n-tag>
-          </n-space>
+            </n-button>
+          </div>
         </div>
       </n-tab-pane>
 
       <!-- ==================== Tab 2：总结进度记录 ==================== -->
       <n-tab-pane name="records" :tab="`总结进度 (${summaryCountLabel})`">
         <n-card class="panel-card" :bordered="true">
+          <div class="list-heading">
+            <h3>总结进度记录</h3>
+            <div class="list-actions">
+              <n-button
+                quaternary circle :loading="summaryTimesLoading" title="刷新"
+                aria-label="刷新总结进度" @click="loadSummaryTimes"
+              >
+                <template #icon><RefreshOutlined /></template>
+              </n-button>
+              <n-button type="primary" round @click="addSummaryTime">
+                <template #icon><AddOutlined /></template>
+                添加记录
+              </n-button>
+            </div>
+          </div>
           <p class="section-hint">
             这里维护 data/.last_summary_time.json，它决定每个频道下一次自动/手动总结从哪个时间点开始抓取消息；
             data/.poll_regenerations.json 是投票重生成运行时缓存，可在异常或数据污染时删除。
           </p>
 
-          <!-- 工具栏：搜索 + 刷新 + 添加记录 -->
-          <div class="page-toolbar">
-            <div class="toolbar-left">
-              <n-input v-model:value="recordSearch" class="toolbar-search" placeholder="搜索频道" clearable>
-                <template #prefix><component :is="SearchIcon" /></template>
-              </n-input>
-            </div>
-            <div class="toolbar-right">
-              <n-button quaternary circle :loading="summaryTimesLoading" title="刷新" @click="loadSummaryTimes">
-                <template #icon><component :is="RefreshIcon" /></template>
-              </n-button>
-              <n-button type="primary" @click="addSummaryTime">添加记录</n-button>
-            </div>
-          </div>
+          <n-input
+            v-model:value="recordSearch"
+            class="record-search"
+            :input-props="{ 'aria-label': '搜索频道' }"
+            placeholder="搜索频道"
+            clearable
+          >
+            <template #prefix><SearchOutlined /></template>
+          </n-input>
 
           <!-- 异步三态：首屏骨架屏 -->
           <div v-if="!summaryLoaded && summaryTimesLoading" class="skel">
@@ -140,16 +189,43 @@
               <span v-else class="empty-hint">换个关键词试试</span>
             </template>
           </n-empty>
-          <n-data-table
-            v-else
-            size="medium"
-            :columns="summaryTimeColumns"
-            :data="filteredSummaryTimes"
-            :bordered="false"
-            :loading="summaryTimesLoading"
-            :row-key="(row: LastSummaryTimeItem) => row.channel"
-            :scroll-x="760"
-          />
+          <ul v-else class="entry-list" role="list" aria-label="总结进度记录" :aria-busy="summaryTimesLoading">
+            <li v-for="record in filteredSummaryTimes" :key="record.channel" class="entry-row">
+              <div class="entry-identity">
+                <span class="entry-icon" aria-hidden="true"><StorageOutlined /></span>
+                <div class="entry-copy">
+                  <strong>{{ getChannelName(record.channel) }}</strong>
+                  <span>上次总结 · {{ formatDateTime(record.time) }}</span>
+                </div>
+              </div>
+              <dl class="entry-details">
+                <div><dt>总结</dt><dd>{{ idCount(record.summary_message_ids) }}</dd></div>
+                <div><dt>投票</dt><dd>{{ idCount(record.poll_message_ids) }}</dd></div>
+                <div><dt>按钮</dt><dd>{{ idCount(record.button_message_ids) }}</dd></div>
+              </dl>
+              <div class="row-actions">
+                <n-button
+                  size="small" quaternary type="primary"
+                  :aria-label="`编辑 ${getChannelName(record.channel)}`"
+                  @click="editSummaryTime(record)"
+                >
+                  编辑
+                </n-button>
+                <n-popconfirm @positive-click="removeSummaryTime(record.channel)">
+                  <template #trigger>
+                    <n-button
+                      size="small" quaternary type="error"
+                      :aria-label="`删除 ${getChannelName(record.channel)}`"
+                      :loading="deletingSummaryChannel === record.channel"
+                    >
+                      删除
+                    </n-button>
+                  </template>
+                  删除后 {{ getChannelName(record.channel) }} 下次总结可能回溯更长时间，确定删除？
+                </n-popconfirm>
+              </div>
+            </li>
+          </ul>
         </n-card>
 
         <!-- 危险操作独立分区：写明后果，二次确认后才执行 -->
@@ -190,8 +266,7 @@
         class="modal-form"
         :model="form"
         :rules="scheduleRules"
-        label-placement="left"
-        label-width="76"
+        label-placement="top"
       >
         <n-form-item label="频道" path="channel">
           <n-select
@@ -221,7 +296,7 @@
       <template #footer>
         <div class="modal-footer">
           <n-button quaternary @click="showScheduleModal = false">取消</n-button>
-          <n-button type="primary" :loading="savingSchedule" @click="handleSaveSchedule">确定</n-button>
+          <n-button type="primary" round :loading="savingSchedule" @click="handleSaveSchedule">保存</n-button>
         </div>
       </template>
     </n-modal>
@@ -238,8 +313,7 @@
         class="modal-form"
         :model="summaryTimeForm"
         :rules="summaryRules"
-        label-placement="left"
-        label-width="104"
+        label-placement="top"
       >
         <n-form-item label="频道" path="channel">
           <n-auto-complete
@@ -265,7 +339,7 @@
       <template #footer>
         <div class="modal-footer">
           <n-button quaternary @click="showSummaryTimeModal = false">取消</n-button>
-          <n-button type="primary" :loading="savingSummary" @click="handleSaveSummaryTime">确定</n-button>
+          <n-button type="primary" round :loading="savingSummary" @click="handleSaveSummaryTime">保存</n-button>
         </div>
       </template>
     </n-modal>
@@ -273,9 +347,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from "vue";
-import { NButton, NIcon, NPopconfirm, useMessage } from "naive-ui";
-import type { DataTableColumns, FormInst, FormRules } from "naive-ui";
+import { ref, computed, onMounted } from "vue";
+import { useMessage } from "naive-ui";
+import type { FormInst, FormRules } from "naive-ui";
 import {
   deleteAllLastSummaryTimes,
   deleteLastSummaryTime,
@@ -289,29 +363,10 @@ import {
   type LastSummaryTimeItem,
   type ScheduleInfo,
 } from "@/api/modules";
+import { AddOutlined, RefreshOutlined, ScheduleOutlined, SearchOutlined, StorageOutlined } from "@/components/icons";
 import { getChannelName } from "@/utils/formatters";
 
 const message = useMessage();
-
-// ── 本地图标（与 components/icons.ts 同款内联 SVG 方式，页面私有图标不进共享文件） ──
-function svgIcon(viewBox: string, pathD: string) {
-  return () =>
-    h(NIcon, null, {
-      default: () =>
-        h("svg", { viewBox, fill: "currentColor", width: "1em", height: "1em" }, [
-          h("path", { d: pathD }),
-        ]),
-    });
-}
-const PlusIcon = svgIcon("0 0 24 24", "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z");
-const SearchIcon = svgIcon(
-  "0 0 24 24",
-  "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
-);
-const RefreshIcon = svgIcon(
-  "0 0 24 24",
-  "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-8 8s3.57 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
-);
 
 // ── 定时任务数据与三态 ─────────────────────────────────
 const schedulesLoading = ref(false);
@@ -441,117 +496,12 @@ function formatDateTime(value: string) {
   return date.toLocaleString("zh-CN");
 }
 
-// ── 任务表格列 ─────────────────────────────────────────
 const deletingChannel = ref("");
-
-const scheduleColumns: DataTableColumns<ScheduleInfo> = [
-  {
-    title: "频道",
-    key: "channel",
-    render: (row) =>
-      h("div", { class: "channel-cell" }, [
-        h("span", { class: "channel-name" }, getChannelName(row.channel)),
-        h("span", { class: "channel-raw", title: row.channel }, row.channel),
-      ]),
-  },
-  {
-    title: "周期",
-    key: "cycle",
-    width: 210,
-    render: (row) => describeCycle(row),
-  },
-  {
-    title: "下次运行",
-    key: "next",
-    width: 150,
-    render: (row) => formatNextRun(row),
-  },
-  {
-    title: "操作",
-    key: "actions",
-    width: 150,
-    align: "right",
-    render: (row) => [
-      h(
-        NButton,
-        { size: "small", quaternary: true, type: "primary", onClick: () => openEditSchedule(row) },
-        () => "编辑"
-      ),
-      h(NPopconfirm, { onPositiveClick: () => removeSchedule(row.channel) }, {
-        trigger: () =>
-          h(
-            NButton,
-            { size: "small", quaternary: true, type: "error", loading: deletingChannel.value === row.channel },
-            () => "删除"
-          ),
-        default: () => `删除后 ${getChannelName(row.channel)} 将不再按计划自动总结，确定删除？`,
-      }),
-    ],
-  },
-];
-
-// ── 总结进度表格列 ─────────────────────────────────────
 const deletingSummaryChannel = ref("");
 
 function idCount(value: number[] | undefined) {
   return value?.length || 0;
 }
-
-const summaryTimeColumns: DataTableColumns<LastSummaryTimeItem> = [
-  {
-    title: "频道",
-    key: "channel",
-    minWidth: 160,
-    ellipsis: { tooltip: true },
-    render: (row) => getChannelName(row.channel),
-  },
-  {
-    title: "上次总结时间",
-    key: "time",
-    width: 190,
-    render: (row) => formatDateTime(row.time),
-  },
-  {
-    title: "总结",
-    key: "summary_message_ids",
-    width: 70,
-    render: (row) => idCount(row.summary_message_ids),
-  },
-  {
-    title: "投票",
-    key: "poll_message_ids",
-    width: 70,
-    render: (row) => idCount(row.poll_message_ids),
-  },
-  {
-    title: "按钮",
-    key: "button_message_ids",
-    width: 70,
-    render: (row) => idCount(row.button_message_ids),
-  },
-  {
-    title: "操作",
-    key: "actions",
-    width: 150,
-    align: "right",
-    render: (row) => [
-      h(
-        NButton,
-        { size: "small", quaternary: true, type: "primary", onClick: () => editSummaryTime(row) },
-        () => "编辑"
-      ),
-      h(NPopconfirm, { onPositiveClick: () => removeSummaryTime(row.channel) }, {
-        trigger: () =>
-          h(
-            NButton,
-            { size: "small", quaternary: true, type: "error", loading: deletingSummaryChannel.value === row.channel },
-            () => "删除"
-          ),
-        default: () => `删除后 ${getChannelName(row.channel)} 下次总结可能回溯更长时间，确定删除？`,
-      }),
-    ],
-  },
-];
 
 // ── 定时任务弹窗 ───────────────────────────────────────
 const showScheduleModal = ref(false);
@@ -813,94 +763,164 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 页头：标题 20px/650 + 副标题 + 右侧主操作 */
+.schedules-page {
+  container: schedules / inline-size;
+  min-width: 0;
+}
+
 .page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
 }
+
 .page-title {
-  font-size: 20px;
+  font-size: clamp(24px, 2.5cqi, 30px);
   font-weight: 650;
 }
+
 .page-subtitle {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--sb-text-2);
 }
 
-/* 列表工具栏：左搜索/筛选，右刷新；窄屏换行 */
-.page-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
+.schedule-tabs :deep(.n-tabs-pane-wrapper) {
   min-width: 0;
-  flex-wrap: wrap;
 }
-.toolbar-right {
+
+.list-heading,
+.list-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.toolbar-search {
-  width: 240px;
+
+.list-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
 }
-.toolbar-filter {
-  width: 140px;
+
+.list-heading h3 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.list-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 12rem);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.record-search {
+  width: min(100%, 26rem);
+  margin-bottom: 16px;
 }
 
 .panel-card :deep(.n-card__content) {
-  padding-top: 16px;
+  min-width: 0;
+  padding: clamp(14px, 2.7cqi, 24px);
 }
 
-/* 骨架屏与空态 */
 .skel {
   padding: 8px 0;
 }
+
 .table-empty {
   padding: 40px 0;
 }
+
 .empty-hint {
   font-size: 12px;
-  color: var(--sb-text-3);
+  color: var(--sb-text-2);
 }
 
-/* 频道单元格：名称 + 弱化原文 */
-.channel-cell {
+.entry-list {
+  list-style: none;
+  border-top: 1px solid var(--sb-border);
+}
+
+.entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 12rem) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+}
+
+.entry-row + .entry-row {
+  border-top: 1px solid var(--sb-border);
+}
+
+.entry-identity {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
-.channel-name {
-  font-weight: 600;
-}
-.channel-raw {
-  font-size: 12px;
-  color: var(--sb-text-3);
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+.entry-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--sb-radius);
+  background: var(--sb-accent-soft);
+  color: var(--sb-accent);
+  font-size: 18px;
 }
 
-/* 未配置频道提示卡：accent 弱化信息，不与错误混淆 */
+.entry-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.entry-copy strong {
+  font-weight: 650;
+}
+
+.entry-copy span,
+.entry-details dt {
+  font-size: 12px;
+  color: var(--sb-text-2);
+}
+
+.entry-copy .channel-url {
+  font-size: 11px;
+}
+
+.entry-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.entry-details div {
+  display: grid;
+  gap: 3px;
+}
+
+.entry-details dd {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .soft-card {
   border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  background: var(--sb-surface);
-  padding: 14px 16px;
+  border-radius: var(--sb-radius-l);
+  background: var(--sb-accent-soft);
+  padding: 16px;
 }
+
 .soft-head {
   display: flex;
   align-items: center;
@@ -922,15 +942,33 @@ onMounted(() => {
   color: var(--sb-text-2);
 }
 
-/* 记录分区说明 */
+.channel-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.channel-option {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  padding-block: 4px;
+}
+
+.channel-option :deep(.n-button__content) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .section-hint {
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--sb-text-2);
   margin-bottom: 12px;
+  overflow-wrap: anywhere;
 }
 
-/* 危险操作分区：error 弱化描边区分常规卡 */
 .danger-card {
   border-color: var(--sb-error-soft);
 }
@@ -951,28 +989,47 @@ onMounted(() => {
   color: var(--sb-text-2);
 }
 
-/* 弹窗：footer 左取消右确定；时间控件撑满 */
 .modal-form :deep(.n-time-picker),
 .modal-form :deep(.n-date-picker) {
   width: 100%;
 }
+
+.row-actions,
 .modal-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
-/* ≤760px：工具栏换行、搜索占满、危险区纵排 */
-@media (max-width: 760px) {
-  .page-toolbar {
-    flex-wrap: wrap;
+.modal-footer {
+  gap: 8px;
+}
+
+@container schedules (max-width: 640px) {
+  .entry-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
   }
-  .toolbar-search {
-    width: 100%;
+
+  .entry-identity {
+    grid-column: 1 / -1;
   }
+
   .danger-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@container schedules (max-width: 410px) {
+  .list-filters,
+  .entry-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row-actions .n-button {
+    min-height: 36px;
   }
 }
 </style>

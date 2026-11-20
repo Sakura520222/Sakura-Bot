@@ -13,6 +13,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -20,10 +21,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// testManager 准备集成测试环境：MYSQL_TEST_DSN 未设置则跳过
-// （设计 §15.2：本地可用一次性 MySQL 8，服务器指向测试库）。
-// DSN 规范化为 parseTime=true & loc=UTC（业务表时间列扫描依赖），
-// 并执行完整业务 DDL。
+// testManager 为每个集成测试创建独立的 MySQL 库。
+// 全局配额聚合和预留回收不能与并行测试共享数据。
 func testManager(t *testing.T) *Manager {
 	t.Helper()
 	dsn := os.Getenv("MYSQL_TEST_DSN")
@@ -31,14 +30,37 @@ func testManager(t *testing.T) *Manager {
 		t.Skip("MYSQL_TEST_DSN 未设置，跳过 MySQL 集成测试")
 	}
 
-	ctx := context.Background()
-	db, err := sql.Open("mysql", normalizeTestDSN(dsn))
+	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
-		t.Fatalf("打开测试库失败: %v", err)
+		t.Fatalf("解析 MySQL 测试 DSN 失败: %v", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	cfg.DBName, cfg.ParseTime, cfg.Loc = "", true, time.UTC
+	admin, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatalf("连接 MySQL 测试服务器失败: %v", err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	ctx := t.Context()
+	if err := admin.PingContext(ctx); err != nil {
 		t.Skipf("MySQL 测试库不可达: %v", err)
+	}
+
+	name := fmt.Sprintf("sakura_db_test_%d_%d", os.Getpid(), uniqueUserID())
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+name+"` CHARACTER SET utf8mb4"); err != nil {
+		t.Fatalf("创建隔离测试库失败: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(ctx, "DROP DATABASE `"+name+"`"); err != nil {
+			t.Errorf("清理隔离测试库失败: %v", err)
+		}
+	})
+
+	cfg.DBName = name
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatalf("打开隔离测试库失败: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -47,17 +69,6 @@ func testManager(t *testing.T) *Manager {
 		t.Fatalf("初始化业务表失败: %v", err)
 	}
 	return m
-}
-
-// normalizeTestDSN 强制测试 DSN 携带 parseTime=true & loc=UTC
-// （同时保证驱动已注册可用）。
-func normalizeTestDSN(dsn string) string {
-	if cfg, err := mysql.ParseDSN(dsn); err == nil {
-		cfg.ParseTime = true
-		cfg.Loc = time.UTC
-		return cfg.FormatDSN()
-	}
-	return dsn
 }
 
 // cleanupQuota 注册测试结束后清理指定用户的配额行。

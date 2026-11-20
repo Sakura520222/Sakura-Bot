@@ -1,6 +1,6 @@
 <template>
   <div class="wiki-admin-page">
-    <n-card size="small" class="wiki-toolbar">
+    <n-card ref="toolbar" size="small" class="wiki-toolbar">
       <div class="toolbar-row">
         <n-select
           :value="selected"
@@ -633,7 +633,7 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
-import { NPopconfirm } from "naive-ui";
+import { NPopconfirm, type NCard } from "naive-ui";
 import { useRoute, useRouter } from "vue-router";
 import {
   wikiAdmin,
@@ -760,6 +760,7 @@ const jobs = ref<Job[]>([]),
   editTitle = ref(""),
   editSlug = ref(""),
   editAlias = ref("");
+const toolbar = ref<InstanceType<typeof NCard>>();
 const draftWorkspace = ref<HTMLElement>();
 const draftReader = ref<HTMLElement>();
 const draftSearch = ref("");
@@ -1206,6 +1207,15 @@ function pageAction(rev: Revision, action: string) {
     wikiAdmin(`${root()}/pages/${rev.page_id}`, "POST", { action }),
   );
 }
+function scrollToDraftWorkspace() {
+  const workspace = draftWorkspace.value;
+  if (!workspace) return;
+  // 文档滚动区已预留顶栏高度，草稿区另留频道工具栏的位置。
+  const toolbarHeight = (toolbar.value?.$el as HTMLElement | undefined)?.offsetHeight ?? 0;
+  workspace.style.scrollMarginBlockStart = `${toolbarHeight + 12}px`;
+  workspace.scrollIntoView({ block: "start" });
+}
+
 async function previewRevision(rev: Revision) {
   const request = ++detailRequest;
   const owner = selected.value;
@@ -1218,7 +1228,7 @@ async function previewRevision(rev: Revision) {
   claimEdits.value = {};
   if (draftReader.value) draftReader.value.scrollTop = 0;
   if (window.matchMedia("(max-width: 800px)").matches) {
-    void nextTick(() => draftWorkspace.value?.scrollIntoView({ block: "start" }));
+    void nextTick(scrollToDraftWorkspace);
   }
   const query = draftJob.value ? `?job_id=${draftJob.value}` : "";
   try {
@@ -1296,7 +1306,7 @@ async function openFailedDrafts(job: string) {
   clearDraftPreview();
   tab.value = "review";
   await nextTick();
-  draftWorkspace.value?.scrollIntoView({ block: "start" });
+  scrollToDraftWorkspace();
 }
 function runDraftAction(action: string) {
   const row = previewRow.value;
@@ -1381,8 +1391,8 @@ onUnmounted(() => {
 }
 .wiki-toolbar {
   position: sticky;
-  top: 0;
-  z-index: 20;
+  top: var(--app-bar-height, 0px);
+  z-index: 10;
   box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
 }
 .toolbar-row {
@@ -1418,7 +1428,6 @@ onUnmounted(() => {
 .job-stats {
   margin: 16px 0;
 }
-.draft-workspace { scroll-margin-top: 100px; }
 .draft-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1535,9 +1544,6 @@ onUnmounted(() => {
   }
   .channel-picker {
     width: 100%;
-  }
-  .wiki-toolbar {
-    top: 0;
   }
 }
 </style>

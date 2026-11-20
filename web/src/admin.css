@@ -1,0 +1,83 @@
+/* 令牌定义在根元素，让弹到 body 的菜单和对话框也能使用管理端配色。 */
+html:has(.sakura-admin) {
+  --sb-bg: #f7f9fd;
+  --sb-surface: #ffffff;
+  --sb-surface-2: #eff3fa;
+  --sb-surface-3: #e6eaf2;
+  --sb-border: #dfe3eb;
+  --sb-border-strong: #74777f;
+  --sb-text: #191c20;
+  --sb-text-2: #44474e;
+  --sb-text-3: #5f636d;
+  --sb-accent: #0b57d0;
+  --sb-accent-hover: #084bb4;
+  --sb-accent-pressed: #073d92;
+  --sb-accent-soft: #e9f1ff;
+  --sb-on-accent: #ffffff;
+  --sb-accent-container: #d3e3fd;
+  --sb-on-accent-container: #041e49;
+  --sb-success: #146c2e;
+  --sb-success-soft: #e1f3e8;
+  --sb-warning: #785900;
+  --sb-warning-soft: #fff1d4;
+  --sb-error: #ba1a1a;
+  --sb-error-soft: #fce8e6;
+  --sb-radius-s: 8px;
+  --sb-radius: 16px;
+  --sb-radius-l: 20px;
+  --sb-radius-xl: 28px;
+  --sb-shadow-1: 0 1px 2px #12264814, 0 2px 5px #1226480a;
+  --sb-page-title-size: clamp(24px, 2.5vw, 32px);
+}
+
+html.dark:has(.sakura-admin) {
+  --sb-bg: #101318;
+  --sb-surface: #191d24;
+  --sb-surface-2: #1e2229;
+  --sb-surface-3: #282d36;
+  --sb-border: #363a43;
+  --sb-border-strong: #8e9099;
+  --sb-text: #e2e2e9;
+  --sb-text-2: #c4c6d0;
+  --sb-text-3: #a9aeb9;
+  --sb-accent: #a8c7fa;
+  --sb-accent-hover: #bfd5fc;
+  --sb-accent-pressed: #91b7f4;
+  --sb-accent-soft: #273750;
+  --sb-on-accent: #062e6f;
+  --sb-accent-container: #0842a0;
+  --sb-on-accent-container: #d3e3fd;
+  --sb-success: #a6d8ac;
+  --sb-success-soft: #203a2d;
+  --sb-warning: #f7d58a;
+  --sb-warning-soft: #483516;
+  --sb-error: #ffb4ab;
+  --sb-error-soft: #482626;
+  --sb-shadow-1: 0 1px 2px #0006, 0 2px 5px #0002;
+}
+
+.sakura-admin :is(.page-head, .page-header, .fw-header) :is(.page-title, .fw-title) {
+  font-size: var(--sb-page-title-size);
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sakura-admin :is(.page-head, .page-header, .fw-header) :is(.page-subtitle, .fw-subtitle) {
+  margin-block-start: 6px;
+  color: var(--sb-text-2);
+  line-height: 1.55;
+}
+
+.sakura-admin :is(.page-head, .page-header, .fw-header) > div {
+  min-width: 0;
+}
+
+html:has(.sakura-admin) .modal-responsive {
+  width: min(600px, calc(100vw - 32px)) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.sakura-admin) body { transition: none; }
+}

@@ -553,7 +553,7 @@ onMounted(loadCatalog);
 /* 目录卡：宽屏吸附在视口内滚动，长目录不会把执行面板顶走 */
 .catalog-panel {
   position: sticky;
-  top: 16px;
+  top: calc(var(--app-bar-height, 0px) + 16px);
 }
 .catalog-panel :deep(.n-card__content) {
   padding-top: 16px;

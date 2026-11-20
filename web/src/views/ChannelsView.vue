@@ -1,53 +1,37 @@
 <template>
   <div class="channels-page">
-    <!-- 统一页头：标题 + 一句话用途 + 右侧主操作（添加频道） -->
     <header class="page-head">
       <div>
         <h2 class="page-title">频道管理</h2>
         <p class="page-subtitle">管理机器人监控的频道，可随时生成总结或移除不再需要的频道。</p>
       </div>
-      <n-button type="primary" @click="openAddModal">
-        <template #icon>
-          <svg viewBox="0 0 24 24" class="icon" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12h14" />
-            <path d="M12 5v14" />
-          </svg>
-        </template>
+      <n-button type="primary" round @click="openAddModal">
+        <template #icon><AddOutlined /></template>
         添加频道
       </n-button>
     </header>
 
     <n-card class="panel-card" :bordered="true">
-      <!-- 工具栏：左搜索 + 配置筛选，右统计与刷新；窄屏自动换行 -->
-      <div class="page-toolbar">
-        <!-- 错误/未加载时没有可过滤的数据，隐藏搜索与筛选，避免无意义的可交互控件 -->
-        <div v-if="loaded && !loadError" class="toolbar-left">
-          <n-input v-model:value="search" class="toolbar-search" placeholder="搜索频道名称或 URL" clearable>
-            <template #prefix>
-              <svg viewBox="0 0 24 24" class="icon" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-            </template>
-          </n-input>
-          <n-select v-model:value="configFilter" class="toolbar-filter" :options="configFilterOptions" />
-        </div>
-        <div class="toolbar-right">
-          <span class="toolbar-stat">{{ statText }}</span>
+      <div class="list-heading">
+        <h3>监控频道</h3>
+        <div class="list-tools">
+          <span class="list-count" aria-live="polite">{{ statText }}</span>
           <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="loadChannels">
-            <template #icon>
-              <svg viewBox="0 0 24 24" class="icon" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                <path d="M8 16H3v5" />
-              </svg>
-            </template>
+            <template #icon><RefreshOutlined /></template>
           </n-button>
         </div>
+      </div>
+
+      <div v-if="loaded && !loadError" class="list-filters">
+        <n-input
+          v-model:value="search"
+          :input-props="{ 'aria-label': '搜索频道名称或 URL' }"
+          placeholder="搜索频道名称或 URL"
+          clearable
+        >
+          <template #prefix><SearchOutlined /></template>
+        </n-input>
+        <n-select v-model:value="configFilter" :options="configFilterOptions" aria-label="筛选频道配置" />
       </div>
 
       <!-- 异步三态：首屏骨架屏 -->
@@ -76,16 +60,62 @@
           <span v-else class="empty-hint">换个关键词或调整筛选条件试试</span>
         </template>
       </n-empty>
-      <n-data-table
-        v-else
-        size="small"
-        :columns="columns"
-        :data="filteredChannels"
-        :bordered="false"
-        :loading="loading"
-        :row-key="(row: ChannelInfo) => row.url"
-        :scroll-x="720"
-      />
+      <ul v-else class="channel-list" role="list" aria-label="监控频道" :aria-busy="loading">
+        <li v-for="channel in filteredChannels" :key="channel.url" class="channel-row">
+          <div class="channel-identity">
+            <span class="channel-icon" aria-hidden="true"><ChannelOutlined /></span>
+            <div class="channel-copy">
+              <strong class="channel-name">{{ getChannelName(channel.url) }}</strong>
+              <span v-if="getChannelName(channel.url) !== channel.url" class="channel-raw">{{ channel.url }}</span>
+            </div>
+          </div>
+          <dl class="channel-settings">
+            <div>
+              <dt>定时任务</dt>
+              <dd>
+                <n-tag :type="channel.has_schedule ? 'success' : 'default'" :bordered="false" round size="small">
+                  {{ channel.has_schedule ? "已配置" : "未配置" }}
+                </n-tag>
+              </dd>
+            </div>
+            <div>
+              <dt>投票设置</dt>
+              <dd>
+                <n-tag :type="channel.has_poll_settings ? 'success' : 'default'" :bordered="false" round size="small">
+                  {{ channel.has_poll_settings ? "已配置" : "未配置" }}
+                </n-tag>
+              </dd>
+            </div>
+          </dl>
+          <div class="row-actions">
+            <n-button
+              size="small"
+              quaternary
+              type="primary"
+              :aria-label="`生成总结 ${getChannelName(channel.url)}`"
+              :loading="generating.has(channel.url)"
+              :disabled="generating.has(channel.url)"
+              @click="handleGenerate(channel.url)"
+            >
+              生成总结
+            </n-button>
+            <n-popconfirm @positive-click="removeChannel(channel.url)">
+              <template #trigger>
+                <n-button
+                  size="small"
+                  quaternary
+                  type="error"
+                  :aria-label="`删除 ${getChannelName(channel.url)}`"
+                  :loading="deletingUrl === channel.url"
+                >
+                  删除
+                </n-button>
+              </template>
+              删除后 {{ getChannelName(channel.url) }} 将退出监控，其定时任务与投票设置会被一并清除，且不可恢复。确定删除？
+            </n-popconfirm>
+          </div>
+        </li>
+      </ul>
     </n-card>
 
     <!-- 添加频道弹窗：表单校验、仅成功才关闭，失败提示留在弹窗内 -->
@@ -105,14 +135,21 @@
         @keyup.enter="handleAdd"
       >
         <n-form-item label="频道 URL" path="url">
-          <n-input v-model:value="addForm.url" :placeholder="channelUrlPlaceholder" :disabled="saving" />
-          <template #feedback>支持 https://t.me/ 链接、@用户名或频道 ID，添加后立即纳入监控。</template>
+          <div class="channel-input">
+            <n-input
+              v-model:value="addForm.url"
+              :placeholder="channelUrlPlaceholder"
+              :input-props="{ 'aria-describedby': 'channel-url-hint' }"
+              :disabled="saving"
+            />
+            <p id="channel-url-hint">支持 https://t.me/ 链接、@用户名或频道 ID，添加后立即纳入监控。</p>
+          </div>
         </n-form-item>
       </n-form>
       <template #footer>
         <div class="modal-footer">
           <n-button quaternary :disabled="saving" @click="showAddModal = false">取消</n-button>
-          <n-button type="primary" :loading="saving" @click="handleAdd">确定</n-button>
+          <n-button type="primary" round :loading="saving" @click="handleAdd">添加</n-button>
         </div>
       </template>
     </n-modal>
@@ -120,10 +157,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from "vue";
-import { NButton, NPopconfirm, useMessage } from "naive-ui";
-import type { DataTableColumns, FormInst, FormRules } from "naive-ui";
+import { computed, onMounted, ref } from "vue";
+import { useMessage } from "naive-ui";
+import type { FormInst, FormRules } from "naive-ui";
 import { addChannel, deleteChannel, generateSummary, getChannels, type ChannelInfo } from "@/api/modules";
+import { AddOutlined, ChannelOutlined, RefreshOutlined, SearchOutlined } from "@/components/icons";
 import { getChannelName } from "@/utils/formatters";
 
 const message = useMessage();
@@ -172,79 +210,8 @@ const statText = computed(() => {
   return shown === total ? `共 ${total} 个频道` : `${shown} / ${total} 个频道`;
 });
 
-// ── 表格列：soft 徽标 + 名称/URL 双行单元格 + 右对齐操作列 ──
 const deletingUrl = ref("");
 const generating = ref<Set<string>>(new Set());
-
-// 状态徽标：soft 底 + 语义前景 + 小圆点药丸（布尔状态不用开关：此处是事实描述，不是可切换配置）
-function statusBadge(ok: boolean, okText: string, offText: string) {
-  return h(
-    "span",
-    { class: ["sb-badge", ok ? "sb-badge--ok" : "sb-badge--off"] },
-    [h("span", { class: "sb-badge-dot" }), ok ? okText : offText]
-  );
-}
-
-function channelCell(url: string) {
-  return h("div", { class: "channel-cell" }, [
-    h("span", { class: "channel-name" }, getChannelName(url)),
-    h("span", { class: "channel-raw", title: url }, url),
-  ]);
-}
-
-const columns: DataTableColumns<ChannelInfo> = [
-  { title: "#", key: "index", width: 56, render: (_row, index) => index + 1 },
-  { title: "频道", key: "url", minWidth: 200, render: (row) => channelCell(row.url) },
-  {
-    title: "定时任务",
-    key: "has_schedule",
-    width: 112,
-    render: (row) => statusBadge(row.has_schedule, "已配置", "未配置"),
-  },
-  {
-    title: "投票设置",
-    key: "has_poll_settings",
-    width: 112,
-    render: (row) => statusBadge(row.has_poll_settings, "已配置", "未配置"),
-  },
-  {
-    title: "操作",
-    key: "actions",
-    width: 200,
-    align: "right",
-    render: (row) => [
-      h(
-        NButton,
-        {
-          size: "small",
-          quaternary: true,
-          type: "primary",
-          "aria-label": "生成总结",
-          loading: generating.value.has(row.url),
-          disabled: generating.value.has(row.url),
-          onClick: () => handleGenerate(row.url),
-        },
-        () => "生成总结"
-      ),
-      // 危险操作：Popconfirm 二次确认，文案写明后果（任务与投票设置一并清除）
-      h(NPopconfirm, { onPositiveClick: () => removeChannel(row.url) }, {
-        trigger: () =>
-          h(
-            NButton,
-            {
-              size: "small",
-              quaternary: true,
-              type: "error",
-              loading: deletingUrl.value === row.url,
-            },
-            () => "删除"
-          ),
-        default: () =>
-          `删除后 ${getChannelName(row.url)} 将退出监控，其定时任务与投票设置会被一并清除，且不可恢复。确定删除？`,
-      }),
-    ],
-  },
-];
 
 // ── 数据加载 ───────────────────────────────────────────
 async function loadChannels() {
@@ -347,145 +314,195 @@ onMounted(loadChannels);
 </script>
 
 <style scoped>
-/* 页头：标题 20px/650 + 副标题 + 右侧主操作 */
+.channels-page {
+  container: channels / inline-size;
+  min-width: 0;
+}
+
 .page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
 }
+
 .page-title {
-  font-size: 20px;
+  font-size: clamp(24px, 2.5cqi, 30px);
   font-weight: 650;
 }
+
 .page-subtitle {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--sb-text-2);
 }
 
-/* 列表工具栏：左搜索/筛选，右统计与刷新；窄屏换行 */
-.page-toolbar {
+.list-heading,
+.list-tools {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.list-heading {
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 14px;
 }
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-  flex-wrap: wrap;
+
+.list-heading h3 {
+  font-size: 16px;
+  font-weight: 650;
 }
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.toolbar-search {
-  width: 240px;
-}
-.toolbar-filter {
-  width: 140px;
-}
-.toolbar-stat {
-  font-size: 12.5px;
+
+.list-count {
+  padding: 4px 10px;
+  border-radius: var(--sb-radius-pill);
+  background: var(--sb-surface-2);
+  font-size: 12px;
   color: var(--sb-text-2);
   white-space: nowrap;
 }
-.icon {
-  width: 16px;
-  height: 16px;
+
+.list-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 12rem);
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .panel-card :deep(.n-card__content) {
-  padding-top: 16px;
+  min-width: 0;
+  padding: clamp(14px, 2.7cqi, 24px);
 }
 
-/* 骨架屏与空态 */
 .skel {
   display: grid;
   gap: 10px;
   padding: 4px 0;
 }
+
 .table-empty {
   padding: 40px 0;
 }
+
 .empty-hint {
   font-size: 12px;
-  color: var(--sb-text-3);
-}
-
-/* 频道单元格：显示名 + 弱化原文，窄列内不撑破布局 */
-.channel-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.channel-name {
-  font-weight: 600;
-}
-.channel-raw {
-  font-size: 12px;
-  color: var(--sb-text-3);
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 状态徽标：soft 底 + 语义前景 + 小圆点药丸 */
-.sb-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 22px;
-  padding: 0 10px;
-  border-radius: var(--sb-radius-pill);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.sb-badge--ok {
-  background: var(--sb-success-soft);
-  color: var(--sb-success);
-}
-.sb-badge--off {
-  background: var(--sb-surface-2);
   color: var(--sb-text-2);
 }
-.sb-badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: none;
+
+.channel-list {
+  list-style: none;
+  border-top: 1px solid var(--sb-border);
 }
 
-/* 弹窗：footer 左取消右确定 */
+.channel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+}
+
+.channel-row + .channel-row {
+  border-top: 1px solid var(--sb-border);
+}
+
+.channel-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.channel-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--sb-radius);
+  background: var(--sb-accent-soft);
+  color: var(--sb-accent);
+  font-size: 18px;
+}
+
+.channel-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.channel-name {
+  font-weight: 650;
+}
+
+.channel-raw {
+  font-size: 12px;
+  color: var(--sb-text-2);
+}
+
+.channel-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.channel-settings div {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-settings dt {
+  font-size: 12px;
+  color: var(--sb-text-2);
+}
+
+.row-actions,
 .modal-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
-/* ≤760px：搜索/筛选占满一行，工具栏纵排换行 */
-@media (max-width: 760px) {
-  .page-toolbar {
-    flex-wrap: wrap;
+.channel-input {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.channel-input p {
+  color: var(--sb-text-2);
+  font-size: 12px;
+}
+
+.modal-footer {
+  gap: 8px;
+}
+
+@container channels (max-width: 640px) {
+  .channel-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
   }
-  .toolbar-search,
-  .toolbar-filter {
-    width: 100%;
+
+  .channel-identity {
+    grid-column: 1 / -1;
   }
-  .toolbar-right {
-    width: 100%;
-    justify-content: flex-end;
+}
+
+@container channels (max-width: 410px) {
+  .list-filters,
+  .channel-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row-actions .n-button {
+    min-height: 36px;
   }
 }
 </style>
