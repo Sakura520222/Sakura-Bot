@@ -408,7 +408,7 @@ func (r *Router) cmdChangelog(ctx context.Context, bot mtproto.Messenger, chatID
 
 func (r *Router) cmdUpdate(ctx context.Context, bot mtproto.Messenger, chatID int64, replyTo int, rawArgs string) {
 	check := strings.EqualFold(strings.TrimSpace(rawArgs), "check")
-	r.updateApplication(ctx, check, "telegram_command_update", func(result applicationUpdate) {
+	r.updateApplication(ctx, check, "telegram_command_update", chatID, func(result applicationUpdate) {
 		icon := "❌ "
 		if result.success {
 			icon = "✅ "

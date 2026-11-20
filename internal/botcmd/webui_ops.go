@@ -520,7 +520,7 @@ func (r *Router) runWebUIOp(ctx context.Context, op string, params map[string]an
 
 	case "update":
 		var result applicationUpdate
-		r.updateApplication(ctx, false, "webui_command_update", func(prepared applicationUpdate) {
+		r.updateApplication(ctx, false, "webui_command_update", 0, func(prepared applicationUpdate) {
 			result = prepared
 		})
 		data := map[string]any{}

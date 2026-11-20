@@ -11,11 +11,13 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ImageLayerPrefixes 定义触及编译后二进制或前端/容器镜像层的路径前缀。
@@ -62,6 +64,112 @@ func RequestImageUpdate(dataDir string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dataDir, ".image_update_request"), []byte("requested\n"), 0o644)
+}
+
+// ImageUpdatePending 记录 /update 的发起对话，供部署结束后的回报路由使用。
+type ImageUpdatePending struct {
+	ChatID      int64
+	RequestedAt time.Time
+}
+
+// ImageDeployResult 是宿主机部署器在部署结束后写入 data/.image_deploy_result 的结果。
+type ImageDeployResult struct {
+	Status     string // "ok" 或 "failed"
+	ExitCode   int
+	Revision   string
+	FinishedAt time.Time
+}
+
+const (
+	imageUpdatePendingFile = ".image_update_pending"
+	imageDeployResultFile  = ".image_deploy_result"
+)
+
+func imageUpdateStatePath(dataDir, name string) string {
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	return filepath.Join(dataDir, name)
+}
+
+// SaveImageUpdatePending 写入 data/.image_update_pending，记录等待部署回报的对话，
+// 返回本次请求时间（用于过滤上一轮部署遗留的陈旧结果）。
+func SaveImageUpdatePending(dataDir string, chatID int64) (time.Time, error) {
+	requestedAt := time.Now().UTC()
+	path := imageUpdateStatePath(dataDir, imageUpdatePendingFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return time.Time{}, err
+	}
+	content := "chat_id=" + strconv.FormatInt(chatID, 10) +
+		"\nrequested_at=" + requestedAt.Format(time.RFC3339) + "\n"
+	return requestedAt, os.WriteFile(path, []byte(content), 0o644)
+}
+
+// ReadImageUpdatePending 读取待回报记录；文件不存在时返回 (nil, nil)。
+func ReadImageUpdatePending(dataDir string) (*ImageUpdatePending, error) {
+	raw, err := os.ReadFile(imageUpdateStatePath(dataDir, imageUpdatePendingFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	pending := &ImageUpdatePending{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "chat_id":
+			pending.ChatID, _ = strconv.ParseInt(value, 10, 64)
+		case "requested_at":
+			pending.RequestedAt, _ = time.Parse(time.RFC3339, value)
+		}
+	}
+	return pending, nil
+}
+
+// ClearImageUpdatePending 删除待回报记录（幂等）。
+func ClearImageUpdatePending(dataDir string) {
+	_ = os.Remove(imageUpdateStatePath(dataDir, imageUpdatePendingFile))
+}
+
+// ReadImageDeployResult 解析宿主机部署器写入的 key=value 部署结果；
+// 文件不存在时返回 (nil, nil)。
+func ReadImageDeployResult(dataDir string) (*ImageDeployResult, error) {
+	raw, err := os.ReadFile(imageUpdateStatePath(dataDir, imageDeployResultFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := &ImageDeployResult{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "status":
+			result.Status = value
+		case "exit_code":
+			result.ExitCode, _ = strconv.Atoi(value)
+		case "revision":
+			result.Revision = value
+		case "finished_at":
+			result.FinishedAt, _ = time.Parse(time.RFC3339, value)
+		}
+	}
+	return result, nil
+}
+
+// ClearImageDeployResult 删除部署结果文件（幂等）。
+func ClearImageDeployResult(dataDir string) {
+	_ = os.Remove(imageUpdateStatePath(dataDir, imageDeployResultFile))
 }
 
 // AcquirePIDFile 创建单实例 PID 文件锁并返回释放闭包。

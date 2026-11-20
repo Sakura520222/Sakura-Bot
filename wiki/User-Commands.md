@@ -100,7 +100,7 @@
 
 ### 一键更新 /update
 
-- **Docker 部署**时，确认更新会向已安装的宿主机部署器提交请求。宿主机运行更新脚本，快进同步源码并拉取对应镜像。查看 `logs/image-deploy.log` 确认部署结果。也可在宿主机直接运行 `bash scripts/deploy.sh`。
+- **Docker 部署**时，确认更新会向已安装的宿主机部署器提交请求。宿主机运行更新脚本，快进同步源码并拉取对应镜像，部署结果会自动回报到发起更新的对话；完整日志在宿主机 `logs/image-deploy.log`。若提示未检测到宿主机部署器，先在宿主机运行 `bash deploy/install-deployer.sh` 安装。也可在宿主机直接运行 `bash scripts/deploy.sh` 手动部署。
 - **本地源码运行**时，`/update check` 打开检查 Git 上游状态的操作。确认 `/update` 后快进更新源码，重新构建两个 Go 程序和 WebUI。构建成功才切换进程。
 - **发行附件**通过更换附件目录和对应镜像更新。 [附件安装与更新](../docs/release-archives.md)
 

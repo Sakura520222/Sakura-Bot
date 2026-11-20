@@ -26,7 +26,7 @@ type applicationUpdate struct {
 	staticDir  string
 }
 
-func (r *Router) updateApplication(ctx context.Context, check bool, reason string, reply func(applicationUpdate)) {
+func (r *Router) updateApplication(ctx context.Context, check bool, reason string, chatID int64, reply func(applicationUpdate)) {
 	if !r.updateMu.TryLock() {
 		reply(applicationUpdate{message: "已有更新操作正在运行"})
 		return
@@ -38,20 +38,20 @@ func (r *Router) updateApplication(ctx context.Context, check bool, reason strin
 	}
 	updateCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	outcome := r.prepareApplicationUpdate(updateCtx, check)
+	outcome := r.prepareApplicationUpdate(updateCtx, check, chatID)
 	reply(outcome)
 	if outcome.executable != "" {
 		r.deps.TriggerReleaseRestart(reason, outcome.executable, outcome.staticDir)
 	}
 }
 
-func (r *Router) prepareApplicationUpdate(ctx context.Context, check bool) applicationUpdate {
+func (r *Router) prepareApplicationUpdate(ctx context.Context, check bool, chatID int64) applicationUpdate {
 	workDir := r.deps.WorkDir
 	if workDir == "" {
 		workDir = "."
 	}
 	if process.IsDocker() {
-		return r.requestDockerUpdate(workDir, check)
+		return r.requestDockerUpdate(workDir, check, chatID)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".git")); err != nil {
 		return applicationUpdate{message: "当前安装没有 Git 工作区，请通过发布附件或部署脚本更新"}
@@ -78,7 +78,7 @@ func (r *Router) prepareApplicationUpdate(ctx context.Context, check bool) appli
 	}
 }
 
-func (r *Router) requestDockerUpdate(workDir string, check bool) applicationUpdate {
+func (r *Router) requestDockerUpdate(workDir string, check bool, chatID int64) applicationUpdate {
 	if check {
 		return applicationUpdate{message: "容器内无法查询宿主机更新状态，请在宿主机检查 Git 上游和镜像"}
 	}
@@ -90,13 +90,26 @@ func (r *Router) requestDockerUpdate(workDir string, check bool) applicationUpda
 		dataDir = filepath.Join(workDir, dataDir)
 	}
 	if !process.DeployerInstalled(dataDir) {
-		return applicationUpdate{message: "未检测到宿主机部署器，请在宿主机运行 bash scripts/deploy.sh"}
+		return applicationUpdate{message: "未检测到宿主机部署器，请在宿主机运行 bash deploy/install-deployer.sh 安装"}
+	}
+	requestedAt := time.Time{}
+	if chatID != 0 {
+		var err error
+		requestedAt, err = process.SaveImageUpdatePending(dataDir, chatID)
+		if err != nil {
+			r.deps.Logger.Error("记录部署回报目标失败", "error", err)
+			return applicationUpdate{message: "记录部署回报目标失败，请检查 data 目录权限"}
+		}
 	}
 	if err := process.RequestImageUpdate(dataDir); err != nil {
+		if chatID != 0 {
+			process.ClearImageUpdatePending(dataDir)
+		}
 		r.deps.Logger.Error("提交宿主机更新请求失败", "error", err)
 		return applicationUpdate{message: "提交宿主机更新请求失败，请检查 data 目录权限"}
 	}
-	return applicationUpdate{success: true, message: "已提交宿主机部署请求，请在 logs/image-deploy.log 查看结果"}
+	r.watchImageDeployResult(dataDir, chatID, requestedAt)
+	return applicationUpdate{success: true, message: "已提交宿主机部署请求，部署器拉取镜像并重建容器后会在这里汇报结果，期间服务可能短暂中断"}
 }
 
 func (r *Router) checkGitUpdate(ctx context.Context, workDir string) applicationUpdate {

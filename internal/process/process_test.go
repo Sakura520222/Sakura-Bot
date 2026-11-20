@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFrontendFingerprintAndPrepareFromImageCache(t *testing.T) {
@@ -98,5 +99,56 @@ func TestImageUpdateAndPIDLock(t *testing.T) {
 	release()
 	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
 		t.Fatal("expected pidFile removed on release")
+	}
+}
+
+func TestImageUpdatePendingRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	if pending, err := ReadImageUpdatePending(dir); err != nil || pending != nil {
+		t.Fatalf("missing pending file must read as (nil, nil): %+v, %v", pending, err)
+	}
+	requestedAt, err := SaveImageUpdatePending(dir, 4242)
+	if err != nil {
+		t.Fatalf("SaveImageUpdatePending: %v", err)
+	}
+	if requestedAt.IsZero() {
+		t.Fatal("SaveImageUpdatePending returned zero time")
+	}
+	pending, err := ReadImageUpdatePending(dir)
+	if err != nil || pending == nil || pending.ChatID != 4242 {
+		t.Fatalf("unexpected pending: %+v, %v", pending, err)
+	}
+	// RFC3339 秒级精度，允许 1 秒内的舍入误差。
+	if d := pending.RequestedAt.Sub(requestedAt); d < -time.Second || d > time.Second {
+		t.Fatalf("requested_at drift: saved=%v read=%v", requestedAt, pending.RequestedAt)
+	}
+	ClearImageUpdatePending(dir)
+	if pending, err := ReadImageUpdatePending(dir); err != nil || pending != nil {
+		t.Fatalf("cleared pending must read as (nil, nil): %+v, %v", pending, err)
+	}
+}
+
+func TestImageDeployResultParsing(t *testing.T) {
+	dir := t.TempDir()
+	if result, err := ReadImageDeployResult(dir); err != nil || result != nil {
+		t.Fatalf("missing result file must read as (nil, nil): %+v, %v", result, err)
+	}
+	content := "status=failed\nexit_code=3\nrevision=0123456789abcdef\nfinished_at=2026-11-20T06:00:00Z\n"
+	if err := os.WriteFile(filepath.Join(dir, imageDeployResultFile), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ReadImageDeployResult(dir)
+	if err != nil || result == nil {
+		t.Fatalf("ReadImageDeployResult: %+v, %v", result, err)
+	}
+	if result.Status != "failed" || result.ExitCode != 3 || result.Revision != "0123456789abcdef" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if !result.FinishedAt.Equal(time.Date(2026, 11, 20, 6, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected finished_at: %v", result.FinishedAt)
+	}
+	ClearImageDeployResult(dir)
+	if result, err := ReadImageDeployResult(dir); err != nil || result != nil {
+		t.Fatalf("cleared result must read as (nil, nil): %+v, %v", result, err)
 	}
 }
