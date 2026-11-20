@@ -45,7 +45,7 @@ docker compose up -d --no-build
 
 `docker compose ps` 显示容器与健康状态。启用 WebUI 时，访问 `/api/health` 检查 HTTP 服务，访问 `/login` 验证页面资源，再以管理员身份核对频道、调度、转发、Guard、Wiki 和助手状态。保留原有 Telegram Token 时，更新前停止旧容器以避免两个进程争抢更新。
 
-使用 systemd 的 Git 克隆部署可通过 `bash deploy/install-deployer.sh` 启用宿主机部署器。Bot 的 `/update` 命令提交部署请求，宿主机执行 `scripts/deploy.sh`，日志写入 `logs/image-deploy.log`。也可以在宿主机手动运行更新脚本。
+使用 systemd 的 Git 克隆部署可通过 `bash deploy/install-deployer.sh` 启用宿主机部署器。Bot 的 `/update` 命令提交部署请求，宿主机执行 `scripts/deploy.sh`，日志写入 `logs/image-deploy.log`。部署结束后，部署器单元把结果写入 `data/.image_deploy_result`，由容器内的 Bot 回报到发起 `/update` 的对话：容器被重建时由新进程的启动钩子回报，版本无变化或部署失败时由原进程回报。也可以在宿主机手动运行更新脚本。
 
 本地源码运行时，`/update check` 查询 Git 上游，`/update` 快进同步代码并重新构建两个程序和 WebUI。构建产物写入 `bin/.updates/`，成功后才切换进程。
 

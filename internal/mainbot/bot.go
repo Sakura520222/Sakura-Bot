@@ -346,6 +346,10 @@ func runBot(
 				logger.Warn("注册主 Bot 本地化命令菜单失败", "language", language.telegram, "error", err)
 			}
 		}
+		// 部署重建后的新进程：回报上一次 /update 的宿主机部署结果（无记录时立即返回）。
+		reportCtx, reportCancel := context.WithTimeout(runCtx, 2*time.Minute)
+		botcmd.ReportPendingImageDeploy(reportCtx, bot, cfg.DataDirectory(), logger)
+		reportCancel()
 		return nil
 	})
 	return group.Wait()

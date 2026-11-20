@@ -10,6 +10,14 @@ fi
 
 git pull --ff-only
 
+# 已安装过宿主机部署器时，随仓库模板刷新 systemd 单元（幂等），避免单元文件
+# 与仓库实现漂移后 /update 的回报协议失效。
+if systemctl list-unit-files 2>/dev/null | grep -q '^sakura-image-deploy\.'; then
+    if ! bash deploy/install-deployer.sh >/dev/null 2>&1; then
+        printf '%s\n' '警告：刷新宿主机部署器单元失败，继续部署。' >&2
+    fi
+fi
+
 if [[ -z "${SAKURA_BOT_IMAGE:-}" ]]; then
     default_image=ghcr.io/sakura520222/sakura-bot:main
     configured_image=$(docker compose config --images)

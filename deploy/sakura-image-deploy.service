@@ -6,5 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/root/Sakura-Bot
-ExecStart=/bin/bash -c 'rm -f data/.image_update_request && bash scripts/deploy.sh >> logs/image-deploy.log 2>&1'
+# 部署结束后把结果写入 data/.image_deploy_result（key=value，容器内 Bot 轮询并
+# 回报到发起 /update 的对话）；开工时同时清理上一轮的请求与结果，避免陈旧数据。
+# 注意：systemd 会吞掉单个 %，日期格式中的 % 必须写成 %%。
+ExecStart=/bin/bash -c 'rm -f data/.image_update_request data/.image_deploy_result; bash scripts/deploy.sh >> logs/image-deploy.log 2>&1; rc=$?; { echo "status=$([ "$rc" -eq 0 ] && echo ok || echo failed)"; echo "exit_code=$rc"; echo "revision=$(git rev-parse HEAD 2>/dev/null || echo unknown)"; echo "finished_at=$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"; } > data/.image_deploy_result; exit $rc'
 TimeoutStartSec=900
