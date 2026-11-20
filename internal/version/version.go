@@ -12,4 +12,4 @@
 package version
 
 // Version 是 Sakura-Bot 的权威版本号。
-var Version = "2.6.1"
+var Version = "2.6.2"
