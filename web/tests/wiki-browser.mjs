@@ -800,6 +800,37 @@ try {
   await desktop.getByRole("heading",{name:channel.title,exact:true}).waitFor();
   await cover.waitFor({state:"detached"});
   await desktop.evaluate(() => localStorage.setItem("sakura_bot_token", "wiki-test-token"));
+  for (const width of [1440, 390]) {
+    const admin = await browser.newPage({ viewport: { width, height: 670 } });
+    try {
+      await admin.addInitScript(() => localStorage.setItem("sakura_bot_token", "wiki-test-token"));
+      await admin.goto(url + "/wiki/admin");
+      await admin.getByRole("button", { name: "保存设置", exact: true }).waitFor();
+      const { scroll, barBottom, toolbarTop } = await admin.evaluate(() => {
+        window.scrollTo(0, 480);
+        return {
+          scroll: window.scrollY,
+          barBottom: document.querySelector(".app-header").getBoundingClientRect().bottom,
+          toolbarTop: document.querySelector(".wiki-toolbar").getBoundingClientRect().top,
+        };
+      });
+      assert.ok(scroll > 100, `Wiki admin should scroll at ${width}px`);
+      assert.ok(Math.abs(toolbarTop - barBottom) <= 1, `Wiki toolbar should stick below the app bar at ${width}px`);
+      if (width === 390) {
+        await admin.getByText("任务", { exact: true }).click();
+        await admin.getByRole("button", { name: "查看未通过的草稿" }).click();
+        await admin.getByRole("button", { name: /审校未通过的测试词条/ }).click();
+        await admin.getByRole("heading", { name: failedDraft.title }).waitFor();
+        const { workspaceTop, toolbarBottom } = await admin.evaluate(() => ({
+          workspaceTop: document.querySelector(".draft-workspace").getBoundingClientRect().top,
+          toolbarBottom: document.querySelector(".wiki-toolbar").getBoundingClientRect().bottom,
+        }));
+        assert.ok(workspaceTop >= toolbarBottom, "Mobile draft should scroll below the toolbar");
+      }
+    } finally {
+      await admin.close();
+    }
+  }
   await desktop.goto(url + "/wiki/admin");
   await desktop.getByText("社区与联网", { exact: true }).click();
   await desktop.getByText("https://api.deepseek.com", { exact: true }).waitFor();

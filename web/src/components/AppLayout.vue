@@ -308,9 +308,13 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+:global(html:has(.app-layout)) {
+  --app-bar-height: 64px;
+  scroll-padding-block-start: var(--app-bar-height);
+}
+
 .app-layout {
   --sidebar-width: 232px;
-  --app-bar-height: 64px;
   --shell-selected: var(--sb-accent-container, var(--sb-accent-soft));
   --shell-on-selected: var(--sb-on-accent-container, var(--sb-accent));
   display: grid;
@@ -595,7 +599,6 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   padding: clamp(16px, 3vw, 32px);
-  scroll-margin-top: var(--app-bar-height);
 }
 
 .app-content:focus { outline: none; }
@@ -612,7 +615,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 760px) {
-  .app-layout { --app-bar-height: 60px; display: block; }
+  :global(html:has(.app-layout)) { --app-bar-height: 60px; }
+  .app-layout { display: block; }
   .app-main { min-height: 100vh; min-height: 100dvh; }
   .app-header { padding-inline: 10px; }
   .header-context { gap: 4px; }
