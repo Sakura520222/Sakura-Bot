@@ -99,3 +99,47 @@ func TestReportPendingImageDeployNoopWithoutPending(t *testing.T) {
 		t.Fatalf("unexpected reports: %q", bot.sent)
 	}
 }
+
+// writeDeployLog 在临时目录布置 logs/image-deploy.log，模拟宿主机日志布局
+// （日志文件与 data 目录同级，位于父目录的 logs/ 下）。
+func writeDeployLog(t *testing.T, content string) string {
+	t.Helper()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	logsDir := filepath.Join(filepath.Dir(dataDir), "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, "image-deploy.log"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dataDir
+}
+
+func TestDeployLogTailKeepsEndOfAppendOnlyLog(t *testing.T) {
+	stale := strings.Repeat("上周拉取 feature 分支镜像的旧日志。", 100)
+	fresh := "error: Your local changes to the following files would be overwritten by merge"
+	content := stale + strings.Repeat("=", 4000) + fresh
+	dataDir := writeDeployLog(t, content)
+	tail := deployLogTail(dataDir)
+	if !strings.HasPrefix(tail, "...") {
+		t.Fatalf("oversized log tail missing cut marker: %.32s", tail)
+	}
+	if !strings.HasSuffix(tail, fresh) {
+		t.Fatalf("tail does not end with the latest failure: %.64s", tail[len(tail)-64:])
+	}
+	if strings.Contains(tail, "旧日志") {
+		t.Fatal("tail still contains stale head content")
+	}
+}
+
+func TestDeployLogTailShortAndMissingLog(t *testing.T) {
+	content := "==> 部署完成\n"
+	dataDir := writeDeployLog(t, content)
+	// 短日志按整段 TrimSpace 后原样透传，不追加截断标记。
+	if tail := deployLogTail(dataDir); tail != strings.TrimSpace(content) {
+		t.Fatalf("short log should pass through verbatim: %q", tail)
+	}
+	if tail := deployLogTail(filepath.Join(t.TempDir(), "data")); tail != "" {
+		t.Fatalf("missing log should yield empty tail: %q", tail)
+	}
+}

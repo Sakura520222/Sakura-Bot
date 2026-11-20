@@ -144,6 +144,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# 宿主机本地 Compose 定制（与上游 docker-compose.yml 自动合并，见 docs/go-deployment.md）
+/docker-compose.override.yml
+
 # Spyder project settings
 .spyderproject
 .spyproject

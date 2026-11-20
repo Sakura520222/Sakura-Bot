@@ -40,6 +40,8 @@ docker compose logs -f sakura-summary-bot
 
 脚本以快进方式更新工作区，拉取与 Git 提交匹配的完整镜像并重建容器。明确配置 `SAKURA_BOT_IMAGE` 时，脚本拉取指定镜像。若 GHCR 需要鉴权，在宿主机运行 `docker login ghcr.io`。使用 GitHub 下载附件时按附件内的 `RELEASE_REVISION` 选取镜像。[Release 附件安装和更新](release-archives.md)
 
+宿主机对 Compose 的本地定制（网络别名、DNS、`extra_hosts` 等）放在 `docker-compose.override.yml`（已加入 `.gitignore`），与上游 `docker-compose.yml` 自动合并；把它直接写进主文件会让快进更新因本地改动重叠而失败，脚本会在拉取阶段给出提示。
+
 在 fork 或修改源码后，可以本地构建。
 
 ```bash

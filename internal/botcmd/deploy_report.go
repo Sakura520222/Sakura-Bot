@@ -157,12 +157,20 @@ func (r *Router) sendImageDeployText(chatID int64, text string) {
 	}
 }
 
+// deployLogTailRunes 是部署回报附带日志的长度上限（按 rune 计）。
+const deployLogTailRunes = 1500
+
 // deployLogTail 读取宿主机部署日志末尾（logs 目录与 data 目录同级，容器内
-// 经 bind mount 可见）；读取失败返回空串。
+// 经 bind mount 可见）；读取失败返回空串。日志跨多次部署追加写入，必须
+// 保留末尾才能反映本次部署的失败原因。
 func deployLogTail(dataDir string) string {
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(dataDir), "logs", "image-deploy.log"))
 	if err != nil {
 		return ""
 	}
-	return truncateRunesStr(strings.TrimSpace(string(raw)), 1500)
+	content := []rune(strings.TrimSpace(string(raw)))
+	if len(content) <= deployLogTailRunes {
+		return string(content)
+	}
+	return "..." + string(content[len(content)-deployLogTailRunes:])
 }
