@@ -10,6 +10,8 @@
 
 在解压出的目录中复制 `data/.env.example` 到 `data/.env`，按快速开始填写配置。使用助手时，填写 `QA_BOT_TOKEN`，并设置 `QA_BOT_ENABLED=true`。需要公开 Wiki 时，按 [Wiki 手册](sakura-wiki.md)配置。
 
+WebUI 默认仅发布到宿主机 `127.0.0.1:8080`。在解压目录根部的 `.env` 或宿主机环境中设置 `WEBUI_BIND_ADDRESS`、`WEBUI_PORT` 和 `WEBUI_CONTAINER_PORT`，不要放在 `data/.env` 中。宿主机反向代理或 Cloudflare Tunnel 使用回环地址，同网络容器使用服务名及容器端口，详见 [WebUI 端口绑定](go-deployment.md#webui-访问与端口绑定)。已下载的 v2.6.0 附件仍包含旧映射，需先应用端口绑定补丁并重建容器；仅拉取镜像不会修正该映射。
+
 ## 使用匹配的官方镜像
 
 `RELEASE_REVISION` 记录了附件对应的 Git 提交。使用该提交的镜像标签启动，避免部署到滚动更新的 `:main` 镜像。
@@ -36,7 +38,7 @@ docker compose up -d --no-build
 
 1. 下载并校验新版本，解压到新目录。
 2. 备份现有 `data/` 和 MySQL 数据库，使用旧目录原有的镜像设置执行 `docker compose down`。
-3. 将旧目录的 `data/` 完整复制到新目录，并按需保留 `logs/`，保留 `data/.env`、配置、提示词、会话和其他持久化数据。根目录的 Compose 环境变量（例如 `WEBUI_PORT`）也需保留，并更新镜像引用。
+3. 将旧目录的 `data/` 完整复制到新目录，并按需保留 `logs/`，保留 `data/.env`、配置、提示词、会话和其他持久化数据。根目录的 Compose 环境变量（`WEBUI_BIND_ADDRESS`、`WEBUI_PORT`、`WEBUI_CONTAINER_PORT`）也需保留，并更新镜像引用，启动前用 `docker compose config` 核对发布地址和端口。
 4. 在新目录按上述任一镜像路径操作，使用新附件的 `RELEASE_REVISION`。
 
 附件无需 Git。请使用上述换包方式更新。`/update`、`scripts/deploy.sh` 和 `deploy/install-deployer.sh` 用于 Git 克隆部署。

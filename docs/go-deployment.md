@@ -10,6 +10,25 @@ Docker 部署需要 Docker Engine 和 Compose v2。MySQL 由宿主机或外部�
 
 复用已有环境时，保留 `data/.env`、`data/config.json`、提示词、自定义数据路径和原数据库配置。容器将 `data/` 和 `logs/` 挂载到固定路径。从宿主机环境或仓库根目录的 `.env` 设置 Compose 的 `WEBUI_PORT` 来修改外部端口。容器端口默认 8080。如果 `data/.env` 中已有自定义的 WebUI 端口，将 Compose 的 `WEBUI_CONTAINER_PORT` 设置为相同值。
 
+### WebUI 访问与端口绑定
+
+Compose 默认只将 WebUI 发布到宿主机 `127.0.0.1:8080`。以下变量放在仓库根目录的 `.env` 或宿主机环境中；`data/.env` 用于容器应用配置，不参与 Compose 的端口插值。
+
+```dotenv
+WEBUI_BIND_ADDRESS=127.0.0.1
+WEBUI_PORT=8080
+WEBUI_CONTAINER_PORT=8080
+```
+
+`WEBUI_BIND_ADDRESS` 未设置或为空时均使用 `127.0.0.1`。需要局域网访问时可显式设置为宿主机的局域网 IP；`0.0.0.0` 会监听所有 IPv4 接口，使用前应确认访问控制。IPv6 回环地址可写为 `[::1]`。
+
+- Nginx、Caddy 或 Cloudflare Tunnel 在宿主机运行时，上游使用 `http://127.0.0.1:8080`，修改外部端口后同步调整上游。
+- 代理或 cloudflared 在容器中运行时，将其加入同一 Docker 网络，上游使用 `http://sakura-summary-bot:8080`（自定义时使用 `WEBUI_CONTAINER_PORT`）；容器中的 `127.0.0.1` 指向该容器自身。
+
+容器内的 `WEBUI_HOST` 保持 `0.0.0.0`，以便 Docker 转发和同网络代理访问。健康检查仍从容器内访问 `127.0.0.1:$WEBUI_PORT/api/health`，这里的端口由 `WEBUI_CONTAINER_PORT` 设置。启用 WebUI 仍需在 `data/.env` 中设置 `WEBUI_ENABLED=true`。
+
+修改绑定地址或端口后，先执行 `docker compose config` 核对解析出的 `host_ip`、`published` 和 `target`，再执行 `docker compose up -d --no-build` 重建容器；仅执行 `docker compose restart` 不会更新端口映射。用 `docker compose port sakura-summary-bot 8080` 检查发布地址（自定义时替换为容器端口）。Docker 发布端口的流量可能经过 FORWARD 链，不能只依赖 nftables 的 INPUT 规则限制访问。
+
 ## 启动镜像
 
 从 Git 克隆目录部署时，执行以下命令。
@@ -55,6 +74,8 @@ docker compose up -d --no-build
 2. 在独立测试 MySQL 与数据副本上启动 Go 镜像，核对频道、用户、积分、计费、订阅、向量检索和 Wiki 的存量记录。原 SQLite 向量目录沿用 `VECTOR_DB_PATH`。
 3. 在生产迁移窗口停旧服务，使用原 MySQL 和数据目录启动已验证的镜像。验证主 Bot、UserBot 和助手分别授权后，再检查实时事件、总结、转发和 WebUI。
 4. 如需回滚，先停 Go 进程。用旧镜像及其原先的 Compose 配置恢复服务。涉及升级后写入的数据时，先评估增量记录和旧版本的兼容性，再决定恢复哪一版备份。
+
+从 v2.6.0 升级或为其应用此补丁时，核对现有代理的上游地址，并保留根目录 `.env` 中的端口设置。仅更新镜像不会改变旧 Compose 的发布地址，必须同时更新 Compose 并重建容器。此变更不修改数据、会话或向量库；回滚到旧 Compose 时也应保留显式的宿主机绑定地址。
 
 ### Chroma 向量库转换
 
