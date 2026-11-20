@@ -188,8 +188,7 @@ const visibleNodes = computed(() => {
   );
 });
 
-/* 画布是 canvas 渲染，读不到 CSS 变量，因此节点/边/标签配色按主题各备一套常量，
-   取值与 --sb-* token 保持同源（亮色 = Google 控制台，暗色 = X）。 */
+/* 节点保留分类色，画布的共用颜色从 Wiki 壳层读取。 */
 interface GraphPalette {
   kinds: Record<string, string>;
   label: string;
@@ -206,9 +205,9 @@ const palettes: Record<"light" | "dark", GraphPalette> = {
       FAQ: "#12b5cb",
       Procedure: "#5f6368",
     },
-    label: "#5f6368", // = 浅色 --sb-text-2
-    edge: "#bdc1c6", // = 浅色 --sb-border-strong
-    selected: "#1a73e8", // = 浅色 --sb-accent
+    label: "#5f6368",
+    edge: "#bdc1c6",
+    selected: "#1a73e8",
   },
   dark: {
     kinds: {
@@ -219,15 +218,26 @@ const palettes: Record<"light" | "dark", GraphPalette> = {
       FAQ: "#78d9ed",
       Procedure: "#9ca0a6",
     },
-    label: "#9ca0a6", // = 深色 --sb-text-2
-    edge: "#5f6368", // #000 画布上箭头方向必须可读，不能更暗
-    selected: "#1d9bf0", // = 深色 --sb-accent
+    label: "#9ca0a6",
+    edge: "#5f6368",
+    selected: "#1d9bf0",
   },
 };
 const palette = ref<GraphPalette>(palettes.light);
 function syncPalette() {
   const dark = document.documentElement.classList.contains("dark");
-  palette.value = dark ? palettes.dark : palettes.light;
+  const fallback = dark ? palettes.dark : palettes.light;
+  if (!canvas.value) {
+    palette.value = fallback;
+    return;
+  }
+  const tokens = getComputedStyle(canvas.value);
+  palette.value = {
+    kinds: fallback.kinds,
+    label: tokens.getPropertyValue("--sb-text-2").trim() || fallback.label,
+    edge: tokens.getPropertyValue("--wiki-graph-edge").trim() || fallback.edge,
+    selected: tokens.getPropertyValue("--sb-accent").trim() || fallback.selected,
+  };
 }
 function nodeColor(kind: string): string {
   return palette.value.kinds[kind] || palette.value.kinds.Entity;

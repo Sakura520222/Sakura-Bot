@@ -11,6 +11,7 @@
           <span class="fw-master-label">转发总开关</span>
           <n-switch
             v-model:value="forwardingEnabled"
+            aria-label="转发总开关"
             :loading="toggling"
             :disabled="firstLoading || !!loadError"
             @update:value="handleToggle"
@@ -33,7 +34,7 @@
     </header>
 
     <!-- 工具栏：搜索 + 模式筛选 + 统计 + 刷新 -->
-    <div class="fw-toolbar">
+    <div class="fw-toolbar" role="group" aria-label="规则筛选">
       <n-input v-model:value="searchText" class="fw-search" placeholder="搜索源 / 目标频道或关键词" clearable>
         <template #prefix>
           <svg viewBox="0 0 24 24" class="fw-icon" fill="none" stroke="currentColor" stroke-width="2"
@@ -616,7 +617,7 @@ onMounted(loadAll);
 /*
  * ForwardingView 专属样式：使用全局块 + fw- 前缀，
  * 因为表格列里 h() 渲染的单元格不会携带 scoped 属性，scoped 选择器命中不了。
- * 颜色全部走 --sb-* 设计令牌，浅色（Google）/ 深色（X）两套主题自动生效。
+ * 浅色与深色都使用管理端的设计令牌。
  */
 .fw-page {
   display: flex;
@@ -658,9 +659,8 @@ onMounted(loadAll);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 8px 5px 14px;
-  background: var(--sb-surface);
-  border: 1px solid var(--sb-border);
+  padding: 6px 10px 6px 14px;
+  background: var(--sb-surface-2);
   border-radius: var(--sb-radius-pill);
 }
 
@@ -672,25 +672,26 @@ onMounted(loadAll);
 
 /* 工具栏 */
 .fw-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
   gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface-2);
 }
 
-.fw-search {
-  width: 240px;
-}
-
+.fw-search,
 .fw-mode-filter {
-  width: 128px;
+  min-width: 0;
 }
 
 .fw-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-left: auto;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .fw-stat {
@@ -703,7 +704,6 @@ onMounted(loadAll);
   display: block;
   width: 15px;
   height: 15px;
-  color: var(--sb-text-3);
 }
 
 /* 数据区容器 */
@@ -861,17 +861,14 @@ onMounted(loadAll);
   justify-content: space-between;
 }
 
-/* 响应式：≤760px 工具栏换行、控件全宽 */
-@media (max-width: 760px) {
-  .fw-search,
-  .fw-mode-filter {
-    width: 100%;
+@media (max-width: 640px) {
+  .fw-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 12px;
   }
 
-  .fw-toolbar-right {
-    width: 100%;
-    justify-content: space-between;
-    margin-left: 0;
+  .fw-search {
+    grid-column: 1 / -1;
   }
 }
 </style>

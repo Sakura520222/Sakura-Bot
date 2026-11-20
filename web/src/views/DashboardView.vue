@@ -1,157 +1,162 @@
 <template>
   <div class="dashboard-page">
-    <!-- 统一页头：标题 + 一句话用途 + 右侧刷新 -->
-    <header class="page-head">
+    <header class="dashboard-heading">
       <div>
-        <h2 class="page-title">仪表板</h2>
-        <p class="page-subtitle">一屏总览 Bot 运行状态与核心指标，常用管理页面一键直达。</p>
+        <h1>仪表板</h1>
+        <p>查看 Bot 运行状态、频道统计和自动总结计划。</p>
       </div>
-      <div class="head-actions">
-        <span class="poll-hint">每 30 秒自动刷新</span>
-        <n-button quaternary circle :loading="refreshing" title="立即刷新" @click="refreshManually">
-          <template #icon><component :is="RefreshIcon" /></template>
+      <div class="dashboard-actions">
+        <span v-if="lastChecked" class="poll-hint" title="每 30 秒自动刷新">
+          检查于 <time :datetime="lastChecked.toISOString()">{{ checkTime.format(lastChecked) }}</time>
+        </span>
+        <n-button
+          circle
+          class="refresh-button"
+          :loading="refreshing"
+          aria-label="立即刷新"
+          title="立即刷新"
+          @click="refreshManually"
+        >
+          <template #icon><RefreshOutlined /></template>
         </n-button>
       </div>
     </header>
 
-    <!-- 异步三态：首屏骨架屏（布局与真实内容对齐，避免加载完成跳动） -->
-    <div v-if="!attempted" class="skel-wrap">
-      <div class="skel-strip">
-        <n-skeleton v-for="i in 3" :key="i" height="36px" width="180px" round />
-      </div>
-      <div class="tile-grid">
-        <n-skeleton v-for="i in 4" :key="i" height="108px" round />
+    <div v-if="!attempted" class="dashboard-skeleton" aria-hidden="true">
+      <n-skeleton class="hero-skeleton" />
+      <div class="metric-grid">
+        <n-skeleton v-for="i in 4" :key="i" class="metric-skeleton" />
       </div>
       <div class="panel-grid">
-        <n-skeleton v-for="i in 2" :key="i" height="260px" round />
+        <n-skeleton v-for="i in 2" :key="i" class="panel-skeleton" />
       </div>
     </div>
 
     <template v-else>
-      <!-- 状态摘要条：三个来源独立取数，任一失败降级为中性"未知"徽标而不是消失 -->
-      <section class="status-strip">
-        <div class="status-pill" :class="`is-${botTone}`">
-          <span class="dot"></span>
-          <span class="p-label">Bot 主程序</span>
-          <span class="p-value">{{ botStatusText }}</span>
+      <section class="status-hero" aria-labelledby="dashboard-status-title">
+        <div class="hero-content">
+          <span class="hero-status" :class="'is-' + overviewStatus.tone">
+            <span class="status-dot" aria-hidden="true"></span>{{ overviewStatus.text }}
+          </span>
+          <h2 id="dashboard-status-title">{{ heroTitle }}</h2>
+          <ul class="service-list" aria-label="服务状态">
+            <li v-for="service in services" :key="service.label" class="service-pill" :class="'is-' + service.tone">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>{{ service.label }}</span>
+              <strong>{{ service.text }}</strong>
+            </li>
+          </ul>
+          <RouterLink class="dashboard-link hero-link" to="/system">
+            查看运行信息 <ArrowIcon aria-hidden="true" />
+          </RouterLink>
         </div>
-        <div class="status-pill" :class="`is-${qaState.tone}`">
-          <span class="dot"></span>
-          <span class="p-label">QA Bot</span>
-          <span class="p-value">{{ qaState.text }}</span>
-        </div>
-        <div class="status-pill" :class="`is-${dbState.tone}`">
-          <span class="dot"></span>
-          <span class="p-label">数据库</span>
-          <span class="p-value">{{ dbState.text }}</span>
+        <div class="hero-art" aria-hidden="true">
+          <span class="hero-orbit hero-orbit-outer"></span>
+          <span class="hero-orbit hero-orbit-inner"></span>
+          <span class="hero-orbit-dot hero-orbit-dot-top"></span>
+          <span class="hero-orbit-dot hero-orbit-dot-bottom"></span>
+          <span class="hero-bot"><RobotOutlined /></span>
         </div>
       </section>
 
-      <!-- 异步三态：核心数据源（仪表板）失败 → 整体错误态 + 重试，禁止用 0 冒充数据 -->
       <n-result
         v-if="dashError"
-        class="dash-error"
+        class="dashboard-panel dashboard-error"
         status="error"
         title="仪表板数据加载失败"
-        description="后端服务不可达或返回错误，运行状态与统计暂无法获取。可点击重试，或等待自动刷新恢复。"
+        description="运行信息与统计暂时无法获取。可立即重试，或等待自动刷新。"
       >
         <template #footer>
           <n-button type="primary" :loading="refreshing" @click="refreshManually">重试</n-button>
         </template>
       </n-result>
-
-      <template v-else>
-        <!-- 统计 tiles：图标 chip + 大数值 + 标签 + 补充说明行 -->
-        <section class="tile-grid">
-          <div v-for="tile in tiles" :key="tile.key" class="stat-tile" :class="`tone-${tile.tone}`">
-            <div class="tile-top">
-              <span class="tile-icon"><component :is="tile.icon" /></span>
-              <span class="tile-label">{{ tile.label }}</span>
-            </div>
-            <div class="tile-value">{{ tile.value }}</div>
-            <div class="tile-supp" :class="tile.suppCls">{{ tile.supp }}</div>
-          </div>
-        </section>
-
-        <!-- 运行信息 + 定时任务概览 -->
-        <section class="panel-grid">
-          <n-card title="运行信息" class="panel-card" :bordered="true">
-            <p class="section-hint">来自后端运行时与配置的当前值。</p>
-            <n-descriptions bordered :column="1" label-placement="left" size="small">
-              <n-descriptions-item label="版本">{{ dash?.version || "-" }}</n-descriptions-item>
-              <n-descriptions-item label="AI 模型">{{ dash?.ai_model || "-" }}</n-descriptions-item>
-              <n-descriptions-item label="日志级别">{{ dash?.log_level || "-" }}</n-descriptions-item>
-              <n-descriptions-item label="转发状态">
-                <n-tag :type="dash?.forwarding_enabled ? 'success' : 'default'" size="small">
-                  {{ dash?.forwarding_enabled ? '已启用' : '已禁用' }}
-                </n-tag>
-              </n-descriptions-item>
-              <n-descriptions-item label="运行时长">{{ formatUptime(dash?.uptime_seconds) }}</n-descriptions-item>
-            </n-descriptions>
-          </n-card>
-
-          <n-card title="定时任务概览" class="panel-card" :bordered="true">
-            <p class="section-hint">各频道自动总结的执行安排，完整管理请进入定时任务页。</p>
-            <!-- 分区降级：定时数据源失败只降级本分区，不影响其余内容 -->
-            <n-alert v-if="schedError" type="error" class="panel-alert" title="定时任务数据加载失败">
-              <div class="alert-row">
-                <span>概览数据获取失败，请检查后端连接后重试。</span>
-                <n-button size="small" type="primary" :loading="schedLoading" @click="loadSchedules">重试</n-button>
-              </div>
-            </n-alert>
-            <!-- 空态给引导：告诉用户下一步去哪里创建 -->
-            <n-empty v-else-if="scheduleList.length === 0" class="table-empty" description="还没有定时任务">
-              <template #extra>
-                <div class="empty-guide">
-                  <span>为频道创建自动总结计划后，这里会展示执行安排。</span>
-                  <n-button type="primary" size="small" @click="router.push('/schedules')">去创建</n-button>
-                </div>
-              </template>
-            </n-empty>
-            <n-list v-else :show-divider="true" class="schedule-list">
-              <n-list-item v-for="s in scheduleList" :key="s.channel">
-                <div class="schedule-row">
-                  <div class="schedule-main">
-                    <span class="schedule-name" :title="s.channel">{{ getChannelName(s.channel) }}</span>
-                    <span class="schedule-cycle">{{ describeCycle(s) }}</span>
-                  </div>
-                  <span class="schedule-next">下次 {{ formatNextRun(s) }}</span>
-                </div>
-              </n-list-item>
-            </n-list>
-          </n-card>
-        </section>
-      </template>
-
-      <!-- 快捷操作：纯静态入口，不依赖数据，错误态下依然可用 -->
-      <n-card title="快捷操作" class="panel-card" :bordered="true">
-        <p class="section-hint">常用管理页面一键直达。</p>
-        <div class="quick-grid">
-          <n-button
-            v-for="q in quickLinks"
-            :key="q.path"
-            size="large"
-            class="quick-btn"
-            @click="router.push(q.path)"
-          >
-            <template #icon><component :is="q.icon" /></template>
-            {{ q.label }}
-          </n-button>
+      <dl v-else class="metric-grid" aria-label="运行统计">
+        <div v-for="tile in tiles" :key="tile.key" class="metric-card" :class="'tone-' + tile.tone">
+          <dt>
+            <span class="metric-icon" aria-hidden="true"><component :is="tile.icon" /></span>
+            {{ tile.label }}
+          </dt>
+          <dd class="metric-value">{{ tile.value }}</dd>
+          <dd v-if="tile.supp" class="metric-detail" :class="tile.suppCls">{{ tile.supp }}</dd>
         </div>
-      </n-card>
+      </dl>
+
+      <div class="panel-grid" :class="{ 'schedule-only': dashError }">
+        <section v-if="!dashError" class="dashboard-panel" aria-labelledby="dashboard-runtime-title">
+          <header class="panel-header"><h2 id="dashboard-runtime-title">运行信息</h2></header>
+          <dl class="runtime-details">
+            <div class="runtime-row"><dt>版本</dt><dd>{{ dash?.version || "–" }}</dd></div>
+            <div class="runtime-row"><dt>AI 模型</dt><dd>{{ dash?.ai_model || "–" }}</dd></div>
+            <div class="runtime-row"><dt>日志级别</dt><dd>{{ dash?.log_level || "–" }}</dd></div>
+            <div class="runtime-row">
+              <dt>转发功能</dt>
+              <dd>
+                <n-tag v-if="dash?.forwarding_enabled !== undefined" :type="dash.forwarding_enabled ? 'success' : 'default'" size="small" round>
+                  {{ dash.forwarding_enabled ? "已启用" : "已禁用" }}
+                </n-tag>
+                <span v-else>–</span>
+              </dd>
+            </div>
+            <div class="runtime-row"><dt>运行时长</dt><dd>{{ formatUptime(dash?.uptime_seconds) }}</dd></div>
+          </dl>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="dashboard-schedule-title">
+          <header class="panel-header">
+            <h2 id="dashboard-schedule-title">定时任务概览</h2>
+            <RouterLink class="dashboard-link text-link" to="/schedules">
+              查看任务 <ArrowIcon aria-hidden="true" />
+            </RouterLink>
+          </header>
+          <n-alert v-if="schedError" type="error" class="schedule-alert" title="定时任务数据加载失败">
+            <n-button size="small" type="primary" :loading="schedLoading" @click="loadSchedules">重试</n-button>
+          </n-alert>
+          <n-empty v-else-if="scheduleList.length === 0" class="schedule-empty" description="还没有定时任务">
+            <template #extra>
+              <RouterLink class="dashboard-link text-link" to="/schedules">创建自动总结计划</RouterLink>
+            </template>
+          </n-empty>
+          <ul v-else class="schedule-list">
+            <li v-for="s in scheduleList" :key="s.channel" class="schedule-row">
+              <span class="schedule-icon" aria-hidden="true"><ScheduleOutlined /></span>
+              <div class="schedule-main">
+                <strong class="schedule-name" :title="s.channel">{{ getChannelName(s.channel) }}</strong>
+                <span class="schedule-cycle">{{ describeCycle(s) }}</span>
+              </div>
+              <span class="schedule-next">下次 {{ formatNextRun(s) }}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
     </template>
+
+    <section class="dashboard-panel quick-panel" aria-labelledby="dashboard-quick-title">
+      <header class="panel-header"><h2 id="dashboard-quick-title">快捷操作</h2></header>
+      <div class="quick-grid">
+        <RouterLink v-for="q in quickLinks" :key="q.path" :to="q.path" class="dashboard-link quick-link">
+          <component :is="q.icon" aria-hidden="true" /> {{ q.label }}
+        </RouterLink>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import type { Component } from "vue";
-import { useRouter } from "vue-router";
 import { NIcon, useMessage } from "naive-ui";
-// getDashboard / getSchedules 是本页原有数据源；getSystemStatus 为系统运维页已在用的
-// 现有接口，仅用于状态条上的 QA / 数据库徽标，均为既有封装，不新增端点。
 import { getDashboard, getSchedules, getSystemStatus } from "@/api/modules";
 import type { BotStatus, ScheduleInfo } from "@/api/modules";
+import {
+  BuildOutlined,
+  ChannelOutlined,
+  DatabaseOutlined,
+  RefreshOutlined,
+  RobotOutlined,
+  ScheduleOutlined,
+  SwapOutlined,
+  TerminalOutlined,
+} from "@/components/icons";
 import { getChannelName, formatUptime } from "@/utils/formatters";
 
 /** /dashboard 接口 data 字段（按后端返回结构声明，字段缺失时逐项兜底） */
@@ -172,11 +177,12 @@ type Tone = "success" | "warning" | "error" | "neutral";
 
 const POLL_MS = 30_000; // 轮询间隔：状态条与统计保持近实时，又不给后端压力
 
+const checkTime = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 const message = useMessage();
-const router = useRouter();
 
 // ── 三态状态：每个数据源独立记录成功/失败，任何失败都有可见呈现 ──
 const attempted = ref(false); // 首次加载是否已完成（骨架屏只在首屏出现）
+const lastChecked = ref<Date | null>(null);
 const refreshing = ref(false); // 页头刷新按钮 loading
 const schedLoading = ref(false); // 概览分区重试按钮 loading
 const dashError = ref(false);
@@ -196,29 +202,11 @@ function svgIcon(viewBox: string, pathD: string): Component {
         ]),
     });
 }
-const RefreshIcon = svgIcon(
-  "0 0 24 24",
-  "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-8 8s3.57 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
-);
-const ForumIcon = svgIcon("0 0 24 24", "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z");
 const DocIcon = svgIcon(
   "0 0 24 24",
   "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"
 );
 const ArrowIcon = svgIcon("0 0 24 24", "M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z");
-const ClockIcon = svgIcon(
-  "0 0 24 24",
-  "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm.01 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"
-);
-const CodeIcon = svgIcon(
-  "0 0 24 24",
-  "M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"
-);
-const GearIcon = svgIcon(
-  "0 0 24 24",
-  "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-);
-const StorageIcon = svgIcon("0 0 24 24", "M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z");
 
 // ── 状态条取数逻辑 ──────────────────────────────────────
 // Bot 状态来自仪表板主数据源；QA / 数据库来自 system/status，来源失败时显示"未知"
@@ -253,6 +241,30 @@ const dbState = computed<{ text: string; tone: Tone }>(() => {
     : { text: "不可用", tone: "error" };
 });
 
+const services = computed(() => [
+  { label: "Bot 主程序", text: botStatusText.value, tone: botTone.value },
+  { label: "QA Bot", ...qaState.value },
+  { label: "数据库", ...dbState.value },
+]);
+
+const overviewStatus = computed<{ text: string; tone: Tone }>(() => {
+  if (dbState.value.tone === "error") return { text: "运行异常", tone: "error" };
+  if (botTone.value === "warning" || qaState.value.tone === "warning") {
+    return { text: "部分服务需检查", tone: "warning" };
+  }
+  const qaReady = qaState.value.tone === "success" || sys.value?.qa_bot?.enabled === false;
+  if (botTone.value === "success" && dbState.value.tone === "success" && qaReady) {
+    return { text: "服务正常", tone: "success" };
+  }
+  return { text: "状态待确认", tone: "neutral" };
+});
+
+const heroTitle = computed(() => {
+  if (botTone.value === "success") return "Sakura-Bot 正在运行";
+  if (botTone.value === "warning") return "Sakura-Bot 自动任务已暂停";
+  return "Sakura-Bot 运行状态";
+});
+
 // ── 统计 tiles ─────────────────────────────────────────
 // 数值兜底：字段缺失显示占位符"–"，绝不用 0 冒充真实统计
 function numOf(value: number | undefined): string {
@@ -273,7 +285,7 @@ const tiles = computed<TileItem[]>(() => [
   {
     key: "channels",
     label: "监控频道",
-    icon: ForumIcon,
+    icon: ChannelOutlined,
     tone: "accent",
     value: numOf(dash.value?.channel_count),
     supp:
@@ -292,22 +304,28 @@ const tiles = computed<TileItem[]>(() => [
   {
     key: "forwarding",
     label: "转发规则",
-    icon: ArrowIcon,
+    icon: SwapOutlined,
     tone: "warning",
     value: numOf(dash.value?.forwarding_rule_count),
-    supp: dash.value?.forwarding_enabled ? "转发功能已启用" : "转发功能已禁用",
-    suppCls: dash.value?.forwarding_enabled ? "on" : "off",
+    supp: forwardingSupp.value.text,
+    suppCls: forwardingSupp.value.cls,
   },
   {
     key: "schedules",
     label: "定时任务",
-    icon: ClockIcon,
+    icon: ScheduleOutlined,
     tone: "neutral",
     value: numOf(dash.value?.schedule_count),
     supp: scheduleSupp.value.text,
     suppCls: scheduleSupp.value.cls,
   },
 ]);
+
+const forwardingSupp = computed(() => {
+  if (dash.value?.forwarding_enabled === true) return { text: "转发功能已启用", cls: "on" };
+  if (dash.value?.forwarding_enabled === false) return { text: "转发功能已禁用", cls: "off" };
+  return { text: "转发状态未知", cls: "" };
+});
 
 const scheduleSupp = computed<{ text: string; cls: string }>(() => {
   if (schedError.value) return { text: "定时数据获取失败", cls: "bad" };
@@ -318,12 +336,12 @@ const scheduleSupp = computed<{ text: string; cls: string }>(() => {
 
 // ── 快捷入口：常用页面一键直达（纯前端路由跳转，不新增接口） ──
 const quickLinks: Array<{ label: string; path: string; icon: Component }> = [
-  { label: "频道管理", path: "/channels", icon: ForumIcon },
-  { label: "定时任务", path: "/schedules", icon: ClockIcon },
-  { label: "转发规则", path: "/forwarding", icon: ArrowIcon },
-  { label: "命令中心", path: "/commands", icon: CodeIcon },
-  { label: "系统运维", path: "/system", icon: GearIcon },
-  { label: "数据库管理", path: "/database", icon: StorageIcon },
+  { label: "频道管理", path: "/channels", icon: ChannelOutlined },
+  { label: "定时任务", path: "/schedules", icon: ScheduleOutlined },
+  { label: "转发规则", path: "/forwarding", icon: SwapOutlined },
+  { label: "命令中心", path: "/commands", icon: TerminalOutlined },
+  { label: "系统运维", path: "/system", icon: BuildOutlined },
+  { label: "数据库管理", path: "/database", icon: DatabaseOutlined },
 ];
 
 // ── 定时任务的周期描述与下次运行时间（纯前端推导，与定时任务页同口径） ──
@@ -420,6 +438,7 @@ async function refreshAll(options: { silent?: boolean; showSpinner?: boolean } =
   if (options.showSpinner) refreshing.value = true;
   // 三个数据源并行拉取，各自把结果（含失败）写入可见状态后汇聚
   await Promise.all([loadDashboard(), loadSchedules(), loadSystemStatus()]);
+  lastChecked.value = new Date();
   if (!attempted.value) attempted.value = true;
   if (options.showSpinner) refreshing.value = false;
   // 手动刷新失败时给一次性 toast；轮询失败由错误态/降级徽标承载，避免连续弹窗骚扰
@@ -450,286 +469,570 @@ onUnmounted(() => {
 
 <style scoped>
 .dashboard-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* 页头：标题 20px/650 + 副标题 + 右侧刷新（与全站页头模式一致） */
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  color: var(--sb-text);
-}
-.page-subtitle {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: var(--sb-text-2);
-}
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.poll-hint {
-  font-size: 12px;
-  color: var(--sb-text-3);
-}
-
-/* 首屏骨架屏：布局与真实内容一致，减少加载完成后的跳动 */
-.skel-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.skel-strip {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-/* 状态摘要条：soft 底徽标 + 语义前景色；失败降级为中性"未知" */
-.status-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius-pill);
-  background: var(--sb-surface);
-  font-size: 13px;
-  white-space: nowrap;
-}
-.p-label {
-  color: var(--sb-text-2);
-}
-.p-value {
-  font-weight: 600;
-  color: var(--sb-text);
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--sb-text-3);
-  flex: none;
-}
-.status-pill.is-success {
-  background: var(--sb-success-soft);
-  border-color: color-mix(in srgb, var(--sb-success) 35%, transparent);
-}
-/* 圆点与数值使用同一语义前景色，保证徽标一眼可辨状态 */
-.status-pill.is-success .dot {
-  background: var(--sb-success);
-}
-.status-pill.is-success .p-value {
-  color: var(--sb-success);
-}
-.status-pill.is-warning {
-  background: var(--sb-warning-soft);
-  border-color: color-mix(in srgb, var(--sb-warning) 35%, transparent);
-}
-.status-pill.is-warning .p-value {
-  color: var(--sb-warning);
-}
-.status-pill.is-warning .dot {
-  background: var(--sb-warning);
-}
-.status-pill.is-error {
-  background: var(--sb-error-soft);
-  border-color: color-mix(in srgb, var(--sb-error) 35%, transparent);
-}
-.status-pill.is-error .p-value {
-  color: var(--sb-error);
-}
-.status-pill.is-error .dot {
-  background: var(--sb-error);
-}
-
-/* 统计 tiles：图标 chip soft 色块 + 26px/600 数值 + 标签 + 补充说明 */
-.tile-grid {
+  --hero-fill: var(--sb-accent-container, color-mix(in srgb, var(--sb-accent) 16%, var(--sb-surface)));
+  --hero-text: var(--sb-on-accent-container, var(--sb-text));
+  --hero-line: color-mix(in srgb, var(--hero-text) 25%, var(--hero-fill));
+  --hero-size: 222px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 12px;
-}
-.stat-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  background: var(--sb-surface);
-  border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  box-shadow: var(--sb-shadow-1);
-}
-.tile-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.tile-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  font-size: 16px;
-}
-.tile-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--sb-text-2);
-}
-.tile-value {
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--sb-text);
-  font-variant-numeric: tabular-nums;
-}
-.tile-supp {
-  font-size: 12px;
-  color: var(--sb-text-3);
-}
-.tile-supp.on {
-  color: var(--sb-success);
-}
-.tile-supp.off {
-  color: var(--sb-warning);
-}
-.tile-supp.bad {
-  color: var(--sb-error);
-}
-.tone-accent .tile-icon {
-  color: var(--sb-accent);
-  background: var(--sb-accent-soft);
-}
-.tone-success .tile-icon {
-  color: var(--sb-success);
-  background: var(--sb-success-soft);
-}
-.tone-warning .tile-icon {
-  color: var(--sb-warning);
-  background: var(--sb-warning-soft);
-}
-.tone-neutral .tile-icon {
-  color: var(--sb-text-2);
-  background: var(--sb-surface-3);
+  gap: 20px;
+  min-width: 0;
+  container: dashboard / inline-size;
 }
 
-/* 分区卡片 */
-.panel-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px;
-}
-.panel-card {
-  background: var(--sb-surface);
-  border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  box-shadow: var(--sb-shadow-1);
-}
-.panel-card :deep(.n-card__content) {
-  padding-top: 12px;
-}
-.section-hint {
-  margin: 0 0 12px;
-  font-size: 12.5px;
-  color: var(--sb-text-2);
-}
-
-/* 概览分区降级提示：错误说明与重试并排 */
-.panel-alert :deep(.alert-row),
-.alert-row {
+.dashboard-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-}
-
-/* 空态引导：文案告诉用户下一步 */
-.table-empty {
-  padding: 32px 0;
-}
-.empty-guide {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.empty-guide span {
-  font-size: 12.5px;
-  color: var(--sb-text-3);
-}
-
-/* 定时任务概览行：频道名 + 周期说明，右下次运行时间 */
-.schedule-list :deep(.n-list-item) {
-  padding: 8px 0;
-}
-.schedule-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.schedule-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
-.schedule-name {
-  font-weight: 600;
+
+.dashboard-heading h1 {
+  margin: 0;
   color: var(--sb-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.schedule-cycle {
-  font-size: 12.5px;
-  color: var(--sb-text-2);
-}
-.schedule-next {
-  flex: none;
-  font-size: 12px;
-  color: var(--sb-text-3);
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+  letter-spacing: -.035em;
+  line-height: 1.18;
 }
 
-/* 快捷操作：大按钮网格，窄屏自动换行 */
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
+.dashboard-heading p {
+  margin: 6px 0 0;
+  color: var(--sb-text-2);
+  font-size: 14px;
 }
-.quick-btn {
+
+.dashboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.poll-hint {
+  color: var(--sb-text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.refresh-button {
+  width: 44px;
   height: 44px;
 }
 
-/* 错误态与上下内容留白 */
-.dash-error {
-  padding: 32px 0;
+.status-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: var(--hero-size);
+  padding: 24px clamp(20px, 3.5vw, 36px);
+  overflow: hidden;
+  border-radius: var(--sb-radius-xl, 28px);
+  background: var(--hero-fill);
+  color: var(--hero-text);
 }
 
-/* ≤760px：隐藏轮询提示文案，其余布局由 auto-fit 网格自适应 */
-@media (max-width: 760px) {
+.hero-content {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.hero-content h2 {
+  margin: 0;
+  font-size: clamp(24px, 3.5vw, 36px);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+
+.hero-status,
+.service-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--sb-radius-pill);
+}
+
+.hero-status {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--status-color, var(--hero-text));
+  background: var(--status-fill, color-mix(in srgb, var(--sb-surface) 55%, var(--hero-fill)));
+}
+
+.is-success {
+  --status-color: var(--sb-success);
+  --status-fill: color-mix(in srgb, var(--sb-success-soft) 70%, var(--sb-surface));
+}
+
+.is-warning {
+  --status-color: var(--sb-warning);
+  --status-fill: color-mix(in srgb, var(--sb-warning-soft) 70%, var(--sb-surface));
+}
+
+.is-error {
+  --status-color: var(--sb-error);
+  --status-fill: color-mix(in srgb, var(--sb-error-soft) 70%, var(--sb-surface));
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-color, var(--hero-text));
+  flex: none;
+}
+
+.service-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.service-pill {
+  min-height: 30px;
+  padding: 3px 9px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--sb-surface) 70%, var(--hero-fill));
+  color: var(--sb-text);
+}
+
+.service-pill strong {
+  font-weight: 650;
+}
+
+.service-pill .status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.dashboard-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 14px;
+  border-radius: var(--sb-radius-pill);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 150ms ease;
+}
+
+.dashboard-link:focus-visible {
+  outline: 2px solid var(--sb-accent);
+  outline-offset: 3px;
+}
+
+.hero-link {
+  margin-top: 2px;
+  background: var(--sb-accent);
+  color: var(--sb-on-accent);
+}
+
+.hero-link:hover {
+  background: var(--sb-accent-hover);
+}
+
+.hero-link:focus-visible {
+  outline-color: var(--hero-text);
+}
+
+.hero-art {
+  display: grid;
+  position: relative;
+  place-items: center;
+  flex: none;
+  width: clamp(124px, 19vw, 245px);
+  height: 148px;
+  margin-inline-end: clamp(0px, 2vw, 30px);
+}
+
+.hero-orbit,
+.hero-orbit-dot {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.hero-orbit {
+  border: 1px solid var(--hero-line);
+  transform: rotate(-28deg);
+}
+
+.hero-orbit-outer {
+  width: 96%;
+  height: 75%;
+}
+
+.hero-orbit-inner {
+  width: 71%;
+  height: 52%;
+}
+
+.hero-orbit-dot {
+  width: 10px;
+  height: 10px;
+  background: var(--hero-line);
+}
+
+.hero-orbit-dot-top {
+  top: 18%;
+  right: 16%;
+}
+
+.hero-orbit-dot-bottom {
+  bottom: 24%;
+  left: 11%;
+  width: 7px;
+  height: 7px;
+}
+
+.hero-bot {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: var(--sb-radius-l);
+  background: color-mix(in srgb, var(--sb-surface) 58%, var(--hero-fill));
+  color: var(--hero-text);
+  font-size: 42px;
+  box-shadow: var(--sb-shadow-1);
+  transform: rotate(-9deg);
+}
+
+.dashboard-skeleton {
+  display: grid;
+  gap: 20px;
+}
+
+.hero-skeleton {
+  height: var(--hero-size);
+  border-radius: var(--sb-radius-xl, 28px);
+}
+
+.metric-skeleton {
+  height: 124px;
+  border-radius: var(--sb-radius-l);
+}
+
+.panel-skeleton {
+  height: 266px;
+  border-radius: var(--sb-radius-l);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.metric-card,
+.dashboard-panel {
+  min-width: 0;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius-l);
+  background: var(--sb-surface);
+}
+
+.metric-card {
+  padding: 14px 16px;
+}
+
+.metric-card dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sb-text-2);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.metric-icon,
+.schedule-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--sb-radius-s);
+  background: var(--metric-fill, var(--hero-fill));
+  color: var(--metric-color, var(--hero-text));
+  font-size: 17px;
+}
+
+.tone-success {
+  --metric-fill: var(--sb-success-soft);
+  --metric-color: var(--sb-success);
+}
+
+.tone-warning {
+  --metric-fill: var(--sb-warning-soft);
+  --metric-color: var(--sb-warning);
+}
+
+.metric-value {
+  margin: 5px 0 0;
+  color: var(--sb-text);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.metric-detail {
+  margin: 5px 0 0;
+  color: var(--sb-text-2);
+  font-size: 12px;
+}
+
+.metric-detail.on {
+  color: var(--sb-success);
+}
+
+.metric-detail.off {
+  color: var(--sb-warning);
+}
+
+.metric-detail.bad {
+  color: var(--sb-error);
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
+  gap: 12px;
+}
+
+.panel-grid.schedule-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dashboard-panel {
+  padding: 4px 18px 12px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 50px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  color: var(--sb-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.text-link {
+  color: var(--sb-accent);
+  white-space: nowrap;
+}
+
+.text-link:hover,
+.quick-link:hover {
+  background: var(--sb-accent-soft);
+}
+
+.runtime-details,
+.schedule-list {
+  padding: 0;
+  margin: 0;
+}
+
+.runtime-row,
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 0;
+  border-top: 1px solid var(--sb-border);
+}
+
+.runtime-row {
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.runtime-row dt,
+.schedule-cycle,
+.schedule-next {
+  color: var(--sb-text-2);
+}
+
+.runtime-row dt {
+  flex: none;
+}
+
+.runtime-row dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--sb-text);
+  font-weight: 600;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.schedule-list {
+  list-style: none;
+}
+
+.schedule-row {
+  min-height: 53px;
+}
+
+.schedule-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.schedule-name {
+  overflow: hidden;
+  color: var(--sb-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-cycle,
+.schedule-next {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-next {
+  text-align: end;
+}
+
+.schedule-alert {
+  margin-block: 2px 8px;
+}
+
+.schedule-empty {
+  padding: 18px 0;
+}
+
+.dashboard-error {
+  padding: 26px 16px;
+}
+
+.quick-panel {
+  padding-bottom: 16px;
+}
+
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  gap: 8px;
+}
+
+.quick-link {
+  border: 1px solid var(--sb-border);
+  color: var(--sb-text);
+}
+
+.quick-link :deep(.n-icon) {
+  color: var(--sb-accent);
+  font-size: 17px;
+}
+
+@container dashboard (max-width: 650px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container dashboard (max-width: 460px) {
   .poll-hint {
     display: none;
+  }
+
+  .hero-skeleton,
+  .status-hero {
+    --hero-size: 244px;
+  }
+
+  .status-hero {
+    position: relative;
+  }
+
+  .hero-art {
+    position: absolute;
+    inset: 6px 2px auto auto;
+    width: 88px;
+    height: 72px;
+    margin: 0;
+    opacity: .55;
+  }
+
+  .hero-bot {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--sb-radius-s);
+    font-size: 25px;
+  }
+
+  .hero-content h2 {
+    max-width: calc(100% - 40px);
+  }
+
+  .metric-card {
+    padding: 12px;
+  }
+
+  .metric-skeleton {
+    height: 120px;
+  }
+
+  .dashboard-panel {
+    padding-inline: 14px;
+  }
+}
+
+@container dashboard (max-width: 320px) {
+  .hero-art {
+    display: none;
+  }
+
+  .hero-content h2 {
+    max-width: none;
+  }
+
+  .metric-card dt,
+  .schedule-row {
+    gap: 6px;
+  }
+
+  .schedule-next {
+    max-width: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-link {
+    transition: none;
   }
 }
 </style>

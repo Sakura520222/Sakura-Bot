@@ -77,7 +77,13 @@
     </div>
 
     <!-- ===== 三个页签：运行控制 / 运行日志 / 维护 ===== -->
-    <n-tabs v-model:value="activeTab" type="line" display-directive="show:lazy" @update:value="onTabChange">
+    <n-tabs
+      v-model:value="activeTab"
+      class="service-workspace"
+      type="line"
+      display-directive="show:lazy"
+      @update:value="onTabChange"
+    >
       <!-- ============ 页签一：运行控制 ============ -->
       <n-tab-pane name="control" tab="运行控制">
         <!-- 主 Bot 控制区：每张行动卡 = 说明 + 按钮（带确认与 loading）+ 结果由 message 反馈 -->
@@ -978,15 +984,15 @@ onMounted(refreshAll);
 /* ===== 状态总览卡 ===== */
 .status-band {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 204px), 1fr));
+  gap: 12px;
 }
 
 .stat-card {
   background: var(--sb-surface);
   border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  padding: 14px 16px;
+  border-radius: var(--sb-radius-l);
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -997,6 +1003,7 @@ onMounted(refreshAll);
 }
 
 .status-error-card {
+  grid-column: 1 / -1;
   align-items: center;
   justify-content: center;
 }
@@ -1004,6 +1011,7 @@ onMounted(refreshAll);
 .stat-top {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1021,8 +1029,8 @@ onMounted(refreshAll);
   width: 30px;
   height: 30px;
   border-radius: var(--sb-radius-s);
-  background: var(--sb-accent-soft);
-  color: var(--sb-accent);
+  background: var(--sb-accent-container);
+  color: var(--sb-on-accent-container);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1109,6 +1117,14 @@ onMounted(refreshAll);
 }
 
 /* ===== Tab 分区 ===== */
+.service-workspace {
+  min-width: 0;
+  padding: 0 clamp(12px, 2vw, 24px) 20px;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius-l);
+  background: var(--sb-surface);
+}
+
 .tab-section {
   display: flex;
   flex-direction: column;
@@ -1143,12 +1159,12 @@ onMounted(refreshAll);
 /* ===== 行动卡（说明 + 按钮 + 状态） ===== */
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  gap: 12px;
 }
 
 .action-card {
-  background: var(--sb-surface);
+  background: var(--sb-surface-2);
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius);
   padding: 16px;
@@ -1173,6 +1189,7 @@ onMounted(refreshAll);
 
 .action-foot {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;

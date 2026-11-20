@@ -1,6 +1,6 @@
 <template>
   <RouterView v-if="isWiki" />
-  <AdminProviders v-else-if="route.matched.length"><RouterView /></AdminProviders>
+  <AdminProviders v-else-if="route.matched.length" class="sakura-admin"><RouterView /></AdminProviders>
 </template>
 
 <script setup lang="ts">
@@ -13,7 +13,7 @@ const AdminProviders = defineAsyncComponent(() => import("./components/AdminProv
 </script>
 
 <style>
-/* 全局设计令牌：一套体系两套取值（浅色 = Google 控制台，深色 = X），其它文件直接引用，勿重复定义 */
+/* 公共页面使用基础令牌。管理端在 admin.css 中覆盖对应的颜色和形状。 */
 :root {
   --sb-bg: #f8f9fa;
   --sb-surface: #ffffff;
@@ -115,48 +115,6 @@ textarea {
 
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--sb-text-3);
-}
-
-.n-card {
-  background: var(--sb-surface);
-  border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  box-shadow: var(--sb-shadow-1);
-}
-
-.n-card > .n-card-header {
-  padding-top: 18px;
-  padding-bottom: 14px;
-}
-
-.n-card > .n-card-header .n-card-header__main {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.n-data-table {
-  --n-td-color-hover: var(--sb-accent-soft) !important;
-  border-radius: var(--sb-radius-s);
-}
-
-.n-data-table .n-data-table-th {
-  letter-spacing: 0;
-}
-
-.n-tag {
-  font-weight: 600;
-}
-
-.n-input .n-input-wrapper {
-  transition: box-shadow 0.18s ease, border-color 0.18s ease;
-}
-
-.n-button {
-  font-weight: 600;
-}
-
-.modal-responsive {
-  width: min(600px, 90vw) !important;
 }
 
 /* 工具类 */
