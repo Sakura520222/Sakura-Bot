@@ -16,7 +16,7 @@ Sakura-Bot is an AGPL-3.0 Telegram channel-management application: AI summaries,
 ```bash
 bash start.sh          # POSIX: build both binaries + WebUI, then run the main bot
 start.bat              # Windows equivalent
-go run ./cmd/sakura-main --web-only   # Static WebUI + /api/health only, no Telegram
+go run ./cmd/sakura-main --web-only   # Static WebUI + /api/health only, no Telegram or MySQL
 ```
 
 ### Checks
@@ -26,17 +26,19 @@ gofmt -l cmd internal            # Must print nothing
 go vet ./...
 go test ./...                    # MySQL integration cases skip without MYSQL_TEST_DSN
 go test -race ./...              # Race suite; set MYSQL_TEST_DSN="" to skip MySQL cases
+go test ./internal/engine -run TestXxx -v   # Single package / single test
 MYSQL_TEST_DSN='root@tcp(127.0.0.1:3306)/sakura_go_test' go test ./...
 ```
 
-MySQL integration tests create and drop their own test database; never point `MYSQL_TEST_DSN` at production data.
+MySQL integration tests create and drop their own test database; never point `MYSQL_TEST_DSN` at production data. CI additionally runs `govulncheck` and the race suite with `MYSQL_TEST_DSN=""`.
 
 ### WebUI and docs site
 
 ```bash
 npm --prefix web ci
 npm --prefix web run dev          # Vite dev server; /api proxies to the Go backend
-npm --prefix web test             # Node unit tests
+npm --prefix web test             # Unit tests (Node built-in runner over web/tests/*.test.ts)
+npm --prefix web run test:guard   # One suite only
 npm --prefix web run build        # vue-tsc type-check + production build
 npm --prefix web run test:wiki:browser        # Playwright Wiki regression (needs local build)
 npm --prefix web run test:assistant:browser
@@ -44,6 +46,8 @@ npm --prefix web run test:assistant:browser
 npm --prefix wiki ci
 npm --prefix wiki run docs:build  # VitePress build; fails on broken internal links
 ```
+
+Unit tests use Node's built-in test runner via `node --experimental-strip-types --test` (no vitest/jest); browser regressions use `playwright-core`.
 
 ### Release tooling
 
@@ -80,12 +84,14 @@ The image bundles both Go binaries and the built WebUI; it contains no Python ru
 | Telegram | `internal/mtproto` (MTProto), `internal/tg` (Bot API) |
 | Commands | `internal/botcmd` (main bot), `internal/handlers` (assistant) |
 | Persistence | `internal/db` (MySQL), `internal/vectors` (SQLite index) |
-| AI | `internal/llm`, `internal/embedder`, `internal/reranker`, `internal/engine`, `internal/rag`, `internal/tools` |
-| Channel business | `internal/summary`, `internal/poll`, `internal/forwarding`, `internal/media` |
+| AI | `internal/llm`, `internal/embedder`, `internal/reranker`, `internal/engine`, `internal/rag`, `internal/tools`, `internal/memory` (channel/summary context for assistant tools) |
+| Channel business | `internal/summary`, `internal/poll`, `internal/forwarding`, `internal/media` (image pipeline), `internal/submission` (review/publish workflow), `internal/welcome` (comment-area welcome) |
+| Assistant users | `internal/qauser` (registration, summary subscriptions, cross-bot requests) |
 | Guard / Wiki | `internal/guard`, `internal/wiki` |
 | HTTP | `internal/webapi` (admin API, public wiki, auth, SPA) |
 | Config | `internal/config` (validation, hot reload, atomic save) |
-| Cross-cutting | `internal/i18n`, `internal/logging`, `internal/filelock`, `internal/version` |
+| Scheduling / process | `internal/scheduler` (cron/interval jobs), `internal/process` (PID files, image-update deployer coordination) |
+| Cross-cutting | `internal/i18n`, `internal/logging`, `internal/filelock`, `internal/version`, `internal/contracts` (shared narrow interfaces), `internal/netpolicy` (outbound HTTP/SSRF guard), `internal/links` (t.me post-link builder) |
 
 ### Configuration
 
@@ -101,4 +107,4 @@ Environment (`data/.env`, loaded by the process) supplies credentials; `data/con
 - Go: gofmt formatting, Chinese comments/logs. Preserve the short AGPL-3.0 copyright header on new Go files.
 - User-facing strings use `internal/i18n` lookups (`Text`/`TLang`/`T`); keys live in `messages_zh.gen.go` and `messages_en.gen.go` — add to both languages, zh-CN is the fallback.
 - Commit messages follow Conventional Commits, e.g. `fix(forwarding): resolve media group deduplication race condition`. Branch from and target PRs to `main`; there is no `dev` branch.
-- The VitePress docs site sources are `wiki/*.md` (deployed to GitHub Pages on merge to `main`). Keep user/developer docs in sync with behavior changes; the build fails on broken internal links.
+- Docs live in two trees: `wiki/*.md` is the VitePress docs site (deployed to GitHub Pages on merge to `main`; build fails on broken internal links), while `docs/` holds deployment/release-focused guides. Keep user/developer docs in sync with behavior changes.
