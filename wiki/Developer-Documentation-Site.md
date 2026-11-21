@@ -28,8 +28,8 @@ npm --prefix wiki run docs:preview
 
 部署工作流位于 [`.github/workflows/docs.yml`](../.github/workflows/docs.yml)：
 
-- 每次推送到 `main` 都会安装锁定依赖、构建文档并部署至 GitHub Pages。
-- 向 `main` 或 `dev` 提交涉及文档的 PR 时，只检查构建；合并后随 `main` 推送发布。
+- 推送到 `main` 且涉及 `wiki/` 或该工作流本身时，安装锁定依赖、构建文档并部署至 GitHub Pages。
+- 向 `main` 提交涉及文档的 PR 时，只检查构建；合并后随 `main` 推送发布。
 - 可以在 Actions 的“文档站构建与部署”工作流中手动运行；仅选择 `main` 时才会发布。
 - 构建失败不会进入部署步骤；同一分支的发布按顺序执行。
 

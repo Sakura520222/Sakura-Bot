@@ -21,4 +21,4 @@
 | 审核、入群验证与通知 | [Sakura Guard](User-Sakura-Guard.md) |
 | 知识采集、增量与发布 | [Sakura Wiki](User-Sakura-Wiki.md) |
 
-[Go 迁移执行记录](../docs/go-mainbot-execplan.md)保存迁移范围、验证结果和已知边界。旧版 Python 运行记录见[历史文档](Archive.md)。
+[Go 迁移执行记录](../docs/go-mainbot-execplan.md)保存迁移范围、验证结果和已知边界。旧版 Python 源码整体归档在仓库的 `legacy/python` 分支（最终版本 v2.5.2）；旧版运行记录见[历史文档](Archive.md)。

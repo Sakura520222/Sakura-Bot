@@ -289,6 +289,10 @@ func readEntries(archive string) []entry {
 			entries = append(entries, entry{name: header.Name, isDir: true})
 			continue
 		}
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			// git archive 写入的 pax 全局头不是归档内容，与 Python tarfile 一致跳过。
+			continue
+		}
 		if header.Typeflag != tar.TypeReg {
 			fail("附件 %s 中出现非普通文件成员: %s", path.Base(archive), header.Name)
 		}

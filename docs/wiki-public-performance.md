@@ -41,7 +41,7 @@ npm --prefix web run test:wiki:browser
 
 最新流的 `EXPLAIN ANALYZE` 走 `wiki_feed_latest`，首批读取 21 个候选修订。推荐和关键词搜索先按当前发布版本连接，扫描并排序这组测试的 8,008 条候选，之后仅读取当批卡片字段。关键词搜索保留已有的中文子串、别名召回和标题加权。性能随可见快照大小、查询选择性和真实证据分布变化。
 
-在可丢弃的 MySQL 实例上设置 `WIKI_TEST_PORT`，从仓库根目录运行 `python -m tests.wiki.benchmark_public_reads`。脚本建立并清理独立数据库，比较旧分页和游标读取，打印 SQL 计时、载荷大小和执行计划。
+基准脚本属于 Python 旧版工具链，随旧源码归档在 `legacy/python` 分支（`tests/wiki/benchmark_public_reads.py`）。其结论仍适用于当前 Go 版本的公开 Wiki 查询路径；需要重跑时可在该归档分支检出脚本，对同一套 SQL 形态计时。
 
 ## 缓存边界
 

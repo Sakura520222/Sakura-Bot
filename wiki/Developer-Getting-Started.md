@@ -44,7 +44,7 @@ web/               Vue WebUI
 wiki/              VitePress 站点
 ```
 
-按[系统架构](Developer-Architecture.md)查找各业务模块。Python 源文件保留用于旧版行为对照和迁移回归。
+按[系统架构](Developer-Architecture.md)查找各业务模块。仓库仅维护 Go 运行时；旧版 Python 源码归档在 `legacy/python` 分支，供历史对照与回滚参考。
 
 ## 本地检查
 

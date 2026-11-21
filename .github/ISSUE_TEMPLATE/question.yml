@@ -31,7 +31,7 @@ body:
           required: true
         - label: "我已经查阅了 README 和 Wiki 相关文档"
           required: true
-        - label: "我的问题与项目直接相关,而非通用的 Python/AI 问题"
+        - label: "我的问题与项目直接相关,而非通用的 AI 使用问题"
           required: true
         - label: '如果这是 bug 报告,我会使用 "Bug 报告" 模板'
           required: true
@@ -81,7 +81,7 @@ body:
       description: "提供你的环境信息"
       placeholder: |
         - Bot 版本: 
-        - Python 版本: 
+        - Go 版本: 
         - 操作系统: 
         - 部署方式: [Docker / 本地运行]
     validations:

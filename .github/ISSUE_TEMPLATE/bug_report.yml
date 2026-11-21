@@ -94,7 +94,7 @@ body:
       label: "🏗️ 部署方式"
       options:
         - "Docker"
-        - "本地运行 (Python)"
+        - "本地运行 (Go)"
         - "Docker Compose"
         - "其他"
     validations:
@@ -106,7 +106,7 @@ body:
       label: "🌍 环境信息"
       placeholder: |
         - Bot 版本: 
-        - Python 版本: 
+        - Go 版本: 
         - 操作系统: 
     validations:
       required: true

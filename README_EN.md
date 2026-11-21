@@ -67,7 +67,7 @@ Documentation site: <https://sakura-bot.pyabunny.com/> (sources in [wiki/](wiki/
 
 ## Contributing
 
-Issues and PRs are welcome. Target the `main` branch (`dev` is automation-maintained), follow [Conventional Commits](https://www.conventionalcommits.org/), and format Go code with gofmt. See the [contributing guide](CONTRIBUTING.md) and [code of conduct](wiki/Code-of-Conduct.md).
+Issues and PRs are welcome. Target the `main` branch, follow [Conventional Commits](https://www.conventionalcommits.org/), and format Go code with gofmt. See the [contributing guide](CONTRIBUTING.md) and [code of conduct](wiki/Code-of-Conduct.md).
 
 ## License
 
