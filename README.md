@@ -1,4 +1,12 @@
-# 🌸 Sakura-Bot
+# 🌸 Sakura-Bot（Python 旧版归档）
+
+> [!WARNING]
+> **本分支为已停止维护（EOL）的 Python 实现归档。**
+>
+> - 最后支持的 Python 版本：**v2.5.2**（本分支所基于的版本）。
+> - 自 **v2.6.0** 起项目已整体迁移到 Go 运行时，日常开发、发布与文档均在 [`main`](https://github.com/Sakura520222/Sakura-Bot/tree/main) 分支进行；迁移记录见 [docs/go-mainbot-execplan.md](https://github.com/Sakura520222/Sakura-Bot/blob/main/docs/go-mainbot-execplan.md)。
+> - 本分支保留全部历史提交，仅供历史对照与紧急回滚参考，**不再接受功能开发或缺陷修复**。
+> - 回滚说明：如需临时运行旧版，请检出本分支并使用 [v2.5.2 Release](https://github.com/Sakura520222/Sakura-Bot/releases/tag/v2.5.2) 的附件与部署流程；生产环境不建议长期停留在该版本。
 
 [![Release](https://img.shields.io/github/v/release/Sakura520222/Sakura-Bot?style=flat-square)](https://github.com/Sakura520222/Sakura-Bot/releases)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
