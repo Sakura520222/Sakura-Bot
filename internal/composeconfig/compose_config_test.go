@@ -145,13 +145,18 @@ func TestUnsetAndEmptyValuesBindLoopback(t *testing.T) {
 
 func TestExplicitAddressesAndCustomPorts(t *testing.T) {
 	requireDocker(t)
-	for _, address := range []string{"0.0.0.0", "192.0.2.10", "[::1]"} {
+	for address, expected := range map[string]string{
+		"0.0.0.0":    "0.0.0.0",
+		"192.0.2.10": "192.0.2.10",
+		// Compose 解析后输出不带方括号的 IPv6 地址。
+		"[::1]": "::1",
+	} {
 		service := renderCompose(t, map[string]string{
 			"WEBUI_BIND_ADDRESS":   address,
 			"WEBUI_PORT":           "18080",
 			"WEBUI_CONTAINER_PORT": "9090",
 		}, "", "")
-		checkBinding(t, service, address, "18080", 9090)
+		checkBinding(t, service, expected, "18080", 9090)
 	}
 }
 
