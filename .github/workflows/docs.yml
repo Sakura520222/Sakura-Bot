@@ -3,8 +3,11 @@ name: 文档站构建与部署
 on:
   push:
     branches: [main]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/docs.yml'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'wiki/**'
       - '.github/workflows/docs.yml'

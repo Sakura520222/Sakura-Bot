@@ -1,0 +1,244 @@
+name: 版本发布
+
+# 正式发布由 v* 标签驱动；也支持手动触发（校验逻辑相同）。
+# 一次发布一个不可变版本：标签必须与 VERSION 一致并指向当前提交；
+# 已带附件的 Release 禁止覆盖。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 校验并发布版本
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+      head: ${{ steps.validate.outputs.head }}
+
+    steps:
+      - name: 检出发布提交
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 校验版本、标签与修订一致
+        id: validate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < VERSION)
+          tag="v$version"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
+            echo "::error::VERSION 中的版本号无效: $version" >&2
+            exit 1
+          fi
+          head=$(git rev-parse HEAD)
+          remote_tag=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}" |
+            awk '$2 ~ /\^\{\}$/ { peeled=$1; next } { direct=$1 } END { print peeled ? peeled : direct }')
+          if [[ "$remote_tag" != "$head" ]]; then
+            echo "::error::远端标签 $tag（$remote_tag）必须指向本次发布的提交 $head。请先推送与 VERSION 匹配的标签。" >&2
+            exit 1
+          fi
+          asset_count=$(gh release view "$tag" --json assets --jq '.assets | length' 2>/dev/null || echo 0)
+          if [[ "$asset_count" != "0" ]]; then
+            echo "::error::Release $tag 已带附件发布。发布不可变，请提升 VERSION 后发布新版本。" >&2
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            exists=true
+          else
+            exists=false
+          fi
+          {
+            echo "exists=$exists"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "head=$head"
+          } >> "$GITHUB_OUTPUT"
+          echo "发布版本: $tag（$head，Release 已存在: $exists）"
+
+      - name: 生成 Release 描述
+        env:
+          VERSION: ${{ steps.validate.outputs.version }}
+          HEAD_SHA: ${{ steps.validate.outputs.head }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if prev=$(git describe --tags --abbrev=0 --exclude "$tag" "$HEAD_SHA" 2>/dev/null); then
+            git log --format='%s' "${prev}..${HEAD_SHA}" -- > commits.txt
+          else
+            git log --format='%s' "$HEAD_SHA" -- > commits.txt
+          fi
+
+          declare -A ZH
+          ZH[feat]=新增功能 ZH[fix]=问题修复 ZH[docs]=文档更新 ZH[style]=代码风格
+          ZH[refactor]=重构 ZH[perf]=性能优化 ZH[test]=测试相关 ZH[build]=构建系统
+          ZH[ci]=持续集成 ZH[chore]=其他变更 ZH[i18n]=国际化 ZH[revert]=回退
+          order="feat fix docs style refactor perf test build ci chore i18n revert"
+
+          declare -A GROUPS
+          while IFS= read -r subject; do
+            [ -n "$subject" ] || continue
+            case "$subject" in
+              "Merge pull request "*|"Merge branch "*) continue ;;
+            esac
+            type=$(printf '%s' "$subject" | sed -E 's/^([a-zA-Z]+)(\(.+\))?!?:.*/\1/' | tr '[:upper:]' '[:lower:]')
+            case "$type" in
+              feat|fix|docs|style|refactor|perf|test|build|ci|chore|i18n|revert) ;;
+              *) type=chore ;;
+            esac
+            GROUPS[$type]="${GROUPS[$type]}- $subject"$'\n'
+          done < commits.txt
+
+          {
+            echo "## 🎉 Release v${VERSION} - $(date +'%Y-%m-%d')"
+            echo ""
+            for type in $order; do
+              [ -n "${GROUPS[$type]}" ] || continue
+              echo "### ${ZH[$type]}"
+              echo ""
+              printf '%s\n' "${GROUPS[$type]}"
+            done
+          } > release_notes.md
+          echo "--- 生成的 Release 描述 ---"
+          cat release_notes.md
+
+      - name: 创建或补全 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.validate.outputs.tag }}
+          HEAD_SHA: ${{ steps.validate.outputs.head }}
+          EXISTS: ${{ steps.validate.outputs.exists }}
+        run: |
+          set -euo pipefail
+          if [ "$EXISTS" = "false" ]; then
+            gh release create "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --target "$HEAD_SHA" \
+              --notes-file release_notes.md \
+              --latest \
+              --verify-tag
+            echo "✅ Release $TAG_NAME 已创建"
+          else
+            # 仅补全上次失败尝试留下的空 Release，不覆盖任何附件。
+            gh release edit "$TAG_NAME" --notes-file release_notes.md
+            echo "✅ Release $TAG_NAME 描述已补全"
+          fi
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 生成并校验源码附件
+        run: go run ./cmd/release-archive build --directory "$RUNNER_TEMP/release-assets"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 拉取同一提交的官方镜像
+        id: image
+        timeout-minutes: 25
+        env:
+          RELEASE_SHA: ${{ steps.validate.outputs.head }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ref="$repo:sha-$RELEASE_SHA"
+          until docker pull "$ref"; do
+            sleep 20
+          done
+          revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$ref")
+          test "$revision" = "$RELEASE_SHA"
+          digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" |
+            awk -v repo="$repo" 'index($0, repo "@sha256:") == 1 { print; exit }')
+          test -n "$digest"
+          echo "ref=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: 上传发布附件
+        env:
+          TAG_NAME: ${{ steps.validate.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset="$RUNNER_TEMP/release-assets/Sakura-Bot-$TAG_NAME"
+          # 不使用 --clobber：附件一旦发布即不可变。
+          gh release upload "$TAG_NAME" "$asset.zip" "$asset.tar.gz" "$RUNNER_TEMP/release-assets/SHA256SUMS"
+
+      - name: 回下载实际发布附件并验证摘要与清单
+        env:
+          TAG_NAME: ${{ steps.validate.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          downloaded="$RUNNER_TEMP/downloaded-assets"
+          gh release download "$TAG_NAME" --dir "$downloaded" \
+            --pattern "Sakura-Bot-$TAG_NAME.zip" --pattern "Sakura-Bot-$TAG_NAME.tar.gz" --pattern SHA256SUMS
+          cmp "$RUNNER_TEMP/release-assets/SHA256SUMS" "$downloaded/SHA256SUMS"
+          go run ./cmd/release-archive verify --directory "$downloaded" --extract-to "$RUNNER_TEMP/release-smoke"
+
+      - name: 验证最终附件的构建和镜像运行
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          RELEASE_SHA: ${{ steps.validate.outputs.head }}
+        run: bash scripts/smoke_release.sh "$RUNNER_TEMP/release-smoke" "$IMAGE_REF" "$RELEASE_SHA"
+
+      - name: 发送 Telegram 通知
+        env:
+          VERSION: ${{ steps.validate.outputs.version }}
+          TAG_NAME: ${{ steps.validate.outputs.tag }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHANNEL_ID }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
+            MESSAGE="🚀 **新版本发布通知**
+
+            Sakura-Bot v${VERSION} 已发布！
+
+            📦 版本: v${VERSION}
+            🖐 发布方式: v* 标签触发
+
+            📦 **下载附件**:
+            ${RELEASE_URL}
+
+            ---
+            由 GitHub Actions 自动发布"
+            curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=Markdown" \
+              -d "disable_web_page_preview=true" \
+              -d 'reply_markup={"inline_keyboard":[[{"text":"📄 View Release","url":"'"${RELEASE_URL}"'"}]]}' >/dev/null
+            echo "✅ Telegram 通知已发送"
+          else
+            echo "⚠️ 未配置 Telegram 通知"
+          fi
+
+      - name: 生成发布摘要
+        env:
+          TAG_NAME: ${{ steps.validate.outputs.tag }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
+          {
+            echo "# 🚀 Release ${TAG_NAME} 发布成功"
+            echo ""
+            echo "📦 附件已回下载并通过 SHA-256、Docker 构建和挂载冒烟测试"
+            echo "🐳 已验证镜像：${IMAGE_REF}"
+            echo "🔗 发布页面: [${RELEASE_URL}](${RELEASE_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
