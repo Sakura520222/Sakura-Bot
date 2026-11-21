@@ -67,7 +67,7 @@ wiki/              项目文档站
 
 ## 贡献
 
-欢迎 Issue 和 PR。PR 请提交到 `main` 分支（`dev` 由自动化维护），提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)，Go 代码使用 gofmt。详见[贡献指南](CONTRIBUTING.md)和[行为准则](wiki/Code-of-Conduct.md)。
+欢迎 Issue 和 PR。PR 请提交到 `main` 分支，提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)，Go 代码使用 gofmt。详见[贡献指南](CONTRIBUTING.md)和[行为准则](wiki/Code-of-Conduct.md)。
 
 ## 许可证
 

@@ -2,16 +2,20 @@ name: CI 持续集成
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
-    name: 单元测试
+    name: Go 测试
     runs-on: ubuntu-latest
     services:
       test-mysql:
@@ -28,7 +32,7 @@ jobs:
     env:
       MYSQL_TEST_DSN: "root@tcp(127.0.0.1:3306)/sakura_go_test"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -54,7 +58,7 @@ jobs:
     name: Go 依赖漏洞扫描
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -67,8 +71,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -84,9 +88,12 @@ jobs:
     name: Docker 构建测试
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - name: 验证 Compose WebUI 端口绑定
-        run: python3 scripts/test_compose_config.py
+        run: go test ./internal/composeconfig -v
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -99,158 +106,16 @@ jobs:
           cache-to: type=gha,mode=max
       - name: 验证 Go 运行时与 WebUI
         run: bash scripts/smoke_image.sh sakura-bot:test "$(tr -d '\r\n' < VERSION)" "$RUNNER_TEMP/smoke-image"
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
       - name: 验证两个发布附件
         run: |
-          python scripts/release_archive.py build --directory "$RUNNER_TEMP/release-assets" \
+          go run ./cmd/release-archive build --directory "$RUNNER_TEMP/release-assets" \
             --extract-to "$RUNNER_TEMP/release-smoke"
           bash scripts/smoke_release.sh "$RUNNER_TEMP/release-smoke" sakura-bot:test "$(git rev-parse HEAD)"
-
-  legacy-parity:
-    name: Python 迁移回归
-    runs-on: ubuntu-latest
-    services:
-      wiki-mysql:
-        image: mysql:8.4.10
-        env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
-          MYSQL_ROOT_HOST: "%"
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
-          --health-interval=10s --health-timeout=5s --health-retries=15
-    env:
-      WIKI_TEST_PORT: "3306"
-      # 收集测试模块时就会创建 Settings，必须在 pytest 启动前提供合法配置。
-      # 以下均为测试占位值，单元测试通过 mock 隔离外部服务。
-      TELEGRAM_API_ID: "123456"
-      TELEGRAM_API_HASH: test_ci_hash_12345
-      TELEGRAM_BOT_TOKEN: 123456:ABCDEF_test_ci_token
-      LLM_API_KEY: test_ci_api_key_for_testing_only
-      LLM_BASE_URL: https://api.test.com
-      LLM_MODEL: test-model
-      REPORT_ADMIN_IDS: 123456,789012
-      LANGUAGE: zh-CN
-      LOG_LEVEL: DEBUG
-      ENABLE_POLL: "true"
-      DATABASE_TYPE: mysql
-      MYSQL_HOST: localhost
-      MYSQL_PORT: "3306"
-      MYSQL_USER: test_user
-      MYSQL_PASSWORD: test_password
-      MYSQL_DATABASE: sakura_bot_test
-    
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 设置 Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-      
-      - name: 安装测试依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist ruff
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: 检查迁移基准的 Python 代码
-        run: |
-          ruff check . --output-format=github
-          ruff format --check .
-
-      - name: 设置 Go（Wiki 跨语言快照验证）
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      
-      - name: 运行单元测试并收集覆盖率
-        id: unit_tests
-        run: |
-          python -m pytest tests/ -v -m "not slow and not integration" \
-            --cov=core \
-            --cov-report=xml:coverage.xml \
-            --cov-report=html:htmlcov \
-            --cov-report=term-missing \
-            --junitxml=test-results/unit.xml \
-            --tb=short \
-            --strict-markers
-          test -s test-results/unit.xml
-          echo "✅ 单元测试通过，覆盖率报告生成完成"
-      
-      - name: 运行集成测试（如果单元测试通过）
-        id: integration_tests
-        if: success()
-        run: |
-          python -m pytest tests/ -v -m "integration" \
-            --cov=core \
-            --cov-append \
-            --cov-report=term-missing \
-            --junitxml=test-results/integration.xml \
-            --tb=short \
-            --strict-markers
-          test -s test-results/integration.xml
-
-      - name: 验证 coverage 数据文件
-        if: always()
-        run: |
-          echo "📊 检查 coverage 数据文件..."
-          if [ -f .coverage ]; then
-            echo "✅ .coverage 文件存在"
-            coverage report
-          else
-            echo "⚠️ .coverage 文件不存在"
-            ls -lah | grep coverage || echo "未找到任何 coverage 相关文件"
-          fi
-      
-      - name: 生成测试报告摘要
-        if: always()
-        run: |
-          echo "## 📊 测试结果摘要" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- 单元测试: ${{ steps.unit_tests.outcome }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 集成测试: ${{ steps.integration_tests.outcome }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f .coverage ]; then
-            echo "### 覆盖率报告" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            python -m coverage report >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "未生成覆盖率数据，请查看测试步骤日志。" >> $GITHUB_STEP_SUMMARY
-          fi
-      
-      - name: 上传覆盖率报告到 Codecov
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-      
-      - name: 上传测试与覆盖率报告
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: |
-            htmlcov/
-            test-results/
-          retention-days: 30
 
   summary:
     name: CI 检查汇总
     runs-on: ubuntu-latest
-    needs: [tests, security-scan, frontend, docker-build-test, legacy-parity]
+    needs: [tests, security-scan, frontend, docker-build-test]
     if: always()
     steps:
       - name: 检查所有验证任务

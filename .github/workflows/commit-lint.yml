@@ -4,143 +4,110 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: commit-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   commit-lint:
     name: 检查提交信息格式
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    
+
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      
-      - name: 获取 PR 的所有提交
-        id: get_commits
-        run: |
-          # 获取提交信息，每行一个提交
-          COMMITS=$(git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
-          
-          # 清理输入：移除多余空格和换行符
-          CLEANED_COMMITS=$(echo "$COMMITS" | tr -s '\n' | sed 's/^[ \t]*//;s/[ \t]*$//' | grep -v '^$')
-          
-          # 写入临时文件，避免 GitHub Actions 变量展开问题
-          echo "$CLEANED_COMMITS" > /tmp/commits.txt
-          
-          echo "检测到以下提交:"
-          echo "$CLEANED_COMMITS"
-      
-      - name: 验证提交信息格式
+
+      - name: 校验提交信息格式
         id: lint_commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          INVALID_COMMITS=""
-          VALID_TYPES="feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert"
-          
-          # 从临时文件读取提交信息，避免 GitHub Actions 变量展开问题
+          set -euo pipefail
+          # 提交信息只经过文件与环境变量传递，不进入脚本源码或表达式插值。
+          git log --pretty=format:'%s' "$BASE_SHA..$HEAD_SHA" > /tmp/commits.txt
+
+          valid_types='^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\(.+\))?: .+'
+          : > /tmp/invalid-commits.txt
           while IFS= read -r commit || [ -n "$commit" ]; do
-            # 跳过空行
-            [ -z "$commit" ] && continue
-            
-            # 跳过自动生成的 merge commits
-            if echo "$commit" | grep -q "^Merge branch"; then
-              echo "⏭️  跳过 merge commit: $commit"
-              continue
-            fi
-            
-            # 检查是否符合 Conventional Commits 格式（只检查标题，不超过100字符）
-            commit_title=$(echo "$commit" | cut -c1-100)
-            if ! echo "$commit_title" | grep -qE "^(${VALID_TYPES})(\(.+\))?: .+"; then
-              INVALID_COMMITS="${INVALID_COMMITS}\n❌ $commit_title"
+            [ -n "$commit" ] || continue
+            case "$commit" in
+              "Merge branch "*|"Merge pull request "*)
+                echo "⏭️  跳过 merge commit: $commit"
+                continue
+                ;;
+            esac
+            if printf '%s\n' "$commit" | grep -qvE "$valid_types"; then
+              printf '%s\n' "$commit" >> /tmp/invalid-commits.txt
+              echo "❌ $commit"
             else
-              echo "✅ $commit_title"
+              echo "✅ $commit"
             fi
           done < /tmp/commits.txt
-          
-          if [ -n "$INVALID_COMMITS" ]; then
-            echo "invalid=true" >> $GITHUB_OUTPUT
-            echo "invalid_commits<<EOF" >> $GITHUB_OUTPUT
-            echo -e "$INVALID_COMMITS" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ -s /tmp/invalid-commits.txt ]; then
+            echo "invalid=true" >> "$GITHUB_OUTPUT"
           else
-            echo "invalid=false" >> $GITHUB_OUTPUT
+            echo "invalid=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
       - name: 检查 PR 标签
         id: check_labels
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
           echo "当前 PR 标签: $LABELS"
-          
-          # 检查是否有类型标签
-          if echo "$LABELS" | grep -qE "(enhancement|bug|documentation|refactor|performance|testing|dependencies)"; then
-            echo "✅ PR 标签符合要求"
-            echo "has_labels=true" >> $GITHUB_OUTPUT
+          if printf '%s' "$LABELS" | grep -qE '(enhancement|bug|documentation|refactor|performance|testing|dependencies)'; then
+            echo "has_labels=true" >> "$GITHUB_OUTPUT"
           else
-            echo "⚠️ 建议添加类型标签"
-            echo "has_labels=false" >> $GITHUB_OUTPUT
+            echo "has_labels=false" >> "$GITHUB_OUTPUT"
           fi
-      
-      - name: 生成评论
-        if: steps.lint_commits.outputs.invalid == 'true'
+
+      - name: 更新或清理检查评论
         uses: actions/github-script@v7
+        env:
+          INVALID: ${{ steps.lint_commits.outputs.invalid }}
+          HAS_LABELS: ${{ steps.check_labels.outputs.has_labels }}
         with:
           script: |
-            const invalidCommits = `${{ steps.lint_commits.outputs.invalid_commits }}`;
-            const hasLabels = `${{ steps.check_labels.outputs.has_labels }}`;
-            
-            let comment = `## ⚠️ 提交信息格式检查失败\n\n`;
-            comment += `以下提交信息不符合 [Conventional Commits](https://www.conventionalcommits.org/) 规范:\n\n`;
-            comment += invalidCommits + `\n\n`;
-            comment += `### 正确格式:\n`;
-            comment += `\\\`\\\`\\\`\n`;
-            comment += `<type>(<scope>): <subject>\n`;
-            comment += `\\\`\\\`\\\`\n\n`;
-            comment += `### 类型:\n`;
-            comment += `- \`feat\`: 新功能\n`;
-            comment += `- \`fix\`: 问题修复\n`;
-            comment += `- \`docs\`: 文档更新\n`;
-            comment += `- \`style\`: 代码格式（不影响功能）\n`;
-            comment += `- \`refactor\`: 代码重构\n`;
-            comment += `- \`perf\`: 性能优化\n`;
-            comment += `- \`test\`: 测试相关\n`;
-            comment += `- \`chore\`: 构建/工具更新\n`;
-            comment += `- \`build\`: 构建系统\n`;
-            comment += `- \`ci\`: CI 配置\n`;
-            comment += `- \`revert\`: 回退提交\n\n`;
-            
-            if (hasLabels === 'false') {
-              comment += `### 建议:\n`;
-              comment += `为 PR 添加类型标签，如:\n`;
-              comment += `- \`enhancement\` - 新功能\n`;
-              comment += `- \`bug\` - 问题修复\n`;
-              comment += `- \`documentation\` - 文档更新\n`;
-              comment += `- \`refactor\` - 代码重构\n`;
-              comment += `- \`performance\` - 性能优化\n\n`;
+            // 评论内容由环境变量读取，避免把提交/PR 内容插入脚本源码。
+            const fs = require('fs');
+            const marker = '<!-- sakura-commit-lint -->';
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: number });
+            const existing = comments.data.find((comment) => comment.body.includes(marker));
+
+            if (process.env.INVALID === 'true') {
+              const invalid = fs.readFileSync('/tmp/invalid-commits.txt', 'utf8').trim();
+              let body = `${marker}\n## ⚠️ 提交信息格式检查失败\n\n`;
+              body += `以下提交信息不符合 [Conventional Commits](https://www.conventionalcommits.org/) 规范:\n\n`;
+              for (const line of invalid.split('\n')) {
+                body += `- \`${line.replace(/`/g, "'")}\`\n`;
+              }
+              body += `\n### 正确格式\n\n\`<type>(<scope>): <subject>\`\n\n`;
+              body += `### 类型\n\n`;
+              body += `\`feat\` 新功能 · \`fix\` 问题修复 · \`docs\` 文档 · \`style\` 代码格式 · \`refactor\` 重构\n`;
+              body += `\`perf\` 性能 · \`test\` 测试 · \`chore\` 工具 · \`build\` 构建 · \`ci\` 持续集成 · \`revert\` 回退\n`;
+              if (process.env.HAS_LABELS === 'false') {
+                body += `\n### 建议\n\n为 PR 添加类型标签，如 \`enhancement\`、\`bug\`、\`documentation\`。\n`;
+              }
+              body += `\n### 修复方法\n\n1. 使用 \`git commit --amend\` 修改最近的提交\n2. 或创建新的修正提交\n3. 推送更改后 PR 将自动重新检查`;
+
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+              }
+              core.setFailed('提交信息格式不符合要求');
+            } else if (existing) {
+              // 检查通过后移除旧的失败提示，避免过期评论残留。
+              await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
             }
-            
-            comment += `### 修复方法:\n`;
-            comment += `1. 使用 \`git commit --amend\` 修改最近的提交\n`;
-            comment += `2. 或创建新的修正提交\n`;
-            comment += `3. 推送更改后 PR 将自动重新检查`;
-            
-            await github.rest.issues.createComment({
-              issue_number: context.payload.pull_request.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-      
-      - name: 设置检查状态
-        if: steps.lint_commits.outputs.invalid == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.setFailed('提交信息格式不符合要求')
-      
-      - name: 成功提示
-        if: steps.lint_commits.outputs.invalid == 'false'
-        run: |
-          echo "✅ 所有提交信息格式正确"

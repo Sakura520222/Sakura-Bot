@@ -102,8 +102,7 @@
 
 ### 分支策略
 
-- **main**: 主分支，稳定版本（生产环境）- **PR 的目标分支**
-- **dev**: 开发分支，从 main 自动同步
+- **main**: 唯一的长期分支（生产环境）- **PR 的目标分支**
 - **feature/***: 新功能分支（从 main 创建）
 - **fix/***: 问题修复分支（从 main 创建）
 - **hotfix/***: 紧急修复分支（从 main 创建）
@@ -111,8 +110,9 @@
 - **test/***: 测试相关分支（从 main 创建）
 - **refactor/***: 代码重构分支（从 main 创建）
 - **chore/***: 构建/工具更新分支（从 main 创建）
+- **legacy/python**: 已归档的 Python 旧版（最后版本 v2.5.2），只读保留，不接受日常开发
 
-> **重要说明**：所有 PR 应该提交到 `main` 分支。main 分支的更改会自动同步到 dev 分支。
+> **重要说明**：所有 PR 提交到 `main` 分支。项目不再维护 `dev` 分支。
 
 ### 工作流程
 
@@ -132,14 +132,15 @@
 
 3. 本地预检查（推荐）
    ```bash
-   # 代码风格检查
-   ruff check .
-   
-   # 导入排序检查（仅供参考）
-   isort --check-only --diff .
-   
-   # 运行测试
-   pytest tests/ -v
+   # Go 格式与静态检查
+   gofmt -l cmd internal
+   go vet ./...
+
+   # 运行测试（无 MySQL 时集成用例自动跳过）
+   go test ./...
+
+   # WebUI（如涉及前端）
+   npm --prefix web run build
    ```
 
 4. 提交到您的 Fork
@@ -156,14 +157,7 @@
    - 等待 CI 检查通过
    - 通过代码审查后合并到 main
 
-6. 自动同步到 dev
-   - PR 合并到 main 后，会自动触发 sync-branches 工作流
-   - main 分支的更改会自动同步到 dev 分支
-
-> **工作流说明**：
-> - 所有 PR 应该提交到 `main` 分支
-> - main 分支的更改会自动同步到 dev 分支
-> - dev 分支是只读的，由自动化工作流维护
+> **发布说明**：合并 PR 只触发 CI 与 `main` 开发镜像构建，不会创建正式 Release。正式版本由维护者推送与 `VERSION` 一致的 `v*` 标签发布，发布与附件不可变。
 
 #### 紧急修复流程
 
@@ -182,9 +176,6 @@
    - 使用更紧急的 PR 标签（如 `bug`、`critical`）
    - 通过快速审查后合并
 
-4. 自动同步到 dev
-   - 合并后自动触发同步工作流
-
 ---
 
 ## 🔍 CI/CD 检查说明
@@ -193,61 +184,46 @@
 
 ### 检查项目
 
-#### 1. 代码质量检查 ✅ 必须通过
+#### 1. Go 检查 ✅ 必须通过
 
-- **Ruff 快速检查** - 主要代码风格检查
-  - 检查代码错误（E）、格式问题（F）、警告（W）、导入排序（I）
-  - 忽略行长度限制（E501）
-  
-- **导入排序检查** - 仅供参考，不影响 CI 通过
-  - 使用 `isort` 检查导入语句排序
-  
-- **代码复杂度检查** - 仅供参考，不影响 CI 通过
-  - 使用 `pylint` 检查代码复杂度
-  - 目标分数：7.0+
+- **gofmt** - `cmd/` 与 `internal/` 必须已格式化
+- **go test** - 单元测试与 MySQL 集成测试（CI 提供临时 MySQL）
+- **go vet** - 静态检查
+- **go test -race** - 并发竞争检测
 
-#### 2. 安全漏洞扫描 ⚠️ 警告
+#### 2. 依赖漏洞扫描 ✅ 必须通过
 
-- **Safety 扫描** - 检查依赖包已知漏洞
-- **Pip-audit 审计** - 审计依赖包安全性
+- **govulncheck** - 检查 Go 依赖的已知漏洞
 
-> 注意：安全扫描失败会显示警告，但不会阻止合并。请在合并前修复安全问题。
+#### 3. WebUI 验证 ✅ 必须通过
 
-#### 3. Docker 构建测试 ✅ 必须通过
+- 单元测试、`vue-tsc` 类型检查与生产构建
+- Wiki 与助手的 Playwright 浏览器回归
 
-- 验证 Dockerfile 是否正确
-- 测试镜像构建是否成功
-- 确保容器能够正常启动
+#### 4. Docker 构建测试 ✅ 必须通过
 
-#### 4. 单元测试 ✅ 必须通过
-
-- 运行 `tests/` 目录下的所有测试
-- 生成代码覆盖率报告
-- 目标：保持较高的测试覆盖率
+- Compose 端口绑定校验（`internal/composeconfig`）
+- 完整镜像构建、镜像冒烟（双 Go 二进制、WebUI、健康检查）
+- 两个发布附件（ZIP/tar.gz）的打包、校验与安装冒烟
 
 ### 本地预检查
 
 在提交 PR 前，您可以在本地运行相同的检查：
 
 ```bash
-# 1. 代码风格检查（必须通过）
-pip install ruff
-ruff check . --select=E,F,W,I --ignore=E501
+# 1. 格式与静态检查（必须通过）
+gofmt -l cmd internal
+go vet ./...
 
-# 2. 自动修复可修复的问题
-ruff check . --fix
+# 2. 运行测试
+go test ./...
 
-# 3. 导入排序（可选）
-pip install isort
-isort .
+# 3. 带独立 MySQL 的集成测试（可选）
+MYSQL_TEST_DSN='root@tcp(127.0.0.1:3306)/sakura_go_test' go test ./...
 
-# 4. 运行测试
-pip install pytest pytest-cov pytest-asyncio
-pytest tests/ -v --cov=core
-
-# 5. Docker 构建测试
-docker build -t sakura-bot:test .
-docker run --rm sakura-bot:test python --version
+# 4. WebUI（如涉及前端）
+npm --prefix web ci
+npm --prefix web run build
 ```
 
 ### CI 失败处理
@@ -272,13 +248,15 @@ docker run --rm sakura-bot:test python --version
    CI 会自动重新运行
 
 4. **常见问题**
-   
+
    | 问题 | 原因 | 解决方法 |
    |------|------|----------|
-   | Ruff 检查失败 | 代码风格不符合规范 | 运行 `ruff check . --fix` 自动修复 |
+   | gofmt 检查失败 | 文件未格式化 | 运行 `gofmt -w <file>` |
+   | go vet 失败 | 静态检查发现问题 | 按 vet 提示修复代码 |
+   | 测试失败 | 代码逻辑错误或测试用例问题 | 本地运行 `go test ./... -run TestXxx -v` 查看详细错误 |
+   | 集成测试失败 | MySQL 用例断言不一致 | 用 `MYSQL_TEST_DSN` 指向独立测试库复现 |
    | Docker 构建失败 | Dockerfile 错误或依赖问题 | 检查依赖和构建配置 |
-   | 测试失败 | 代码逻辑错误或测试用例问题 | 本地运行 `pytest -v` 查看详细错误 |
-   | 安全漏洞警告 | 依赖包存在已知漏洞 | 更新依赖包到安全版本 |
+   | 依赖漏洞扫描失败 | Go 依赖存在已知漏洞 | 运行 `govulncheck ./...` 并升级依赖 |
 
 ---
 
@@ -295,7 +273,7 @@ docker run --rm sakura-bot:test python --version
 | `documentation` | 文档更新 | 更新 README 说明 |
 | `refactor` | 代码重构 | 重构错误处理模块 |
 | `performance` | 性能优化 | 优化数据库查询性能 |
-| `dependencies` | 依赖更新 | 升级 Python 依赖版本 |
+| `dependencies` | 依赖更新 | 升级 Go/npm 依赖版本 |
 | `testing` | 测试相关 | 添加单元测试 |
 | `ci` | CI 配置 | 更新 GitHub Actions |
 
@@ -360,7 +338,7 @@ git commit -m "fix(summary): 修复汇总消息格式错误"
 git commit -m "docs(readme): 更新安装说明"
 
 # 代码重构
-git commit -m "refactor(core): 优化错误处理逻辑"
+git commit -m "refactor(botcmd): 优化错误处理逻辑"
 ```
 
 ### 详细的 Body
@@ -379,77 +357,49 @@ Closes #123"
 
 ## 代码规范
 
-### Python 代码风格
+### Go 代码风格
 
-我们遵循 [PEP 8](https://pep8.org/) 规范，使用以下工具：
-
-#### Ruff (主要检查工具)
-
-```bash
-# 安装 ruff
-pip install ruff
-
-# 检查代码
-ruff check .
-
-# 自动修复
-ruff check . --fix
-```
-
-#### isort (导入排序)
+- 使用 `gofmt` 格式化全部 Go 源码（`gofmt -w cmd internal`）
+- 新文件保留简短的 AGPL-3.0 版权头（参见现有源文件）
+- 注释、日志与文档约定使用中文
+- 用户可见字符串使用 `internal/i18n` 的文案键（中英双语同时添加，zh-CN 为回退语言）
 
 ```bash
-# 安装 isort
-pip install isort
+# 检查格式
+gofmt -l cmd internal
 
-# 检查导入排序
-isort --check-only .
+# 格式化
+gofmt -w cmd internal
 
-# 自动修复
-isort .
+# 静态检查
+go vet ./...
 ```
 
 ### 代码结构
 
 ```
 Sakura-Bot/
-├── core/              # 核心模块
-├── tests/            # 测试文件
-├── data/             # 数据文件
-├── wiki/             # 文档
-├── main.py           # 入口文件
-├── qa_bot.py         # QA Bot 入口
-└── requirements.txt  # 依赖列表
+├── cmd/              # 程序入口：sakura-main、sakura-qa、release-archive
+├── internal/         # 业务领域与共享基础设施
+├── web/              # Vue 3 WebUI
+├── wiki/             # VitePress 文档站源文件
+├── data/             # 运行配置、提示词与会话（含 .env.example 模板）
+├── deploy/           # 宿主机部署器 systemd 单元
+├── scripts/          # 部署与冒烟脚本
+└── docs/             # 面向部署与发布的专项文档
 ```
 
 ### 命名规范
 
-- **模块/包**: `lowercase_with_underscores`
-- **类**: `CapitalizedWords`
-- **函数/方法**: `lowercase_with_underscores`
-- **常量**: `UPPERCASE_WITH_UNDERSCORES`
-- **私有方法**: `_leading_underscore`
+- **包名**: 简短小写单词
+- **导出标识符**: `CapitalizedWords`
+- **未导出标识符**: `lowerCamelCase`
+- **常量**: `CapitalizedWords` 或 `lowerCamelCase`（遵循 Go 惯例）
 
-### 文档字符串
+### WebUI 代码风格
 
-使用 Google 风格的 docstrings：
-
-```python
-def summarize_channel(channel_id: str, messages: List[str]) -> str:
-    """生成频道消息汇总
-    
-    Args:
-        channel_id: 频道 ID
-        messages: 消息列表
-    
-    Returns:
-        汇总文本
-    
-    Raises:
-        ValueError: 如果频道 ID 无效
-    """
-    pass
-```
+- TypeScript + Vue 3 组合式 API，类型检查通过 `npm --prefix web run build`（`vue-tsc`）验证
+- 前端 API 封装位于 `web/src/api/`，与后端 `internal/webapi` 的路由/模式保持同步
 
 ---
 
@@ -458,38 +408,39 @@ def summarize_channel(channel_id: str, messages: List[str]) -> str:
 ### 运行测试
 
 ```bash
-# 安装测试依赖
-pip install pytest pytest-cov pytest-asyncio
+# 运行所有测试（MySQL 集成用例在未设置 MYSQL_TEST_DSN 时自动跳过）
+go test ./...
 
-# 运行所有测试
-pytest
+# 运行特定包
+go test ./internal/config -v
 
-# 运行特定测试文件
-pytest tests/test_module.py
+# 运行特定测试
+go test ./internal/engine -run TestAnonymousDiscussionHistoryPersistsAcrossTurnsAndRestart -v
 
-# 生成覆盖率报告
-pytest --cov=core --cov-report=html
+# 带独立 MySQL 的集成测试（测试库会被创建和删除，勿指向生产数据）
+MYSQL_TEST_DSN='root@tcp(127.0.0.1:3306)/sakura_go_test' go test ./...
+
+# 并发竞争检测
+go test -race ./...
+
+# WebUI 单元测试与构建
+npm --prefix web test
+npm --prefix web run build
 ```
 
 ### 编写测试
 
-```python
-# tests/test_example.py
-import pytest
-
-
-def test_example():
-    """测试示例"""
-    result = function_to_test()
-    assert result == expected_value
-
-
-@pytest.mark.asyncio
-async def test_async_example():
-    """异步测试示例"""
-    result = await async_function()
-    assert result is not None
+```go
+func TestSummarizeChannel(t *testing.T) {
+    // 常规用例使用标准库 testing；依赖外部服务的用例在环境缺失时 t.Skip。
+    got := SummarizeChannel(...)
+    if got != want {
+        t.Errorf("SummarizeChannel() = %q, want %q", got, want)
+    }
+}
 ```
+
+涉及 MySQL 的用例通过 `MYSQL_TEST_DSN` 获取连接，并在测试内创建/清理独立数据库；参见 `internal/db` 现有测试的组织方式。
 
 ---
 
@@ -497,17 +448,17 @@ async def test_async_example():
 
 ### 报告 Bug
 
-请使用 [Bug Report 模板](.github/ISSUE_TEMPLATE/bug_report.md) 并提供：
+请使用 [Bug Report 模板](.github/ISSUE_TEMPLATE/bug_report.yml) 并提供：
 
 1. 清晰的描述和复现步骤
 2. 预期行为和实际行为
-3. 环境信息（Python 版本、操作系统等）
+3. 环境信息（程序版本、操作系统、部署方式等）
 4. 相关日志和错误信息
 5. 截图（如果适用）
 
 ### 功能请求
 
-请使用 [Feature Request 模板](.github/ISSUE_TEMPLATE/feature_request.md) 并说明：
+请使用 [Feature Request 模板](.github/ISSUE_TEMPLATE/feature_request.yml) 并说明：
 
 1. 功能描述和使用场景
 2. 详细的实现建议
@@ -524,6 +475,15 @@ async def test_async_example():
 2. 改进现有文档的清晰度
 3. 添加使用示例
 4. 翻译文档
+
+文档站源文件在 `wiki/` 目录，本地验证：
+
+```bash
+npm --prefix wiki ci
+npm --prefix wiki run docs:build
+```
+
+构建会检查内部链接；新增页面需要同步更新 `wiki/.vitepress/config.mts` 的侧边栏。
 
 ---
 
@@ -543,7 +503,7 @@ async def test_async_example():
 
 ## 💬 获取帮助
 
-- 📖 查看 [Wiki](../wiki)
+- 📖 查看[文档站](https://sakura-bot.pyabunny.com/)
 - 💬 参与 [Discussions](../../discussions)
 - 🐛 查看 [Issues](../../issues)
 

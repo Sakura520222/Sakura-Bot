@@ -46,8 +46,9 @@ Relates to #
 
 ## 测试情况
 
-- [ ] 已运行 `python run_ruff.py`
-- [ ] 已运行 `pytest tests/ -v -m "not slow and not integration"`
+- [ ] 已运行 `go test ./...`
+- [ ] 已运行 `go vet ./...`，`gofmt -l cmd internal` 无输出
+- [ ] 涉及前端时已运行 `npm --prefix web run build`
 - [ ] 已补充或更新测试
 - [ ] 涉及数据库迁移
 - [ ] 涉及配置结构变更
@@ -59,9 +60,9 @@ Relates to #
 
 ## 自检清单
 
-- [ ] 分支名符合 Gitflow 规范
+- [ ] 分支从 `main` 创建并指向 `main`
 - [ ] 没有提交真实 Token、Session、日志、数据库、缓存或本地配置
-- [ ] 新增 Python 文件包含 AGPL-3.0 版权头
+- [ ] 新增 Go 文件包含 AGPL-3.0 版权头
 - [ ] 注释与日志使用中文
 - [ ] 用户可见字符串已使用 i18n
 - [ ] 文档已更新，或确认无需更新
