@@ -337,6 +337,23 @@ func RevisionVisibleSQL(revAlias, pageAlias string) string {
 	return fmt.Sprintf("%s.approved=TRUE AND %s", r, RevisionEvidenceSQL(r, pageAlias))
 }
 
+// imageParentValidSQL 生成“图片来源的父帖仍然有效”谓词（图片来源别名为 s）：父帖须属于同一频道和同一条消息、
+// media_key 一致，且未被删除、隐藏、排除或取消核实。RevisionEvidenceSQL 以它的否定形式拒绝孤儿图片。
+func imageParentValidSQL() string {
+	return `(s.source_type<>'image' OR EXISTS (SELECT 1 FROM wiki_sources parent
+        WHERE parent.channel_id=s.channel_id AND parent.source_type='message'
+        AND parent.message_id=s.message_id AND parent.media_key=s.media_key
+        AND parent.deleted=FALSE AND parent.hidden=FALSE AND parent.excluded=FALSE AND parent.verified=TRUE))`
+}
+
+// publishableEvidenceSQL 判定某个分块此刻能否作为公开证据（来源别名为 s，分块别名为 ch）：来源未被删除、
+// 隐藏或排除，已核实，内容与引用时一致，且（若为图片）父帖仍然有效。它与 RevisionEvidenceSQL 对单条证据的
+// 拒绝条件互为反面，供装配阶段预先剔除发布校验不会放行的引用；来源是否属于本频道由调用方自行限定。
+func publishableEvidenceSQL() string {
+	return `s.deleted=FALSE AND s.hidden=FALSE AND s.excluded=FALSE AND s.verified=TRUE
+    AND s.content_hash=ch.content_hash AND ` + imageParentValidSQL()
+}
+
 // VisibleSQL 组合频道、修订及隐藏主题过滤的完整公开读取谓词（对齐 core/wiki/reader.py:VISIBLE）。
 func VisibleSQL(chanAlias, revAlias, pageAlias string) string {
 	c := strings.TrimSpace(chanAlias)
