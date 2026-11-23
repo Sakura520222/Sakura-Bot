@@ -393,10 +393,11 @@ func TestStaleEvidenceFailureStopsTheJobWithoutSpendingRetries(t *testing.T) {
 		}
 		return count
 	}
-	// ready 在发布阶段失败的任务：assembled 是装配时记录的来源版本。
-	ready := func(assembled int64, refreshes int) *JobRecord {
+	// ready 把一个已认领的任务置为“在发布阶段失败”：assembled 是装配时记录的来源版本。
+	// fixture 认领的任务仍占着频道，EnqueueJob 遇到活动任务会原样返回它，所以第一个场景直接复用该任务；
+	// 后面的场景等上一个任务结束、释放频道之后再认领新任务。
+	ready := func(job *JobRecord, assembled int64, refreshes int) *JobRecord {
 		t.Helper()
-		job := f.claimJob(t)
 		job.Phase = "ready"
 		job.Progress["assembled_generation"] = assembled
 		if refreshes > 0 {
@@ -406,7 +407,7 @@ func TestStaleEvidenceFailureStopsTheJobWithoutSpendingRetries(t *testing.T) {
 	}
 
 	// 来源自装配以来没有变化：重新整理不会有新结果，任务直接结束并指出词条。
-	job := ready(current, 0)
+	job := ready(f.job, current, 0)
 	if err := runtime.handleJobError(ctx, job, &staleEvidenceError{PageID: f.page, RevisionID: "stale"}); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +426,7 @@ func TestStaleEvidenceFailureStopsTheJobWithoutSpendingRetries(t *testing.T) {
 	}
 
 	// 来源在变，但已经刷新过上限次数：同样不再刷新。
-	job = ready(current-1, maxEvidenceRefreshes)
+	job = ready(f.claimJob(t), current-1, maxEvidenceRefreshes)
 	if err := runtime.handleJobError(ctx, job, &staleEvidenceError{PageID: f.page, RevisionID: "stale"}); err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +435,7 @@ func TestStaleEvidenceFailureStopsTheJobWithoutSpendingRetries(t *testing.T) {
 	}
 
 	// 没有定位到词条的错误（例如审校阶段发现）也要结束，并给出通用说明。
-	job = ready(current, 0)
+	job = ready(f.claimJob(t), current, 0)
 	if err := runtime.handleJobError(ctx, job, errPublicationEvidence); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +444,7 @@ func TestStaleEvidenceFailureStopsTheJobWithoutSpendingRetries(t *testing.T) {
 	}
 
 	// 装配之后来源确实变了：刷新一次。这是恢复步骤，不记错误码，也不占用重试次数。
-	job = ready(current-1, 0)
+	job = ready(f.claimJob(t), current-1, 0)
 	job.Cursor["revisions"] = map[string]any{f.page: "stale"}
 	if err := runtime.handleJobError(ctx, job, &staleEvidenceError{PageID: f.page, RevisionID: "stale"}); err != nil {
 		t.Fatal(err)
