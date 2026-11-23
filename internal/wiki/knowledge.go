@@ -33,6 +33,19 @@ var (
 	errPublicationReviewReenabled  = errors.New("已重新启用 AI 来源审校，请重新审校后发布")
 )
 
+// staleEvidenceError 表示发布校验因证据失效拒绝了某个词条的修订，并记下是哪一个，供任务失败时定位。
+type staleEvidenceError struct {
+	PageID     string
+	RevisionID string
+}
+
+func (e *staleEvidenceError) Error() string {
+	return fmt.Sprintf("%s: page %s revision %s", errPublicationEvidence, e.PageID, e.RevisionID)
+}
+
+// Unwrap 保留对 errPublicationEvidence 的判定，现有调用方无需区分两者。
+func (e *staleEvidenceError) Unwrap() error { return errPublicationEvidence }
+
 // RevisionSeedItem 表示页面及其基线修订条目。
 type RevisionSeedItem struct {
 	PageID     string
@@ -718,15 +731,15 @@ func MergeFacts(facts []map[string]any) []map[string]any {
 }
 
 // BuildPage 聚合词条全部有效事实并生成或复用 wiki_page_revisions（对齐 knowledge.py:build_page）。
+// 只有发布校验会放行的引用才会进入修订：带着失效引用的修订无法发布，重试多少次结果都一样。
 func (k *Knowledge) BuildPage(ctx context.Context, job *JobRecord, page PageRecord, minSources int) (string, error) {
-	rows, err := k.store.DB.QueryContext(ctx, `
+	rows, err := k.store.DB.QueryContext(ctx, fmt.Sprintf(`
 		SELECT f.fact FROM wiki_facts f
 		JOIN wiki_chunks ch ON ch.id=f.chunk_id
 		JOIN wiki_sources s ON s.id=ch.source_id
-		WHERE f.page_id=? AND s.deleted=FALSE AND s.hidden=FALSE AND s.excluded=FALSE
-		  AND s.verified=TRUE AND s.content_hash=f.source_hash
+		WHERE f.page_id=? AND s.channel_id=? AND s.content_hash=f.source_hash AND %s
 		ORDER BY s.created_at, f.id
-	`, page.ID)
+	`, publishableEvidenceSQL()), page.ID, job.ChannelID)
 	if err != nil {
 		return "", err
 	}
@@ -740,6 +753,11 @@ func (k *Knowledge) BuildPage(ctx context.Context, job *JobRecord, page PageReco
 	_ = rows.Close()
 
 	facts := MergeFacts(rawFacts)
+	// 合并后的一条断言可能同时引用多个来源，锚点分块有效并不代表每条引证都能通过发布校验。
+	facts, err = k.pruneRevokedEvidence(ctx, job.ChannelID, facts)
+	if err != nil {
+		return "", err
+	}
 	if len(facts) == 0 {
 		return "", nil
 	}
@@ -808,7 +826,14 @@ func (k *Knowledge) BuildPage(ctx context.Context, job *JobRecord, page PageReco
 	}
 	contentHash := documentContentHash(document)
 	if hasOld && oldHash == contentHash && !oldRejected {
-		return oldID, nil
+		// 文档没变不代表证据还有效：旧修订可能带着此后被撤销的引用，沿用它只会被发布校验反复拒绝。
+		publishable, err := k.revisionEvidenceValid(ctx, job.ChannelID, page.ID, oldID)
+		if err != nil {
+			return "", err
+		}
+		if publishable {
+			return oldID, nil
+		}
 	}
 
 	revisionID := NewID()
@@ -874,6 +899,113 @@ func (k *Knowledge) BuildPage(ctx context.Context, job *JobRecord, page PageReco
 		return "", err
 	}
 	return revisionID, nil
+}
+
+// revokedEvidenceBatch 是逐批核对引证时单条 SQL 涉及的分块数量上限。
+const revokedEvidenceBatch = 500
+
+// pruneRevokedEvidence 逐条核对事实引用的分块，剔除发布校验不会放行的引证（来源被删除、隐藏、排除，
+// 内容已变更，或父帖已失效的图片）。合并后的事实可能同时引用多个来源，仅凭锚点分块无法判定；
+// 引证被全部剔除的断言随之丢弃，原本就没有引证的断言保持原样。
+func (k *Knowledge) pruneRevokedEvidence(ctx context.Context, channelID string, facts []map[string]any) ([]map[string]any, error) {
+	cited := map[string]bool{}
+	for _, fact := range facts {
+		if evArr, ok := fact["evidence"].([]any); ok {
+			for _, raw := range evArr {
+				if em, ok := raw.(map[string]any); ok {
+					if id := mapString(em, "chunk_id"); id != "" {
+						cited[id] = true
+					}
+				}
+			}
+		}
+	}
+	if len(cited) == 0 {
+		return facts, nil
+	}
+	ids := SortedKeys(cited)
+	revoked := map[string]bool{}
+	for start := 0; start < len(ids); start += revokedEvidenceBatch {
+		batch := ids[start:min(len(ids), start+revokedEvidenceBatch)]
+		if err := k.collectRevokedChunks(ctx, channelID, batch, revoked); err != nil {
+			return nil, err
+		}
+	}
+	if len(revoked) == 0 {
+		return facts, nil
+	}
+	return dropEvidenceChunks(facts, revoked), nil
+}
+
+// collectRevokedChunks 查出 batch 中此刻不能作为公开证据的分块，并入 revoked。
+func (k *Knowledge) collectRevokedChunks(ctx context.Context, channelID string, batch []string, revoked map[string]bool) error {
+	marks, args := stringPlaceholders(batch)
+	rows, err := k.store.DB.QueryContext(ctx, fmt.Sprintf(`
+		SELECT ch.id FROM wiki_chunks ch
+		JOIN wiki_sources s ON s.id=ch.source_id
+		WHERE ch.id IN (%s) AND s.channel_id=? AND NOT (%s)
+	`, marks, publishableEvidenceSQL()), append(args, channelID)...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		revoked[id] = true
+	}
+	return rows.Err()
+}
+
+// dropEvidenceChunks 返回剔除 revoked 中分块引证后的事实：引证被全部剔除的断言整条丢弃，
+// 原本就没有引证的断言保持原样。不修改传入的事实。
+func dropEvidenceChunks(facts []map[string]any, revoked map[string]bool) []map[string]any {
+	out := make([]map[string]any, 0, len(facts))
+	for _, fact := range facts {
+		evArr, ok := fact["evidence"].([]any)
+		if !ok || len(evArr) == 0 {
+			out = append(out, fact)
+			continue
+		}
+		kept := make([]any, 0, len(evArr))
+		for _, raw := range evArr {
+			if em, ok := raw.(map[string]any); ok && revoked[mapString(em, "chunk_id")] {
+				continue
+			}
+			kept = append(kept, raw)
+		}
+		switch len(kept) {
+		case 0:
+			continue
+		case len(evArr):
+			out = append(out, fact)
+		default:
+			fact = cloneMap(fact)
+			fact["evidence"] = kept
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+// revisionEvidenceValid 判断修订现有的全部证据是否仍满足发布校验，
+// 与跳过 AI 审校发布时的放行条件一致。
+func (k *Knowledge) revisionEvidenceValid(ctx context.Context, channelID, pageID, revisionID string) (bool, error) {
+	var id string
+	err := k.store.DB.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT r.id FROM wiki_page_revisions r
+		JOIN wiki_pages p ON p.id=r.page_id
+		WHERE r.id=? AND r.channel_id=? AND p.id=? AND %s
+	`, RevisionEvidenceSQL("r", "p")), revisionID, channelID, pageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return id != "", nil
 }
 
 // Profile 实时统计频道可见消息规模、UTC 小时分布、月度节奏与最近 24 个月主题趋势（对齐 knowledge.py:profile）。
@@ -1335,6 +1467,9 @@ func (k *Knowledge) Publish(ctx context.Context, channelID, jobID, actor string,
 		for _, cand := range candidates {
 			if pcfg.rollbackID == "" && (!baseline[cand.RevisionID] || stagedRevs[cand.PageID]) {
 				if err := k.ApproveRevision(ctx, tx, channelID, cand.PageID, cand.RevisionID, policy); err != nil {
+					if errors.Is(err, errPublicationEvidence) {
+						return &staleEvidenceError{PageID: cand.PageID, RevisionID: cand.RevisionID}
+					}
 					return err
 				}
 				continue
@@ -1344,8 +1479,12 @@ func (k *Knowledge) Publish(ctx context.Context, channelID, jobID, actor string,
 				SELECT r.id FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id
 				WHERE r.id=? AND r.channel_id=? AND p.id=? AND %s
 			`, RevisionVisibleSQL("r", "p")), cand.RevisionID, channelID, cand.PageID).Scan(&okID)
+			// 只有“修订不再可见”才是证据失效；数据库自身的错误必须原样上报，不能被当成需要重新整理。
+			if errors.Is(err, sql.ErrNoRows) {
+				return &staleEvidenceError{PageID: cand.PageID, RevisionID: cand.RevisionID}
+			}
 			if err != nil {
-				return errPublicationEvidence
+				return err
 			}
 		}
 

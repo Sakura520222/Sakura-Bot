@@ -105,6 +105,9 @@ func (r *Runtime) advanceJob(ctx context.Context, job *JobRecord) error {
 		if err := r.Store.ReportJob(ctx, job, "正在整理文章与知识地图", false, map[string]any{"stage": "assemble"}); err != nil {
 			return err
 		}
+		if err := r.markAssembledGeneration(ctx, job, channel.ID); err != nil {
+			return err
+		}
 		if err := r.Engine.Assemble(ctx, job, channel); err != nil {
 			return err
 		}
@@ -247,29 +250,14 @@ func (r *Runtime) handleJobError(ctx context.Context, job *JobRecord, cause erro
 		(job.Kind == "page_edit" && errors.Is(cause, errPublicationEvidence)):
 		return r.Store.FinishJob(ctx, job, "failed", "page_edit_conflict", 0)
 	case errors.Is(cause, errPublicationEvidence):
-		delete(job.Cursor, "page_after")
-		job.Cursor["revisions"] = map[string]any{}
-		delete(job.Cursor, "dropped_pages")
-		job.Progress["assembled_pages"] = 0
-		job.Progress["pages"] = 0
-		job.Progress["activity"] = "来源有更新，正在刷新文章"
-		err := r.Store.WithTx(ctx, func(tx *sql.Tx) error {
-			if err := r.Store.FenceJob(ctx, tx, job); err != nil {
-				return err
-			}
-			_, err := tx.ExecContext(ctx, `
-				INSERT IGNORE INTO wiki_dirty_pages SELECT ?, id
-				FROM wiki_pages WHERE channel_id=? AND hidden=FALSE
-			`, job.ChannelID, job.ChannelID)
-			return err
-		})
+		refresh, err := r.evidenceRefreshAllowed(ctx, job)
 		if err != nil {
 			return err
 		}
-		if err := r.Store.CheckpointJob(ctx, job, "assemble", false); err != nil {
-			return err
+		if refresh {
+			return r.refreshStaleEvidence(ctx, job, detail)
 		}
-		delay = 1
+		return r.failStaleEvidence(ctx, job, cause, code)
 	case errors.Is(cause, errPublicationReview), errors.Is(cause, errPublicationReviewReenabled):
 		job.Progress["review_complete"] = false
 		if err := r.Store.CheckpointJob(ctx, job, "review", false); err != nil {
@@ -294,6 +282,121 @@ func (r *Runtime) handleJobError(ctx context.Context, job *JobRecord, cause erro
 	}
 	r.logger.Warn("Wiki 任务失败", "job", job.ID, "phase", job.Phase, "status", status, "code", code, "detail", detail)
 	return r.Store.FinishJob(ctx, job, status, code, delay)
+}
+
+// maxEvidenceRefreshes 是单个任务内因“来源在装配后发生变化”而整体刷新的上限。
+const maxEvidenceRefreshes = 2
+
+// markAssembledGeneration 记录本次装配开始时的来源版本。发布阶段若因证据失效被拒，
+// 可据此判断装配之后来源是否真的变过：没有变，重新整理就只会得到同样的修订。
+func (r *Runtime) markAssembledGeneration(ctx context.Context, job *JobRecord, channelID string) error {
+	var generation int64
+	err := r.Store.DB.QueryRowContext(ctx, "SELECT source_generation FROM wiki_channels WHERE id=?", channelID).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrLeaseLost
+	}
+	if err != nil {
+		return err
+	}
+	job.Mu.Lock()
+	job.Progress["assembled_generation"] = generation
+	job.Mu.Unlock()
+	return nil
+}
+
+// evidenceRefreshAllowed 判断发布校验拒绝后是否值得把全部词条重新整理一遍，值得时登记一次刷新。
+func (r *Runtime) evidenceRefreshAllowed(ctx context.Context, job *JobRecord) (bool, error) {
+	channel, err := r.Store.GetChannel(ctx, job.ChannelID)
+	if err != nil {
+		return false, err
+	}
+	if channel == nil {
+		return false, ErrLeaseLost
+	}
+	job.Mu.Lock()
+	defer job.Mu.Unlock()
+	if !evidenceRefreshWorthwhile(job.Cursor, job.Progress, channel.SourceGeneration) {
+		return false, nil
+	}
+	job.Cursor["evidence_refreshes"] = mapInt(job.Cursor, "evidence_refreshes") + 1
+	return true, nil
+}
+
+// evidenceRefreshWorthwhile 是刷新决策的纯判定：装配完成后来源版本没有变化，说明重新整理只会得到
+// 同样的修订，再试也只是重复同一次失败。来源版本包含新帖入库在内的所有来源写入，
+// 活跃频道里可能仅因新消息而变化，因此另外用 maxEvidenceRefreshes 限制单个任务的刷新总次数。
+func evidenceRefreshWorthwhile(cursor, progress map[string]any, sourceGeneration int64) bool {
+	if mapInt(cursor, "evidence_refreshes") >= maxEvidenceRefreshes {
+		return false
+	}
+	_, recorded := progress["assembled_generation"]
+	return !recorded || mapInt64(progress, "assembled_generation") != sourceGeneration
+}
+
+// refreshStaleEvidence 在装配完成后来源发生变化时重新整理全部词条：把所有未隐藏词条登记进失效队列，
+// 清空修订清单并退回装配阶段。这是恢复步骤而不是失败重试，不记错误码，因此不占用频道的重试次数。
+func (r *Runtime) refreshStaleEvidence(ctx context.Context, job *JobRecord, detail string) error {
+	const activity = "来源有更新，正在刷新文章"
+	err := r.Store.WithTx(ctx, func(tx *sql.Tx) error {
+		if err := r.Store.FenceJob(ctx, tx, job); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT IGNORE INTO wiki_dirty_pages SELECT ?, id
+			FROM wiki_pages WHERE channel_id=? AND hidden=FALSE
+		`, job.ChannelID, job.ChannelID)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	job.Mu.Lock()
+	delete(job.Cursor, "page_after")
+	job.Cursor["revisions"] = map[string]any{}
+	delete(job.Cursor, "dropped_pages")
+	job.Progress["assembled_pages"] = 0
+	job.Progress["pages"] = 0
+	job.Progress["activity"] = activity
+	job.Progress["error_detail"] = activity
+	refreshes := mapInt(job.Cursor, "evidence_refreshes")
+	job.Mu.Unlock()
+	if err := r.Store.CheckpointJob(ctx, job, "assemble", false); err != nil {
+		return err
+	}
+	r.logger.Warn("Wiki 装配完成后来源发生变化，正在刷新文章", "job", job.ID, "refreshes", refreshes, "detail", detail)
+	return r.Store.FinishJob(ctx, job, "partial", "", 1)
+}
+
+// failStaleEvidence 结束一个重新整理也无法恢复的任务：不进入重试队列，并在进度中指出仍引用失效来源的词条。
+// 任务退回整理阶段并清空修订清单，排查处理后点「立即重试」会先重新整理再发布。
+func (r *Runtime) failStaleEvidence(ctx context.Context, job *JobRecord, cause error, code string) error {
+	pageID, detail := "", "部分修订引用了已失效的来源，重新整理也无法修复，已停止重试"
+	var stale *staleEvidenceError
+	if errors.As(cause, &stale) {
+		pageID = stale.PageID
+		var title string
+		err := r.Store.DB.QueryRowContext(ctx, "SELECT title FROM wiki_pages WHERE id=? AND channel_id=?", pageID, job.ChannelID).Scan(&title)
+		switch {
+		case err == nil && title != "":
+			detail = fmt.Sprintf("词条「%s」的修订引用了已失效的来源，重新整理也无法修复，已停止重试", title)
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+	}
+	job.Mu.Lock()
+	delete(job.Cursor, "page_after")
+	job.Cursor["revisions"] = map[string]any{}
+	delete(job.Cursor, "dropped_pages")
+	delete(job.Cursor, "evidence_refreshes")
+	job.Progress["error_detail"] = detail
+	job.Progress["activity"] = detail
+	job.Mu.Unlock()
+	if err := r.Store.CheckpointJob(ctx, job, "assemble", false); err != nil {
+		return err
+	}
+	r.logger.Warn("Wiki 任务失败", "job", job.ID, "phase", job.Phase, "status", "failed", "code", code,
+		"page", pageID, "detail", detail)
+	return r.Store.FinishJob(ctx, job, "failed", code, 0)
 }
 
 func jobFailure(cause error, attempts int) (detail, code string, delay int) {
