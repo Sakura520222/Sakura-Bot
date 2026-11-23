@@ -89,7 +89,9 @@ jobs:
           ZH[ci]=持续集成 ZH[chore]=其他变更 ZH[i18n]=国际化 ZH[revert]=回退
           order="feat fix docs style refactor perf test build ci chore i18n revert"
 
-          declare -A GROUPS
+          # GROUPS 是 bash 的内置特殊数组（当前用户所属的用户组），不能用作关联数组名。
+          # 脚本开了 set -u，读取关联数组中不存在的键会报未绑定变量，取值一律带 :- 默认值。
+          declare -A BY_TYPE
           while IFS= read -r subject; do
             [ -n "$subject" ] || continue
             case "$subject" in
@@ -100,17 +102,17 @@ jobs:
               feat|fix|docs|style|refactor|perf|test|build|ci|chore|i18n|revert) ;;
               *) type=chore ;;
             esac
-            GROUPS[$type]="${GROUPS[$type]}- $subject"$'\n'
+            BY_TYPE[$type]="${BY_TYPE[$type]:-}- $subject"$'\n'
           done < commits.txt
 
           {
             echo "## 🎉 Release v${VERSION} - $(date +'%Y-%m-%d')"
             echo ""
             for type in $order; do
-              [ -n "${GROUPS[$type]}" ] || continue
+              [ -n "${BY_TYPE[$type]:-}" ] || continue
               echo "### ${ZH[$type]}"
               echo ""
-              printf '%s\n' "${GROUPS[$type]}"
+              printf '%s\n' "${BY_TYPE[$type]}"
             done
           } > release_notes.md
           echo "--- 生成的 Release 描述 ---"
